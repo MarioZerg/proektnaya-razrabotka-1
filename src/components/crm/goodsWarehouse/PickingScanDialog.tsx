@@ -43,6 +43,11 @@ interface Hit {
  * держим ТОЛЬКО нужную вещь — что это, с какой полки её взять и под какой заказ.
  *
  * Фокус из поля не уходит никогда, чтобы кладовщик пикал не притрагиваясь к мышке.
+ *
+ * POEHALI: подбор — action start_picking / scan по barcode, уже есть. Не создавать
+ * «scan_session» в облаке.
+ * FRONTEND-ONLY: Set уже пикнутых кодов живёт только в этом окне, чтобы двойной
+ * пик одной наклейки не накручивал счётчик. В базу это не пишется.
  */
 const PickingScanDialog = ({ open, onOpenChange, onOpenCard }: PickingScanDialogProps) => {
   const { user } = useAuth();

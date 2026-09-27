@@ -1,5 +1,7 @@
 const LOGS_URL = 'https://functions.poehali.dev/76b45ef0-dcd6-43ae-bafe-a568bb09547a';
 
+/** POEHALI: журнал действий. FRONTEND-ONLY: сбой GET не писать как «записей нет». */
+
 /** Этап работы — по нему админ фильтрует журнал: «покажи всё про пошив». */
 export type LogStage = 'shifts' | 'cutting' | 'sewing' | 'stickering';
 

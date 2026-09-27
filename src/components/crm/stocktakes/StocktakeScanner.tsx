@@ -16,6 +16,7 @@ import { useScannerAutoSubmit } from '@/hooks/useScannerAutoSubmit';
 import { playScanSound, playScanErrorSound, primeScanSounds } from '@/lib/scanSound';
 import { fetchShelves, type Shelf } from '@/lib/shelvesApi';
 import { scanStocktake, undoStocktakeScan, type Stocktake } from '@/lib/stocktakesApi';
+import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
 
 interface StocktakeScannerProps {
   stocktake: Stocktake;
@@ -34,11 +35,14 @@ interface ScanRow {
  *
  * Полка выбирается один раз на стеллаж, а не на каждую вещь: так система понимает,
  * что вещь лежит не там, где числится, и при подтверждении сама поправит адрес.
+ *
+ * POEHALI: scanStocktake уже есть. FRONTEND-ONLY: HID-скан и выбор полки на экране.
  */
 const StocktakeScanner = ({ stocktake, onScanned }: StocktakeScannerProps) => {
   const { toast } = useToast();
   const { user } = useAuth();
   const [shelves, setShelves] = useState<Shelf[]>([]);
+  const [shelvesError, setShelvesError] = useState<string | null>(null);
   const [shelfId, setShelfId] = useState('');
   const [barcode, setBarcode] = useState('');
   const [saving, setSaving] = useState(false);
@@ -48,9 +52,18 @@ const StocktakeScanner = ({ stocktake, onScanned }: StocktakeScannerProps) => {
 
   const focusInput = () => setTimeout(() => inputRef.current?.focus(), 0);
 
+  const loadShelves = () => {
+    setShelvesError(null);
+    fetchShelves()
+      .then(setShelves)
+      .catch((e) => {
+        setShelvesError(e instanceof Error ? e.message : 'Не удалось загрузить полки');
+      });
+  };
+
   useEffect(() => {
     primeScanSounds();
-    fetchShelves().then(setShelves).catch(() => setShelves([]));
+    loadShelves();
     focusInput();
   }, []);
 
@@ -159,6 +172,14 @@ const StocktakeScanner = ({ stocktake, onScanned }: StocktakeScannerProps) => {
           />
         </div>
       </div>
+
+      {shelvesError && (
+        <WarehouseFetchError
+          title="Не удалось загрузить полки"
+          description={shelvesError}
+          onRetry={loadShelves}
+        />
+      )}
 
       <p className="text-sm text-muted-foreground">
         {shelfName

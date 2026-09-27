@@ -2,6 +2,8 @@ import func2url from '../../backend/func2url.json';
 
 const PROMOTION_URL = (func2url as Record<string, string>).promotion;
 
+/** POEHALI: акции площадок. FRONTEND-ONLY: сбой GET не писать как «акций нет». */
+
 export type MarketplaceCode = 'ozon' | 'wildberries' | 'yandex_market';
 
 /** Что система советует сделать с ценой размера. */

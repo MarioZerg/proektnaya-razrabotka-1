@@ -1,5 +1,7 @@
 const SUPPLIERS_URL = 'https://functions.poehali.dev/eb3fba8a-def9-443a-a867-97243dacc9f8';
 
+/** POEHALI: поставщики. FRONTEND-ONLY: сбой GET не писать как «поставщиков пока нет». */
+
 /** Валюты, в которых поставщики выставляют цены. */
 export const CURRENCIES = ['RUB', 'USD', 'EUR', 'CNY'] as const;
 

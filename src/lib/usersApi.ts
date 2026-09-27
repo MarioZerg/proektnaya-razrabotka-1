@@ -2,6 +2,8 @@ import type { Role } from '@/lib/roles';
 
 const USERS_URL = 'https://functions.poehali.dev/1db3a89a-f0f6-470e-bef4-fb5ca8fa02df';
 
+/** POEHALI: сотрудники. FRONTEND-ONLY: сбой GET не писать как «сотрудников пока нет». */
+
 export interface UserRoleEntry {
   role: Role;
   isApproved: boolean;

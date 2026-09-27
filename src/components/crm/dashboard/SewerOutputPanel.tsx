@@ -8,6 +8,7 @@ import {
   type SewerDailyInfo,
   type SewerBonusInfo,
 } from '@/lib/salaryApi';
+import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
 
 const money = (value: number) =>
   new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 0 }).format(value) + ' ₽';
@@ -73,14 +74,23 @@ const SewerOutputPanel = () => {
   const [daily, setDaily] = useState<SewerDailyInfo | null>(null);
   const [bonus, setBonus] = useState<SewerBonusInfo | null>(null);
   const [loaded, setLoaded] = useState(false);
+  const [dailyError, setDailyError] = useState<string | null>(null);
+  const [bonusError, setBonusError] = useState<string | null>(null);
 
   const load = useCallback(() => {
-    Promise.all([
-      fetchSewerDaily().catch(() => null),
-      fetchSewerBonus().catch(() => null),
-    ]).then(([d, b]) => {
-      setDaily(d);
-      setBonus(b);
+    Promise.allSettled([fetchSewerDaily(), fetchSewerBonus()]).then(([d, b]) => {
+      if (d.status === 'fulfilled') {
+        setDailyError(null);
+        setDaily(d.value);
+      } else {
+        setDailyError(d.reason instanceof Error ? d.reason.message : 'Не удалось загрузить акцию дня');
+      }
+      if (b.status === 'fulfilled') {
+        setBonusError(null);
+        setBonus(b.value);
+      } else {
+        setBonusError(b.reason instanceof Error ? b.reason.message : 'Не удалось загрузить премию');
+      }
       setLoaded(true);
     });
   }, []);
@@ -132,6 +142,15 @@ const SewerOutputPanel = () => {
   );
 
   if (!daily && !bonus) {
+    if (dailyError || bonusError) {
+      return (
+        <WarehouseFetchError
+          title="Не удалось загрузить выработку"
+          description={dailyError || bonusError || undefined}
+          onRetry={load}
+        />
+      );
+    }
     return (
       <p className="py-6 text-sm text-muted-foreground">
         Ни акции на сегодня, ни активной премии за выработку нет
@@ -162,6 +181,12 @@ const SewerOutputPanel = () => {
               </b>
             </p>
           </div>
+        ) : dailyError ? (
+          <WarehouseFetchError
+            title="Не удалось загрузить акцию дня"
+            description={dailyError}
+            onRetry={load}
+          />
         ) : (
           <div className="rounded-lg border border-dashed p-3">
             <p className="flex items-center gap-1.5 text-sm font-medium text-muted-foreground">
@@ -191,6 +216,12 @@ const SewerOutputPanel = () => {
               )}
             </p>
           </div>
+        ) : bonusError ? (
+          <WarehouseFetchError
+            title="Не удалось загрузить премию за выработку"
+            description={bonusError}
+            onRetry={load}
+          />
         ) : (
           <div className="rounded-lg border border-dashed p-3">
             <p className="flex items-center gap-1.5 text-sm font-medium text-muted-foreground">

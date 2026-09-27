@@ -19,6 +19,7 @@ import { roleLabels, type Role } from '@/lib/roles';
 import { fetchWorkshops, type Workshop } from '@/lib/workshopsApi';
 import { fetchEmployees, type Employee } from '@/lib/usersApi';
 import { Input } from '@/components/ui/input';
+import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
 
 interface KioskPreviewDialogProps {
   open: boolean;
@@ -56,20 +57,29 @@ const KioskPreviewDialog = ({ open, onOpenChange, adminName }: KioskPreviewDialo
   // сотрудника, с его настоящими заказами, рулонами и сменой.
   const [mode, setMode] = useState<'role' | 'employee'>('role');
   const [employees, setEmployees] = useState<Employee[]>([]);
+  const [listError, setListError] = useState<string | null>(null);
   const [employeeQuery, setEmployeeQuery] = useState('');
   const [employeeId, setEmployeeId] = useState<number | null>(null);
 
-  useEffect(() => {
-    if (!open) return;
+  const loadLists = () => {
     fetchWorkshops()
       .then((list) => {
+        setListError(null);
         setWorkshops(list);
         if (list.length > 0) setWorkshopId((prev) => prev || String(list[0].id));
       })
-      .catch(() => setWorkshops([]));
+      .catch((e) => {
+        setListError(e instanceof Error ? e.message : 'Не удалось загрузить цеха');
+      });
     fetchEmployees()
       .then((list) => setEmployees(list.filter((e) => e.isActive)))
-      .catch(() => setEmployees([]));
+      // FRONTEND-ONLY: справочник для выбора — не затираем предыдущий список.
+      .catch(() => {});
+  };
+
+  useEffect(() => {
+    if (!open) return;
+    loadLists();
   }, [open]);
 
   // Показываем только тех, кто реально работает за терминалом — админов и менеджеров там нет.
@@ -113,6 +123,13 @@ const KioskPreviewDialog = ({ open, onOpenChange, adminName }: KioskPreviewDialo
 
           <div className="space-y-1.5">
             <Label>Цех</Label>
+            {listError && workshops.length === 0 ? (
+              <WarehouseFetchError
+                title="Не удалось загрузить цеха"
+                description={listError}
+                onRetry={loadLists}
+              />
+            ) : (
             <Select value={workshopId} onValueChange={setWorkshopId}>
               <SelectTrigger>
                 <SelectValue placeholder="Выберите цех" />
@@ -125,6 +142,7 @@ const KioskPreviewDialog = ({ open, onOpenChange, adminName }: KioskPreviewDialo
                 ))}
               </SelectContent>
             </Select>
+            )}
           </div>
 
           <div className="flex gap-2">

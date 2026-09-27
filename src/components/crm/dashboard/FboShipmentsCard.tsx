@@ -18,6 +18,7 @@ import {
   confirmGazelkaShip,
   type FboBoardItem,
 } from '@/lib/marketplaceSuppliesApi';
+import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
 
 const fmtDateTime = (iso: string | null) => {
   if (!iso) return '—';
@@ -53,13 +54,19 @@ const FboShipmentsCard = () => {
   const navigate = useNavigate();
   const [items, setItems] = useState<FboBoardItem[]>([]);
   const [loading, setLoading] = useState(true);
+  const [listError, setListError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<number | null>(null);
 
   const load = () => {
     setLoading(true);
     fetchFboBoard()
-      .then(setItems)
-      .catch(() => setItems([]))
+      .then((list) => {
+        setListError(null);
+        setItems(list);
+      })
+      .catch((e) => {
+        setListError(e instanceof Error ? e.message : 'Не удалось загрузить отгрузки FBO');
+      })
       .finally(() => setLoading(false));
   };
 
@@ -84,7 +91,17 @@ const FboShipmentsCard = () => {
     }
   };
 
-  if (!loading && items.length === 0) return null;
+  if (!loading && items.length === 0 && !listError) return null;
+
+  if (listError && items.length === 0) {
+    return (
+      <WarehouseFetchError
+        title="Не удалось загрузить отгрузки FBO"
+        description={listError}
+        onRetry={load}
+      />
+    );
+  }
 
   const pending = items.filter((i) => i.needsShipConfirm);
 

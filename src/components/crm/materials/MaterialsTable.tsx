@@ -21,6 +21,8 @@ import MaterialsCards from '@/components/crm/materials/MaterialsCards';
 
 interface MaterialsTableProps {
   loading: boolean;
+  /** FRONTEND-ONLY: сбой GET — не писать «материалов пока нет». */
+  error?: string | null;
   materials: Material[];
   pagedMaterials: Material[];
   typeById: Map<number, string>;
@@ -40,6 +42,7 @@ interface MaterialsTableProps {
  *  таблица без горизонтальной прокрутки. */
 const MaterialsTable = ({
   loading,
+  error = null,
   materials,
   pagedMaterials,
   typeById,
@@ -51,7 +54,7 @@ const MaterialsTable = ({
   onAskDelete,
   filtered = false,
 }: MaterialsTableProps) => {
-  if (loading) {
+  if (loading && materials.length === 0) {
     return (
       <div className="flex items-center gap-2 text-sm text-muted-foreground">
         <Icon name="Loader2" size={16} className="animate-spin" />
@@ -61,6 +64,7 @@ const MaterialsTable = ({
   }
 
   if (materials.length === 0) {
+    if (error) return null;
     return (
       <p className="text-sm text-muted-foreground">
         {filtered

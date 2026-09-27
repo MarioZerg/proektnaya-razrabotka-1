@@ -20,6 +20,7 @@ import Icon from '@/components/ui/icon';
 import { useToast } from '@/hooks/use-toast';
 import { moveRoll } from '@/lib/rollsApi';
 import type { Workshop } from '@/lib/workshopsApi';
+import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
 
 interface Props {
   open: boolean;
@@ -33,6 +34,8 @@ interface Props {
   workshopName?: string | null;
   shiftNumber?: number | null;
   workshops: Workshop[];
+  workshopsError?: string | null;
+  onRetryWorkshops?: () => void;
   onDone: () => void;
 }
 
@@ -61,6 +64,8 @@ const RollMoveDialog = ({
   workshopName,
   shiftNumber,
   workshops,
+  workshopsError,
+  onRetryWorkshops,
   onDone,
 }: Props) => {
   const { toast } = useToast();
@@ -168,6 +173,13 @@ const RollMoveDialog = ({
             <>
               <div className="space-y-1.5">
                 <Label>Цех</Label>
+                {workshopsError && workshops.length === 0 ? (
+                  <WarehouseFetchError
+                    title="Не удалось загрузить цеха"
+                    description={workshopsError}
+                    onRetry={onRetryWorkshops || (() => {})}
+                  />
+                ) : (
                 <Select
                   value={wsId}
                   onValueChange={(v) => {
@@ -186,6 +198,7 @@ const RollMoveDialog = ({
                     ))}
                   </SelectContent>
                 </Select>
+                )}
               </div>
 
               <div className="space-y-1.5">

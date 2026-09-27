@@ -25,6 +25,13 @@ import { useTablePage } from '@/components/crm/finance/useTablePage';
  * Вынесено из страницы, чтобы разметку можно было читать сверху вниз, не продираясь
  * через полторы сотни строк расчётов. Логика перенесена один в один — здесь нет
  * ни одного нового условия.
+ *
+ * POEHALI: список, полки, очереди и выгрузки — уже существующие GET/POST функции
+ * склада (goods_warehouse) и полок. Новых action и полей отсюда не добавлять.
+ *
+ * FRONTEND-ONLY: плитки, фильтр «есть стикер хранения», дебаунс поиска, ошибка
+ * «не загрузилось» вместо нуля при сбое сети, кэш счётчика подбора на 15 сек.
+ * Этого на poehali нет и заводить не нужно — агенту править только UI.
  */
 export const useGoodsWarehouseState = () => {
   const { toast } = useToast();
@@ -45,6 +52,11 @@ export const useGoodsWarehouseState = () => {
   const [items, setItems] = useState<GoodsWarehouseItem[]>([]);
   const [shelves, setShelves] = useState<Shelf[]>([]);
   const [loading, setLoading] = useState(true);
+  /**
+   * FRONTEND-ONLY: сбой основного списка. На poehali отдельной ошибки нет —
+   * без этого флага пустая таблица читалась как «товаров нет».
+   */
+  const [listError, setListError] = useState<string | null>(null);
 
   const [search, setSearch] = useState('');
   // То, что реально ушло в запрос. Отделено от search: поле ввода меняется на
@@ -88,8 +100,8 @@ export const useGoodsWarehouseState = () => {
         setStocktakeLeft(st?.report ? st.report.missingCount : 0);
       })
       .catch(() => {
-        setStocktakeActive(false);
-        setStocktakeLeft(0);
+        // FRONTEND-ONLY: не гасим активный пересчёт из‑за обрыва сети —
+        // иначе плитка врёт «инвентаризации нет».
       });
   };
 
@@ -118,14 +130,29 @@ export const useGoodsWarehouseState = () => {
   // фильтр кладовщик открыл в таблице ниже.
   const [pendingShelf, setPendingShelf] = useState<GoodsWarehouseItem[]>([]);
   const [pendingReturns, setPendingReturns] = useState<GoodsWarehouseItem[]>([]);
+  /** Первая успешная загрузка очередей — до неё плитки крутятся, а не показывают 0. */
+  const [queuesReady, setQueuesReady] = useState(false);
+  const [queuesError, setQueuesError] = useState<string | null>(null);
 
   const loadQueues = () => {
-    fetchGoodsWarehouse({ status: 'awaiting_shelf' })
-      .then((list) => setPendingShelf(list.filter((i) => !!i.storageLabeledAt)))
-      .catch(() => {});
-    fetchGoodsWarehouse({ status: 'mp_return' })
-      .then(setPendingReturns)
-      .catch(() => {});
+    setQueuesError(null);
+    Promise.all([
+      fetchGoodsWarehouse({ status: 'awaiting_shelf' }),
+      fetchGoodsWarehouse({ status: 'mp_return' }),
+    ])
+      .then(([shelf, returns]) => {
+        // FRONTEND-ONLY: в очередь «разложить» берём только вещи со стикером хранения.
+        // POEHALI уже отдаёт storageLabeledAt, отдельного фильтра в функции нет —
+        // не заводить action «pending_labeled», это отбор на клиенте.
+        setPendingShelf(shelf.filter((i) => !!i.storageLabeledAt));
+        setPendingReturns(returns);
+        setQueuesReady(true);
+      })
+      .catch((e) => {
+        setQueuesError(
+          e instanceof Error ? e.message : 'Не удалось загрузить очередь склада',
+        );
+      });
   };
 
   const load = () => {
@@ -134,7 +161,12 @@ export const useGoodsWarehouseState = () => {
     // заказ и «положить» его на полку нельзя, поэтому список заказов здесь больше не нужен.
     // Полки грузим отдельно от товара: если связь моргнула и справочник не дошёл,
     // склад всё равно покажется. Раньше один сбой оставлял страницу пустой.
-    fetchShelves().then(setShelves).catch(() => {});
+    fetchShelves()
+      .then(setShelves)
+      .catch(() => {
+        // FRONTEND-ONLY: справочник полок не критичен для списка вещей.
+        // Пустой select хуже, чем пропажа всей таблицы — таблицу не трогаем.
+      });
     // Очереди на плитках перечитываем вместе с таблицей: кладовщик разложил вещь —
     // счётчик должен упасть сразу, не дожидаясь перезахода на страницу.
     loadQueues();
@@ -164,8 +196,13 @@ export const useGoodsWarehouseState = () => {
         ? { search: searchQuery, ...(stockOnly ? { status: 'in_stock' as GoodsStatusFilter } : {}) }
         : { status: statusFilter === 'all' ? undefined : (statusFilter as GoodsStatusFilter) },
     )
-      .then(setItems)
-      .catch(() => {})
+      .then((list) => {
+        setListError(null);
+        setItems(list);
+      })
+      .catch((e) => {
+        setListError(e instanceof Error ? e.message : 'Не удалось загрузить склад');
+      })
       .finally(() => setLoading(false));
   };
 
@@ -176,11 +213,6 @@ export const useGoodsWarehouseState = () => {
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [statusFilter, searchQuery]);
-
-  // Возвраты, забранные с пункта выдачи, но ещё не осмотренные: товар привезли,
-  // а решение (полка / перепаковка / утиль) кладовщик ещё не принял. Пока вещь не
-  // лежит на полке, она считается непроверенной и в подбор не попадает.
-  const [uncheckedReturns, setUncheckedReturns] = useState(0);
 
   // Подбор теперь открывается только отсюда — держим на кнопке живой счётчик,
   // чтобы кладовщик видел работу, не заходя внутрь.
@@ -201,7 +233,9 @@ export const useGoodsWarehouseState = () => {
     fetchInspection('inspected')
       // counts.inspected уже включает забранные из цеха — складывать не нужно.
       .then((d) => setInspectedReady(d.counts.inspected || 0))
-      .catch(() => setInspectedReady(0));
+      .catch(() => {
+        // FRONTEND-ONLY: не обнуляем счётчик осмотренных при сбое обновления.
+      });
   };
 
   useEffect(() => {
@@ -209,24 +243,12 @@ export const useGoodsWarehouseState = () => {
     loadStocktake();
   }, []);
 
-  // СЧИТАЕМ ПО ВЕЩАМ НА СКЛАДЕ, А НЕ ПО ЗАЯВКАМ ВОЗВРАТА.
-  //
-  // Раньше здесь считались заявки со статусом «забрана с ПВЗ», и плашка показывала
-  // 10 штук, тогда как в разборе лежало 7, а на дашборде значилось 5 — три числа про
-  // одну и ту же работу расходились между собой.
-  //
-  // Причина: заявка и вещь живут раздельно. Из тех 10 заявок четыре вещи уже собраны
-  // под заказы (picking), одна уехала в поставку — работы по ним нет, а заявка так и
-  // висит незакрытой. И наоборот: вещи, отменённые после стикеровки, заявкой вообще
-  // не оформлены, но разбирать их надо.
-  //
-  // Кладовщик по этой плашке открывает разбор возвратов и видит там СПИСОК ВЕЩЕЙ —
-  // значит и считать надо вещи, тем же условием, что и плитка «Разобрать возвраты».
-  useEffect(() => {
-    fetchGoodsWarehouse({ status: 'mp_return' })
-      .then((list) => setUncheckedReturns(list.length))
-      .catch(() => setUncheckedReturns(0));
-  }, []);
+  // Непроверенные возвраты = та же очередь mp_return, что и плитка «Разобрать возвраты».
+  // Считаем вещи на складе, не заявки ПВЗ: заявка может висеть, а вещь уже в подборе.
+  // FRONTEND-ONLY: второй GET убран — число бралось из того же запроса, но только
+  // при входе на страницу, и после разбора плашка врала. POEHALI: отдельного
+  // счётчика нет, используем уже загруженный список status=mp_return.
+  const uncheckedReturns = pendingReturns.length;
 
   // Вещи, зависшие после отмены заказа на маркетплейсе: заказ отменили уже после
   // стикеровки, вещь в поставку не уедет, но и свободным остатком не считается.
@@ -236,7 +258,9 @@ export const useGoodsWarehouseState = () => {
   const loadStuckCancelled = () => {
     fetchStuckCancelled()
       .then((d) => setStuckCancelled(d.items))
-      .catch(() => setStuckCancelled([]));
+      .catch(() => {
+        // FRONTEND-ONLY: не прячем уже показанных «зависших» при сбое обновления.
+      });
   };
 
   useEffect(() => {
@@ -480,6 +504,9 @@ export const useGoodsWarehouseState = () => {
     canReceiveManually,
     shelves,
     loading,
+    listError,
+    queuesReady,
+    queuesError,
     search,
     setSearch,
     statusFilter,
@@ -509,6 +536,7 @@ export const useGoodsWarehouseState = () => {
     stocktakeActive,
     loadStocktake,
     load,
+    loadQueues,
     loadInspectedReady,
     uncheckedReturns,
     stuckCancelled,

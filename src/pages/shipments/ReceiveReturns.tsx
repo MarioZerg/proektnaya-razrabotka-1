@@ -37,6 +37,7 @@ import {
   rejectMarketplaceReturn,
   type MarketplaceReturn,
 } from '@/lib/marketplaceReturnsApi';
+import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
 
 const statusLabels: Record<string, { label: string; className: string }> = {
   new: { label: 'Ждёт решения', className: 'bg-amber-500 text-white hover:bg-amber-500' },
@@ -80,6 +81,7 @@ const ReceiveReturns = () => {
   const [returns, setReturns] = useState<MarketplaceReturn[]>([]);
   const [counts, setCounts] = useState<Record<string, number>>({});
   const [loading, setLoading] = useState(true);
+  const [listError, setListError] = useState<string | null>(null);
   const [syncing, setSyncing] = useState(false);
   const [processingId, setProcessingId] = useState<number | null>(null);
   const [outcomes, setOutcomes] = useState<Record<string, number>>({});
@@ -93,9 +95,13 @@ const ReceiveReturns = () => {
     setLoading(true);
     fetchMarketplaceReturns({ status: statusFilter, marketplace: marketplaceFilter })
       .then((data) => {
+        setListError(null);
         setReturns(data.returns);
         setCounts(data.counts);
         setOutcomes(data.outcomes);
+      })
+      .catch((e) => {
+        setListError(e instanceof Error ? e.message : 'Не удалось загрузить возвраты');
       })
       .finally(() => setLoading(false));
   };
@@ -319,15 +325,25 @@ const ReceiveReturns = () => {
           </Select>
         </div>
 
-        {loading ? (
+        {listError && (
+          <WarehouseFetchError
+            title="Не удалось загрузить возвраты"
+            description={listError}
+            onRetry={load}
+          />
+        )}
+
+        {loading && returns.length === 0 ? (
           <div className="flex items-center gap-2 text-sm text-muted-foreground">
             <Icon name="Loader2" size={16} className="animate-spin" />
             Загрузка...
           </div>
         ) : returns.length === 0 ? (
+          listError ? null : (
           <p className="text-sm text-muted-foreground">
             Возвратов нет. Нажмите «Загрузить с маркетплейсов», чтобы подтянуть свежие заявки.
           </p>
+          )
         ) : (
           <div className="rounded-md border border-border">
             <Table>

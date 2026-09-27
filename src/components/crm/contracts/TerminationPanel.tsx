@@ -24,6 +24,7 @@ import {
   signTermination,
   type TerminationState,
 } from '@/lib/terminationApi';
+import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
 
 /** «4 сентября 2026» — без «г.» на конце: рядом в тексте и так стоит точка. */
 const formatDate = (v: string) =>
@@ -44,6 +45,7 @@ const TerminationPanel = () => {
   const { toast } = useToast();
   const { user } = useAuth();
   const [state, setState] = useState<TerminationState | null>(null);
+  const [listError, setListError] = useState<string | null>(null);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [reason, setReason] = useState('');
   const [code, setCode] = useState('');
@@ -51,12 +53,29 @@ const TerminationPanel = () => {
 
   const load = useCallback(() => {
     if (!user?.id) return;
-    fetchTerminationState(user.id).then(setState).catch(() => setState(null));
+    fetchTerminationState(user.id)
+      .then((s) => {
+        setListError(null);
+        setState(s);
+      })
+      .catch((e) => {
+        setListError(e instanceof Error ? e.message : 'Не удалось загрузить расторжение');
+      });
   }, [user?.id]);
 
   useEffect(() => load(), [load]);
 
-  if (!state || user?.role === 'admin') return null;
+  if (user?.role === 'admin') return null;
+  if (listError) {
+    return (
+      <WarehouseFetchError
+        title="Не удалось загрузить расторжение"
+        description={listError}
+        onRetry={load}
+      />
+    );
+  }
+  if (!state) return null;
 
   const cur = state.current;
   const active =

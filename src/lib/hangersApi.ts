@@ -1,5 +1,7 @@
 const HANGERS_URL = 'https://functions.poehali.dev/85bbeb23-4daf-48af-943e-69237b89bdeb';
 
+/** POEHALI: вешалки в цехе. FRONTEND-ONLY: сбой GET не писать как «вешалок пока нет». */
+
 export interface Hanger {
   id: number;
   number: number;
@@ -33,6 +35,9 @@ const post = async (payload: Record<string, unknown>) => {
 export const fetchHangers = async (): Promise<Hanger[]> => {
   const res = await fetch(HANGERS_URL);
   const data = await res.json();
+  if (!res.ok) {
+    throw new Error(data.error || 'Не удалось загрузить вешалки');
+  }
   return data.hangers || [];
 };
 

@@ -17,6 +17,7 @@ import RollEditDialog from '@/components/crm/rolls/RollEditDialog';
 import RollRemoveDialog from '@/components/crm/rolls/RollRemoveDialog';
 import { fetchWorkshops, type Workshop } from '@/lib/workshopsApi';
 import { currencySymbols } from '@/lib/suppliersApi';
+import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
 
 const statusLabels: Record<RollStatus, { label: string; variant: 'secondary' | 'default' | 'outline' }> = {
   in_storage: { label: 'На складе', variant: 'secondary' },
@@ -57,23 +58,39 @@ const RollShow = () => {
   const [removeOpen, setRemoveOpen] = useState(false);
   /** Цеха нужны для выбора смены при перемещении рулона. */
   const [workshops, setWorkshops] = useState<Workshop[]>([]);
+  const [workshopsError, setWorkshopsError] = useState<string | null>(null);
 
   const load = useCallback(() => {
     setLoading(true);
     fetchRollDetail(rollId)
-      .then(setData)
+      .then((d) => {
+        setError(null);
+        setData(d);
+      })
       .catch((e) => setError(e instanceof Error ? e.message : 'Не удалось загрузить рулон'))
       .finally(() => setLoading(false));
   }, [rollId]);
 
   useEffect(() => load(), [load]);
 
+  const loadWorkshops = () => {
+    fetchWorkshops()
+      .then((list) => {
+        setWorkshopsError(null);
+        setWorkshops(list);
+      })
+      .catch((e) => {
+        setWorkshopsError(e instanceof Error ? e.message : 'Не удалось загрузить цеха');
+      });
+  };
+
   // Список цехов грузим только администратору: перемещать рулон может он один.
   useEffect(() => {
-    if (isAdmin) fetchWorkshops().then(setWorkshops).catch(() => setWorkshops([]));
+    if (isAdmin) loadWorkshops();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isAdmin]);
 
-  if (loading) {
+  if (loading && !data) {
     return (
       <CrmLayout>
         <div className="flex items-center gap-2 text-sm text-muted-foreground">
@@ -84,10 +101,25 @@ const RollShow = () => {
     );
   }
 
-  if (error || !data) {
+  if (error && !data) {
     return (
       <CrmLayout>
-        <p className="text-sm text-destructive">{error || 'Рулон не найден'}</p>
+        <WarehouseFetchError
+          title="Не удалось загрузить рулон"
+          description={error}
+          onRetry={load}
+        />
+        <Button variant="ghost" size="sm" className="mt-2" onClick={() => navigate('/crm/inventory/rolls')}>
+          <Icon name="ChevronLeft" size={16} className="mr-1" />К рулонам
+        </Button>
+      </CrmLayout>
+    );
+  }
+
+  if (!data) {
+    return (
+      <CrmLayout>
+        <p className="text-sm text-destructive">Рулон не найден</p>
         <Button variant="ghost" size="sm" className="mt-2" onClick={() => navigate('/crm/inventory/rolls')}>
           <Icon name="ChevronLeft" size={16} className="mr-1" />К рулонам
         </Button>
@@ -244,6 +276,8 @@ const RollShow = () => {
             workshopName={roll.workshopName}
             shiftNumber={roll.shiftNumber}
             workshops={workshops}
+            workshopsError={workshopsError}
+            onRetryWorkshops={loadWorkshops}
             onDone={load}
           />
           <RollWriteOffDialog

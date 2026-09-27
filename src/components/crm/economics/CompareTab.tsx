@@ -18,6 +18,7 @@ import {
   type MarketplaceCode,
 } from '@/lib/unitEconomicsApi';
 import { moneyShort, profitColor } from './economicsShared';
+import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
 
 const ALL: { code: MarketplaceCode; scheme: 'FBO' | 'FBS' }[] = [
   { code: 'ozon', scheme: 'FBS' },
@@ -38,14 +39,24 @@ const ALL: { code: MarketplaceCode; scheme: 'FBO' | 'FBS' }[] = [
 const CompareTab = () => {
   const [rows, setRows] = useState<CompareRow[]>([]);
   const [loading, setLoading] = useState(true);
+  const [listError, setListError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
 
-  useEffect(() => {
+  const load = () => {
     setLoading(true);
     fetchCompare()
-      .then(setRows)
-      .catch(() => setRows([]))
+      .then((d) => {
+        setListError(null);
+        setRows(d);
+      })
+      .catch((e) => {
+        setListError(e instanceof Error ? e.message : 'Не удалось сравнить площадки');
+      })
       .finally(() => setLoading(false));
+  };
+
+  useEffect(() => {
+    load();
   }, []);
 
   const visible = useMemo(() => {
@@ -71,12 +82,22 @@ const CompareTab = () => {
       .sort((a, b) => b.count - a.count);
   }, [visible]);
 
-  if (loading) {
+  if (loading && rows.length === 0) {
     return (
       <div className="flex items-center gap-2 py-8 text-sm text-muted-foreground">
         <Icon name="Loader2" size={16} className="animate-spin" />
         Считаем по всем площадкам…
       </div>
+    );
+  }
+
+  if (listError && rows.length === 0) {
+    return (
+      <WarehouseFetchError
+        title="Не удалось сравнить площадки"
+        description={listError}
+        onRetry={load}
+      />
     );
   }
 

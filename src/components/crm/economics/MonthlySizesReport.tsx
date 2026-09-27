@@ -10,6 +10,7 @@ import {
 } from '@/components/ui/table';
 import Icon from '@/components/ui/icon';
 import { fetchMonthlyReport, type MonthlyReport } from '@/lib/unitEconomicsApi';
+import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
 
 const MONTH_NAMES = [
   'янв', 'фев', 'мар', 'апр', 'май', 'июн',
@@ -52,16 +53,27 @@ const change = (now: number, before: number): number | null => {
 const MonthlySizesReport = ({ marketplace }: { marketplace: string }) => {
   const [data, setData] = useState<MonthlyReport | null>(null);
   const [loading, setLoading] = useState(true);
+  const [listError, setListError] = useState<string | null>(null);
 
-  useEffect(() => {
+  const load = () => {
     setLoading(true);
     fetchMonthlyReport(marketplace, 6)
-      .then(setData)
-      .catch(() => setData(null))
+      .then((d) => {
+        setListError(null);
+        setData(d);
+      })
+      .catch((e) => {
+        setListError(e instanceof Error ? e.message : 'Не удалось загрузить отчёт');
+      })
       .finally(() => setLoading(false));
+  };
+
+  useEffect(() => {
+    load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [marketplace]);
 
-  if (loading) {
+  if (loading && !data) {
     return (
       <Card className="border-border shadow-none">
         <CardContent className="flex items-center gap-2 py-6 text-sm text-muted-foreground">
@@ -69,6 +81,16 @@ const MonthlySizesReport = ({ marketplace }: { marketplace: string }) => {
           Собираю отчёт по месяцам...
         </CardContent>
       </Card>
+    );
+  }
+
+  if (listError && !data) {
+    return (
+      <WarehouseFetchError
+        title="Не удалось загрузить помесячный отчёт"
+        description={listError}
+        onRetry={load}
+      />
     );
   }
 

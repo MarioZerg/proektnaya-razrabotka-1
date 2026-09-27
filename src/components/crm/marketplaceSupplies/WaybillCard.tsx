@@ -19,6 +19,7 @@ import {
   type WaybillEditableFields,
 } from '@/lib/waybillApi';
 import type { SupplyDetail } from '@/lib/marketplaceSuppliesApi';
+import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
 
 interface WaybillCardProps {
   supply: SupplyDetail;
@@ -115,6 +116,7 @@ const WaybillCard = ({ supply, isManager }: WaybillCardProps) => {
   const { toast } = useToast();
   const [doc, setDoc] = useState<WaybillDocument | null>(null);
   const [loading, setLoading] = useState(true);
+  const [listError, setListError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [creating, setCreating] = useState(false);
   const [generating, setGenerating] = useState(false);
@@ -130,14 +132,23 @@ const WaybillCard = ({ supply, isManager }: WaybillCardProps) => {
     setForm(next);
   };
 
-  useEffect(() => {
+  const load = () => {
+    setLoading(true);
     fetchWaybill(supply.id)
       .then((d) => {
+        setListError(null);
         setDoc(d);
         fillForm(d);
       })
-      .catch(() => setDoc(null))
+      .catch((e) => {
+        setListError(e instanceof Error ? e.message : 'Не удалось загрузить накладную');
+      })
       .finally(() => setLoading(false));
+  };
+
+  useEffect(() => {
+    load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [supply.id]);
 
   const handleCreate = async () => {
@@ -224,7 +235,7 @@ const WaybillCard = ({ supply, isManager }: WaybillCardProps) => {
     }
   };
 
-  if (loading) {
+  if (loading && !doc) {
     return (
       <Card className="border-border shadow-none">
         <CardContent className="flex items-center gap-2 py-5 text-sm text-muted-foreground">
@@ -232,6 +243,16 @@ const WaybillCard = ({ supply, isManager }: WaybillCardProps) => {
           Загрузка транспортной накладной...
         </CardContent>
       </Card>
+    );
+  }
+
+  if (listError && !doc) {
+    return (
+      <WarehouseFetchError
+        title="Не удалось загрузить транспортную накладную"
+        description={listError}
+        onRetry={load}
+      />
     );
   }
 

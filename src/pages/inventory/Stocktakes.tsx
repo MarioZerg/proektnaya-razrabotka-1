@@ -13,6 +13,7 @@ import {
   TableRow,
 } from '@/components/ui/table';
 import Icon from '@/components/ui/icon';
+import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/context/AuthContext';
 import StocktakeScanner from '@/components/crm/stocktakes/StocktakeScanner';
@@ -38,6 +39,9 @@ import { formatDateTime } from '@/lib/dateUtils';
  * Всё, что не отсканировано, попадает в недостачу. Закрыть — значит отправить
  * результат админу: списывает ненайденное только он. Так пересчёт не превращается
  * в способ тихо убрать со склада пропавшую вещь.
+ *
+ * POEHALI: start/close/scan/approve — функция stocktakes, не дублировать.
+ * FRONTEND-ONLY: ошибка загрузки не должна выглядеть как «пересчёт не идёт».
  */
 const Stocktakes = () => {
   const navigate = useNavigate();
@@ -53,6 +57,7 @@ const Stocktakes = () => {
   const [history, setHistory] = useState<Stocktake[]>([]);
   const [pending, setPending] = useState<Stocktake | null>(null);
   const [loading, setLoading] = useState(true);
+  const [listError, setListError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [note, setNote] = useState('');
   const [rejectReason, setRejectReason] = useState('');
@@ -61,12 +66,17 @@ const Stocktakes = () => {
     setLoading(true);
     try {
       const [act, list] = await Promise.all([fetchActiveStocktake(), fetchStocktakes()]);
+      setListError(null);
       setActive(act);
       setHistory(list);
       // Инвентаризация, ждущая решения админа: показываем её отдельным блоком
       // с полным отчётом — админ должен видеть, что именно он подтверждает.
       const waiting = list.find((s) => s.status === 'pending_approval');
       setPending(waiting ? await fetchStocktake(waiting.id) : null);
+    } catch (e) {
+      setListError(
+        e instanceof Error ? e.message : 'Не удалось загрузить инвентаризацию',
+      );
     } finally {
       setLoading(false);
     }
@@ -211,6 +221,14 @@ const Stocktakes = () => {
           </p>
         </div>
 
+        {listError && (
+          <WarehouseFetchError
+            title="Не удалось загрузить инвентаризацию"
+            description={listError}
+            onRetry={load}
+          />
+        )}
+
         {loading ? (
           <div className="flex items-center gap-2 text-sm text-muted-foreground">
             <Icon name="Loader2" size={16} className="animate-spin" />
@@ -267,7 +285,7 @@ const Stocktakes = () => {
               </div>
             )}
 
-            {!active && canCount && (
+            {!active && canCount && !listError && (
               <div className="rounded-md border border-dashed border-border p-6 text-center">
                 <Icon name="ClipboardCheck" size={36} className="mx-auto text-muted-foreground" />
                 <p className="mt-2 font-medium">Пересчёт не идёт</p>

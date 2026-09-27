@@ -6,6 +6,7 @@ import {
   type ReturnHistoryEntry,
 } from '@/lib/goodsWarehouseApi';
 import { formatDate } from './formatDate';
+import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
 
 /**
  * История возвратов вещи: сколько раз её возвращали и кому она принадлежала.
@@ -29,21 +30,38 @@ const GoodsReturnHistory = ({ goodsId }: { goodsId: number }) => {
   const [history, setHistory] = useState<ReturnHistoryEntry[]>([]);
   const [historyLost, setHistoryLost] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [listError, setListError] = useState<string | null>(null);
 
-  useEffect(() => {
+  const load = () => {
+    setLoading(true);
     fetchReturnHistory(goodsId)
       .then((d) => {
+        setListError(null);
         setHistory(d.history || []);
         setHistoryLost(!!d.historyLost);
       })
-      .catch(() => {})
+      .catch((e) => {
+        setListError(e instanceof Error ? e.message : 'Не удалось загрузить историю возвратов');
+      })
       .finally(() => setLoading(false));
+  };
+
+  useEffect(() => {
+    load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [goodsId]);
 
-  if (loading) return null;
+  if (loading && history.length === 0 && !listError) return null;
 
   return (
     <div className="space-y-2">
+      {listError && (
+        <WarehouseFetchError
+          title="Не удалось загрузить историю возвратов"
+          description={listError}
+          onRetry={load}
+        />
+      )}
       <div className="flex items-center gap-2">
         <h2 className="font-semibold">Возвраты этой вещи</h2>
         {history.length > 0 && (
@@ -74,11 +92,13 @@ const GoodsReturnHistory = ({ goodsId }: { goodsId: number }) => {
       )}
 
       {history.length === 0 ? (
+        listError ? null : (
         <p className="text-sm text-muted-foreground">
           {historyLost
             ? 'После добавления на склад возвратов не было'
             : 'Эту вещь ни разу не возвращали'}
         </p>
+        )
       ) : (
         <div className="space-y-2">
           {history.map((h) => (

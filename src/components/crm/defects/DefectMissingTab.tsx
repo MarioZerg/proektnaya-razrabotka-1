@@ -18,6 +18,7 @@ import {
   type MissingDefect,
 } from '@/lib/kioskApi';
 import { roleLabels, formatQty, formatDate } from './defectShared';
+import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
 
 /**
  * Вкладка «Не найдено при приёмке».
@@ -33,6 +34,7 @@ const DefectMissingTab = () => {
 
   const [items, setItems] = useState<MissingDefect[]>([]);
   const [loading, setLoading] = useState(true);
+  const [listError, setListError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [target, setTarget] = useState<MissingDefect | null>(null);
   const [mode, setMode] = useState<'penalty' | 'writeoff'>('writeoff');
@@ -41,8 +43,13 @@ const DefectMissingTab = () => {
   const load = () => {
     setLoading(true);
     fetchMissingDefects()
-      .then(setItems)
-      .catch(() => setItems([]))
+      .then((list) => {
+        setListError(null);
+        setItems(list);
+      })
+      .catch((e) => {
+        setListError(e instanceof Error ? e.message : 'Не удалось загрузить пропажи');
+      })
       .finally(() => setLoading(false));
   };
 
@@ -186,11 +193,21 @@ const DefectMissingTab = () => {
         </Badge>
       </div>
 
+      {listError && (
+        <WarehouseFetchError
+          title="Не удалось загрузить пропажи"
+          description={listError}
+          onRetry={load}
+        />
+      )}
+
       {waiting.length === 0 ? (
+        listError ? null : (
         <div className="flex flex-col items-center gap-3 py-8">
           <Icon name="PackageCheck" size={40} className="text-muted-foreground" />
           <p className="text-base font-semibold">Все пропавшие куски разобраны</p>
         </div>
+        )
       ) : (
         <div className="space-y-2">{waiting.map(renderCard)}</div>
       )}

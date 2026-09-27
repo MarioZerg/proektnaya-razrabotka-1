@@ -9,6 +9,7 @@ import {
   closeShippedStuck,
   type ShippedStuckItem,
 } from '@/lib/goodsWarehouseApi';
+import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
 
 interface ShippedStuckPanelProps {
   /** Перечитать список подбора после закрытия позиций. */
@@ -39,6 +40,7 @@ const ShippedStuckPanel = ({ onReload }: ShippedStuckPanelProps) => {
   const { toast } = useToast();
   const { user } = useAuth();
   const [items, setItems] = useState<ShippedStuckItem[]>([]);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
   const [closing, setClosing] = useState(false);
 
@@ -47,15 +49,30 @@ const ShippedStuckPanel = ({ onReload }: ShippedStuckPanelProps) => {
 
   const load = () => {
     fetchShippedStuck()
-      .then((d) => setItems(d.items))
-      .catch(() => setItems([]));
+      .then((d) => {
+        setLoadError(null);
+        setItems(d.items);
+      })
+      .catch((e) => {
+        setLoadError(e instanceof Error ? e.message : 'Не удалось загрузить список');
+      });
   };
 
   useEffect(() => {
     if (canClose) load();
   }, [canClose]);
 
-  if (!canClose || items.length === 0) return null;
+  if (!canClose) return null;
+  if (loadError) {
+    return (
+      <WarehouseFetchError
+        title="Не удалось проверить уехавшие заказы"
+        description={loadError}
+        onRetry={load}
+      />
+    );
+  }
+  if (items.length === 0) return null;
 
   const handleClose = async () => {
     if (closing) return;

@@ -13,6 +13,7 @@ import {
   type MarketplaceReturn,
 } from '@/lib/marketplaceReturnsApi';
 import { fetchShelves, type Shelf } from '@/lib/shelvesApi';
+import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
 import {
   Select,
   SelectContent,
@@ -40,13 +41,23 @@ const ReturnScanCard = ({ onProcessed }: ReturnScanCardProps) => {
   // упаковку даже не вскрывали), кладовщик кладёт её сразу и не гоняет через
   // отдельный шаг «разложить по полкам».
   const [shelves, setShelves] = useState<Shelf[]>([]);
+  const [shelvesError, setShelvesError] = useState<string | null>(null);
   const [shelfId, setShelfId] = useState<string>('');
   const inputRef = useRef<HTMLInputElement>(null);
 
-  useEffect(() => {
+  const loadShelves = () => {
     fetchShelves()
-      .then(setShelves)
-      .catch(() => setShelves([]));
+      .then((list) => {
+        setShelvesError(null);
+        setShelves(list);
+      })
+      .catch((e) => {
+        setShelvesError(e instanceof Error ? e.message : 'Не удалось загрузить полки');
+      });
+  };
+
+  useEffect(() => {
+    loadShelves();
   }, []);
 
   const handleScan = async () => {
@@ -193,6 +204,13 @@ const ReturnScanCard = ({ onProcessed }: ReturnScanCardProps) => {
             {/* Целую вещь можно положить на полку сразу — выберите какую.
                 Если полку не выбрать, вещь встанет в очередь «ждёт полку». */}
             <div className="space-y-1.5">
+              {shelvesError ? (
+                <WarehouseFetchError
+                  title="Не удалось загрузить полки"
+                  description={shelvesError}
+                  onRetry={loadShelves}
+                />
+              ) : (
               <Select value={shelfId} onValueChange={setShelfId}>
                 <SelectTrigger>
                   <SelectValue placeholder="Полка — если кладёте вещь сразу" />
@@ -205,6 +223,7 @@ const ReturnScanCard = ({ onProcessed }: ReturnScanCardProps) => {
                   ))}
                 </SelectContent>
               </Select>
+              )}
               <p className="text-xs text-muted-foreground">
                 Вещь целая и осмотр не нужен — выберите полку, и товар сразу станет
                 доступен для заказов. Без полки он встанет в очередь на укладку

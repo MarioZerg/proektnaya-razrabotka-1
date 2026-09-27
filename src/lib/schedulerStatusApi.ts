@@ -1,5 +1,7 @@
 const SCHEDULER_STATUS_URL = 'https://functions.poehali.dev/28ee919b-a6b3-4f53-9efb-d53ce1c8ca63';
 
+/** POEHALI: статус планировщика. FRONTEND-ONLY: сбой GET не писать как «все задания работают». */
+
 /**
  * Фоновое задание планировщика.
  *

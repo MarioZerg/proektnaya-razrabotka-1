@@ -15,6 +15,7 @@ import { useSewingItemsFilters } from '@/components/crm/sewingItems/useSewingIte
 import { useSewingItemOrderDetail } from '@/components/crm/sewingItems/useSewingItemOrderDetail';
 import { useSewingItemsQueueActions } from '@/components/crm/sewingItems/useSewingItemsQueueActions';
 import { isStorekeeperRole } from '@/lib/roles';
+import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
 import NextStackHint from '@/components/crm/sewingItems/NextStackHint';
 import {
   CANCELLED_CUT_TAB,
@@ -30,6 +31,7 @@ const SewingItems = () => {
     workshops,
     rolls,
     loading,
+    listError,
     load,
     printQrCuttingEnabled,
     cancelOrderPenalty,
@@ -403,14 +405,23 @@ const SewingItems = () => {
           </div>
         )}
 
-        {!loading && (
+        {!loading && !listError && (
           <p className="text-sm text-muted-foreground">
             Итого на странице: {totalMeters.toFixed(2)} п.м. ({totalPieces} шт.)
           </p>
         )}
 
+        {listError && (
+          <WarehouseFetchError
+            title="Не удалось загрузить заказы"
+            description={listError}
+            onRetry={load}
+          />
+        )}
+
         <SewingItemsTable
           loading={loading}
+          error={listError}
           pagedOrders={pagedOrders}
           onOpenDetail={openDetail}
           page={page}

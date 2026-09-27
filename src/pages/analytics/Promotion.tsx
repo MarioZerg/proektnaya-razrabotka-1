@@ -11,6 +11,7 @@ import {
   type RobotStatus,
 } from '@/lib/priceRobotApi';
 import { fetchOverview, type PriceAdvice } from '@/lib/promotionApi';
+import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
 
 const MARKETPLACES: { code: RobotMarketplace; label: string }[] = [
   { code: 'ozon', label: 'OZON' },
@@ -39,26 +40,30 @@ const PromotionPage = () => {
   const [busy, setBusy] = useState(false);
   const [moveProgress, setMoveProgress] = useState<string | null>(null);
   const [robot, setRobot] = useState<RobotStatus | null>(null);
+  const [robotError, setRobotError] = useState<string | null>(null);
   // Советы считаются отдельной функцией: она смотрит маржу, рекламу и СПП.
-  // Ошибку советов не показываем поверх подъёма — без них страница работает.
   const [advice, setAdvice] = useState<PriceAdvice[] | null>(null);
+  const [adviceError, setAdviceError] = useState<string | null>(null);
 
   const loadRobot = useCallback(() => {
     if (!isAdmin) return;
     fetchOverview(marketplace, user?.id)
-      .then((d) => setAdvice(d.items || []))
-      .catch(() => setAdvice([]));
-    fetchRobotStatus(marketplace, user?.id)
-      .then(setRobot)
+      .then((d) => {
+        setAdviceError(null);
+        setAdvice(d.items || []);
+      })
       .catch((e) => {
-        setRobot({ catalog: [], pendingLeft: 0, maxStepPercent: 3, runs: [] });
-        toast({
-          title: 'Не удалось загрузить',
-          description: e instanceof Error ? e.message : undefined,
-          variant: 'destructive',
-        });
+        setAdviceError(e instanceof Error ? e.message : 'Не удалось загрузить советы');
       });
-  }, [isAdmin, marketplace, user?.id, toast]);
+    fetchRobotStatus(marketplace, user?.id)
+      .then((d) => {
+        setRobotError(null);
+        setRobot(d);
+      })
+      .catch((e) => {
+        setRobotError(e instanceof Error ? e.message : 'Не удалось загрузить ассортимент');
+      });
+  }, [isAdmin, marketplace, user?.id]);
 
   useEffect(() => {
     setRobot(null);
@@ -136,14 +141,24 @@ const PromotionPage = () => {
         </Tabs>
 
         <div className="space-y-4">
+          {robotError && !robot ? (
+            <WarehouseFetchError
+              title="Не удалось загрузить ассортимент"
+              description={robotError}
+              onRetry={loadRobot}
+            />
+          ) : (
           <RobotTabPanel
             key={marketplace}
             robot={robot}
             advice={advice}
+            adviceError={adviceError}
+            onRetryAdvice={loadRobot}
             busy={busy}
             onRaise={raiseNow}
             moveProgress={moveProgress}
           />
+          )}
         </div>
       </div>
     </CrmLayout>

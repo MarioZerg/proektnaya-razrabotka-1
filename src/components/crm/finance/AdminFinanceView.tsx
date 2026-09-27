@@ -5,6 +5,7 @@ import SalaryRatesCard from '@/components/crm/finance/SalaryRatesCard';
 import CashBoxCard from '@/components/crm/finance/CashBoxCard';
 import MissedAccrualsAlert from '@/components/crm/finance/MissedAccrualsAlert';
 import AdminOperationsPanel from '@/components/crm/finance/AdminOperationsPanel';
+import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
 import type { Employee } from '@/lib/usersApi';
 import type {
   SalaryOperation,
@@ -55,7 +56,12 @@ interface AdminFinanceViewProps {
   onUpdateRate: (id: number, rate: number) => Promise<void>;
   payouts: SalaryPayout[];
   payoutsLoading: boolean;
+  payoutsError?: string | null;
+  onRetryPayouts?: () => void;
   onDeletePayout: (id: number) => Promise<void>;
+  operationsError?: string | null;
+  cashError?: string | null;
+  onRetryCash?: () => void;
 }
 
 /** Касса компании: начисления, сводка, касса, тарифы и история выплат. */
@@ -100,11 +106,38 @@ const AdminFinanceView = ({
   onUpdateRate,
   payouts,
   payoutsLoading,
+  payoutsError = null,
+  onRetryPayouts,
   onDeletePayout,
+  operationsError = null,
+  cashError = null,
+  onRetryCash,
 }: AdminFinanceViewProps) => (
   <CrmLayout>
     <div className="space-y-6">
       <h1 className="text-xl font-bold">Финансы компании</h1>
+
+      {operationsError && (
+        <WarehouseFetchError
+          title="Не удалось загрузить начисления"
+          description={operationsError}
+          onRetry={onReload}
+        />
+      )}
+      {cashError && onRetryCash && (
+        <WarehouseFetchError
+          title="Не удалось загрузить кассу"
+          description={cashError}
+          onRetry={onRetryCash}
+        />
+      )}
+      {payoutsError && onRetryPayouts && (
+        <WarehouseFetchError
+          title="Не удалось загрузить выплаты"
+          description={payoutsError}
+          onRetry={onRetryPayouts}
+        />
+      )}
 
       {/* Люди работали, а денег им не начислили. Молчаливая потеря: ошибки нет,
           человек просто остаётся без зарплаты. Показываем сразу под шапкой. */}
@@ -136,6 +169,7 @@ const AdminFinanceView = ({
           onDeleteAccrual={onDeleteAccrual}
           onEditAccrual={onEditAccrual}
           onReload={onReload}
+          error={operationsError}
         />
 
         <div className="space-y-6 lg:col-span-1">
@@ -172,7 +206,12 @@ const AdminFinanceView = ({
         <SalaryRatesCard onUpdate={onUpdateRate} />
       </div>
 
-      <SalaryPayoutsTable payouts={payouts} loading={payoutsLoading} onDelete={onDeletePayout} />
+      <SalaryPayoutsTable
+        payouts={payouts}
+        loading={payoutsLoading}
+        error={payoutsError}
+        onDelete={onDeletePayout}
+      />
     </div>
   </CrmLayout>
 );

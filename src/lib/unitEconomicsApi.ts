@@ -1,5 +1,7 @@
 const UNIT_ECONOMICS_URL = 'https://functions.poehali.dev/4ebd72ad-8ca4-456c-840c-d2db30ce04cd';
 
+/** POEHALI: юнит-экономика. FRONTEND-ONLY: сбой GET не писать как «нет цен / нечего сравнивать». */
+
 /** Код площадки в системе. */
 export type MarketplaceCode = 'ozon' | 'wildberries' | 'yandex_market';
 /** Схема работы: со склада площадки (FBO) или со своего (FBS). */

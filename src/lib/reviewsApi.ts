@@ -1,5 +1,7 @@
 const REVIEWS_URL = 'https://functions.poehali.dev/085266ac-7c01-408d-9e05-6a1981f3b41d';
 
+/** POEHALI: отзывы OZON/WB. FRONTEND-ONLY: сбой GET не писать как «отзывов пока нет». */
+
 export interface Review {
   id: number;
   marketplace: 'OZON' | 'WB';

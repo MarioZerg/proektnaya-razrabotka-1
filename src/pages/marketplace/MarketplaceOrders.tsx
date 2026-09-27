@@ -29,6 +29,7 @@ import OrdersConfirmDialogs from '@/components/crm/orders/OrdersConfirmDialogs';
 import OrdersPageDialogs from '@/components/crm/orders/OrdersPageDialogs';
 import { useOrdersSync } from '@/components/crm/orders/useOrdersSync';
 import { findDuplicateOrders } from '@/lib/findDuplicateOrders';
+import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
 
 const MarketplaceOrders = () => {
   const { toast } = useToast();
@@ -40,6 +41,7 @@ const MarketplaceOrders = () => {
   const canManageOrders = user?.role === 'admin';
   const [orders, setOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
+  const [listError, setListError] = useState<string | null>(null);
   const [marketplaceItems, setMarketplaceItems] = useState<MarketplaceItem[]>([]);
   // Магазины нужны в подборе товара: карточки МЕГАТЮЛЬ и ДЮНЫ лежат вперемешку,
   // и без метки один и тот же размер не отличить.
@@ -81,11 +83,19 @@ const MarketplaceOrders = () => {
   const [search, setSearch] = useState('');
   const [searchResults, setSearchResults] = useState<Order[] | null>(null);
   const [searching, setSearching] = useState(false);
+  const [searchError, setSearchError] = useState<string | null>(null);
+  const [searchRetry, setSearchRetry] = useState(0);
 
   const load = () => {
     setLoading(true);
     fetchOrders()
-      .then(setOrders)
+      .then((list) => {
+        setListError(null);
+        setOrders(list);
+      })
+      .catch((e) => {
+        setListError(e instanceof Error ? e.message : 'Не удалось загрузить заказы');
+      })
       .finally(() => setLoading(false));
   };
 
@@ -105,6 +115,8 @@ const MarketplaceOrders = () => {
     fetchMarketplaceItems().then(({ items, shops: shopList }) => {
       setMarketplaceItems(items);
       setShops(shopList);
+    }).catch(() => {
+      // FRONTEND-ONLY: справочник для ручного заказа. Сбой не прячет конвейер.
     });
   }, []);
 
@@ -115,19 +127,26 @@ const MarketplaceOrders = () => {
     if (q.length < 2) {
       setSearchResults(null);
       setSearching(false);
+      setSearchError(null);
       return;
     }
     setSearching(true);
+    setSearchError(null);
     let cancelled = false;
     const t = setTimeout(() => {
       searchOrders(q)
         .then((found) => {
           // Ответ на устаревший запрос игнорируем: иначе медленный ответ по
           // старому куску номера перетёр бы результат свежего.
-          if (!cancelled) setSearchResults(found);
+          if (!cancelled) {
+            setSearchError(null);
+            setSearchResults(found);
+          }
         })
-        .catch(() => {
-          if (!cancelled) setSearchResults([]);
+        .catch((e) => {
+          if (!cancelled) {
+            setSearchError(e instanceof Error ? e.message : 'Не удалось найти заказ');
+          }
         })
         .finally(() => {
           if (!cancelled) setSearching(false);
@@ -137,7 +156,7 @@ const MarketplaceOrders = () => {
       cancelled = true;
       clearTimeout(t);
     };
-  }, [search]);
+  }, [search, searchRetry]);
 
   // ВОЗВРАТ ОШИБОЧНО СНЯТОГО ЗАКАЗА НА КОНВЕЙЕР.
   //
@@ -161,6 +180,7 @@ const MarketplaceOrders = () => {
       // и в нём должен смениться статус, а не остаться старый.
       load();
       if (search.trim().length >= 2) {
+        // FRONTEND-ONLY: сбой обновления поиска не обнуляет найденный заказ.
         searchOrders(search.trim()).then(setSearchResults).catch(() => undefined);
       }
     } catch (err) {
@@ -362,6 +382,22 @@ const MarketplaceOrders = () => {
 
         {!loading && <OrdersSummary orders={orders} />}
 
+        {listError && !searchActive && (
+          <WarehouseFetchError
+            title="Не удалось загрузить заказы"
+            description={listError}
+            onRetry={load}
+          />
+        )}
+
+        {searchError && (
+          <WarehouseFetchError
+            title="Не удалось найти заказ"
+            description={searchError}
+            onRetry={() => setSearchRetry((n) => n + 1)}
+          />
+        )}
+
         <OrdersToolbar
           canManage={canManageOrders}
           onOpenManual={openManual}
@@ -391,7 +427,7 @@ const MarketplaceOrders = () => {
 
         {/* Пока идёт поиск, говорим об этом словами: пустая таблица читается как
             «ничего не нашлось», и человек уходит, не дождавшись ответа. */}
-        {searchActive && (
+        {searchActive && !searchError && (
           <p className="text-sm text-muted-foreground">
             {searching
               ? 'Ищем заказ по номеру...'
@@ -402,6 +438,7 @@ const MarketplaceOrders = () => {
 
         <OrdersTable
           loading={searchActive ? searching && !searchResults : loading}
+          error={searchActive ? searchError : listError}
           orders={visibleOrders}
           onEdit={openEdit}
           onDelete={(id) =>

@@ -14,6 +14,7 @@ import { useToast } from '@/hooks/use-toast';
 import { updateOrder, type Order, type OrderDetail } from '@/lib/ordersApi';
 import { fetchMarketplaceItems, type MarketplaceItem, type Shop } from '@/lib/marketplaceItemsApi';
 import { printFboSticker } from '@/lib/printFboSticker';
+import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
 
 interface FboStickerCardProps {
   order: Order;
@@ -31,15 +32,23 @@ const FboStickerCard = ({ order, orderDetail, onSaved }: FboStickerCardProps) =>
   const { toast } = useToast();
   const [items, setItems] = useState<MarketplaceItem[]>([]);
   const [shops, setShops] = useState<Shop[]>([]);
+  const [listError, setListError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
-  useEffect(() => {
+  const load = () => {
     fetchMarketplaceItems()
       .then(({ items: list, shops: shopList }) => {
+        setListError(null);
         setItems(list);
         setShops(shopList);
       })
-      .catch(() => setItems([]));
+      .catch((e) => {
+        setListError(e instanceof Error ? e.message : 'Не удалось загрузить товары');
+      });
+  };
+
+  useEffect(() => {
+    load();
   }, []);
 
   // Кандидаты — товары того же материала и размера, что и заказ. Именно среди них выбираем,
@@ -104,6 +113,12 @@ const FboStickerCard = ({ order, orderDetail, onSaved }: FboStickerCardProps) =>
                 <span className="text-muted-foreground">Товар привязан</span>
               )}
             </div>
+          ) : listError && items.length === 0 ? (
+            <WarehouseFetchError
+              title="Не удалось загрузить справочник"
+              description={listError}
+              onRetry={load}
+            />
           ) : (
             <Select value="" onValueChange={handleSelect} disabled={saving}>
               <SelectTrigger>

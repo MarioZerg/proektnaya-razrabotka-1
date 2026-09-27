@@ -1,5 +1,7 @@
 const ETRN_URL = 'https://functions.poehali.dev/6917fac0-8a1e-4cfa-9bba-0e1e79faa158';
 
+/** POEHALI: ЭТрН. FRONTEND-ONLY: сбой GET не писать как «накладная не заведена». */
+
 /**
  * Статус электронной транспортной накладной.
  *

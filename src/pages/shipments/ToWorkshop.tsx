@@ -25,6 +25,7 @@ import ToWorkshopFilters from '@/components/crm/shipments/ToWorkshopFilters';
 import ToWorkshopTable from '@/components/crm/shipments/ToWorkshopTable';
 import AssembleShipmentView from '@/components/crm/shipments/AssembleShipmentView';
 import ReceiveConfirmDialog from '@/components/crm/shipments/ReceiveConfirmDialog';
+import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
 
 type TabValue = 'new' | 'completed';
 
@@ -41,6 +42,7 @@ const ToWorkshop = () => {
   const [workshops, setWorkshops] = useState<Workshop[]>([]);
   const [materials, setMaterials] = useState<Material[]>([]);
   const [loading, setLoading] = useState(true);
+  const [listError, setListError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<TabValue>('new');
   const [materialFilter, setMaterialFilter] = useState('all');
   const [workshopFilter, setWorkshopFilter] = useState('all');
@@ -71,14 +73,23 @@ const ToWorkshop = () => {
     setLoading(true);
     // Справочники запрашиваем каждый сам по себе: если связь моргнула и один не дошёл,
     // список заявок всё равно покажется. Раньше один сбой оставлял страницу пустой.
-    fetchWorkshops().then(setWorkshops).catch(() => {});
+    fetchWorkshops().then(setWorkshops).catch(() => {
+      // FRONTEND-ONLY: фильтр по цеху можно выбрать позже.
+    });
     fetchMaterialsData()
       .then((materialsData) => setMaterials(materialsData.materials))
-      .catch(() => {});
+      .catch(() => {
+        // FRONTEND-ONLY: фильтр по материалу не критичен для списка заявок.
+      });
     // Кружок загрузки снимаем по главному запросу страницы.
     fetchShipments('to_workshop')
-      .then(setShipments)
-      .catch(() => {})
+      .then((list) => {
+        setListError(null);
+        setShipments(list);
+      })
+      .catch((e) => {
+        setListError(e instanceof Error ? e.message : 'Не удалось загрузить заявки');
+      })
       .finally(() => setLoading(false));
   };
 
@@ -475,8 +486,17 @@ const ToWorkshop = () => {
           onReset={resetFilters}
         />
 
+        {listError && (
+          <WarehouseFetchError
+            title="Не удалось загрузить заявки"
+            description={listError}
+            onRetry={load}
+          />
+        )}
+
         <ToWorkshopTable
           loading={loading}
+          error={listError}
           shipments={visibleShipments}
           workshops={workshops}
           zone={zone}

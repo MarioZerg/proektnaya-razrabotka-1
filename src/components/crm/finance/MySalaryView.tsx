@@ -5,10 +5,13 @@ import MyAccrualsFilter from '@/components/crm/finance/MyAccrualsFilter';
 import MyPayoutsCard from '@/components/crm/finance/MyPayoutsCard';
 import { formatMoney } from '@/components/crm/finance/financeShared';
 import type { MyAccrual, MyPayout } from '@/lib/salaryApi';
+import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
 
 interface MySalaryViewProps {
   myLocked: boolean;
   myLoading: boolean;
+  myError?: string | null;
+  onRetry?: () => void;
   myDaysLeft: number;
   myDateFrom: string;
   myDateTo: string;
@@ -32,6 +35,8 @@ interface MySalaryViewProps {
 const MySalaryView = ({
   myLocked,
   myLoading,
+  myError = null,
+  onRetry,
   myDaysLeft,
   myDateFrom,
   myDateTo,
@@ -53,7 +58,15 @@ const MySalaryView = ({
         </p>
       </div>
 
-      {myLocked && !myLoading ? (
+      {myError && onRetry && (
+        <WarehouseFetchError
+          title="Не удалось загрузить зарплату"
+          description={myError}
+          onRetry={onRetry}
+        />
+      )}
+
+      {myLocked && !myLoading && !myError ? (
         // Первые две недели зарплата скрыта: новичок только осваивается, суммы
         // прыгают, а ранние сравнения с коллегами демотивируют. Откроется сама.
         <div className="rounded-md border border-dashed border-border bg-muted/40 p-8 text-center">
@@ -88,6 +101,7 @@ const MySalaryView = ({
           <MyAccrualsTable
             accruals={myFiltered}
             loading={myLoading}
+            error={myError}
             filtered={!!myDateFrom || !!myDateTo}
           />
         </div>

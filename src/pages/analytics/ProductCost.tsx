@@ -4,7 +4,6 @@ import CrmLayout from '@/components/crm/CrmLayout';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import Icon from '@/components/ui/icon';
-import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/context/AuthContext';
 import FabricCostCard from '@/components/crm/cost/FabricCostCard';
 import CostSettingsPanel from '@/components/crm/cost/CostSettingsPanel';
@@ -12,6 +11,7 @@ import ExtraExpensesPanel from '@/components/crm/cost/ExtraExpensesPanel';
 import ManagerCommissionPanel from '@/components/crm/cost/ManagerCommissionPanel';
 import ManagerAccrualsPanel from '@/components/crm/finance/ManagerAccrualsPanel';
 import { fetchProductCosts, type CostResponse, type CostGroup } from '@/lib/productCostApi';
+import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
 
 const money = (v: number) =>
   v.toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -29,26 +29,25 @@ const money = (v: number) =>
  * себестоимость пересчиталась сама.
  */
 const ProductCost = () => {
-  const { toast } = useToast();
   const { user } = useAuth();
   // Менеджер читает, но не правит: он торгуется с площадками и должен знать нижнюю
   // границу цены. А налог, тарифы и статьи расходов — деньги владельца.
   const canEdit = user?.role === 'admin';
   const [data, setData] = useState<CostResponse | null>(null);
   const [loading, setLoading] = useState(true);
+  const [listError, setListError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
 
   const load = () => {
     setLoading(true);
     fetchProductCosts()
-      .then(setData)
-      .catch((e) =>
-        toast({
-          title: 'Не удалось загрузить',
-          description: e instanceof Error ? e.message : undefined,
-          variant: 'destructive',
-        }),
-      )
+      .then((d) => {
+        setListError(null);
+        setData(d);
+      })
+      .catch((e) => {
+        setListError(e instanceof Error ? e.message : 'Не удалось загрузить себестоимость');
+      })
       .finally(() => setLoading(false));
   };
 
@@ -195,13 +194,23 @@ const ProductCost = () => {
           className="max-w-xs"
         />
 
-        {loading ? (
+        {listError && (
+          <WarehouseFetchError
+            title="Не удалось загрузить себестоимость"
+            description={listError}
+            onRetry={load}
+          />
+        )}
+
+        {loading && !data ? (
           <div className="flex items-center gap-2 text-sm text-muted-foreground">
             <Icon name="Loader2" size={16} className="animate-spin" />
             Считаем себестоимость...
           </div>
         ) : visible.length === 0 ? (
+          listError ? null : (
           <p className="text-sm text-muted-foreground">Тканей не найдено</p>
+          )
         ) : (
           /* Плашка на каждую ткань, внутри — переключение по ширинам. */
           <div className="grid grid-cols-1 gap-3 lg:grid-cols-2 2xl:grid-cols-3">

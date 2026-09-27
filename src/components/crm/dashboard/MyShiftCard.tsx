@@ -3,10 +3,13 @@ import { Card, CardContent } from '@/components/ui/card';
 import Icon from '@/components/ui/icon';
 import { formatMoney } from '@/components/crm/dashboard/dashboardShared';
 import type { EmployeeShiftStatus } from '@/lib/shiftSessionsApi';
+import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
 
 interface MyShiftCardProps {
   me: EmployeeShiftStatus | null;
   loading: boolean;
+  error?: string | null;
+  onRetry?: () => void;
 }
 
 /** «7 ч 20 мин» — сколько человек уже отработал. */
@@ -45,7 +48,7 @@ const shortTime = (t?: string | null) => (t ? t.slice(0, 5) : null);
  * ЗАКРЫТИЯ смены, а не сами по себе. Последнее важнее всего: забытая открытой
  * смена не приносит ничего.
  */
-const MyShiftCard = ({ me, loading }: MyShiftCardProps) => {
+const MyShiftCard = ({ me, loading, error, onRetry }: MyShiftCardProps) => {
   // Время идёт — счётчик отработанного должен идти вместе с ним, иначе цифра
   // застынет на моменте входа и будет врать весь день.
   const [now, setNow] = useState(() => Date.now());
@@ -54,7 +57,19 @@ const MyShiftCard = ({ me, loading }: MyShiftCardProps) => {
     return () => clearInterval(t);
   }, []);
 
-  if (loading || !me) return null;
+  if (loading && !me) return null;
+
+  if (error && !me) {
+    return (
+      <WarehouseFetchError
+        title="Не удалось загрузить смену"
+        description={error}
+        onRetry={onRetry || (() => {})}
+      />
+    );
+  }
+
+  if (!me) return null;
 
   const rate = me.shiftRate || 0;
   const open = me.isOpen;

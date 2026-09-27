@@ -36,7 +36,11 @@ const EMPTY_COUNTS: InspectionCounts = {
   disposed: 0,
 };
 
-/** Данные и действия страницы «Возвраты на осмотре»: этапы, выбор строк, операции. */
+/** Данные и действия страницы «Возвраты на осмотре»: этапы, выбор строк, операции.
+ *
+ * POEHALI: fetchInspection и действия этапов уже в goods_warehouse.
+ * FRONTEND-ONLY: ошибка загрузки и поиск по стикеру в списке — только экран.
+ */
 export const useReturnsInspection = () => {
   const { toast } = useToast();
   const { user } = useAuth();
@@ -55,6 +59,7 @@ export const useReturnsInspection = () => {
     stageFromUrl && VALID_STAGES.includes(stageFromUrl) ? stageFromUrl : 'fromReturn',
   );
   const [loading, setLoading] = useState(true);
+  const [listError, setListError] = useState<string | null>(null);
   const [selected, setSelected] = useState<number[]>([]);
   const [acting, setActing] = useState(false);
   const [disposeReason, setDisposeReason] = useState('');
@@ -71,10 +76,13 @@ export const useReturnsInspection = () => {
     setLoading(true);
     fetchInspection(nextStage)
       .then((data) => {
+        setListError(null);
         setCounts(data.counts);
         setItems(data.items);
       })
-      .catch(() => setItems([]))
+      .catch((e) => {
+        setListError(e instanceof Error ? e.message : 'Не удалось загрузить осмотр');
+      })
       .finally(() => setLoading(false));
   };
 
@@ -86,7 +94,11 @@ export const useReturnsInspection = () => {
   }, [stage]);
 
   useEffect(() => {
-    fetchShelves().then(setShelves).catch(() => setShelves([]));
+    fetchShelves()
+      .then(setShelves)
+      .catch(() => {
+        // FRONTEND-ONLY: без справочника полок список осмотра всё равно нужен.
+      });
   }, []);
 
   const toggle = (id: number) =>
@@ -249,6 +261,8 @@ export const useReturnsInspection = () => {
     stage,
     setStage,
     loading,
+    listError,
+    load,
     selected,
     setSelected,
     acting,

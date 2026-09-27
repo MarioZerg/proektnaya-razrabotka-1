@@ -20,6 +20,8 @@ import WarehouseMaterialsCards from '@/components/crm/warehouseMaterials/Warehou
 
 interface WarehouseMaterialsTableProps {
   loading: boolean;
+  /** FRONTEND-ONLY: сбой GET — не писать «материалов пока нет». */
+  error?: string | null;
   groups: MaterialTypeGroup[];
   /** Фильтры отсеяли всё — текст другой, чем у пустого справочника. */
   filtered: boolean;
@@ -44,10 +46,11 @@ const GroupHeader = ({ group }: { group: MaterialTypeGroup }) => {
  *  без горизонтальной прокрутки. Количество и рулоны собраны в одну ячейку. */
 const WarehouseMaterialsTable = ({
   loading,
+  error = null,
   groups,
   filtered,
 }: WarehouseMaterialsTableProps) => {
-  if (loading) {
+  if (loading && groups.length === 0) {
     return (
       <div className="flex items-center gap-2 rounded-md border border-border bg-muted/20 px-4 py-8 text-sm text-muted-foreground">
         <Icon name="Loader2" size={16} className="animate-spin" />
@@ -57,6 +60,7 @@ const WarehouseMaterialsTable = ({
   }
 
   if (groups.length === 0) {
+    if (error) return null;
     return (
       <div className="rounded-md border border-dashed border-border bg-muted/20 px-4 py-10 text-center">
         <Icon name="PackageSearch" size={28} className="mx-auto mb-2 text-muted-foreground" />

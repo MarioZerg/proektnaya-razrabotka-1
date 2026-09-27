@@ -23,6 +23,7 @@ import ReturnCodeCard from '@/components/crm/returnCodes/ReturnCodeCard';
 import GiveoutList from '@/components/crm/returnCodes/GiveoutList';
 import GiveoutProgressDialog from '@/components/crm/returnCodes/GiveoutProgressDialog';
 import ReturnCodeDialogs from '@/components/crm/returnCodes/ReturnCodeDialogs';
+import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
 import JsBarcode from 'jsbarcode';
 import QRCode from 'qrcode';
 
@@ -51,6 +52,7 @@ const ReturnPickupCodes = () => {
   /** По каким пунктам выдачи разложены ждущие вещи OZON — кладовщику нужно знать, куда ехать. */
   const [ozonPlaces, setOzonPlaces] = useState<OzonPvzPlace[]>([]);
   const [loading, setLoading] = useState(true);
+  const [listError, setListError] = useState<string | null>(null);
   const [shown, setShown] = useState<ReturnPickupCode | null>(null);
   const [editing, setEditing] = useState<ReturnPickupCode | null>(null);
   const [codeValue, setCodeValue] = useState('');
@@ -61,6 +63,7 @@ const ReturnPickupCodes = () => {
   const autoTried = useRef(false);
   const [giveouts, setGiveouts] = useState<ReturnGiveout[]>([]);
   const [listLoading, setListLoading] = useState(true);
+  const [giveoutsError, setGiveoutsError] = useState<string | null>(null);
   // Отправление, приёмку которого сейчас смотрим вживую.
   const [progress, setProgress] = useState<GiveoutProgress | null>(null);
   const [watchingId, setWatchingId] = useState<number | null>(null);
@@ -70,6 +73,7 @@ const ReturnPickupCodes = () => {
     setLoading(true);
     fetchReturnCodes(shopId)
       .then((d) => {
+        setListError(null);
         setItems(d.items);
         setTotalWaiting(d.totalWaiting);
         setOzonPlaces(d.ozonPlaces);
@@ -77,7 +81,9 @@ const ReturnPickupCodes = () => {
         // Первый заход: сервер сам подставил рабочий кабинет — запоминаем его.
         setShopId((prev) => prev ?? d.shopId);
       })
-      .catch(() => setItems([]))
+      .catch((e) => {
+        setListError(e instanceof Error ? e.message : 'Не удалось загрузить коды');
+      })
       .finally(() => setLoading(false));
   };
 
@@ -92,8 +98,13 @@ const ReturnPickupCodes = () => {
   // Что лежит на складах OZON и что уже собрано к выдаче.
   const loadGiveouts = () => {
     fetchPickupList(shopId)
-      .then((d) => setGiveouts(d.giveouts))
-      .catch(() => setGiveouts([]))
+      .then((d) => {
+        setGiveoutsError(null);
+        setGiveouts(d.giveouts);
+      })
+      .catch((e) => {
+        setGiveoutsError(e instanceof Error ? e.message : 'Не удалось загрузить выдачи');
+      })
       .finally(() => setListLoading(false));
   };
 
@@ -108,6 +119,7 @@ const ReturnPickupCodes = () => {
     if (!watchingId) return;
     return fetchGiveoutProgress(watchingId, shopId)
       .then((d) => setProgress(d))
+      // FRONTEND-ONLY: опрос приёмки. Сбой тика не прячет уже показанный прогресс.
       .catch(() => undefined);
   }, [watchingId, shopId]);
 
@@ -251,7 +263,15 @@ const ReturnPickupCodes = () => {
           </Card>
         )}
 
-        {loading ? (
+        {listError && (
+          <WarehouseFetchError
+            title="Не удалось загрузить коды"
+            description={listError}
+            onRetry={load}
+          />
+        )}
+
+        {loading && items.length === 0 ? (
           <div className="flex items-center gap-2 text-sm text-muted-foreground">
             <Icon name="Loader2" size={16} className="animate-spin" />
             Загрузка…
@@ -278,6 +298,8 @@ const ReturnPickupCodes = () => {
         <GiveoutList
           giveouts={giveouts}
           listLoading={listLoading}
+          error={giveoutsError}
+          onRetry={loadGiveouts}
           onWatch={setWatchingId}
         />
 

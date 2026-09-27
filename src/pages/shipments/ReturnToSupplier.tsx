@@ -34,6 +34,7 @@ import { fetchSuppliers, type Supplier } from '@/lib/suppliersApi';
 import { fetchRolls, type Roll } from '@/lib/rollsApi';
 import { formatDateTime as formatDate } from '@/lib/dateUtils';
 import { formatQuantity } from '@/lib/formatQuantity';
+import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
 
 interface ItemRow {
   rollId: string;
@@ -48,6 +49,7 @@ const ReturnToSupplier = () => {
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [rolls, setRolls] = useState<Roll[]>([]);
   const [loading, setLoading] = useState(true);
+  const [listError, setListError] = useState<string | null>(null);
 
   const [dialogOpen, setDialogOpen] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -59,14 +61,23 @@ const ReturnToSupplier = () => {
     setLoading(true);
     // Справочники для формы возврата идут каждый сам по себе: если связь моргнула и один
     // не дошёл, список отгрузок всё равно покажется. Раньше сбой оставлял страницу пустой.
-    fetchSuppliers().then(setSuppliers).catch(() => {});
+    fetchSuppliers().then(setSuppliers).catch(() => {
+      // FRONTEND-ONLY: справочник для формы, не для списка.
+    });
     fetchRolls()
       .then((rollsData) => setRolls(rollsData.filter((r) => r.status !== 'completed')))
-      .catch(() => {});
+      .catch(() => {
+        // FRONTEND-ONLY: рулоны нужны только при создании возврата.
+      });
     // Кружок загрузки снимаем по главному запросу страницы.
     fetchShipments('return_to_supplier')
-      .then(setShipments)
-      .catch(() => {})
+      .then((list) => {
+        setListError(null);
+        setShipments(list);
+      })
+      .catch((e) => {
+        setListError(e instanceof Error ? e.message : 'Не удалось загрузить возвраты');
+      })
       .finally(() => setLoading(false));
   };
 
@@ -204,13 +215,23 @@ const ReturnToSupplier = () => {
           </Dialog>
         </div>
 
-        {loading ? (
+        {listError && (
+          <WarehouseFetchError
+            title="Не удалось загрузить возвраты"
+            description={listError}
+            onRetry={load}
+          />
+        )}
+
+        {loading && shipments.length === 0 ? (
           <div className="flex items-center gap-2 text-sm text-muted-foreground">
             <Icon name="Loader2" size={16} className="animate-spin" />
             Загрузка...
           </div>
         ) : shipments.length === 0 ? (
+          listError ? null : (
           <p className="text-sm text-muted-foreground">Возвратов пока нет</p>
+          )
         ) : (
           <div className="rounded-md border border-border">
             <Table>

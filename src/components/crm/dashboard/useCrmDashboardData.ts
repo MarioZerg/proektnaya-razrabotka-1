@@ -50,12 +50,14 @@ export const useCrmDashboardData = () => {
   const canSeeWorkingToday = canSeeShiftCalendar;
 
   const [dataLoading, setDataLoading] = useState(true);
+  const [summaryError, setSummaryError] = useState<string | null>(null);
   // Готовые цифры для плиток. Раньше здесь лежали ПОЛНЫЕ списки — все заказы,
   // весь склад, все рулоны — и панель считала плитки сама, перебирая тысячи
   // записей в браузере. Теперь считает база, а сюда приходит десяток чисел.
   const [summary, setSummary] = useState<DashboardSummary | null>(null);
 
   const [shiftsLoading, setShiftsLoading] = useState(true);
+  const [shiftsError, setShiftsError] = useState<string | null>(null);
   const [employeeShifts, setEmployeeShifts] = useState<EmployeeShiftStatus[]>([]);
   const [togglingId, setTogglingId] = useState<number | null>(null);
   const [allShifts, setAllShifts] = useState<ShiftListItem[]>([]);
@@ -71,16 +73,25 @@ export const useCrmDashboardData = () => {
   // что платили за это дважды: сервер собирал мегабайты, а планшет в цехе
   // потом их разбирал и подтормаживал. Теперь всё считает база, а сюда
   // приходит около килобайта готовых чисел.
-  useEffect(() => {
+  const loadSummary = () => {
     if (isCleaner) {
       setDataLoading(false);
       return;
     }
     setDataLoading(true);
     fetchDashboardSummary(user?.role, user?.id)
-      .then(setSummary)
-      .catch(() => {})
+      .then((s) => {
+        setSummaryError(null);
+        setSummary(s);
+      })
+      .catch((e) => {
+        setSummaryError(e instanceof Error ? e.message : 'Не удалось загрузить сводку');
+      })
       .finally(() => setDataLoading(false));
+  };
+
+  useEffect(() => {
+    loadSummary();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.role, user?.id]);
 
@@ -88,7 +99,13 @@ export const useCrmDashboardData = () => {
   const loadShifts = () => {
     setShiftsLoading(true);
     fetchEmployeeShifts()
-      .then(setEmployeeShifts)
+      .then((list) => {
+        setShiftsError(null);
+        setEmployeeShifts(list);
+      })
+      .catch((e) => {
+        setShiftsError(e instanceof Error ? e.message : 'Не удалось загрузить смены');
+      })
       .finally(() => setShiftsLoading(false));
   };
 
@@ -111,11 +128,15 @@ export const useCrmDashboardData = () => {
     setShiftsLoading(true);
     fetchShiftsWithCalendar(month)
       .then(({ employees, days }) => {
+        setShiftsError(null);
         setEmployeeShifts(employees);
         if (month) {
           setCalendarDays(days);
           loadedCalendarMonth.current = month;
         }
+      })
+      .catch((e) => {
+        setShiftsError(e instanceof Error ? e.message : 'Не удалось загрузить смены');
       })
       .finally(() => setShiftsLoading(false));
 
@@ -231,7 +252,11 @@ export const useCrmDashboardData = () => {
     canSeeFboBoard,
     canSeeWorkingToday,
     dataLoading,
+    summaryError,
+    loadSummary,
+    loadShifts,
     shiftsLoading,
+    shiftsError,
     employeeShifts,
     togglingId,
     allShifts,

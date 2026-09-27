@@ -28,12 +28,14 @@ import {
 import ItemFormDialog from '@/components/crm/marketplaceItems/ItemFormDialog';
 import ItemsToolbar from '@/components/crm/marketplaceItems/ItemsToolbar';
 import ItemsGrid from '@/components/crm/marketplaceItems/ItemsGrid';
+import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
 
 const MarketplaceItemsSettings = () => {
   const { toast } = useToast();
   const [items, setItems] = useState<MarketplaceItem[]>([]);
   const [materials, setMaterials] = useState<Material[]>([]);
   const [loading, setLoading] = useState(true);
+  const [listError, setListError] = useState<string | null>(null);
 
   // Магазин, ассортимент которого сейчас смотрят. Кабинеты МЕГАТЮЛЬ и ДЮНА
   // разные, и карточки нельзя показывать вперемешку: товар одного магазина,
@@ -59,17 +61,21 @@ const MarketplaceItemsSettings = () => {
     // список товаров всё равно покажется. Раньше один сбой оставлял страницу пустой.
     fetchMaterialsData()
       .then((materialsData) => setMaterials(materialsData.materials))
+      // FRONTEND-ONLY: справочник для фильтра. Сбой не прячет карточки товаров.
       .catch(() => {});
     // Кружок загрузки снимаем по главному запросу страницы.
     fetchMarketplaceItems()
       .then(({ items: list, shops: shopList }) => {
+        setListError(null);
         setItems(list);
         setShops(shopList);
         // При первом заходе открываем первый магазин, а не «все»: работают
         // всегда в контексте одного кабинета.
         setShopId((prev) => prev ?? shopList[0]?.id ?? null);
       })
-      .catch(() => {})
+      .catch((e) => {
+        setListError(e instanceof Error ? e.message : 'Не удалось загрузить товары');
+      })
       .finally(() => setLoading(false));
   };
 
@@ -332,8 +338,17 @@ const MarketplaceItemsSettings = () => {
           />
         )}
 
+        {listError && (
+          <WarehouseFetchError
+            title="Не удалось загрузить товары"
+            description={listError}
+            onRetry={load}
+          />
+        )}
+
         <ItemsGrid
           loading={loading}
+          error={listError}
           items={shopItems}
           emptyLabel={
             currentShop

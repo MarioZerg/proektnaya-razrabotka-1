@@ -47,6 +47,7 @@ const KioskRollsScreen = ({ workshopId, shiftNumber, userId, userName, role }: K
   const [typeFilter, setTypeFilter] = useState<number | 'all'>('all');
   const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(true);
+  const [listError, setListError] = useState<string | null>(null);
   const [selected, setSelected] = useState<Roll | null>(null);
   // Отсканировали рулон, которого нет в смене — показываем номер прямо на экране,
   // чтобы закройщик мог продиктовать его кладовщику, не переспрашивая.
@@ -74,15 +75,22 @@ const KioskRollsScreen = ({ workshopId, shiftNumber, userId, userName, role }: K
         setMaterials(matData.materials);
         setTypes(matData.types);
       })
-      .catch(() => {});
+      .catch(() => {
+        // FRONTEND-ONLY: справочник типов не критичен для списка рулонов смены.
+      });
     // Кружок загрузки снимаем по главному запросу экрана.
     // forUserId — сервер сам отдаёт рулоны ТОЛЬКО цеха и смены этого сотрудника.
     // Раньше запрашивался общий список и отсеивался уже в планшете: список
     // обрезался по общему лимиту, и часть своих рулонов до закройщика не доезжала,
     // зато мелькали чужие.
     fetchRolls({ status: 'in_workshop', usedSinceUserId: userId, forUserId: userId })
-      .then(setRolls)
-      .catch(() => {})
+      .then((list) => {
+        setListError(null);
+        setRolls(list);
+      })
+      .catch((e) => {
+        setListError(e instanceof Error ? e.message : 'Не удалось загрузить рулоны');
+      })
       .finally(() => setLoading(false));
   };
 
@@ -169,7 +177,7 @@ const KioskRollsScreen = ({ workshopId, shiftNumber, userId, userName, role }: K
 
   // Ловим сканер на уровне всей страницы: поля с фокусом на этом экране нет, а на
   // планшете фокус легко теряется от случайного касания.
-  useGlobalScanner(handleScan, !loading && !selected && !saving);
+  useGlobalScanner(handleScan, !loading && !selected && !saving && !listError);
 
   /**
    * Приёмка рулона сменой.
@@ -319,6 +327,8 @@ const KioskRollsScreen = ({ workshopId, shiftNumber, userId, userName, role }: K
     return (
       <KioskRollScanPrompt
         loading={loading}
+        error={listError}
+        onRetry={load}
         rollsCount={roleRolls.length}
         notFound={notFound}
         onOpenList={() => setListOpen(true)}
@@ -329,6 +339,8 @@ const KioskRollsScreen = ({ workshopId, shiftNumber, userId, userName, role }: K
   return (
     <KioskRollsList
       loading={loading}
+      error={listError}
+      onRetry={load}
       visibleTypes={visibleTypes}
       typeFilter={typeFilter}
       setTypeFilter={setTypeFilter}

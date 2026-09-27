@@ -44,12 +44,14 @@ export const useSupplyAssemble = (supplyId: number) => {
 
   const [supply, setSupply] = useState<SupplyDetail | null>(null);
   const [loading, setLoading] = useState(true);
+  const [listError, setListError] = useState<string | null>(null);
   const [addingBox, setAddingBox] = useState(false);
   const [completing, setCompleting] = useState(false);
 
   const [candidatesOpen, setCandidatesOpen] = useState(false);
   const [candidates, setCandidates] = useState<SupplyCandidate[]>([]);
   const [candidatesLoading, setCandidatesLoading] = useState(false);
+  const [candidatesError, setCandidatesError] = useState<string | null>(null);
 
   const [closingBoxes, setClosingBoxes] = useState(false);
   // Какой короб закрывается прямо сейчас. Закрытие идёт по одному коробу и на
@@ -80,8 +82,12 @@ export const useSupplyAssemble = (supplyId: number) => {
     if (!silent) setLoading(true);
     fetchSupplyDetail(supplyId)
       .then((data) => {
+        setListError(null);
         setSupply(data);
         setCargoType(data.ozonCargoType === 'PALLET' ? 'PALLET' : 'BOX');
+      })
+      .catch((e) => {
+        setListError(e instanceof Error ? e.message : 'Не удалось загрузить поставку');
       })
       .finally(() => {
         if (!silent) setLoading(false);
@@ -134,12 +140,23 @@ export const useSupplyAssemble = (supplyId: number) => {
     };
   }, [supplyId]);
 
-  useEffect(() => {
-    if (!candidatesOpen) return;
+  const loadCandidates = () => {
     setCandidatesLoading(true);
     fetchSupplyCandidates(supplyId)
-      .then(setCandidates)
+      .then((list) => {
+        setCandidatesError(null);
+        setCandidates(list);
+      })
+      .catch((e) => {
+        setCandidatesError(e instanceof Error ? e.message : 'Не удалось загрузить товары поставки');
+      })
       .finally(() => setCandidatesLoading(false));
+  };
+
+  useEffect(() => {
+    if (!candidatesOpen) return;
+    loadCandidates();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [candidatesOpen, supplyId]);
 
   const handleAddBox = async () => {
@@ -201,7 +218,7 @@ export const useSupplyAssemble = (supplyId: number) => {
         // поведение, чтобы короба не разошлись с реальностью.
         load(true);
       }
-      if (candidatesOpen) fetchSupplyCandidates(supplyId).then(setCandidates);
+      if (candidatesOpen) loadCandidates();
     } catch (e) {
       // ЗАКАЗ ОТМЕНЁН покупателем. Отдельный звук и отдельное окно: вещь едет не в
       // короб, а на полку хранения. Молчаливая ошибка тут не годится — кладовщик
@@ -232,7 +249,7 @@ export const useSupplyAssemble = (supplyId: number) => {
       await removeBoxItem(itemId);
       toast({ title: 'Товар убран из короба' });
       load();
-      if (candidatesOpen) fetchSupplyCandidates(supplyId).then(setCandidates);
+      if (candidatesOpen) loadCandidates();
     } catch (e) {
       toast({ title: 'Ошибка', description: e instanceof Error ? e.message : undefined, variant: 'destructive' });
     }
@@ -256,7 +273,7 @@ export const useSupplyAssemble = (supplyId: number) => {
         description: 'Товар вернулся на склад',
       });
       load();
-      if (candidatesOpen) fetchSupplyCandidates(supplyId).then(setCandidates);
+      if (candidatesOpen) loadCandidates();
     } catch (e) {
       toast({
         title: 'Ошибка',
@@ -473,12 +490,15 @@ export const useSupplyAssemble = (supplyId: number) => {
     navigate,
     supply,
     loading,
+    listError,
     addingBox,
     completing,
     candidatesOpen,
     setCandidatesOpen,
     candidates,
     candidatesLoading,
+    candidatesError,
+    loadCandidates,
     closingBoxes,
     closeProgress,
     cargoType,

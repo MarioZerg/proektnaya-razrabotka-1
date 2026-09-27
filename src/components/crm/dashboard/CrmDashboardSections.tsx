@@ -13,6 +13,7 @@ import {
   type ShiftCalendarDay,
 } from '@/lib/shiftSessionsApi';
 import { type ShiftListItem } from '@/lib/shiftsApi';
+import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
 
 interface CrmDashboardSectionsProps {
   userId?: number;
@@ -22,9 +23,13 @@ interface CrmDashboardSectionsProps {
   canSeeShiftCalendar: boolean;
   widgets: DashboardWidgetData[];
   dataLoading: boolean;
+  summaryError?: string | null;
+  onRetrySummary?: () => void;
   employeeShifts: EmployeeShiftStatus[];
   allShifts: ShiftListItem[];
   shiftsLoading: boolean;
+  shiftsError?: string | null;
+  onRetryShifts?: () => void;
   togglingId: number | null;
   onToggleShift: (employee: EmployeeShiftStatus) => Promise<void>;
   onSwitchShift: (employeeId: number, shiftId: number) => Promise<void>;
@@ -47,9 +52,13 @@ const CrmDashboardSections = ({
   canSeeShiftCalendar,
   widgets,
   dataLoading,
+  summaryError = null,
+  onRetrySummary,
   employeeShifts,
   allShifts,
   shiftsLoading,
+  shiftsError = null,
+  onRetryShifts,
   togglingId,
   onToggleShift,
   onSwitchShift,
@@ -70,6 +79,14 @@ const CrmDashboardSections = ({
         потому, что заказ покупателя стоит, а увидеть это иначе можно только
         зайдя в подбор. */}
     <StalePickingPanel />
+
+    {summaryError && onRetrySummary && (
+      <WarehouseFetchError
+        title="Не удалось загрузить плитки главной"
+        description={summaryError}
+        onRetry={onRetrySummary}
+      />
+    )}
 
     {widgets.length > 0 && <DashboardWidgetsGrid widgets={widgets} loading={dataLoading} />}
 
@@ -98,6 +115,8 @@ const CrmDashboardSections = ({
             employees={employeeShifts}
             shifts={allShifts}
             loading={shiftsLoading}
+            error={shiftsError}
+            onRetry={onRetryShifts}
             togglingId={togglingId}
             onToggle={onToggleShift}
             onSwitchShift={onSwitchShift}

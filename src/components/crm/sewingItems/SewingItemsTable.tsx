@@ -63,6 +63,8 @@ const buildPageList = (current: number, total: number): Array<number | 'ellipsis
 
 interface SewingItemsTableProps {
   loading: boolean;
+  /** FRONTEND-ONLY: сбой GET — не писать «заказов не найдено». */
+  error?: string | null;
   pagedOrders: Order[];
   onOpenDetail: (order: Order) => void;
   page: number;
@@ -75,6 +77,7 @@ interface SewingItemsTableProps {
 
 const SewingItemsTable = ({
   loading,
+  error = null,
   pagedOrders,
   onOpenDetail,
   page,
@@ -85,7 +88,7 @@ const SewingItemsTable = ({
 }: SewingItemsTableProps) => {
   const { printingId, printSticker: handlePrintSticker } = usePrintOrderSticker();
 
-  if (loading) {
+  if (loading && pagedOrders.length === 0) {
     return (
       <div className="flex items-center gap-2 text-sm text-muted-foreground">
         <Icon name="Loader2" size={16} className="animate-spin" />
@@ -94,11 +97,14 @@ const SewingItemsTable = ({
     );
   }
 
+  if (error && pagedOrders.length === 0) return null;
+
   return (
     <>
       <div className="md:hidden">
         <SewingItemsCards
           loading={loading}
+          error={error}
           pagedOrders={pagedOrders}
           onOpenDetail={onOpenDetail}
           page={page}

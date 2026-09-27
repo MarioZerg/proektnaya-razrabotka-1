@@ -9,6 +9,7 @@ import ExtraFboPanel from '@/components/crm/goodsWarehouse/ExtraFboPanel';
 import GoodsPickingHeader from '@/components/crm/goodsWarehouse/GoodsPickingHeader';
 import GoodsPickingFilters from '@/components/crm/goodsWarehouse/GoodsPickingFilters';
 import GoodsPickingTable from '@/components/crm/goodsWarehouse/GoodsPickingTable';
+import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
 import { useGoodsPicking } from '@/components/crm/goodsWarehouse/useGoodsPicking';
 
 /**
@@ -21,6 +22,7 @@ const GoodsPicking = () => {
   const navigate = useNavigate();
   const {
     loading,
+    listError,
     search,
     setSearch,
     scanOpen,
@@ -100,8 +102,17 @@ const GoodsPicking = () => {
           </div>
         )}
 
+        {listError && (
+          <WarehouseFetchError
+            title="Не удалось загрузить подбор"
+            description={listError}
+            onRetry={load}
+          />
+        )}
+
         <GoodsPickingTable
           loading={loading}
+          error={listError}
           search={search}
           workOrders={workOrders}
           filtered={filtered}

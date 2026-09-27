@@ -3,6 +3,8 @@ import { cachedRequest, invalidateCache } from '@/lib/requestCache';
 
 const CONTRACTS_URL = (func2url as Record<string, string>).contracts;
 
+/** POEHALI: договоры. FRONTEND-ONLY: сбой GET не писать как «документов пока нет». */
+
 /**
  * Открывает договор так, чтобы в адресной строке был НАШ домен.
  *

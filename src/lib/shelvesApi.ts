@@ -1,5 +1,7 @@
 const SHELVES_URL = 'https://functions.poehali.dev/06b83d03-2e1c-4061-972d-a39d81cf0b2d';
 
+/** POEHALI: полки склада. FRONTEND-ONLY: сбой GET не писать как «полок нет». */
+
 export interface Shelf {
   id: number;
   name: string;

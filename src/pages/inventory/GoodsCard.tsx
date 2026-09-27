@@ -28,6 +28,7 @@ import GoodsCardActions from '@/components/crm/goodsCard/GoodsCardActions';
 import GoodsCardDetails from '@/components/crm/goodsCard/GoodsCardDetails';
 import GoodsCardHistory from '@/components/crm/goodsCard/GoodsCardHistory';
 import GoodsReturnHistory from '@/components/crm/goodsCard/GoodsReturnHistory';
+import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
 
 /**
  * Карточка вещи со склада.
@@ -46,6 +47,7 @@ const GoodsCard = () => {
 
   const [card, setCard] = useState<GoodsCardType | null>(null);
   const [loading, setLoading] = useState(true);
+  const [listError, setListError] = useState<string | null>(null);
   const [printing, setPrinting] = useState(false);
   const [sending, setSending] = useState(false);
   /** Стикер напечатан в этой сессии — показываем кнопку отправки сразу. */
@@ -66,13 +68,12 @@ const GoodsCard = () => {
     if (!id) return;
     setLoading(true);
     fetchGoodsCard(Number(id))
-      .then(setCard)
+      .then((c) => {
+        setListError(null);
+        setCard(c);
+      })
       .catch((e) => {
-        toast({
-          title: 'Не удалось открыть карточку',
-          description: e instanceof Error ? e.message : undefined,
-          variant: 'destructive',
-        });
+        setListError(e instanceof Error ? e.message : 'Не удалось открыть карточку');
       })
       .finally(() => setLoading(false));
   };
@@ -204,7 +205,7 @@ const GoodsCard = () => {
     }
   };
 
-  if (loading) {
+  if (loading && !card) {
     return (
       <CrmLayout>
         <div className="flex items-center gap-2 text-sm text-muted-foreground">
@@ -218,7 +219,15 @@ const GoodsCard = () => {
   if (!card) {
     return (
       <CrmLayout>
-        <p className="text-sm text-muted-foreground">Товар не найден</p>
+        {listError ? (
+          <WarehouseFetchError
+            title="Не удалось открыть карточку"
+            description={listError}
+            onRetry={load}
+          />
+        ) : (
+          <p className="text-sm text-muted-foreground">Товар не найден</p>
+        )}
       </CrmLayout>
     );
   }

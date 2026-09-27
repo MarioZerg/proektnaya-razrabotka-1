@@ -33,6 +33,8 @@ import ToWorkshopCards from '@/components/crm/shipments/ToWorkshopCards';
 
 interface ToWorkshopTableProps {
   loading: boolean;
+  /** FRONTEND-ONLY: сбой GET — не писать «заявок пока нет». */
+  error?: string | null;
   shipments: Shipment[];
   workshops: Workshop[];
   zone: AccessZone;
@@ -51,6 +53,7 @@ interface ToWorkshopTableProps {
 
 const ToWorkshopTable = ({
   loading,
+  error = null,
   shipments,
   workshops,
   zone,
@@ -77,7 +80,7 @@ const ToWorkshopTable = ({
     zone === 'admin' ||
     (zone === 'workshop' && s.workshopId === userWorkshopId && (s.shiftNumber === null || s.shiftNumber === userShiftNumber));
 
-  if (loading) {
+  if (loading && shipments.length === 0) {
     return (
       <div className="flex items-center gap-2 rounded-md border border-border bg-muted/20 px-4 py-8 text-sm text-muted-foreground">
         <Icon name="Loader2" size={16} className="animate-spin" />
@@ -87,6 +90,7 @@ const ToWorkshopTable = ({
   }
 
   if (shipments.length === 0) {
+    if (error) return null;
     return (
       <div className="rounded-md border border-dashed border-border bg-muted/20 px-4 py-10 text-center">
         <Icon name="Factory" size={28} className="mx-auto mb-2 text-muted-foreground" />

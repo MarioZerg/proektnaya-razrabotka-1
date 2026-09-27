@@ -26,6 +26,7 @@ import MaterialPeopleTable from '@/components/crm/analytics/MaterialPeopleTable'
 import { fetchMaterialAnalysis, type MaterialAnalysis } from '@/lib/rollsApi';
 import { fetchWorkshops, type Workshop } from '@/lib/workshopsApi';
 import { formatDate } from '@/lib/dateUtils';
+import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
 
 const num = (v: number) => v.toLocaleString('ru-RU', { maximumFractionDigits: 1 });
 const money = (v: number) => v.toLocaleString('ru-RU', { maximumFractionDigits: 0 }) + ' ₽';
@@ -51,6 +52,7 @@ const monthStart = () => {
 const MaterialAnalysisPage = () => {
   const [data, setData] = useState<MaterialAnalysis | null>(null);
   const [loading, setLoading] = useState(true);
+  const [listError, setListError] = useState<string | null>(null);
   const [from, setFrom] = useState(monthStart());
   const [to, setTo] = useState('');
   const [role, setRole] = useState('all');
@@ -58,7 +60,9 @@ const MaterialAnalysisPage = () => {
   const [workshops, setWorkshops] = useState<Workshop[]>([]);
 
   useEffect(() => {
-    fetchWorkshops().then(setWorkshops).catch(() => setWorkshops([]));
+    fetchWorkshops().then(setWorkshops).catch(() => {
+      // FRONTEND-ONLY: фильтр цехов вторичен. Сбой не прячет отчёт.
+    });
   }, []);
 
   const load = useCallback(() => {
@@ -69,8 +73,13 @@ const MaterialAnalysisPage = () => {
       role: role === 'all' ? '' : role,
       workshop: workshop === 'all' ? '' : workshop,
     })
-      .then(setData)
-      .catch(() => setData(null))
+      .then((d) => {
+        setListError(null);
+        setData(d);
+      })
+      .catch((e) => {
+        setListError(e instanceof Error ? e.message : 'Не удалось загрузить анализ сырья');
+      })
       .finally(() => setLoading(false));
   }, [from, to, role, workshop]);
 
@@ -91,6 +100,14 @@ const MaterialAnalysisPage = () => {
             но в изделия не ушло.
           </p>
         </div>
+
+        {listError && (
+          <WarehouseFetchError
+            title="Не удалось загрузить анализ сырья"
+            description={listError}
+            onRetry={load}
+          />
+        )}
 
         <div className="flex flex-wrap items-end gap-3">
           <div className="space-y-1.5">
@@ -218,7 +235,7 @@ const MaterialAnalysisPage = () => {
                   {!data?.byMaterial.length ? (
                     <TableRow>
                       <TableCell colSpan={6} className="py-8 text-center text-muted-foreground">
-                        {loading ? 'Загрузка…' : 'За период данных нет'}
+                        {loading ? 'Загрузка…' : listError ? 'Не удалось загрузить' : 'За период данных нет'}
                       </TableCell>
                     </TableRow>
                   ) : (

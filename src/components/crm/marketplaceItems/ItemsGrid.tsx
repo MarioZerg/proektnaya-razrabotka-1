@@ -17,6 +17,8 @@ import type { MarketplaceItem } from '@/lib/marketplaceItemsApi';
 
 interface ItemsGridProps {
   loading: boolean;
+  /** FRONTEND-ONLY: сбой GET — не писать «товаров пока нет». */
+  error?: string | null;
   items: MarketplaceItem[];
   filteredItems: MarketplaceItem[];
   pagedItems: MarketplaceItem[];
@@ -33,6 +35,7 @@ interface ItemsGridProps {
 
 const ItemsGrid = ({
   loading,
+  error = null,
   items,
   filteredItems,
   pagedItems,
@@ -80,15 +83,17 @@ const ItemsGrid = ({
 
   return (
     <>
-      {loading ? (
+      {loading && items.length === 0 ? (
         <div className="flex items-center gap-2 text-sm text-muted-foreground">
           <Icon name="Loader2" size={16} className="animate-spin" />
           Загрузка...
         </div>
       ) : items.length === 0 ? (
+        error ? null : (
         <p className="text-sm text-muted-foreground">
           {emptyLabel || 'Товаров пока нет — добавьте первый.'}
         </p>
+        )
       ) : filteredItems.length === 0 ? (
         <p className="text-sm text-muted-foreground">Ничего не найдено по заданным фильтрам.</p>
       ) : (

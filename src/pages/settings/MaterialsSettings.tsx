@@ -25,6 +25,7 @@ import {
 import MaterialFormDialog from '@/components/crm/materials/MaterialFormDialog';
 import MaterialTypesRow from '@/components/crm/materials/MaterialTypesRow';
 import MaterialsTable from '@/components/crm/materials/MaterialsTable';
+import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
 import {
   NEW_TYPE_VALUE,
   PAGE_SIZE,
@@ -39,6 +40,7 @@ const MaterialsSettings = () => {
   // Магазины: по ним разводится ассортимент и обработка бокового шва.
   const [shops, setShops] = useState<Shop[]>([]);
   const [loading, setLoading] = useState(true);
+  const [listError, setListError] = useState<string | null>(null);
   const [page, setPage] = useState(1);
   // Группа в чипах сверху: без фильтра таблица смешивает тюль, тесьму и пакеты,
   // и нужный материал приходится искать по страницам.
@@ -54,9 +56,13 @@ const MaterialsSettings = () => {
     setLoading(true);
     fetchMaterialsData()
       .then((data) => {
+        setListError(null);
         setTypes(data.types);
         setMaterials(data.materials);
         setShops(data.shops);
+      })
+      .catch((e) => {
+        setListError(e instanceof Error ? e.message : 'Не удалось загрузить материалы');
       })
       .finally(() => setLoading(false));
   };
@@ -238,8 +244,17 @@ const MaterialsSettings = () => {
           onDeleteType={handleDeleteType}
         />
 
+        {listError && (
+          <WarehouseFetchError
+            title="Не удалось загрузить материалы"
+            description={listError}
+            onRetry={load}
+          />
+        )}
+
         <MaterialsTable
           loading={loading}
+          error={listError}
           materials={filteredMaterials}
           pagedMaterials={pagedMaterials}
           filtered={typeFilter !== 'all'}

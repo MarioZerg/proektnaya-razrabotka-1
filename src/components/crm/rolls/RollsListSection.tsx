@@ -19,6 +19,8 @@ import { shiftLabel } from '@/components/crm/shipments/toWorkshopShared';
 
 interface RollsListSectionProps {
   loading: boolean;
+  /** FRONTEND-ONLY: сбой GET рулонов — не писать «рулонов не найдено». */
+  error?: string | null;
   /** Все рулоны, прошедшие фильтры — по ним считается «показано X из Y». */
   allFiltered: Roll[];
   /** Видимая часть списка: длинный список браузер не тянет. */
@@ -31,13 +33,14 @@ interface RollsListSectionProps {
 /** Список рулонов: карточки на телефоне, таблица на компьютере, догрузка частями. */
 const RollsListSection = ({
   loading,
+  error = null,
   allFiltered,
   filtered,
   workshops,
   onOpen,
   onShowMore,
 }: RollsListSectionProps) => {
-  if (loading) {
+  if (loading && allFiltered.length === 0) {
     return (
       <div className="flex items-center gap-2 text-sm text-muted-foreground">
         <Icon name="Loader2" size={16} className="animate-spin" />
@@ -47,6 +50,7 @@ const RollsListSection = ({
   }
 
   if (allFiltered.length === 0) {
+    if (error) return null;
     return <p className="text-sm text-muted-foreground">Рулонов не найдено</p>;
   }
 

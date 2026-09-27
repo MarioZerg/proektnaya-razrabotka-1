@@ -63,6 +63,8 @@ const ozonStatusLabel = (s?: string | null) => (s ? OZON_STATUS_LABELS[s] || s :
 
 interface OrdersTableProps {
   loading: boolean;
+  /** FRONTEND-ONLY: сбой GET/поиска — не писать «заказов пока нет». */
+  error?: string | null;
   orders: Order[];
   onEdit: (order: Order) => void;
   onDelete: (id: number) => void;
@@ -74,6 +76,7 @@ interface OrdersTableProps {
 
 const OrdersTable = ({
   loading,
+  error = null,
   orders,
   onEdit,
   onDelete,
@@ -92,7 +95,7 @@ const OrdersTable = ({
     setPage(1);
   }, [orders.length]);
 
-  if (loading) {
+  if (loading && orders.length === 0) {
     return (
       <div className="flex items-center gap-2 text-sm text-muted-foreground">
         <Icon name="Loader2" size={16} className="animate-spin" />
@@ -102,6 +105,7 @@ const OrdersTable = ({
   }
 
   if (orders.length === 0) {
+    if (error) return null;
     return <p className="text-sm text-muted-foreground">Заказов пока нет.</p>;
   }
 

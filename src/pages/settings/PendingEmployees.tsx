@@ -24,6 +24,7 @@ import PendingApprovalCard from '@/components/crm/users/PendingApprovalCard';
 import ApproveWithPasswordDialog, {
   type IssuedCredentials,
 } from '@/components/crm/users/ApproveWithPasswordDialog';
+import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
 
 interface PendingRequest {
   employee: Employee;
@@ -37,6 +38,7 @@ const PendingEmployees = () => {
   const { toast } = useToast();
   const [requests, setRequests] = useState<PendingRequest[]>([]);
   const [loading, setLoading] = useState(true);
+  const [listError, setListError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<number | null>(null);
   const [rejectTarget, setRejectTarget] = useState<PendingRequest | null>(null);
   const [approveTarget, setApproveTarget] = useState<PendingRequest | null>(null);
@@ -57,6 +59,10 @@ const PendingEmployees = () => {
             .forEach((r) => pending.push({ employee: emp, role: r.role }));
         });
         setRequests(pending);
+        setListError(null);
+      })
+      .catch((e) => {
+        setListError(e instanceof Error ? e.message : 'Не удалось загрузить заявки');
       })
       .finally(() => setLoading(false));
   };
@@ -128,12 +134,21 @@ const PendingEmployees = () => {
           </Button>
         </div>
 
-        {loading ? (
+        {listError && (
+          <WarehouseFetchError
+            title="Не удалось загрузить заявки"
+            description={listError}
+            onRetry={load}
+          />
+        )}
+
+        {loading && requests.length === 0 ? (
           <div className="flex items-center justify-center gap-2 py-16 text-muted-foreground">
             <Icon name="Loader2" size={18} className="animate-spin" />
             Загружаем заявки…
           </div>
         ) : requests.length === 0 ? (
+          listError ? null : (
           <div className="flex flex-col items-center gap-3 rounded-lg border border-dashed border-border py-16 text-center">
             <div className="grid h-12 w-12 place-items-center rounded-full bg-emerald-500/10 text-emerald-600">
               <Icon name="CheckCheck" size={24} />
@@ -145,6 +160,7 @@ const PendingEmployees = () => {
               </p>
             </div>
           </div>
+          )
         ) : (
           <div className="space-y-3">
             {requests.map((req) => (

@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button';
 import Icon from '@/components/ui/icon';
 import { formatQuantity } from '@/lib/formatQuantity';
 import { fetchStockValue, type StockValue } from '@/lib/rollsApi';
+import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
 
 const formatMoney = (n: number) =>
   n.toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -20,16 +21,27 @@ const formatMoney = (n: number) =>
 const StockValueCard = () => {
   const [data, setData] = useState<StockValue | null>(null);
   const [loading, setLoading] = useState(true);
+  const [listError, setListError] = useState<string | null>(null);
   const [expanded, setExpanded] = useState(false);
 
-  useEffect(() => {
+  const load = () => {
+    setLoading(true);
     fetchStockValue()
-      .then(setData)
-      .catch(() => setData(null))
+      .then((d) => {
+        setListError(null);
+        setData(d);
+      })
+      .catch((e) => {
+        setListError(e instanceof Error ? e.message : 'Не удалось посчитать остатки');
+      })
       .finally(() => setLoading(false));
+  };
+
+  useEffect(() => {
+    load();
   }, []);
 
-  if (loading) {
+  if (loading && !data) {
     return (
       <Card className="border-border shadow-none">
         <CardContent className="flex items-center gap-2 p-4 text-sm text-muted-foreground">
@@ -37,6 +49,16 @@ const StockValueCard = () => {
           Считаю стоимость остатков…
         </CardContent>
       </Card>
+    );
+  }
+
+  if (listError && !data) {
+    return (
+      <WarehouseFetchError
+        title="Не удалось посчитать стоимость остатков"
+        description={listError}
+        onRetry={load}
+      />
     );
   }
 

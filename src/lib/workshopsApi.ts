@@ -1,5 +1,7 @@
 const WORKSHOPS_URL = 'https://functions.poehali.dev/c3ce83da-9296-40d9-b00b-720d364431ea';
 
+/** POEHALI: цеха. FRONTEND-ONLY: сбой GET не писать как «цехов нет». */
+
 export interface Workshop {
   id: number;
   name: string;

@@ -7,6 +7,7 @@ import { cn } from '@/lib/utils';
 import { fetchMaterialsData, type Material, type MaterialType } from '@/lib/materialsApi';
 import { STOCK_LOW_LIMIT, STOCK_MEDIUM_LIMIT } from '@/lib/stockLevels';
 import WarehouseMaterialsTable from '@/components/crm/warehouseMaterials/WarehouseMaterialsTable';
+import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
 import {
   groupByType,
   matchesStockFilter,
@@ -25,17 +26,27 @@ const WarehouseMaterials = () => {
   const [types, setTypes] = useState<MaterialType[]>([]);
   const [materials, setMaterials] = useState<Material[]>([]);
   const [loading, setLoading] = useState(true);
+  const [listError, setListError] = useState<string | null>(null);
   const [stockFilter, setStockFilter] = useState<StockFilter>('all');
   const [typeFilter, setTypeFilter] = useState<number | 'all'>('all');
   const [search, setSearch] = useState('');
 
-  useEffect(() => {
+  const load = () => {
+    setLoading(true);
     fetchMaterialsData()
       .then((data) => {
+        setListError(null);
         setTypes(data.types);
         setMaterials(data.materials);
       })
+      .catch((e) => {
+        setListError(e instanceof Error ? e.message : 'Не удалось загрузить материалы');
+      })
       .finally(() => setLoading(false));
+  };
+
+  useEffect(() => {
+    load();
   }, []);
 
   const activeMaterials = useMemo(
@@ -101,6 +112,14 @@ const WarehouseMaterials = () => {
             его видно в «Стоимости остатков» на странице рулонов
           </p>
         </div>
+
+        {listError && (
+          <WarehouseFetchError
+            title="Не удалось загрузить материалы"
+            description={listError}
+            onRetry={load}
+          />
+        )}
 
         <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
           {STOCK_TABS.map((tab) => (
@@ -196,7 +215,12 @@ const WarehouseMaterials = () => {
           </span>
         </div>
 
-        <WarehouseMaterialsTable loading={loading} groups={groups} filtered={filtered} />
+        <WarehouseMaterialsTable
+          loading={loading}
+          error={listError}
+          groups={groups}
+          filtered={filtered}
+        />
       </div>
     </CrmLayout>
   );

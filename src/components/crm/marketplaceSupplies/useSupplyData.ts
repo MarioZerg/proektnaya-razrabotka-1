@@ -13,6 +13,7 @@ import { fetchMarketplaceItems, type MarketplaceItem, type Shop } from '@/lib/ma
 export const useSupplyData = (supplyId: number) => {
   const [supply, setSupply] = useState<SupplyDetail | null>(null);
   const [loading, setLoading] = useState(true);
+  const [listError, setListError] = useState<string | null>(null);
 
   const [supplyNumber, setSupplyNumber] = useState('');
   const [supplyBarcode, setSupplyBarcode] = useState('');
@@ -52,6 +53,7 @@ export const useSupplyData = (supplyId: number) => {
       fetchGoodsWarehouse('picking,awaiting_supply'),
     ])
       .then(([data, goods]) => {
+        setListError(null);
         setSupply(data);
         // Считаем готовым только то, что поедет ИМЕННО в эту поставку: своя площадка,
         // своя схема (FBS/FBO), а для FBO — ещё и свой кластер. Раньше счётчик брал весь
@@ -79,7 +81,9 @@ export const useSupplyData = (supplyId: number) => {
       })
       // Счётчик готового считается из карточки поставки и склада вместе, поэтому запросы
       // не разделить. Ловим ошибку, чтобы обрыв связи не оставлял вечный кружок загрузки.
-      .catch(() => {})
+      .catch((e) => {
+        setListError(e instanceof Error ? e.message : 'Не удалось загрузить поставку');
+      })
       .finally(() => setLoading(false));
   };
 
@@ -96,13 +100,16 @@ export const useSupplyData = (supplyId: number) => {
         setMarketplaceItems(items);
         setShops(shopList);
       })
-      .catch(() => setMarketplaceItems([]));
+      .catch(() => {
+        // FRONTEND-ONLY: справочник для догрузки, не для самой карточки.
+      });
   }, []);
 
   return {
     supply,
     setSupply,
     loading,
+    listError,
     readyGoods,
     setReadyGoods,
     marketplaceItems,

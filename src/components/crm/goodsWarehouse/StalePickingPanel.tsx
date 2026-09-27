@@ -13,6 +13,7 @@ import {
   repickToFree,
   type StalePickingItem,
 } from '@/lib/goodsWarehouseApi';
+import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
 
 interface StalePickingPanelProps {
   /** Перечитать списки вокруг: подбор и счётчики склада. */
@@ -48,6 +49,7 @@ const StalePickingPanel = ({ onReload }: StalePickingPanelProps) => {
   const { user } = useAuth();
   const [items, setItems] = useState<StalePickingItem[]>([]);
   const [total, setTotal] = useState(0);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
   // Какую строку перецепляем прямо сейчас: кнопки соседних строк не блокируем.
   const [repicking, setRepicking] = useState<number | null>(null);
@@ -60,12 +62,12 @@ const StalePickingPanel = ({ onReload }: StalePickingPanelProps) => {
   const load = () => {
     fetchStalePicking()
       .then((d) => {
+        setLoadError(null);
         setItems(d.items);
         setTotal(d.count);
       })
-      .catch(() => {
-        setItems([]);
-        setTotal(0);
+      .catch((e) => {
+        setLoadError(e instanceof Error ? e.message : 'Не удалось загрузить список');
       });
   };
 
@@ -73,7 +75,17 @@ const StalePickingPanel = ({ onReload }: StalePickingPanelProps) => {
     if (canDecide) load();
   }, [canDecide]);
 
-  if (!canDecide || items.length === 0) return null;
+  if (!canDecide) return null;
+  if (loadError) {
+    return (
+      <WarehouseFetchError
+        title="Не удалось загрузить ненайденные вещи"
+        description={loadError}
+        onRetry={load}
+      />
+    );
+  }
+  if (items.length === 0) return null;
 
   const handleRepick = async (item: StalePickingItem) => {
     if (repicking) return;

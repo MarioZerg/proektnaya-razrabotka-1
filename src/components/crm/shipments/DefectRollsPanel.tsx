@@ -19,6 +19,7 @@ import {
   declineDefectRoll,
   type Roll,
 } from '@/lib/rollsApi';
+import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
 
 const formatQty = (n: number) => (Number.isInteger(n) ? String(n) : n.toFixed(2));
 
@@ -37,6 +38,7 @@ const DefectRollsPanel = () => {
   const { user } = useAuth();
 
   const [rolls, setRolls] = useState<Roll[]>([]);
+  const [listError, setListError] = useState<string | null>(null);
   // Забранные на склад бракованные рулоны: ждут решения по поставщику.
   const [onStock, setOnStock] = useState<Roll[]>([]);
   const [open, setOpen] = useState(false);
@@ -49,6 +51,7 @@ const DefectRollsPanel = () => {
   const load = () => {
     fetchRolls()
       .then((list) => {
+        setListError(null);
         // Ждут забора — только те, что ещё physически в цехе. Уже привезённые на склад
         // остаются помеченными (в раскрой не идут), но забирать их больше не нужно.
         setRolls(list.filter((r) => r.defectFlaggedAt && r.status === 'in_workshop'));
@@ -56,7 +59,9 @@ const DefectRollsPanel = () => {
           list.filter((r) => r.defectFlaggedAt && r.status === 'in_storage'),
         );
       })
-      .catch(() => setRolls([]));
+      .catch((e) => {
+        setListError(e instanceof Error ? e.message : 'Не удалось загрузить брак');
+      });
   };
 
   useEffect(load, []);
@@ -109,7 +114,18 @@ const DefectRollsPanel = () => {
   };
 
   // Пока брака нет вообще, панель не занимает место на странице.
-  if (rolls.length === 0 && onStock.length === 0 && !open) return null;
+  // FRONTEND-ONLY: сбой GET не прячем — иначе кладовщик думает, что брака нет.
+  if (rolls.length === 0 && onStock.length === 0 && !open && !listError) return null;
+
+  if (listError && rolls.length === 0 && onStock.length === 0 && !open) {
+    return (
+      <WarehouseFetchError
+        title="Не удалось проверить брак в цехе"
+        description={listError}
+        onRetry={load}
+      />
+    );
+  }
 
   return (
     <>

@@ -32,6 +32,8 @@ const formatDate = (value: string | null) => {
 interface ReturnsInspectionListProps {
   title?: string;
   loading: boolean;
+  /** FRONTEND-ONLY: сбой GET осмотра — не писать «на этом этапе пусто». */
+  error?: string | null;
   items: InspectionItem[];
   visible: InspectionItem[];
   selected: number[];
@@ -45,6 +47,7 @@ interface ReturnsInspectionListProps {
 const ReturnsInspectionList = ({
   title,
   loading,
+  error = null,
   items,
   visible,
   selected,
@@ -119,7 +122,9 @@ const ReturnsInspectionList = ({
           Загрузка...
         </div>
       ) : items.length === 0 ? (
+        error ? null : (
         <p className="text-sm text-muted-foreground">На этом этапе пусто</p>
+        )
       ) : visible.length === 0 ? (
         <p className="text-sm text-muted-foreground">
           По запросу «{search}» ничего не нашлось. Возможно, вещь ещё не отмечена как

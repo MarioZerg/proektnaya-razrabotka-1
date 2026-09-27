@@ -1,6 +1,12 @@
 import fetchWithRetry from '@/lib/fetchWithRetry';
 const SHIFTS_URL = 'https://functions.poehali.dev/88851192-9090-480d-b9f7-aecfea5e7bdf';
 
+/**
+ * Клиент смен.
+ *
+ * POEHALI: живая функция shifts. FRONTEND-ONLY: ошибка загрузки — не писать «смен нет».
+ */
+
 export interface ShiftListItem {
   id: number;
   workshopId: number;

@@ -16,6 +16,8 @@ import { Checkbox } from '@/components/ui/checkbox';
 
 interface GoodsWarehouseTableProps {
   loading: boolean;
+  /** FRONTEND-ONLY: сбой GET списка — не путать с «товаров не найдено». */
+  error?: string | null;
   items: GoodsWarehouseItem[];
   onReturnToWorkshop: (id: number) => void;
   onMarkLost: (id: number, reason: string) => Promise<void>;
@@ -38,6 +40,7 @@ interface GoodsWarehouseTableProps {
 
 const GoodsWarehouseTable = ({
   loading,
+  error = null,
   items,
   onReturnToWorkshop,
   onMarkLost,
@@ -51,7 +54,7 @@ const GoodsWarehouseTable = ({
 }: GoodsWarehouseTableProps) => {
   const a = useGoodsWarehouseTableActions({ items, onMarkLost, onDelete });
 
-  if (loading) {
+  if (loading && items.length === 0) {
     return (
       <div className="flex items-center gap-2 text-sm text-muted-foreground">
         <Icon name="Loader2" size={16} className="animate-spin" />
@@ -61,6 +64,8 @@ const GoodsWarehouseTable = ({
   }
 
   if (items.length === 0) {
+    // Баннер ошибки уже над таблицей — здесь не дублируем и не пишем «не найдено».
+    if (error) return null;
     return <p className="text-sm text-muted-foreground">Товаров не найдено</p>;
   }
 
@@ -142,12 +147,12 @@ const GoodsWarehouseTable = ({
                 isAdmin={isAdmin}
                 onDelete={onDelete}
                 pickMode={pickMode}
-                pickedIds={pickedIds}
+                picked={pickedIds.includes(i.id)}
                 onTogglePick={onTogglePick}
                 canPrintStickers={a.canPrintStickers}
                 canPrintShelfSticker={a.canPrintShelfSticker}
                 canPrintMpLabels={a.canPrintMpLabels}
-                selectedIds={a.selectedIds}
+                selected={a.selectedIds.includes(i.id)}
                 toggleOne={a.toggleOne}
                 labelBusyId={a.labelBusyId}
                 onPrintMpLabel={a.handlePrintMpLabel}

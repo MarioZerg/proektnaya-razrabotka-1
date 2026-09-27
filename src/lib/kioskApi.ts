@@ -3,6 +3,13 @@ import type { TakenOrder } from '@/lib/ordersApi';
 
 const KIOSK_URL = 'https://functions.poehali.dev/646f604e-57e9-47fb-b2ca-dd424abfba48';
 
+/**
+ * Клиент терминала цеха.
+ *
+ * POEHALI: живая функция kiosk. QR-вход, стикеровка, перепаковка — уже там.
+ * FRONTEND-ONLY: глобальный скан, звук, ошибка загрузки вместо «список пуст».
+ */
+
 export interface KioskOrder {
   id: number;
   orderNumber: string;
@@ -135,8 +142,13 @@ export const fetchTerminalSettings = async (
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ action: 'terminal_settings', workshopId }),
   });
-  if (!res.ok) return { manualStickering: false, sewerPackingAfterPackerShift: false };
-  return res.json();
+  const data = await res.json();
+  // FRONTEND-ONLY: раньше HTTP-ошибка возвращала { manualStickering: false }
+  // и терминал прятал разрешённый поиск, как будто цех его запретил.
+  if (!res.ok) {
+    throw new Error(data.error || 'Не удалось загрузить настройки терминала');
+  }
+  return data;
 };
 
 export const findStickeringOrders = async (filters: {

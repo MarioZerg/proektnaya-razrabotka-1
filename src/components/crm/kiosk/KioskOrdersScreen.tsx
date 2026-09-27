@@ -93,7 +93,9 @@ const KioskOrdersScreen = ({ packerId, packerName, workshopId, role }: KioskOrde
     }
     fetchTerminalSettings(workshopId)
       .then((s) => setManualSearchAllowed(s.manualStickering))
-      .catch(() => setManualSearchAllowed(false));
+      .catch(() => {
+        // FRONTEND-ONLY: не прячем уже разрешённый поиск, если настройки не дошли.
+      });
   }, [workshopId, privilegedSearch]);
 
   const handleSearch = async () => {

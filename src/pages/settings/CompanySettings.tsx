@@ -12,6 +12,7 @@ import {
   saveCompanyRequisites,
   type CompanyRequisites,
 } from '@/lib/contractsApi';
+import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
 
 const EMPTY: CompanyRequisites = {
   name: '',
@@ -83,24 +84,28 @@ const CompanySettings = () => {
   const [form, setForm] = useState<CompanyRequisites>(EMPTY);
   const [initial, setInitial] = useState<CompanyRequisites>(EMPTY);
   const [loading, setLoading] = useState(true);
+  const [listError, setListError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
-  useEffect(() => {
+  const load = () => {
     if (!user?.id) return;
+    setLoading(true);
     fetchCompanyRequisites(user.id)
       .then((d) => {
+        setListError(null);
         setForm(d);
         setInitial(d);
       })
-      .catch((e) =>
-        toast({
-          title: 'Не удалось загрузить',
-          description: e instanceof Error ? e.message : undefined,
-          variant: 'destructive',
-        })
-      )
+      .catch((e) => {
+        setListError(e instanceof Error ? e.message : 'Не удалось загрузить реквизиты');
+      })
       .finally(() => setLoading(false));
-  }, [user?.id, toast]);
+  };
+
+  useEffect(() => {
+    load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id]);
 
   const dirty = JSON.stringify(form) !== JSON.stringify(initial);
   const missing = FIELDS.filter((f) => f.required && !form[f.key].trim());
@@ -136,14 +141,22 @@ const CompanySettings = () => {
           </p>
         </div>
 
-        {loading ? (
+        {listError && (
+          <WarehouseFetchError
+            title="Не удалось загрузить реквизиты"
+            description={listError}
+            onRetry={load}
+          />
+        )}
+
+        {loading && !initial.name && !listError ? (
           <div className="flex items-center gap-2 text-sm text-muted-foreground">
             <Icon name="Loader2" size={16} className="animate-spin" />
             Загрузка...
           </div>
         ) : (
           <>
-            {missing.length > 0 && (
+            {!listError && missing.length > 0 && (
               <Card className="border-amber-300 bg-amber-50 shadow-none">
                 <CardContent className="flex items-start gap-3 py-4">
                   <Icon

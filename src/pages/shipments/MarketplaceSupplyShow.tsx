@@ -1,6 +1,7 @@
 import { useParams } from 'react-router-dom';
 import CrmLayout from '@/components/crm/CrmLayout';
 import Icon from '@/components/ui/icon';
+import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
 import useSupplyData from '@/components/crm/marketplaceSupplies/useSupplyData';
 import useSupplyActions from '@/components/crm/marketplaceSupplies/useSupplyActions';
 import useSupplyFlags from '@/components/crm/marketplaceSupplies/useSupplyFlags';
@@ -27,6 +28,7 @@ const MarketplaceSupplyShow = () => {
     supply,
     setSupply,
     loading,
+    listError,
     readyGoods,
     setReadyGoods,
     marketplaceItems,
@@ -45,13 +47,25 @@ const MarketplaceSupplyShow = () => {
     fields,
   });
 
-  if (loading || !supply) {
+  if (loading && !supply) {
     return (
       <CrmLayout>
         <div className="flex items-center gap-2 text-sm text-muted-foreground">
           <Icon name="Loader2" size={16} className="animate-spin" />
           Загрузка...
         </div>
+      </CrmLayout>
+    );
+  }
+
+  if (!supply) {
+    return (
+      <CrmLayout>
+        <WarehouseFetchError
+          title="Не удалось загрузить поставку"
+          description={listError || undefined}
+          onRetry={() => load()}
+        />
       </CrmLayout>
     );
   }

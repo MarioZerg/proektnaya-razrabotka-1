@@ -21,6 +21,7 @@ import {
   rejectTermination,
   type PendingTermination,
 } from '@/lib/terminationApi';
+import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
 
 const roleLabels: Record<string, string> = {
   sewer: 'Швея',
@@ -49,6 +50,7 @@ const TerminationsAdmin = ({ onChanged }: { onChanged?: () => void }) => {
   const { toast } = useToast();
   const { user } = useAuth();
   const [items, setItems] = useState<PendingTermination[]>([]);
+  const [listError, setListError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [rejecting, setRejecting] = useState<PendingTermination | null>(null);
   const [confirming, setConfirming] = useState<PendingTermination | null>(null);
@@ -56,10 +58,27 @@ const TerminationsAdmin = ({ onChanged }: { onChanged?: () => void }) => {
 
   const load = useCallback(() => {
     if (!user?.id) return;
-    fetchPendingTerminations(user.id).then(setItems).catch(() => setItems([]));
+    fetchPendingTerminations(user.id)
+      .then((list) => {
+        setListError(null);
+        setItems(list);
+      })
+      .catch((e) => {
+        setListError(e instanceof Error ? e.message : 'Не удалось загрузить заявления');
+      });
   }, [user?.id]);
 
   useEffect(() => load(), [load]);
+
+  if (listError) {
+    return (
+      <WarehouseFetchError
+        title="Не удалось загрузить заявления о расторжении"
+        description={listError}
+        onRetry={load}
+      />
+    );
+  }
 
   if (items.length === 0) return null;
 

@@ -90,7 +90,10 @@ const StorekeeperTasksWidget = () => {
         setShiftOpen(r.shiftOpen);
         setTasks(r.tasks);
       })
-      .catch(() => setTasks([]));
+      .catch(() => {
+        // FRONTEND-ONLY: не прячем чек-лист при сбое опроса. POEHALI список
+        // заданий уже отдаёт — отдельного «error» action не нужно.
+      });
   }, [user?.id, isStorekeeper, isDemo]);
 
   useEffect(() => {

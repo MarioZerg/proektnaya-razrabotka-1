@@ -1,3 +1,4 @@
+import { memo } from 'react';
 import { Button } from '@/components/ui/button';
 import { TableCell, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
@@ -25,12 +26,12 @@ interface GoodsWarehouseTableRowProps {
   isAdmin: boolean;
   onDelete?: (id: number) => Promise<void>;
   pickMode: boolean;
-  pickedIds: number[];
+  picked: boolean;
   onTogglePick?: (id: number) => void;
   canPrintStickers: boolean;
   canPrintShelfSticker: (item: GoodsWarehouseItem) => boolean;
   canPrintMpLabels: boolean;
-  selectedIds: number[];
+  selected: boolean;
   toggleOne: (id: number) => void;
   labelBusyId: number | null;
   onPrintMpLabel: (item: GoodsWarehouseItem) => void;
@@ -43,12 +44,12 @@ const GoodsWarehouseTableRow = ({
   isAdmin,
   onDelete,
   pickMode,
-  pickedIds,
+  picked,
   onTogglePick,
   canPrintStickers,
   canPrintShelfSticker,
   canPrintMpLabels,
-  selectedIds,
+  selected,
   toggleOne,
   labelBusyId,
   onPrintMpLabel,
@@ -57,7 +58,7 @@ const GoodsWarehouseTableRow = ({
   return (
               <TableRow
                 className={
-                  pickMode && pickedIds.includes(i.id)
+                  pickMode && picked
                     ? 'bg-primary/5 hover:bg-primary/10'
                     : i.receiveReason === 'admin'
                       ? 'bg-amber-50 hover:bg-amber-100'
@@ -70,7 +71,7 @@ const GoodsWarehouseTableRow = ({
                   <TableCell>
                     {i.status === 'in_stock' && (
                       <Checkbox
-                        checked={pickedIds.includes(i.id)}
+                        checked={picked}
                         onCheckedChange={() => onTogglePick?.(i.id)}
                         aria-label={`Забрать ${i.storageBarcode}`}
                       />
@@ -83,7 +84,7 @@ const GoodsWarehouseTableRow = ({
                   <TableCell>
                     {canPrintStorageSticker(i) && (
                       <Checkbox
-                        checked={selectedIds.includes(i.id)}
+                        checked={selected}
                         onCheckedChange={() => toggleOne(i.id)}
                         aria-label={`Выбрать ${i.storageBarcode}`}
                       />
@@ -217,4 +218,4 @@ const GoodsWarehouseTableRow = ({
   );
 };
 
-export default GoodsWarehouseTableRow;
+export default memo(GoodsWarehouseTableRow);

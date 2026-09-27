@@ -1,5 +1,7 @@
 const MARKETPLACE_INTEGRATIONS_URL = 'https://functions.poehali.dev/74493687-7597-43cc-a138-fa8c1e7215b4';
 
+/** POEHALI: ключи площадок. FRONTEND-ONLY: сбой GET не писать как «ничего не подключено». */
+
 export type MarketplaceCode =
   | 'ozon'
   | 'wildberries'

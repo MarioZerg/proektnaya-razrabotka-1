@@ -2,6 +2,8 @@ import fetchWithRetry from '@/lib/fetchWithRetry';
 
 const SHIFT_SESSIONS_URL = 'https://functions.poehali.dev/6143d29d-094c-4dc6-a520-eb0eeb10d8a0';
 
+/** POEHALI: смены. FRONTEND-ONLY: сбой GET не писать как «сотрудник не открыл смену». */
+
 export interface EmployeeShiftStatus {
   id: number;
   fullName: string;

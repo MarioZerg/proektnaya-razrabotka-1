@@ -26,6 +26,7 @@ import {
 import ManagerFinanceView from '@/components/crm/finance/ManagerFinanceView';
 import MySalaryView from '@/components/crm/finance/MySalaryView';
 import AdminFinanceView from '@/components/crm/finance/AdminFinanceView';
+import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
 
 const Finance = () => {
   const { user } = useAuth();
@@ -57,13 +58,16 @@ const Finance = () => {
   const [period1Total, setPeriod1Total] = useState(0);
   const [period2Total, setPeriod2Total] = useState(0);
   const [operationsLoading, setOperationsLoading] = useState(true);
+  const [operationsError, setOperationsError] = useState<string | null>(null);
 
   const [payouts, setPayouts] = useState<SalaryPayout[]>([]);
   const [payoutsLoading, setPayoutsLoading] = useState(true);
+  const [payoutsError, setPayoutsError] = useState<string | null>(null);
 
   const [cashBalance, setCashBalance] = useState(0);
   const [cashTransactions, setCashTransactions] = useState<CashBoxTransaction[]>([]);
   const [cashLoading, setCashLoading] = useState(true);
+  const [cashError, setCashError] = useState<string | null>(null);
 
   const [savingAccrual, setSavingAccrual] = useState(false);
 
@@ -71,6 +75,7 @@ const Finance = () => {
   const [myBalance, setMyBalance] = useState(0);
   const [myPayouts, setMyPayouts] = useState<MyPayout[]>([]);
   const [myLoading, setMyLoading] = useState(true);
+  const [myError, setMyError] = useState<string | null>(null);
   // Новичкам зарплата открывается через 2 недели после регистрации — считает сервер.
   const [myLocked, setMyLocked] = useState(false);
   const [myDaysLeft, setMyDaysLeft] = useState(0);
@@ -95,7 +100,7 @@ const Finance = () => {
   // ответ на последний запрос, иначе на экране осталась бы сумма чужого периода.
   const mySalaryReqId = useRef(0);
 
-  useEffect(() => {
+  const loadMySalary = () => {
     if (user?.role === 'admin' || !user?.id) return;
     const reqId = ++mySalaryReqId.current;
     setMyLoading(true);
@@ -110,10 +115,20 @@ const Finance = () => {
         setMyEarned(data.periodEarned);
         setMyPenalties(data.periodPenalties);
         setMyCount(data.periodCount);
+        setMyError(null);
+      })
+      .catch((e) => {
+        if (reqId !== mySalaryReqId.current) return;
+        setMyError(e instanceof Error ? e.message : 'Не удалось загрузить зарплату');
       })
       .finally(() => {
         if (reqId === mySalaryReqId.current) setMyLoading(false);
       });
+  };
+
+  useEffect(() => {
+    loadMySalary();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.role, user?.id, myDateFrom, myDateTo]);
 
   // Сменили фильтр — возвращаемся на первую страницу: иначе можно оказаться на
@@ -154,6 +169,11 @@ const Finance = () => {
         setPendingPayouts(data.pendingPayouts);
         setPeriod1Total(data.period1Total);
         setPeriod2Total(data.period2Total);
+        setOperationsError(null);
+      })
+      .catch((e) => {
+        if (reqId !== operationsReqId.current) return;
+        setOperationsError(e instanceof Error ? e.message : 'Не удалось загрузить начисления');
       })
       .finally(() => {
         if (reqId !== operationsReqId.current) return;
@@ -164,7 +184,13 @@ const Finance = () => {
   const loadPayouts = () => {
     setPayoutsLoading(true);
     fetchSalaryPayouts()
-      .then(setPayouts)
+      .then((list) => {
+        setPayoutsError(null);
+        setPayouts(list);
+      })
+      .catch((e) => {
+        setPayoutsError(e instanceof Error ? e.message : 'Не удалось загрузить выплаты');
+      })
       .finally(() => setPayoutsLoading(false));
   };
 
@@ -172,8 +198,12 @@ const Finance = () => {
     setCashLoading(true);
     fetchCashBox()
       .then((data) => {
+        setCashError(null);
         setCashBalance(data.balance);
         setCashTransactions(data.transactions);
+      })
+      .catch((e) => {
+        setCashError(e instanceof Error ? e.message : 'Не удалось загрузить кассу');
       })
       .finally(() => setCashLoading(false));
   };
@@ -338,6 +368,8 @@ const Finance = () => {
       <MySalaryView
         myLocked={myLocked}
         myLoading={myLoading}
+        myError={myError}
+        onRetry={loadMySalary}
         myDaysLeft={myDaysLeft}
         myDateFrom={myDateFrom}
         myDateTo={myDateTo}
@@ -395,7 +427,12 @@ const Finance = () => {
       onUpdateRate={handleUpdateRate}
       payouts={payouts}
       payoutsLoading={payoutsLoading}
+      payoutsError={payoutsError}
+      onRetryPayouts={loadPayouts}
       onDeletePayout={handleDeletePayout}
+      operationsError={operationsError}
+      cashError={cashError}
+      onRetryCash={loadCashBox}
     />
   );
 };

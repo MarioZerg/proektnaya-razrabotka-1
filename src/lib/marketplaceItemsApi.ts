@@ -2,6 +2,8 @@ import type { Shop } from '@/lib/marketplaceIntegrationsApi';
 
 const ITEMS_URL = 'https://functions.poehali.dev/9959a7b8-9bf6-4fbe-8170-68cc9e031f77';
 
+/** POEHALI: карточки товаров площадок. FRONTEND-ONLY: сбой GET не писать как «товаров пока нет». */
+
 export type { Shop };
 
 export interface MarketplaceItem {

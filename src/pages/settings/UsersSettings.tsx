@@ -8,11 +8,13 @@ import EmployeesTabsSwitch from '@/components/crm/users/EmployeesTabsSwitch';
 import { useEmployeesData } from '@/components/crm/users/useEmployeesData';
 import { useEmployeeCard } from '@/components/crm/users/useEmployeeCard';
 import { useEmployeeActions } from '@/components/crm/users/useEmployeeActions';
+import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
 
 const UsersSettings = () => {
   const {
     setEmployees,
     loading,
+    listError,
     load,
     roleFilter,
     setRoleFilter,
@@ -90,8 +92,17 @@ const UsersSettings = () => {
           archivedCount={archivedCount}
         />
 
+        {listError && (
+          <WarehouseFetchError
+            title="Не удалось загрузить сотрудников"
+            description={listError}
+            onRetry={load}
+          />
+        )}
+
         <EmployeesTable
           loading={loading}
+          error={listError}
           filtered={filtered}
           archiveView={tab === 'archived'}
           onArchiveRequest={setArchiveTarget}

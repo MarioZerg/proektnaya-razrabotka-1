@@ -16,6 +16,7 @@ import { fetchRolls, createRoll, type Roll } from '@/lib/rollsApi';
 import { fetchMaterialsData, type Material, type MaterialType } from '@/lib/materialsApi';
 import { fetchWorkshops, type Workshop } from '@/lib/workshopsApi';
 import { isStorekeeperRole } from '@/lib/roles';
+import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
 
 const Rolls = () => {
   const { toast } = useToast();
@@ -26,6 +27,7 @@ const Rolls = () => {
   const [materialTypes, setMaterialTypes] = useState<MaterialType[]>([]);
   const [workshops, setWorkshops] = useState<Workshop[]>([]);
   const [loading, setLoading] = useState(true);
+  const [listError, setListError] = useState<string | null>(null);
 
   const [statusFilter, setStatusFilter] = useState('all');
   const [materialFilter, setMaterialFilter] = useState('all');
@@ -73,15 +75,26 @@ const Rolls = () => {
         setMaterials(materialsData.materials);
         setMaterialTypes(materialsData.types);
       })
-      .catch(() => {});
-    fetchWorkshops().then(setWorkshops).catch(() => {});
+      .catch(() => {
+        // FRONTEND-ONLY: справочник материалов не критичен для списка рулонов.
+      });
+    fetchWorkshops()
+      .then(setWorkshops)
+      .catch(() => {
+        // FRONTEND-ONLY: фильтр по цеху можно выбрать позже.
+      });
     // Кружок загрузки снимаем по главному запросу страницы.
     fetchRolls({
       ...(isProductionRole && user ? { forUserId: user.id } : {}),
       ...(search.trim() ? { search: search.trim() } : {}),
     })
-      .then(setRolls)
-      .catch(() => {})
+      .then((list) => {
+        setListError(null);
+        setRolls(list);
+      })
+      .catch((e) => {
+        setListError(e instanceof Error ? e.message : 'Не удалось загрузить рулоны');
+      })
       .finally(() => setLoading(false));
   };
 
@@ -268,8 +281,17 @@ const Rolls = () => {
               <LowStockPrintCard rolls={allFiltered.filter(isLowStockRoll)} />
             )}
 
+            {listError && (
+              <WarehouseFetchError
+                title="Не удалось загрузить рулоны"
+                description={listError}
+                onRetry={load}
+              />
+            )}
+
             <RollsListSection
               loading={loading}
+              error={listError}
               allFiltered={allFiltered}
               filtered={filtered}
               workshops={workshops}

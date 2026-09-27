@@ -14,6 +14,7 @@ import {
   adminCloseStorekeeperTask,
   type StorekeeperTask,
 } from '@/lib/shiftSessionsApi';
+import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
 
 interface StorekeeperTaskChecklistDialogProps {
   /** Кладовщик, чей чек-лист смотрим. null — диалог закрыт. */
@@ -45,14 +46,20 @@ const StorekeeperTaskChecklistDialog = ({
   const { toast } = useToast();
   const [tasks, setTasks] = useState<StorekeeperTask[]>([]);
   const [loading, setLoading] = useState(false);
+  const [listError, setListError] = useState<string | null>(null);
   const [busyKey, setBusyKey] = useState<string | null>(null);
 
   const load = () => {
     if (!employee) return;
     setLoading(true);
     fetchStorekeeperTasks(employee.id)
-      .then((r) => setTasks(r.tasks))
-      .catch(() => setTasks([]))
+      .then((r) => {
+        setListError(null);
+        setTasks(r.tasks);
+      })
+      .catch((e) => {
+        setListError(e instanceof Error ? e.message : 'Не удалось загрузить задания');
+      })
       .finally(() => setLoading(false));
   };
 
@@ -96,11 +103,17 @@ const StorekeeperTaskChecklistDialog = ({
           новой смене, список посчитается заново — этот шаг на него не повлияет.
         </p>
 
-        {loading ? (
+        {loading && tasks.length === 0 ? (
           <div className="flex items-center gap-2 py-4 text-sm text-muted-foreground">
             <Icon name="Loader2" size={16} className="animate-spin" />
             Загрузка...
           </div>
+        ) : listError && tasks.length === 0 ? (
+          <WarehouseFetchError
+            title="Не удалось загрузить задания"
+            description={listError}
+            onRetry={load}
+          />
         ) : tasks.length === 0 ? (
           <p className="py-4 text-sm text-muted-foreground">
             У сотрудника нет открытой смены или заданий.

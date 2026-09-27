@@ -21,6 +21,7 @@ import {
 } from '@/lib/reviewsApi';
 import EmployeeRatingCards from '@/components/crm/reviews/EmployeeRatingCards';
 import ReviewsTable from '@/components/crm/reviews/ReviewsTable';
+import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
 
 const emptyRating: RatingResult = { cutter: [], sewer: [], packer: [] };
 
@@ -31,6 +32,7 @@ const Reviews = () => {
   const [reviews, setReviews] = useState<Review[]>([]);
   const [rating, setRating] = useState<RatingResult>(emptyRating);
   const [loading, setLoading] = useState(true);
+  const [listError, setListError] = useState<string | null>(null);
   const [syncing, setSyncing] = useState(false);
   const [marketplace, setMarketplace] = useState<'all' | 'OZON' | 'WB'>('all');
   const [ratingFilter, setRatingFilter] = useState<'all' | 'high' | 'low'>('all');
@@ -39,11 +41,18 @@ const Reviews = () => {
     setLoading(true);
     // Рейтинг тянем отдельно от отзывов: не дошёл один запрос — второй блок страницы
     // всё равно наполнится. Раньше единственный сбой связи оставлял страницу пустой.
-    fetchReviewsRating().then(setRating).catch(() => {});
-    // Кружок загрузки снимаем по главному запросу страницы.
+    fetchReviewsRating().then(setRating).catch(() => {
+      // FRONTEND-ONLY: рейтинг вторичен. Сбой не прячет ленту отзывов.
+    });
+    // FRONTEND-ONLY: рейтинг вторичен. Сбой отзывов — баннер, список не обнуляем.
     fetchReviews()
-      .then(setReviews)
-      .catch(() => {})
+      .then((list) => {
+        setListError(null);
+        setReviews(list);
+      })
+      .catch((e) => {
+        setListError(e instanceof Error ? e.message : 'Не удалось загрузить отзывы');
+      })
       .finally(() => setLoading(false));
   };
 
@@ -144,13 +153,21 @@ const Reviews = () => {
           <p className="ml-auto text-sm text-muted-foreground">Показано: {filtered.length}</p>
         </div>
 
-        {loading ? (
+        {listError && (
+          <WarehouseFetchError
+            title="Не удалось загрузить отзывы"
+            description={listError}
+            onRetry={load}
+          />
+        )}
+
+        {loading && reviews.length === 0 ? (
           <div className="flex items-center gap-2 text-sm text-muted-foreground">
             <Icon name="Loader2" size={16} className="animate-spin" />
             Загрузка...
           </div>
         ) : (
-          <ReviewsTable reviews={filtered} />
+          <ReviewsTable reviews={filtered} error={listError} />
         )}
       </div>
     </CrmLayout>

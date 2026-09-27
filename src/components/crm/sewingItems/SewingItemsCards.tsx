@@ -20,6 +20,8 @@ import { orderHangerLabel } from '@/lib/hangersApi';
 
 interface SewingItemsCardsProps {
   loading: boolean;
+  /** FRONTEND-ONLY: сбой GET — не писать «заказов не найдено». */
+  error?: string | null;
   pagedOrders: Order[];
   onOpenDetail: (order: Order) => void;
   page: number;
@@ -38,6 +40,7 @@ const ribbonClass: Record<string, string> = {
 
 const SewingItemsCards = ({
   loading,
+  error = null,
   pagedOrders,
   onOpenDetail,
   page,
@@ -48,7 +51,7 @@ const SewingItemsCards = ({
 }: SewingItemsCardsProps) => {
   const { printingId, printSticker: handlePrintSticker } = usePrintOrderSticker();
 
-  if (loading) {
+  if (loading && pagedOrders.length === 0) {
     return (
       <div className="flex items-center gap-2 text-sm text-muted-foreground">
         <Icon name="Loader2" size={16} className="animate-spin" />
@@ -58,6 +61,7 @@ const SewingItemsCards = ({
   }
 
   if (pagedOrders.length === 0) {
+    if (error) return null;
     return <p className="text-sm text-muted-foreground">Заказов не найдено.</p>;
   }
 

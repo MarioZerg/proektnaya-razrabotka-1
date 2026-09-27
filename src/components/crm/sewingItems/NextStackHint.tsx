@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import Icon from '@/components/ui/icon';
 import { fetchStackPreview, type StackPreview } from '@/lib/ordersApi';
 import { usePolling } from '@/hooks/usePolling';
+import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
 
 interface NextStackHintProps {
   workshopId: number | null;
@@ -18,16 +19,25 @@ interface NextStackHintProps {
  * заказ может уйти другому. Иначе подсказка выглядела бы обманом. */
 const NextStackHint = ({ workshopId, refreshKey }: NextStackHintProps) => {
   const [preview, setPreview] = useState<StackPreview | null>(null);
+  const [listError, setListError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!workshopId) setPreview(null);
+    if (!workshopId) {
+      setPreview(null);
+      setListError(null);
+    }
   }, [workshopId]);
 
   const load = useCallback(() => {
     if (!workshopId) return;
     return fetchStackPreview(workshopId)
-      .then(setPreview)
-      .catch(() => setPreview(null));
+      .then((d) => {
+        setListError(null);
+        setPreview(d);
+      })
+      .catch((e) => {
+        setListError(e instanceof Error ? e.message : 'Не удалось загрузить очередь');
+      });
   }, [workshopId, refreshKey]);
 
   // Очередь общая на цех — обновляем, чтобы подсказка не устаревала, пока закройщик
@@ -36,6 +46,16 @@ const NextStackHint = ({ workshopId, refreshKey }: NextStackHintProps) => {
   // Раз в две минуты: очередь закройщика меняется не ежесекундно, а подсказка
   // висит открытой на каждой станции всю смену.
   usePolling(load, 120000, !!workshopId);
+
+  if (listError && !preview) {
+    return (
+      <WarehouseFetchError
+        title="Не удалось загрузить очередь раскроя"
+        description={listError}
+        onRetry={load}
+      />
+    );
+  }
 
   if (!preview || preview.kind === 'none' || preview.count === 0) return null;
 

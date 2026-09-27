@@ -13,6 +13,8 @@ import type { Review } from '@/lib/reviewsApi';
 
 interface ReviewsTableProps {
   reviews: Review[];
+  /** FRONTEND-ONLY: сбой GET — не писать «отзывов пока нет». */
+  error?: string | null;
 }
 
 const marketplaceBadge: Record<string, { label: string; className: string }> = {
@@ -34,8 +36,9 @@ const Stars = ({ rating }: { rating: number | null }) => {
 const person = (name: string | null) =>
   name ? <span>{name}</span> : <span className="text-muted-foreground">—</span>;
 
-const ReviewsTable = ({ reviews }: ReviewsTableProps) => {
+const ReviewsTable = ({ reviews, error = null }: ReviewsTableProps) => {
   if (reviews.length === 0) {
+    if (error) return null;
     return (
       <p className="rounded-md border border-dashed border-border p-8 text-center text-sm text-muted-foreground">
         Отзывов пока нет. Нажмите «Обновить отзывы», чтобы загрузить их с OZON и Wildberries.

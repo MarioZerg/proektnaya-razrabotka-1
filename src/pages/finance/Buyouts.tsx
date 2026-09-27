@@ -9,6 +9,7 @@ import BuyoutsSchemes from '@/components/crm/buyouts/BuyoutsSchemes';
 import BuyoutsList from '@/components/crm/buyouts/BuyoutsList';
 import BuyoutsPager from '@/components/crm/buyouts/BuyoutsPager';
 import { PER_PAGE, type BuyoutsData } from '@/components/crm/buyouts/buyoutsShared';
+import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
 
 /**
  * Выкупы — что покупатели реально забрали и сколько мы на этом заработали.
@@ -34,23 +35,32 @@ const Buyouts = () => {
     pages: 1,
   });
   const [loading, setLoading] = useState(true);
+  const [listError, setListError] = useState<string | null>(null);
   const [syncing, setSyncing] = useState(false);
   const { toast } = useToast();
 
-  useEffect(() => {
+  const load = () => {
     setLoading(true);
     fetchBoughtFeed(page, PER_PAGE, dateFrom, dateTo, mp, scheme)
-      .then((d) =>
+      .then((d) => {
+        setListError(null);
         setData({
           items: d.items || [],
           total: d.total,
           pages: d.pages,
           totals: d.totals,
           breakdown: d.breakdown,
-        }),
-      )
-      .catch(() => setData({ items: [], total: 0, pages: 1 }))
+        });
+      })
+      .catch((e) => {
+        setListError(e instanceof Error ? e.message : 'Не удалось загрузить выкупы');
+      })
       .finally(() => setLoading(false));
+  };
+
+  useEffect(() => {
+    load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [page, dateFrom, dateTo, mp, scheme]);
 
   // Смена периода возвращает на первую страницу: оставаться на сотой в новом
@@ -159,7 +169,15 @@ const Buyouts = () => {
           />
         )}
 
-        <BuyoutsList items={data.items} loading={loading} />
+        {listError && (
+          <WarehouseFetchError
+            title="Не удалось загрузить выкупы"
+            description={listError}
+            onRetry={load}
+          />
+        )}
+
+        <BuyoutsList items={data.items} loading={loading} error={listError} />
 
         {!loading && (
           <BuyoutsPager page={page} pages={data.pages} onPage={setPage} />

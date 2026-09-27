@@ -34,6 +34,7 @@ export const useLogsState = () => {
   const [summary, setSummary] = useState<LogSummary | null>(null);
   const [users, setUsers] = useState<{ id: number; name: string }[]>([]);
   const [loading, setLoading] = useState(true);
+  const [listError, setListError] = useState<string | null>(null);
 
   const [stage, setStage] = useState<LogStage | ''>('');
   const [userId, setUserId] = useState<number | ''>('');
@@ -59,21 +60,25 @@ export const useLogsState = () => {
     setLoading(true);
     fetchLogEvents({ ...filters, limit: PAGE_SIZE, offset: (page - 1) * PAGE_SIZE })
       .then((r) => {
+        setListError(null);
         setItems(r.items);
         setTotal(r.total);
       })
-      .catch(() => {
-        setItems([]);
-        setTotal(0);
+      .catch((e) => {
+        setListError(e instanceof Error ? e.message : 'Не удалось загрузить журнал');
       })
       .finally(() => setLoading(false));
-    fetchLogSummary(filters).then(setSummary).catch(() => setSummary(null));
+    fetchLogSummary(filters).then(setSummary).catch(() => {
+      // FRONTEND-ONLY: плитки сводки вторичны. Сбой не обнуляет журнал.
+    });
   }, [filters, page]);
 
   useEffect(() => load(), [load]);
 
   useEffect(() => {
-    fetchLogUsers().then(setUsers).catch(() => setUsers([]));
+    fetchLogUsers().then(setUsers).catch(() => {
+      // FRONTEND-ONLY: фильтр по людям. Сбой не прячет журнал.
+    });
   }, []);
 
   // Любая смена фильтра возвращает на первую страницу: иначе легко остаться на
@@ -111,6 +116,7 @@ export const useLogsState = () => {
     summary,
     users,
     loading,
+    listError,
     stage,
     setStage,
     userId,

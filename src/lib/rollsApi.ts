@@ -1,5 +1,12 @@
 const ROLLS_URL = 'https://functions.poehali.dev/10824802-d4e4-48de-b98a-0fc06f8412d5';
 
+/**
+ * Клиент рулонов.
+ *
+ * POEHALI: живая функция rolls. Новые статусы и action — сначала там.
+ * FRONTEND-ONLY: ошибка загрузки, HID-скан на киоске, фильтр «малый остаток».
+ */
+
 export type RollStatus = 'in_storage' | 'in_workshop' | 'completed';
 
 export interface Roll {

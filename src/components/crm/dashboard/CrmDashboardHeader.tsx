@@ -15,6 +15,8 @@ interface CrmDashboardHeaderProps {
   isStorekeeper: boolean;
   myShiftStatus: EmployeeShiftStatus | null;
   shiftsLoading: boolean;
+  shiftsError?: string | null;
+  onRetryShifts?: () => void;
 }
 
 /**
@@ -32,6 +34,8 @@ const CrmDashboardHeader = ({
   isStorekeeper,
   myShiftStatus,
   shiftsLoading,
+  shiftsError,
+  onRetryShifts,
 }: CrmDashboardHeaderProps) => (
   <>
     <div>
@@ -57,7 +61,12 @@ const CrmDashboardHeader = ({
     {/* Своя смена — первое, что видит кладовщик: идёт ли она и сколько
         принесёт при закрытии. */}
     {isStorekeeper && (
-      <MyShiftCard me={myShiftStatus} loading={shiftsLoading} />
+      <MyShiftCard
+        me={myShiftStatus}
+        loading={shiftsLoading}
+        error={shiftsError}
+        onRetry={onRetryShifts}
+      />
     )}
 
     {/* Решения склада, которые стоят денег, — сразу перед виджетами: админ видит их

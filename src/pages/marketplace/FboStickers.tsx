@@ -13,10 +13,12 @@ import {
 import Icon from '@/components/ui/icon';
 import { stickerItems } from '@/lib/stickerItems';
 import { fetchEmployees, type Employee } from '@/lib/usersApi';
+import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
 
 const FboStickers = () => {
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [loading, setLoading] = useState(true);
+  const [listError, setListError] = useState<string | null>(null);
 
   const [itemId, setItemId] = useState('');
   const [marketplaceId, setMarketplaceId] = useState('');
@@ -24,10 +26,21 @@ const FboStickers = () => {
   const [cutterId, setCutterId] = useState('');
   const [seamstressId, setSeamstressId] = useState('');
 
-  useEffect(() => {
+  const load = () => {
+    setLoading(true);
     fetchEmployees()
-      .then(setEmployees)
+      .then((list) => {
+        setListError(null);
+        setEmployees(list);
+      })
+      .catch((e) => {
+        setListError(e instanceof Error ? e.message : 'Не удалось загрузить сотрудников');
+      })
       .finally(() => setLoading(false));
+  };
+
+  useEffect(() => {
+    load();
   }, []);
 
   const cutters = employees.filter((e) => e.role === 'cutter');
@@ -37,6 +50,14 @@ const FboStickers = () => {
     <CrmLayout>
       <div className="space-y-6">
         <h1 className="text-xl font-bold">Печать ленты стикеров</h1>
+
+        {listError && (
+          <WarehouseFetchError
+            title="Не удалось загрузить сотрудников"
+            description={listError}
+            onRetry={load}
+          />
+        )}
 
         <Card className="border-border shadow-none">
           <CardContent className="space-y-4 pt-6">

@@ -35,6 +35,8 @@ interface OperationsTableProps {
   onEdit: (id: number, amount: number, description: string) => Promise<void>;
   /** Перезагрузить список после отмены штрафа. */
   onReload: () => void;
+  /** FRONTEND-ONLY: сбой GET — не писать «начислений пока нет». */
+  error?: string | null;
 }
 
 const OperationsTable = ({
@@ -47,6 +49,7 @@ const OperationsTable = ({
   onDelete,
   onEdit,
   onReload,
+  error = null,
 }: OperationsTableProps) => {
   return (
     <div className="space-y-4">
@@ -54,13 +57,15 @@ const OperationsTable = ({
           (сумму, описание, даты) просто срезало за краем экрана. Показываем
           то же самое карточками. На компьютере остаётся обычная таблица. */}
       <div className="space-y-2 md:hidden">
-        {loading ? (
+        {loading && operations.length === 0 ? (
           <div className="flex items-center gap-2 p-4 text-sm text-muted-foreground">
             <Icon name="Loader2" size={16} className="animate-spin" />
             Загрузка...
           </div>
         ) : operations.length === 0 ? (
+          error ? null : (
           <p className="p-4 text-center text-sm text-muted-foreground">Начислений пока нет</p>
+          )
         ) : (
           operations.map((op) => (
             <div key={op.id} className="rounded-md border border-border bg-card p-3">
@@ -168,11 +173,13 @@ const OperationsTable = ({
                 </TableCell>
               </TableRow>
             ) : operations.length === 0 ? (
+              error ? null : (
               <TableRow>
                 <TableCell colSpan={9} className="text-center text-sm text-muted-foreground">
                   Начислений пока нет
                 </TableCell>
               </TableRow>
+              )
             ) : (
               operations.map((op) => (
                 <TableRow key={op.id}>

@@ -9,6 +9,7 @@ import {
   clearSupplyTails,
   type SupplyTailItem,
 } from '@/lib/goodsWarehouseApi';
+import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
 
 interface SupplyTailsPanelProps {
   /** Перечитать список подбора после освобождения вещей. */
@@ -30,6 +31,7 @@ const SupplyTailsPanel = ({ onReload }: SupplyTailsPanelProps) => {
   const { toast } = useToast();
   const { user } = useAuth();
   const [items, setItems] = useState<SupplyTailItem[]>([]);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
   const [clearing, setClearing] = useState(false);
 
@@ -38,15 +40,30 @@ const SupplyTailsPanel = ({ onReload }: SupplyTailsPanelProps) => {
 
   const load = () => {
     fetchSupplyTails()
-      .then((d) => setItems(d.items))
-      .catch(() => setItems([]));
+      .then((d) => {
+        setLoadError(null);
+        setItems(d.items);
+      })
+      .catch((e) => {
+        setLoadError(e instanceof Error ? e.message : 'Не удалось загрузить список');
+      });
   };
 
   useEffect(() => {
     if (canClear) load();
   }, [canClear]);
 
-  if (!canClear || items.length === 0) return null;
+  if (!canClear) return null;
+  if (loadError) {
+    return (
+      <WarehouseFetchError
+        title="Не удалось проверить хвосты поставок"
+        description={loadError}
+        onRetry={load}
+      />
+    );
+  }
+  if (items.length === 0) return null;
 
   const handleClear = async () => {
     if (clearing) return;

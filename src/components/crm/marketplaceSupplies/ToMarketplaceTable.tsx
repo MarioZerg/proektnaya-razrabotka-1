@@ -15,12 +15,14 @@ import { marketplaceLogo, statusVariant } from './toMarketplaceConstants';
 
 interface ToMarketplaceTableProps {
   loading: boolean;
+  /** FRONTEND-ONLY: сбой GET — не писать «поставок пока нет». */
+  error?: string | null;
   supplies: Supply[];
   onOpen: (id: number) => void;
 }
 
-const ToMarketplaceTable = ({ loading, supplies, onOpen }: ToMarketplaceTableProps) => {
-  if (loading) {
+const ToMarketplaceTable = ({ loading, error = null, supplies, onOpen }: ToMarketplaceTableProps) => {
+  if (loading && supplies.length === 0) {
     return (
       <div className="flex items-center gap-2 text-sm text-muted-foreground">
         <Icon name="Loader2" size={16} className="animate-spin" />
@@ -30,6 +32,7 @@ const ToMarketplaceTable = ({ loading, supplies, onOpen }: ToMarketplaceTablePro
   }
 
   if (supplies.length === 0) {
+    if (error) return null;
     return <p className="text-sm text-muted-foreground">Поставок пока нет</p>;
   }
 

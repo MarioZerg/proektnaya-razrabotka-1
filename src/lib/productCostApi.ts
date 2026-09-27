@@ -1,5 +1,7 @@
 const PRODUCT_COST_URL = 'https://functions.poehali.dev/7e85cd3d-e5cd-44e2-a803-5ff07584de12';
 
+/** POEHALI: себестоимость. FRONTEND-ONLY: сбой GET не писать как «тканей не найдено». */
+
 /** Один материал в составе изделия. */
 export interface CostMaterial {
   materialId: number;

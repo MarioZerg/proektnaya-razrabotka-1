@@ -7,6 +7,7 @@ import GoodsWarehouseHeader from '@/components/crm/goodsWarehouse/GoodsWarehouse
 import GoodsWarehouseWorkTiles from '@/components/crm/goodsWarehouse/GoodsWarehouseWorkTiles';
 import GoodsWarehouseDialogs from '@/components/crm/goodsWarehouse/GoodsWarehouseDialogs';
 import StuckCancelledPanel from '@/components/crm/goodsWarehouse/StuckCancelledPanel';
+import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
 import { useGoodsWarehouseState } from '@/components/crm/goodsWarehouse/useGoodsWarehouseState';
 import TablePager from '@/components/crm/finance/TablePager';
 
@@ -48,10 +49,23 @@ const GoodsWarehouse = () => {
           pickingFbs={s.pickingFbs}
           stocktakeActive={s.stocktakeActive}
           stocktakeLeft={s.stocktakeLeft}
+          queuesLoading={!s.queuesReady && !s.queuesError}
           onPlace={() => s.setPlaceOpen(true)}
           onPickup={() => s.setPickupOpen(true)}
           onPlaceInspected={() => s.setPlaceInspectedOpen(true)}
         />
+        )}
+
+        {!s.stockOnly && s.queuesError && (
+          <WarehouseFetchError
+            title="Не удалось загрузить очередь склада"
+            description={s.queuesError}
+            onRetry={() => {
+              s.loadQueues();
+              s.loadInspectedReady();
+              s.loadStocktake();
+            }}
+          />
         )}
 
         {!s.stockOnly && (
@@ -119,6 +133,13 @@ const GoodsWarehouse = () => {
         {/* Фильтры и таблица — единый блок: между ними почти нет зазора, поэтому
             видно, что список подчиняется этим полям. Раньше их разделял отступ и
             строка со счётчиком, и связь читалась не сразу. */}
+        {s.listError && (
+          <WarehouseFetchError
+            title="Не удалось загрузить склад"
+            description={s.listError}
+            onRetry={s.load}
+          />
+        )}
         <div className="space-y-2">
         <GoodsWarehouseFilters
           search={s.search}
@@ -149,6 +170,7 @@ const GoodsWarehouse = () => {
 
         <GoodsWarehouseTable
           loading={s.loading}
+          error={s.listError}
           items={s.pagedItems}
           onReturnToWorkshop={s.handleReturn}
           onMarkLost={s.handleMarkLost}

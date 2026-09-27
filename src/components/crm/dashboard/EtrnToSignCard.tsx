@@ -6,6 +6,7 @@ import { Badge } from '@/components/ui/badge';
 import Icon from '@/components/ui/icon';
 import { formatDateTime } from '@/lib/dateUtils';
 import { fetchPendingEtrn, type EtrnPendingItem } from '@/lib/etrnApi';
+import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
 
 const mpLabel: Record<string, string> = {
   OZON: 'OZON',
@@ -39,16 +40,38 @@ const EtrnToSignCard = () => {
   const navigate = useNavigate();
   const [items, setItems] = useState<EtrnPendingItem[]>([]);
   const [loading, setLoading] = useState(true);
+  const [listError, setListError] = useState<string | null>(null);
 
-  useEffect(() => {
+  const load = () => {
+    setLoading(true);
     fetchPendingEtrn()
-      .then(setItems)
-      .catch(() => setItems([]))
+      .then((list) => {
+        setListError(null);
+        setItems(list);
+      })
+      .catch((e) => {
+        setListError(e instanceof Error ? e.message : 'Не удалось загрузить накладные');
+      })
       .finally(() => setLoading(false));
-  }, []);
+  };
+
+  useEffect(load, []);
 
   // Пустая очередь — не повод занимать место на главной: подписывать нечего.
-  if (loading || items.length === 0) return null;
+  // FRONTEND-ONLY: сбой не прячем — иначе кажется, что подписывать нечего.
+  if (loading && items.length === 0 && !listError) return null;
+
+  if (listError && items.length === 0) {
+    return (
+      <WarehouseFetchError
+        title="Не удалось загрузить накладные на подпись"
+        description={listError}
+        onRetry={load}
+      />
+    );
+  }
+
+  if (items.length === 0) return null;
 
   return (
     <div className="space-y-2">

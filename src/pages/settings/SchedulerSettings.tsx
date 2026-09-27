@@ -4,7 +4,6 @@ import { usePolling } from '@/hooks/usePolling';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import Icon from '@/components/ui/icon';
-import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/context/AuthContext';
 import SchedulerJobCard from '@/components/crm/scheduler/SchedulerJobCard';
 import MarketplaceReconcile from '@/components/crm/scheduler/MarketplaceReconcile';
@@ -13,6 +12,7 @@ import {
   type SchedulerGroup,
   type SchedulerJob,
 } from '@/lib/schedulerStatusApi';
+import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
 
 /**
  * Планировщик — состояние фоновых заданий.
@@ -30,7 +30,6 @@ import {
  * приём заказов, ловля отмен или служебная работа склада.
  */
 const SchedulerSettings = () => {
-  const { toast } = useToast();
   const { user } = useAuth();
   const isAdmin = user?.role === 'admin';
 
@@ -41,25 +40,23 @@ const SchedulerSettings = () => {
   const [tooOften, setTooOften] = useState(0);
   const [extraPerMonth, setExtraPerMonth] = useState(0);
   const [loading, setLoading] = useState(true);
+  const [listError, setListError] = useState<string | null>(null);
 
   const load = () => {
     setLoading(true);
     // Передаём себя: ссылки с ключом запуска сервер отдаёт только администратору.
     fetchSchedulerStatus(user?.id)
       .then((d) => {
+        setListError(null);
         setJobs(d.items);
         setGroups(d.groups);
         setProblems(d.problems);
         setTooOften(d.tooOftenCount ?? 0);
         setExtraPerMonth(d.extraPerMonthTotal ?? 0);
       })
-      .catch((e) =>
-        toast({
-          title: 'Не удалось загрузить',
-          description: e instanceof Error ? e.message : undefined,
-          variant: 'destructive',
-        }),
-      )
+      .catch((e) => {
+        setListError(e instanceof Error ? e.message : 'Не удалось загрузить планировщик');
+      })
       .finally(() => setLoading(false));
   };
 
@@ -102,8 +99,16 @@ const SchedulerSettings = () => {
           </Button>
         </div>
 
+        {listError && (
+          <WarehouseFetchError
+            title="Не удалось загрузить планировщик"
+            description={listError}
+            onRetry={load}
+          />
+        )}
+
         {/* Общее состояние: одной строкой, чтобы не вчитываться в карточки. */}
-        {!loading && (
+        {!loading && !listError && (
           <div
             className={`flex items-center gap-3 rounded-lg border px-4 py-3 ${
               problems === 0 ? 'border-emerald-300 bg-emerald-50' : 'border-amber-300 bg-amber-50'

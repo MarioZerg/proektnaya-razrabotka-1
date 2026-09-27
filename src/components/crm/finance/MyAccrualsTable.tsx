@@ -20,11 +20,13 @@ import { useTablePage } from '@/components/crm/finance/useTablePage';
 interface MyAccrualsTableProps {
   accruals: MyAccrual[];
   loading: boolean;
+  /** FRONTEND-ONLY: сбой GET — не писать «начислений пока нет». */
+  error?: string | null;
   /** Выбран период — пустой список значит «за эти дни ничего», а не «начислений нет». */
   filtered?: boolean;
 }
 
-const MyAccrualsTable = ({ accruals, loading, filtered }: MyAccrualsTableProps) => {
+const MyAccrualsTable = ({ accruals, loading, error = null, filtered }: MyAccrualsTableProps) => {
   const emptyText = filtered ? 'За выбранный период начислений нет' : 'Начислений пока нет';
 
   // Один и тот же набор строк для телефона (карточки) и компьютера (таблица).
@@ -34,13 +36,13 @@ const MyAccrualsTable = ({ accruals, loading, filtered }: MyAccrualsTableProps) 
     <>
     {/* Свою зарплату сотрудники смотрят в основном с телефона — там карточки. */}
     <div className="space-y-2 md:hidden">
-      {loading ? (
+      {loading && accruals.length === 0 ? (
         <div className="flex items-center gap-2 text-sm text-muted-foreground">
           <Icon name="Loader2" size={16} className="animate-spin" />
           Загрузка...
         </div>
       ) : accruals.length === 0 ? (
-        <p className="text-sm text-muted-foreground">{emptyText}</p>
+        error ? null : <p className="text-sm text-muted-foreground">{emptyText}</p>
       ) : (
         visible.map((a) => (
           <div key={a.id} className="rounded-md border border-border p-3">
@@ -102,11 +104,13 @@ const MyAccrualsTable = ({ accruals, loading, filtered }: MyAccrualsTableProps) 
               </TableCell>
             </TableRow>
           ) : accruals.length === 0 ? (
+            error ? null : (
             <TableRow>
               <TableCell colSpan={6} className="text-center text-sm text-muted-foreground">
                 {emptyText}
               </TableCell>
             </TableRow>
+            )
           ) : (
             visible.map((a) => (
               <TableRow key={a.id}>

@@ -24,6 +24,7 @@ import {
   STOCK_MEDIUM_LIMIT,
 } from '@/lib/stockLevels';
 import { useAuth } from '@/context/AuthContext';
+import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
 
 const WorkshopMaterials = () => {
   const { user } = useAuth();
@@ -31,16 +32,21 @@ const WorkshopMaterials = () => {
   const [columns, setColumns] = useState<WorkshopMaterialColumn[]>([]);
   const [activeColumn, setActiveColumn] = useState<{ workshopId: number; shiftNumber: number | null } | null>(null);
   const [loading, setLoading] = useState(true);
+  const [listError, setListError] = useState<string | null>(null);
   const [materialFreeShifts, setMaterialFreeShifts] = useState<Record<string, number[]>>({});
 
   const load = () => {
     setLoading(true);
     fetchWorkshopMaterials()
       .then((materialsResp) => {
+        setListError(null);
         setTypes(materialsResp.types);
         setColumns(materialsResp.columns);
         setActiveColumn(materialsResp.activeColumn);
         setMaterialFreeShifts(materialsResp.materialFreeShifts || {});
+      })
+      .catch((e) => {
+        setListError(e instanceof Error ? e.message : 'Не удалось загрузить остатки');
       })
       .finally(() => setLoading(false));
   };
@@ -175,13 +181,23 @@ const WorkshopMaterials = () => {
           </div>
         </div>
 
-        {loading ? (
+        {listError && (
+          <WarehouseFetchError
+            title="Не удалось загрузить остатки"
+            description={listError}
+            onRetry={load}
+          />
+        )}
+
+        {loading && types.length === 0 ? (
           <div className="flex items-center gap-2 text-sm text-muted-foreground">
             <Icon name="Loader2" size={16} className="animate-spin" />
             Загрузка...
           </div>
         ) : types.length === 0 ? (
+          listError ? null : (
           <p className="text-sm text-muted-foreground">В цехах пока нет материалов</p>
+          )
         ) : (
           <div className="space-y-4">
             {showTabs && (

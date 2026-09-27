@@ -7,6 +7,7 @@ import {
   type StaffEfficiencyData,
   type StaffEfficiencyRow,
 } from '@/lib/staffEfficiencyApi';
+import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
 
 const initials = (name: string) =>
   name
@@ -49,16 +50,27 @@ const PERIODS = [7, 30, 90];
 const StaffEfficiencyCard = () => {
   const [data, setData] = useState<StaffEfficiencyData | null>(null);
   const [loading, setLoading] = useState(true);
+  const [listError, setListError] = useState<string | null>(null);
   const [days, setDays] = useState(30);
   const [group, setGroup] = useState<GroupKey>('sewers');
   const [showReasons, setShowReasons] = useState(false);
 
-  useEffect(() => {
+  const load = () => {
     setLoading(true);
     fetchStaffEfficiency(days)
-      .then(setData)
-      .catch(() => setData(null))
+      .then((d) => {
+        setListError(null);
+        setData(d);
+      })
+      .catch((e) => {
+        setListError(e instanceof Error ? e.message : 'Не удалось загрузить эффективность');
+      })
       .finally(() => setLoading(false));
+  };
+
+  useEffect(() => {
+    load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [days]);
 
   const rows: StaffEfficiencyRow[] = data?.[group] || [];
@@ -108,13 +120,23 @@ const StaffEfficiencyCard = () => {
         </div>
       </div>
 
-      {loading ? (
+      {listError && (
+        <WarehouseFetchError
+          title="Не удалось загрузить эффективность"
+          description={listError}
+          onRetry={load}
+        />
+      )}
+
+      {loading && !data ? (
         <div className="flex items-center gap-2 py-6 text-sm text-muted-foreground">
           <Icon name="Loader2" size={16} className="animate-spin" />
           Считаем показатели...
         </div>
       ) : rows.length === 0 ? (
+        listError ? null : (
         <p className="py-6 text-sm text-muted-foreground">За выбранный период данных нет</p>
+        )
       ) : (
         <div className="overflow-hidden rounded-lg border">
           <div className="max-h-[360px] divide-y overflow-y-auto">

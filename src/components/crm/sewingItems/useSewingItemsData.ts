@@ -23,6 +23,7 @@ export const useSewingItemsData = () => {
   const [workshops, setWorkshops] = useState<Workshop[]>([]);
   const [rolls, setRolls] = useState<Roll[]>([]);
   const [loading, setLoading] = useState(true);
+  const [listError, setListError] = useState<string | null>(null);
   const [printQrCuttingEnabled, setPrintQrCuttingEnabled] = useState(true);
   // Штраф за отмену заказа из настроек цеха — показываем сотруднику в подтверждении,
   // чтобы он видел сумму ДО отмены, а не узнавал о списании из расчётки.
@@ -135,7 +136,9 @@ export const useSewingItemsData = () => {
     // чужого цеха в него не попадала — швея-гость не могла указать тесьму совсем.
     // Каждый справочник идёт сам по себе: в цехе связь моргает, и раньше единственный
     // недошедший запрос оставлял конвейер полностью пустым.
-    fetchEmployees().then(setEmployees).catch(() => {});
+    fetchEmployees().then(setEmployees).catch(() => {
+      // FRONTEND-ONLY: фильтр по сотруднику не критичен для конвейера.
+    });
     fetchMaterialsData()
       .then((materialsData) => {
         // Фильтр материалов на конвейере — это фильтр по заказам, а заказ всегда шьётся из
@@ -144,8 +147,12 @@ export const useSewingItemsData = () => {
         const fabricTypeId = materialsData.types.find((t) => t.name === 'Тюль')?.id;
         setMaterials(fabricTypeId ? materialsData.materials.filter((m) => m.typeId === fabricTypeId) : materialsData.materials);
       })
-      .catch(() => {});
-    fetchWorkshops().then(setWorkshops).catch(() => {});
+      .catch(() => {
+        // FRONTEND-ONLY: фильтр по ткани не критичен для списка заказов.
+      });
+    fetchWorkshops().then(setWorkshops).catch(() => {
+      // FRONTEND-ONLY: фильтр по цеху можно выбрать позже.
+    });
     fetchRolls(
       isProductionRole && user?.id
         ? // Роль передаём ЯВНО — ту, в которой человек сейчас в приложении.
@@ -156,7 +163,9 @@ export const useSewingItemsData = () => {
         : { status: 'in_workshop' }
     )
       .then(setRolls)
-      .catch(() => {});
+      .catch(() => {
+        // FRONTEND-ONLY: рулоны нужны в карточке заказа, не для пустого конвейера.
+      });
     // Кружок загрузки снимаем по главному запросу — списку заказов.
     //
     // Швее и закройщику просим историю ПО НИМ САМИМ. Архив закрытых заказов
@@ -168,8 +177,13 @@ export const useSewingItemsData = () => {
       isSewer || isCutter ? user?.id : undefined,
       isSewer ? 'sewer' : isCutter ? 'cutter' : undefined,
     )
-      .then(setOrders)
-      .catch(() => {})
+      .then((list) => {
+        setListError(null);
+        setOrders(list);
+      })
+      .catch((e) => {
+        setListError(e instanceof Error ? e.message : 'Не удалось загрузить заказы');
+      })
       .finally(() => setLoading(false));
   };
 
@@ -239,6 +253,7 @@ export const useSewingItemsData = () => {
     workshops,
     rolls,
     loading,
+    listError,
     load,
     printQrCuttingEnabled,
     cancelOrderPenalty,

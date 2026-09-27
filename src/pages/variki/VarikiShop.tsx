@@ -27,6 +27,7 @@ import {
   type VarikiPurchase,
 } from '@/lib/varikiApi';
 import { formatDateTime } from '@/lib/dateUtils';
+import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
 
 /**
  * Магазин вариков: сотрудник тратит игровую валюту на настоящие подарки.
@@ -82,6 +83,7 @@ const VarikiShop = () => {
   const [balance, setBalance] = useState(0);
   const [purchases, setPurchases] = useState<VarikiPurchase[]>([]);
   const [loading, setLoading] = useState(true);
+  const [listError, setListError] = useState<string | null>(null);
   const [buying, setBuying] = useState(false);
   const [confirmItem, setConfirmItem] = useState<ShopItem | null>(null);
   const [visitDate, setVisitDate] = useState('');
@@ -90,9 +92,13 @@ const VarikiShop = () => {
     setLoading(true);
     fetchShop(user?.id)
       .then((d) => {
+        setListError(null);
         setItems(d.items);
         setBalance(d.balance);
         setPurchases(d.purchases);
+      })
+      .catch((e) => {
+        setListError(e instanceof Error ? e.message : 'Не удалось загрузить магазин');
       })
       .finally(() => setLoading(false));
   };
@@ -171,7 +177,15 @@ const VarikiShop = () => {
           </div>
         </div>
 
-        {loading ? (
+        {listError && (
+          <WarehouseFetchError
+            title="Не удалось загрузить магазин"
+            description={listError}
+            onRetry={load}
+          />
+        )}
+
+        {loading && items.length === 0 ? (
           <div className="flex items-center gap-2 text-sm text-muted-foreground">
             <Icon name="Loader2" size={16} className="animate-spin" />
             Загрузка...

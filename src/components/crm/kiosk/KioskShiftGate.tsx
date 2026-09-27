@@ -9,6 +9,7 @@ import {
   type KioskShift,
   type OpenShiftWorkshop,
 } from '@/lib/kioskApi';
+import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
 
 /** Подписи и иконки должностей, в которых выходят в цех. Тексты простые: сотрудник
  * должен узнать свою работу с одного взгляда, не вчитываясь. */
@@ -50,6 +51,7 @@ const KioskShiftGate = ({
   onLogout,
 }: KioskShiftGateProps) => {
   const [workshops, setWorkshops] = useState<OpenShiftWorkshop[]>([]);
+  const [workshopsError, setWorkshopsError] = useState<string | null>(null);
   const [selectedWorkshop, setSelectedWorkshop] = useState<number | null>(
     Number(workshopId) || null
   );
@@ -65,10 +67,10 @@ const KioskShiftGate = ({
   const roleChoices = (user.allowedRoles || []).filter((r) => ROLE_LABELS[r]);
   const showRoleChoice = roleChoices.length > 1;
 
-  useEffect(() => {
-    if (shift?.isOpen) return;
+  const loadWorkshops = () => {
     fetchOpenShiftOptions()
       .then((list) => {
+        setWorkshopsError(null);
         setWorkshops(list);
         // Цех НЕ выбирается: терминал стоит в конкретном цехе, и работать с него
         // можно только в нём. Раньше на экран вываливался список всех цехов, и
@@ -86,7 +88,15 @@ const KioskShiftGate = ({
             : (shifts[0] ?? null)
         );
       })
-      .catch(() => setWorkshops([]));
+      .catch((e) => {
+        setWorkshopsError(e instanceof Error ? e.message : 'Не удалось загрузить цеха');
+      });
+  };
+
+  useEffect(() => {
+    if (shift?.isOpen) return;
+    loadWorkshops();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [shift?.isOpen, workshopId, user.shiftFromCode]);
 
   const currentWorkshop = workshops.find((w) => w.id === selectedWorkshop);
@@ -163,7 +173,15 @@ const KioskShiftGate = ({
           </div>
         )}
 
-        {showRoleChoice && (
+            {workshopsError && (
+              <WarehouseFetchError
+                title="Не удалось загрузить цеха"
+                description={workshopsError}
+                onRetry={loadWorkshops}
+              />
+            )}
+
+            {showRoleChoice && (
               <div className="space-y-2">
                 <p className="text-center text-base text-muted-foreground">
                   Кем работаете сегодня?
@@ -225,7 +243,7 @@ const KioskShiftGate = ({
                   showRoleChoice ? selectedRole : null
                 )
               }
-              disabled={shiftSaving}
+              disabled={shiftSaving || !!workshopsError}
             >
               <Icon
                 name={shiftSaving ? 'Loader2' : 'Play'}

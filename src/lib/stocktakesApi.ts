@@ -1,5 +1,12 @@
 const STOCKTAKES_URL = 'https://functions.poehali.dev/a737392b-5582-4cfd-ba50-185a19b73ee9';
 
+/**
+ * Клиент инвентаризации склада.
+ *
+ * POEHALI: живая функция stocktakes. Новые статусы и action — сначала там.
+ * FRONTEND-ONLY: звук скана, выбор полки, ошибка загрузки списка.
+ */
+
 /** Одна вещь в отчёте инвентаризации. */
 export interface StocktakeItem {
   goodsWarehouseId: number | null;

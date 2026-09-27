@@ -32,14 +32,22 @@ const DocsCountdownBanner = () => {
   const [status, setStatus] = useState<DocsStatus | null>(null);
   const [reason, setReason] = useState<string | null>(null);
 
-  useEffect(() => {
+  const load = () => {
     if (!user?.id) return;
     fetchPersonalData(user.id, user.id)
       .then((d) => {
         setStatus(d.docsStatus);
         setReason(d.docsRejectedReason);
       })
-      .catch(() => setStatus(null));
+      .catch(() => {
+        // FRONTEND-ONLY: сбой не обнуляет срок — иначе активный счётчик исчезнет
+        // из шапки, как будто документы уже сданы.
+      });
+  };
+
+  useEffect(() => {
+    load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id]);
 
   // Проверено, срок не назначен или человек уже заблокирован (там своя заслонка) —

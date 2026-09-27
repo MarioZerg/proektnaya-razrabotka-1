@@ -14,6 +14,7 @@ import type { Roll } from '@/lib/rollsApi';
 import { hangerLabel, type Hanger } from '@/lib/hangersApi';
 import { isOrderCancelled } from '@/components/crm/sewingItems/sewingItemsShared';
 import { formatQuantity } from '@/lib/formatQuantity';
+import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
 
 interface CutterActionsCardProps {
   selectedOrder: Order;
@@ -25,6 +26,8 @@ interface CutterActionsCardProps {
   selectedRollId: string;
   setSelectedRollId: (value: string) => void;
   hangers: Hanger[];
+  hangersError?: string | null;
+  onRetryHangers?: () => void;
   selectedHanger: string;
   setSelectedHanger: (value: string) => void;
   onCut: (rollId?: number, hangerNumber?: number) => void;
@@ -44,6 +47,8 @@ const CutterActionsCard = ({
   selectedRollId,
   setSelectedRollId,
   hangers,
+  hangersError,
+  onRetryHangers,
   selectedHanger,
   setSelectedHanger,
   onCut,
@@ -146,6 +151,13 @@ const CutterActionsCard = ({
 
         <div className="w-40 space-y-1.5">
           <Label>Вешалка</Label>
+          {hangersError && hangers.length === 0 ? (
+            <WarehouseFetchError
+              title="Не удалось загрузить вешалки"
+              description={hangersError}
+              onRetry={onRetryHangers || (() => {})}
+            />
+          ) : (
           <Select value={selectedHanger} onValueChange={setSelectedHanger} disabled={cutting || isAlreadyCut}>
             <SelectTrigger>
               <SelectValue placeholder="Выберите вешалку" />
@@ -162,6 +174,7 @@ const CutterActionsCard = ({
               )}
             </SelectContent>
           </Select>
+          )}
         </div>
 
         <Button

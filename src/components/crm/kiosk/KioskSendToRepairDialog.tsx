@@ -16,6 +16,7 @@ import {
   sendToRepair,
   type RepairReason,
 } from '@/lib/repairFabricApi';
+import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
 
 interface KioskSendToRepairDialogProps {
   open: boolean;
@@ -67,14 +68,27 @@ const KioskSendToRepairDialog = ({
   const { user } = useAuth();
   const [saving, setSaving] = useState(false);
   const [reasons, setReasons] = useState<RepairReason[]>([]);
+  const [reasonsError, setReasonsError] = useState<string | null>(null);
+  const [reasonsLoading, setReasonsLoading] = useState(true);
   const [chosen, setChosen] = useState<RepairReason | null>(null);
   /** Своя формулировка — нужна только для «Другое». */
   const [customReason, setCustomReason] = useState('');
 
-  useEffect(() => {
+  const loadReasons = () => {
+    setReasonsLoading(true);
     fetchRepairReasons()
-      .then((r) => setReasons(r.reasons))
-      .catch(() => setReasons([]));
+      .then((r) => {
+        setReasonsError(null);
+        setReasons(r.reasons);
+      })
+      .catch((e) => {
+        setReasonsError(e instanceof Error ? e.message : 'Не удалось загрузить причины');
+      })
+      .finally(() => setReasonsLoading(false));
+  };
+
+  useEffect(() => {
+    loadReasons();
   }, []);
 
   // Каждая вещь — свой разбор. Причина от предыдущей не должна переноситься:
@@ -186,11 +200,19 @@ const KioskSendToRepairDialog = ({
               </span>
             </p>
 
-            {groups.length === 0 ? (
+            {reasonsError ? (
+              <WarehouseFetchError
+                title="Не удалось загрузить причины"
+                description={reasonsError}
+                onRetry={loadReasons}
+              />
+            ) : reasonsLoading && groups.length === 0 ? (
               <p className="flex items-center gap-2 text-base text-muted-foreground">
                 <Icon name="Loader2" size={18} className="animate-spin" />
                 Загружаем причины…
               </p>
+            ) : groups.length === 0 ? (
+              <p className="text-base text-muted-foreground">Причины не найдены</p>
             ) : (
               groups.map((g) => (
                 <div key={g.name} className="space-y-2">

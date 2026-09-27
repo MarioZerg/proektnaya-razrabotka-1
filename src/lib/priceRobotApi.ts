@@ -2,6 +2,8 @@ import func2url from '../../backend/func2url.json';
 
 const URL = (func2url as Record<string, string>).price_robot;
 
+/** POEHALI: робот цен. FRONTEND-ONLY: сбой GET не писать как «карточек нет / поднимать нечего». */
+
 export type RobotMarketplace = 'ozon' | 'wildberries' | 'yandex_market';
 
 /** Карточка витрины: из каталога владелец набирает, что поднимать. */

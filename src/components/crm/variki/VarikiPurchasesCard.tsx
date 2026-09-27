@@ -11,6 +11,7 @@ import {
   type VarikiPurchase,
 } from '@/lib/varikiApi';
 import { formatDateTime } from '@/lib/dateUtils';
+import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
 
 /**
  * Покупки за варики — блок на панели администратора.
@@ -33,6 +34,7 @@ const VarikiPurchasesCard = () => {
   const { user } = useAuth();
 
   const [items, setItems] = useState<VarikiPurchase[]>([]);
+  const [listError, setListError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<number | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [targetId, setTargetId] = useState<number | null>(null);
@@ -40,8 +42,13 @@ const VarikiPurchasesCard = () => {
   const load = () => {
     if (!user?.id) return;
     fetchAllPurchases(user.id)
-      .then((d) => setItems(d.purchases.filter((p) => p.status === 'pending')))
-      .catch(() => setItems([]));
+      .then((d) => {
+        setListError(null);
+        setItems(d.purchases.filter((p) => p.status === 'pending'));
+      })
+      .catch((e) => {
+        setListError(e instanceof Error ? e.message : 'Не удалось загрузить покупки');
+      });
   };
 
   useEffect(() => {
@@ -112,6 +119,16 @@ const VarikiPurchasesCard = () => {
       setBusyId(null);
     }
   };
+
+  if (listError && items.length === 0) {
+    return (
+      <WarehouseFetchError
+        title="Не удалось загрузить покупки за варики"
+        description={listError}
+        onRetry={load}
+      />
+    );
+  }
 
   if (items.length === 0) return null;
 

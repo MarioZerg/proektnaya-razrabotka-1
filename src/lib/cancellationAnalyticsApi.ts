@@ -1,5 +1,7 @@
 const ANALYTICS_URL = 'https://functions.poehali.dev/89778b19-288d-4b45-a9bb-e1e80ac0b285';
 
+/** POEHALI: отчёт по отменам. FRONTEND-ONLY: сбой GET не писать как «отмен нет». */
+
 /** Покупатель (предположительно) и его поведение за период. */
 export interface CancelledOrder {
   /**

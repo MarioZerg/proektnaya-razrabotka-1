@@ -10,6 +10,8 @@ interface RobotTabPanelProps {
   robot: RobotStatus | null;
   /** Советы по ценам этой площадки; null — ещё считаются. */
   advice: PriceAdvice[] | null;
+  adviceError?: string | null;
+  onRetryAdvice?: () => void;
   busy: boolean;
   onRaise: (
     step: number,
@@ -29,6 +31,8 @@ interface RobotTabPanelProps {
 const RobotTabPanel = ({
   robot,
   advice,
+  adviceError,
+  onRetryAdvice,
   busy,
   onRaise,
   moveProgress,
@@ -75,6 +79,8 @@ const RobotTabPanel = ({
 
       <RobotAdviceCard
         advice={advice}
+        adviceError={adviceError}
+        onRetryAdvice={onRetryAdvice}
         onlyAdvice={onlyAdvice}
         onOnlyAdviceChange={setOnlyAdvice}
       />

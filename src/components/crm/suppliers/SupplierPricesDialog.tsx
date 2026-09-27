@@ -31,6 +31,7 @@ import {
   type Supplier,
 } from '@/lib/suppliersApi';
 import { fetchMaterialsData, type Material } from '@/lib/materialsApi';
+import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
 
 interface SupplierPricesDialogProps {
   supplier: Supplier | null;
@@ -56,16 +57,18 @@ const SupplierPricesDialog = ({ supplier, onClose, onSaved }: SupplierPricesDial
   const [materials, setMaterials] = useState<Material[]>([]);
   const [rows, setRows] = useState<Record<number, PriceRow>>({});
   const [loading, setLoading] = useState(false);
+  const [listError, setListError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
   // Курс поставщика — по нему сразу показываем, во что превратится валютная цена.
   const rate = supplier?.exchangeRate ?? null;
 
-  useEffect(() => {
+  const load = () => {
     if (!supplier) return;
     setLoading(true);
     fetchMaterialsData()
       .then(({ materials: list }) => {
+        setListError(null);
         const active = list.filter((m) => m.status === 'active');
         setMaterials(active);
         // Подставляем уже сохранённые цены, остальным — валюту поставщика по умолчанию.
@@ -79,8 +82,15 @@ const SupplierPricesDialog = ({ supplier, onClose, onSaved }: SupplierPricesDial
         }
         setRows(existing);
       })
-      .catch(() => setMaterials([]))
+      .catch((e) => {
+        setListError(e instanceof Error ? e.message : 'Не удалось загрузить материалы');
+      })
       .finally(() => setLoading(false));
+  };
+
+  useEffect(() => {
+    load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [supplier]);
 
   const handleSave = async () => {
@@ -147,11 +157,17 @@ const SupplierPricesDialog = ({ supplier, onClose, onSaved }: SupplierPricesDial
           </p>
         ) : null}
 
-        {loading ? (
+        {loading && materials.length === 0 ? (
           <div className="flex items-center gap-2 py-6 text-sm text-muted-foreground">
             <Icon name="Loader2" size={16} className="animate-spin" />
             Загрузка материалов…
           </div>
+        ) : listError && materials.length === 0 ? (
+          <WarehouseFetchError
+            title="Не удалось загрузить материалы"
+            description={listError}
+            onRetry={load}
+          />
         ) : (
           <div className="max-h-[50vh] overflow-y-auto rounded-md border border-border">
             <Table>

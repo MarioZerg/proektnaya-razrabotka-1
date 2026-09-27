@@ -15,6 +15,7 @@ import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/context/AuthContext';
 import { restoreLostGoods } from '@/lib/goodsWarehouseApi';
 import { fetchShelves, type Shelf } from '@/lib/shelvesApi';
+import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
 
 interface RestoreLostDialogProps {
   open: boolean;
@@ -51,15 +52,25 @@ const RestoreLostDialog = ({
   const { toast } = useToast();
   const { user } = useAuth();
   const [shelves, setShelves] = useState<Shelf[]>([]);
+  const [shelvesError, setShelvesError] = useState<string | null>(null);
   const [shelfId, setShelfId] = useState<string>('');
   const [note, setNote] = useState('');
   const [saving, setSaving] = useState(false);
 
+  const loadShelves = () => {
+    fetchShelves()
+      .then((list) => {
+        setShelvesError(null);
+        setShelves(list);
+      })
+      .catch((e) => {
+        setShelvesError(e instanceof Error ? e.message : 'Не удалось загрузить полки');
+      });
+  };
+
   useEffect(() => {
     if (!open) return;
-    fetchShelves()
-      .then(setShelves)
-      .catch(() => setShelves([]));
+    loadShelves();
   }, [open]);
 
   const handleRestore = async () => {
@@ -132,6 +143,13 @@ const RestoreLostDialog = ({
 
           <div className="space-y-1.5">
             <Label>Полка</Label>
+            {shelvesError ? (
+              <WarehouseFetchError
+                title="Не удалось загрузить полки"
+                description={shelvesError}
+                onRetry={loadShelves}
+              />
+            ) : (
             <Select value={shelfId} onValueChange={setShelfId}>
               <SelectTrigger>
                 <SelectValue
@@ -150,6 +168,7 @@ const RestoreLostDialog = ({
                 ))}
               </SelectContent>
             </Select>
+            )}
             <p className="text-xs text-muted-foreground">
               Не выбирать — вещь останется на прежней полке
             </p>

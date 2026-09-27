@@ -10,6 +10,7 @@ import SuppliesFilters from '@/components/crm/shipments/SuppliesFilters';
 import SuppliesTable from '@/components/crm/shipments/SuppliesTable';
 import ReviewSupplyDialog from '@/components/crm/shipments/ReviewSupplyDialog';
 import LogisticsDialog from '@/components/crm/shipments/LogisticsDialog';
+import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
 
 interface FromSupplierContentProps {
   isAdmin: boolean;
@@ -19,6 +20,7 @@ interface FromSupplierContentProps {
     suppliers: Supplier[];
     materials: Material[];
     loading: boolean;
+    listError: string | null;
     statusFilter: string;
     setStatusFilter: Dispatch<SetStateAction<string>>;
     supplierFilter: string;
@@ -134,8 +136,17 @@ const FromSupplierContent = ({
         onReset={list.resetFilters}
       />
 
+      {list.listError && (
+        <WarehouseFetchError
+          title="Не удалось загрузить приёмки"
+          description={list.listError}
+          onRetry={list.load}
+        />
+      )}
+
       <SuppliesTable
         loading={list.loading}
+        error={list.listError}
         shipments={list.shipments}
         isAdmin={isAdmin}
         canEditPending={canEditPending}

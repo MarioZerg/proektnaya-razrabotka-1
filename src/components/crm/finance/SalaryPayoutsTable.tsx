@@ -17,10 +17,11 @@ import { useTablePage } from '@/components/crm/finance/useTablePage';
 interface SalaryPayoutsTableProps {
   payouts: SalaryPayout[];
   loading: boolean;
+  error?: string | null;
   onDelete: (id: number) => void;
 }
 
-const SalaryPayoutsTable = ({ payouts, loading, onDelete }: SalaryPayoutsTableProps) => {
+const SalaryPayoutsTable = ({ payouts, loading, error = null, onDelete }: SalaryPayoutsTableProps) => {
   const { visible, page, setPage, totalPages, total } = useTablePage(payouts);
 
   return (
@@ -41,7 +42,7 @@ const SalaryPayoutsTable = ({ payouts, loading, onDelete }: SalaryPayoutsTablePr
               </TableRow>
             </TableHeader>
             <TableBody>
-              {loading ? (
+              {loading && payouts.length === 0 ? (
                 <TableRow>
                   <TableCell colSpan={5} className="text-center text-sm text-muted-foreground">
                     <Icon name="Loader2" size={16} className="mr-2 inline animate-spin" />
@@ -49,11 +50,13 @@ const SalaryPayoutsTable = ({ payouts, loading, onDelete }: SalaryPayoutsTablePr
                   </TableCell>
                 </TableRow>
               ) : payouts.length === 0 ? (
+                error ? null : (
                 <TableRow>
                   <TableCell colSpan={5} className="text-center text-sm text-muted-foreground">
                     Выплат пока не было
                   </TableCell>
                 </TableRow>
+                )
               ) : (
                 visible.map((p) => (
                   <TableRow key={p.id}>

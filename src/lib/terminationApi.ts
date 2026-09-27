@@ -2,6 +2,8 @@ import func2url from '../../backend/func2url.json';
 
 const URL = (func2url as Record<string, string>).termination;
 
+/** POEHALI: расторжение. FRONTEND-ONLY: сбой GET не прятать как «заявлений нет». */
+
 /**
  * Расторжение договора ГПХ по инициативе сотрудника.
  *

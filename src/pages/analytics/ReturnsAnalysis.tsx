@@ -23,6 +23,7 @@ import {
   type ReturnsBySewer,
   type ReturnReasonStat,
 } from '@/lib/marketplaceReturnsApi';
+import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
 
 /** Процент возвратов, выше которого стоит разбираться с качеством пошива. */
 const HIGH_RETURN_RATE = 5;
@@ -35,15 +36,25 @@ const ReturnsAnalysis = () => {
   const [reasons, setReasons] = useState<ReturnReasonStat[]>([]);
   const [days, setDays] = useState('90');
   const [loading, setLoading] = useState(true);
+  const [listError, setListError] = useState<string | null>(null);
 
-  useEffect(() => {
+  const load = () => {
     setLoading(true);
     fetchReturnsReport(Number(days))
       .then((data) => {
+        setListError(null);
         setBySewer(data.bySewer);
         setReasons(data.reasons);
       })
+      .catch((e) => {
+        setListError(e instanceof Error ? e.message : 'Не удалось загрузить отчёт');
+      })
       .finally(() => setLoading(false));
+  };
+
+  useEffect(() => {
+    load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [days]);
 
   const totalReturns = bySewer.reduce((sum, r) => sum + r.total, 0);
@@ -89,7 +100,15 @@ const ReturnsAnalysis = () => {
           </Card>
         </div>
 
-        {loading ? (
+        {listError && (
+          <WarehouseFetchError
+            title="Не удалось загрузить отчёт"
+            description={listError}
+            onRetry={load}
+          />
+        )}
+
+        {loading && bySewer.length === 0 && reasons.length === 0 ? (
           <div className="flex items-center gap-2 text-sm text-muted-foreground">
             <Icon name="Loader2" size={16} className="animate-spin" />
             Загрузка...
@@ -102,9 +121,11 @@ const ReturnsAnalysis = () => {
               </CardHeader>
               <CardContent className="p-0">
                 {bySewer.length === 0 ? (
+                  listError ? null : (
                   <p className="p-4 text-sm text-muted-foreground">
                     За выбранный период возвратов не было
                   </p>
+                  )
                 ) : (
                   <Table>
                     <TableHeader>

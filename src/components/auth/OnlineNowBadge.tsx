@@ -11,7 +11,12 @@ const OnlineNowBadge = () => {
   const [data, setData] = useState<OnlineNow | null>(null);
 
   const load = useCallback(
-    () => fetchOnlineNow().then(setData).catch(() => setData(null)),
+    () =>
+      fetchOnlineNow()
+        .then(setData)
+        .catch(() => {
+          // FRONTEND-ONLY: не обнуляем счётчик — иначе на входе «сейчас никого».
+        }),
     [],
   );
 

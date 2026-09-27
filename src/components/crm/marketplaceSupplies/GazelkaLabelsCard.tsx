@@ -6,6 +6,7 @@ import { useToast } from '@/hooks/use-toast';
 import { fetchGazelkaPlans, type GazelkaPlan } from '@/lib/gazelkaApi';
 import { missingLabelFields } from '@/lib/gazelkaPackingLabel';
 import type { SupplyDetail } from '@/lib/marketplaceSuppliesApi';
+import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
 
 interface GazelkaLabelsCardProps {
   supply: SupplyDetail;
@@ -30,20 +31,41 @@ const GazelkaLabelsCard = ({ supply }: GazelkaLabelsCardProps) => {
   const { toast } = useToast();
   const [plan, setPlan] = useState<GazelkaPlan | null>(null);
   const [loading, setLoading] = useState(false);
+  const [listError, setListError] = useState<string | null>(null);
   const [printing, setPrinting] = useState(false);
+
+  const load = () => {
+    if (!supply.gazelkaPlanId) return;
+    setLoading(true);
+    fetchGazelkaPlans()
+      .then((plans) => {
+        setListError(null);
+        setPlan(plans.find((p) => p.id === supply.gazelkaPlanId) || null);
+      })
+      .catch((e) => {
+        setListError(e instanceof Error ? e.message : 'Не удалось загрузить заявку Газельки');
+      })
+      .finally(() => setLoading(false));
+  };
 
   // Данные заявки тянем только когда она вообще привязана: лишний поход
   // во внешний сервис на каждом открытии экрана сборки ни к чему.
   useEffect(() => {
-    if (!supply.gazelkaPlanId) return;
-    setLoading(true);
-    fetchGazelkaPlans()
-      .then((plans) => setPlan(plans.find((p) => p.id === supply.gazelkaPlanId) || null))
-      .catch(() => setPlan(null))
-      .finally(() => setLoading(false));
+    load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [supply.gazelkaPlanId]);
 
   if (!supply.gazelkaPlanId) return null;
+
+  if (listError && !plan) {
+    return (
+      <WarehouseFetchError
+        title="Не удалось загрузить заявку Газельки"
+        description={listError}
+        onRetry={load}
+      />
+    );
+  }
 
   const boxesCount = supply.boxes.length || plan?.boxes || 1;
 

@@ -6,6 +6,7 @@ import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import Icon from '@/components/ui/icon';
 import KioskSendToRepairDialog from '@/components/crm/kiosk/KioskSendToRepairDialog';
+import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
 import { useToast } from '@/hooks/use-toast';
 import { printStorageSticker } from '@/lib/printStorageSticker';
 import { printDisposeSticker } from '@/lib/printDisposeSticker';
@@ -60,6 +61,7 @@ const KioskRepackScreen = ({ actorId, actorName, workshopId }: KioskRepackScreen
   const [scanError, setScanError] = useState<string | null>(null);
   /** Сколько вещей ждёт перепаковки в цехе — объём работы без вывода списка. */
   const [waiting, setWaiting] = useState(0);
+  const [countError, setCountError] = useState<string | null>(null);
   /** Сколько вещей упаковщица закрыла за эту смену на экране. */
   const [doneCount, setDoneCount] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -67,7 +69,14 @@ const KioskRepackScreen = ({ actorId, actorName, workshopId }: KioskRepackScreen
   const focusInput = () => setTimeout(() => inputRef.current?.focus(), 0);
 
   const loadCount = () => {
-    fetchRepackCount(workshopId).then((r) => setWaiting(r.mineCount + r.freeCount));
+    fetchRepackCount(workshopId)
+      .then((r) => {
+        setCountError(null);
+        setWaiting(r.mineCount + r.freeCount);
+      })
+      .catch((e) => {
+        setCountError(e instanceof Error ? e.message : 'Не удалось узнать очередь');
+      });
   };
 
   useEffect(() => {
@@ -179,6 +188,13 @@ const KioskRepackScreen = ({ actorId, actorName, workshopId }: KioskRepackScreen
     <div className="space-y-4">
       {/* Сканер и счётчики. Пока вещь на экране — поле заблокировано: сначала
           закончи с ней, потом бери следующую. */}
+      {countError && (
+        <WarehouseFetchError
+          title="Не удалось узнать очередь перепаковки"
+          description={countError}
+          onRetry={loadCount}
+        />
+      )}
       <div className="space-y-3 rounded-xl border-2 border-violet-300 bg-violet-50 p-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <p className="text-xl font-bold text-violet-900">
@@ -186,7 +202,7 @@ const KioskRepackScreen = ({ actorId, actorName, workshopId }: KioskRepackScreen
           </p>
           <div className="flex gap-2">
             <span className="rounded-lg bg-violet-600 px-4 py-2 text-xl font-bold text-white">
-              {waiting} шт. ждёт
+              {countError ? 'очередь неизвестна' : `${waiting} шт. ждёт`}
             </span>
             {doneCount > 0 && (
               <span className="rounded-lg border border-emerald-400 bg-white px-4 py-2 text-xl font-bold text-emerald-700">
@@ -294,7 +310,9 @@ const KioskRepackScreen = ({ actorId, actorName, workshopId }: KioskRepackScreen
           <Icon name="ScanLine" size={72} className="text-muted-foreground" />
           <p className="text-center text-2xl font-semibold">Отсканируйте вещь из тележки</p>
           <p className="max-w-md text-center text-muted-foreground">
-            {waiting > 0
+            {countError
+              ? 'Очередь не загрузилась — сканировать можно, список вещей на экране не показываем'
+              : waiting > 0
               ? `В цехе ждёт перепаковки ${waiting} шт. Берите вещь и подносите к сканеру`
               : 'Сюда попадают возвраты, которые кладовщик отправил переупаковать'}
           </p>

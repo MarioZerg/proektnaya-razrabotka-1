@@ -11,6 +11,7 @@ import {
 } from '@/lib/marketplaceIntegrationsApi';
 import { marketplaceIntegrationsConfig } from '@/lib/marketplaceIntegrationsConfig';
 import MarketplaceIntegrationCard from '@/components/crm/settings/MarketplaceIntegrationCard';
+import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
 
 const MarketplaceIntegrationsSettings = () => {
   const { toast } = useToast();
@@ -20,15 +21,20 @@ const MarketplaceIntegrationsSettings = () => {
   // Какой магазин настраиваем сейчас. Кабинеты разные, производство общее.
   const [shopId, setShopId] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
+  const [listError, setListError] = useState<string | null>(null);
   const [savingCode, setSavingCode] = useState<string | null>(null);
 
   const load = () => {
     setLoading(true);
     fetchMarketplaceIntegrations()
       .then(({ integrations: list, shops: shopList }) => {
+        setListError(null);
         setIntegrations(list);
         setShops(shopList);
         setShopId((prev) => prev ?? shopList[0]?.id ?? null);
+      })
+      .catch((e) => {
+        setListError(e instanceof Error ? e.message : 'Не удалось загрузить интеграции');
       })
       .finally(() => setLoading(false));
   };
@@ -80,7 +86,15 @@ const MarketplaceIntegrationsSettings = () => {
           </p>
         </div>
 
-        {loading ? (
+        {listError && (
+          <WarehouseFetchError
+            title="Не удалось загрузить интеграции"
+            description={listError}
+            onRetry={load}
+          />
+        )}
+
+        {loading && integrations.length === 0 && shops.length === 0 ? (
           <div className="flex items-center gap-2 text-sm text-muted-foreground">
             <Icon name="Loader2" size={16} className="animate-spin" />
             Загрузка...

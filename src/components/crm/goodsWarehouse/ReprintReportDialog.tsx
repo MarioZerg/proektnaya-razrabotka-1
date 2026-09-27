@@ -18,6 +18,7 @@ import { Button } from '@/components/ui/button';
 import Icon from '@/components/ui/icon';
 import { formatDateTime } from '@/lib/dateUtils';
 import { fetchReprintReport, type ReprintReport } from '@/lib/kioskApi';
+import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
 
 interface ReprintReportDialogProps {
   open: boolean;
@@ -36,14 +37,25 @@ const ReprintReportDialog = ({ open, onOpenChange }: ReprintReportDialogProps) =
   const [days, setDays] = useState(30);
   const [report, setReport] = useState<ReprintReport | null>(null);
   const [loading, setLoading] = useState(false);
+  const [listError, setListError] = useState<string | null>(null);
 
-  useEffect(() => {
+  const load = () => {
     if (!open) return;
     setLoading(true);
     fetchReprintReport(days)
-      .then(setReport)
-      .catch(() => setReport(null))
+      .then((d) => {
+        setListError(null);
+        setReport(d);
+      })
+      .catch((e) => {
+        setListError(e instanceof Error ? e.message : 'Не удалось загрузить отчёт');
+      })
       .finally(() => setLoading(false));
+  };
+
+  useEffect(() => {
+    load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, days]);
 
   return (
@@ -71,11 +83,17 @@ const ReprintReportDialog = ({ open, onOpenChange }: ReprintReportDialogProps) =
             ))}
           </div>
 
-          {loading ? (
+          {loading && !report ? (
             <div className="flex items-center gap-2 py-6 text-sm text-muted-foreground">
               <Icon name="Loader2" size={16} className="animate-spin" />
               Загрузка...
             </div>
+          ) : listError && !report ? (
+            <WarehouseFetchError
+              title="Не удалось загрузить отчёт по стикерам"
+              description={listError}
+              onRetry={load}
+            />
           ) : !report || report.total === 0 ? (
             <div className="py-8 text-center">
               <Icon name="CircleCheck" size={44} className="mx-auto text-emerald-600" />

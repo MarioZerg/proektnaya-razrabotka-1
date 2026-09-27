@@ -19,6 +19,7 @@ import {
   type PendingDefect,
 } from '@/lib/kioskApi';
 import { roleLabels, formatQty } from './defectShared';
+import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
 
 /**
  * Приёмка брака сканером.
@@ -36,6 +37,7 @@ const DefectScanTab = () => {
   const { user } = useAuth();
 
   const [pending, setPending] = useState<PendingDefect[]>([]);
+  const [listError, setListError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [lastReceived, setLastReceived] = useState<string[]>([]);
   // Кусок, который кладовщик не нашёл: спрашиваем комментарий перед отправкой.
@@ -47,8 +49,13 @@ const DefectScanTab = () => {
 
   const load = () => {
     fetchPendingDefects()
-      .then(setPending)
-      .catch(() => setPending([]));
+      .then((list) => {
+        setListError(null);
+        setPending(list);
+      })
+      .catch((e) => {
+        setListError(e instanceof Error ? e.message : 'Не удалось загрузить очередь брака');
+      });
   };
 
   useEffect(load, []);
@@ -170,11 +177,21 @@ const DefectScanTab = () => {
         </Badge>
       </div>
 
+      {listError && (
+        <WarehouseFetchError
+          title="Не удалось загрузить очередь брака"
+          description={listError}
+          onRetry={load}
+        />
+      )}
+
       {pending.length === 0 ? (
+        listError ? null : (
         <div className="flex flex-col items-center gap-3 py-10">
           <Icon name="PackageCheck" size={48} className="text-muted-foreground" />
           <p className="text-base font-semibold">Весь брак принят на склад</p>
         </div>
+        )
       ) : (
         <div className="space-y-2">
           {pending.map((p) => (

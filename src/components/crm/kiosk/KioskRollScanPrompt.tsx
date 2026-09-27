@@ -1,6 +1,7 @@
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import Icon from '@/components/ui/icon';
+import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
 
 /** «1 рулон», «22 рулона», «5 рулонов» — иначе на экране висит «21 рулонов». */
 const rollWord = (n: number) => {
@@ -14,6 +15,9 @@ const rollWord = (n: number) => {
 
 interface KioskRollScanPromptProps {
   loading: boolean;
+  /** FRONTEND-ONLY: сбой GET рулонов — не писать «в смене 0 рулонов». */
+  error?: string | null;
+  onRetry?: () => void;
   /** Сколько рулонов «своего» типа в смене — показываем под приглашением. */
   rollsCount: number;
   /** Номер отсканированного рулона, которого нет в смене. */
@@ -26,6 +30,8 @@ interface KioskRollScanPromptProps {
  * был главным экраном, закройщик по привычке тыкал в номера и ошибался рулоном. */
 const KioskRollScanPrompt = ({
   loading,
+  error = null,
+  onRetry,
   rollsCount,
   notFound,
   onOpenList,
@@ -48,10 +54,17 @@ const KioskRollScanPrompt = ({
             Загружаю рулоны смены…
           </div>
         )}
-        {!loading && (
+        {!loading && !error && (
           <p className="text-xl text-muted-foreground">
             В вашей смене {rollsCount} {rollWord(rollsCount)}
           </p>
+        )}
+        {!loading && error && onRetry && (
+          <WarehouseFetchError
+            title="Не удалось загрузить рулоны смены"
+            description={error}
+            onRetry={onRetry}
+          />
         )}
       </CardContent>
     </Card>

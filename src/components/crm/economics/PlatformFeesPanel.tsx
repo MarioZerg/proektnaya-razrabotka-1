@@ -3,6 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import Icon from '@/components/ui/icon';
 import { fetchPlatformFees, type FeesMonth } from '@/lib/unitEconomicsApi';
+import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
 
 const MONTHS = [
   'январь', 'февраль', 'март', 'апрель', 'май', 'июнь',
@@ -43,21 +44,30 @@ const CATEGORIES: Record<string, { label: string; icon: string }> = {
 const PlatformFeesPanel = ({ marketplace }: { marketplace: string }) => {
   const [data, setData] = useState<FeesMonth[]>([]);
   const [loading, setLoading] = useState(true);
+  const [listError, setListError] = useState<string | null>(null);
   const [openMonth, setOpenMonth] = useState<string | null>(null);
 
-  useEffect(() => {
+  const load = () => {
     setLoading(true);
     fetchPlatformFees(marketplace, 6)
       .then((r) => {
+        setListError(null);
         const withData = r.filter((m) => m.items.length > 0);
         setData(withData);
         if (withData[0]) setOpenMonth(withData[0].month);
       })
-      .catch(() => setData([]))
+      .catch((e) => {
+        setListError(e instanceof Error ? e.message : 'Не удалось загрузить удержания');
+      })
       .finally(() => setLoading(false));
+  };
+
+  useEffect(() => {
+    load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [marketplace]);
 
-  if (loading) {
+  if (loading && data.length === 0) {
     return (
       <Card className="border-border shadow-none">
         <CardContent className="flex items-center gap-2 py-6 text-sm text-muted-foreground">
@@ -65,6 +75,16 @@ const PlatformFeesPanel = ({ marketplace }: { marketplace: string }) => {
           Собираю расходы площадки...
         </CardContent>
       </Card>
+    );
+  }
+
+  if (listError && data.length === 0) {
+    return (
+      <WarehouseFetchError
+        title="Не удалось загрузить удержания площадки"
+        description={listError}
+        onRetry={load}
+      />
     );
   }
 

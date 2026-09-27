@@ -20,6 +20,7 @@ import {
   reprintStorageLabel,
   type UnlabeledCandidate,
 } from '@/lib/kioskApi';
+import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
 
 const ANY = 'any';
 
@@ -35,6 +36,7 @@ interface KioskUnlabeledScreenProps {
 const KioskUnlabeledScreen = ({ actorId, actorName }: KioskUnlabeledScreenProps) => {
   const { toast } = useToast();
   const [sewers, setSewers] = useState<Array<{ id: number; name: string }>>([]);
+  const [sewersError, setSewersError] = useState<string | null>(null);
   const [sewerId, setSewerId] = useState(ANY);
   const [width, setWidth] = useState(ANY);
   const [height, setHeight] = useState(ANY);
@@ -42,10 +44,19 @@ const KioskUnlabeledScreen = ({ actorId, actorName }: KioskUnlabeledScreenProps)
   const [loading, setLoading] = useState(false);
   const [searched, setSearched] = useState(false);
 
-  useEffect(() => {
+  const loadSewers = () => {
     fetchUnlabeledSewers()
-      .then(setSewers)
-      .catch(() => setSewers([]));
+      .then((list) => {
+        setSewersError(null);
+        setSewers(list);
+      })
+      .catch((e) => {
+        setSewersError(e instanceof Error ? e.message : 'Не удалось загрузить швей');
+      });
+  };
+
+  useEffect(() => {
+    loadSewers();
   }, []);
 
   const handleSearch = async () => {
@@ -97,6 +108,14 @@ const KioskUnlabeledScreen = ({ actorId, actorName }: KioskUnlabeledScreenProps)
           </div>
         </div>
       </div>
+
+      {sewersError && (
+        <WarehouseFetchError
+          title="Не удалось загрузить список швей"
+          description={sewersError}
+          onRetry={loadSewers}
+        />
+      )}
 
       <Card className="border-border shadow-none">
         <CardContent className="space-y-4 pt-6">

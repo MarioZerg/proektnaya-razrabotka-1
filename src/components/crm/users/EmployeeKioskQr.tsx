@@ -3,6 +3,7 @@ import QRCode from 'qrcode';
 import { Button } from '@/components/ui/button';
 import Icon from '@/components/ui/icon';
 import { fetchWorkshops } from '@/lib/workshopsApi';
+import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
 
 interface EmployeeKioskQrProps {
   employeeId: number;
@@ -17,15 +18,24 @@ interface EmployeeKioskQrProps {
 const EmployeeKioskQr = ({ employeeId, fullName, shiftNumber, workshop }: EmployeeKioskQrProps) => {
   const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
   const [workshopId, setWorkshopId] = useState<number>(1);
+  const [listError, setListError] = useState<string | null>(null);
 
-  useEffect(() => {
+  const loadWorkshops = () => {
     if (!workshop) return;
     fetchWorkshops()
       .then((list) => {
+        setListError(null);
         const found = list.find((w) => w.name === workshop);
         if (found) setWorkshopId(found.id);
       })
-      .catch(() => undefined);
+      .catch((e) => {
+        setListError(e instanceof Error ? e.message : 'Не удалось загрузить цех');
+      });
+  };
+
+  useEffect(() => {
+    loadWorkshops();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [workshop]);
 
   const today = new Date();
@@ -36,7 +46,12 @@ const EmployeeKioskQr = ({ employeeId, fullName, shiftNumber, workshop }: Employ
   const url = `${window.location.origin}/kiosk/${workshopId}?barcode=${code}`;
 
   useEffect(() => {
-    QRCode.toDataURL(url, { width: 320, margin: 1 }).then(setQrDataUrl).catch(() => setQrDataUrl(null));
+    QRCode.toDataURL(url, { width: 320, margin: 1 })
+      .then(setQrDataUrl)
+      .catch(() => {
+        // FRONTEND-ONLY: не крутим вечный спиннер, если QR не собрался.
+        setQrDataUrl(null);
+      });
   }, [url]);
 
   const handlePrint = () => {
@@ -85,6 +100,13 @@ const EmployeeKioskQr = ({ employeeId, fullName, shiftNumber, workshop }: Employ
         <Icon name="QrCode" size={16} className="text-muted-foreground" />
         QR для входа в терминал цеха
       </div>
+      {listError ? (
+        <WarehouseFetchError
+          title="Не удалось определить цех для QR"
+          description={listError}
+          onRetry={loadWorkshops}
+        />
+      ) : (
       <div className="flex items-center gap-3">
         {qrDataUrl ? (
           <img src={qrDataUrl} alt="QR сотрудника" className="h-28 w-28 shrink-0" />
@@ -103,6 +125,7 @@ const EmployeeKioskQr = ({ employeeId, fullName, shiftNumber, workshop }: Employ
           </Button>
         </div>
       </div>
+      )}
     </div>
   );
 };

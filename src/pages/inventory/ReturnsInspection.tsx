@@ -6,6 +6,7 @@ import { INSPECTION_STAGES } from '@/components/crm/goodsWarehouse/inspectionSta
 import ReturnsInspectionStages from '@/components/crm/goodsWarehouse/ReturnsInspectionStages';
 import ReturnsInspectionActions from '@/components/crm/goodsWarehouse/ReturnsInspectionActions';
 import ReturnsInspectionList from '@/components/crm/goodsWarehouse/ReturnsInspectionList';
+import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
 import { useReturnsInspection } from '@/components/crm/goodsWarehouse/useReturnsInspection';
 
 /**
@@ -26,6 +27,8 @@ const ReturnsInspection = () => {
     stage,
     setStage,
     loading,
+    listError,
+    load,
     selected,
     setSelected,
     acting,
@@ -79,6 +82,14 @@ const ReturnsInspection = () => {
 
         <ReturnsInspectionStages counts={counts} stage={stage} onStageChange={setStage} />
 
+        {listError && (
+          <WarehouseFetchError
+            title="Не удалось загрузить осмотр возвратов"
+            description={listError}
+            onRetry={() => load(stage)}
+          />
+        )}
+
         <ReturnsInspectionActions
           stage={stage}
           selected={selected}
@@ -114,6 +125,7 @@ const ReturnsInspection = () => {
         <ReturnsInspectionList
           title={current?.title}
           loading={loading}
+          error={listError}
           items={items}
           visible={visible}
           selected={selected}

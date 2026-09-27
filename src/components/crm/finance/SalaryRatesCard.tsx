@@ -8,6 +8,7 @@ import { roleLabels, type Role } from '@/lib/roles';
 import { fetchSalaryRates, type SalaryRate } from '@/lib/salaryApi';
 import { fetchWorkshops, type Workshop } from '@/lib/workshopsApi';
 import { roleRateLabels } from '@/components/crm/finance/financeShared';
+import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
 
 interface SalaryRatesCardProps {
   onUpdate: (id: number, rate: number) => Promise<void>;
@@ -101,26 +102,43 @@ const SalaryRatesCard = ({ onUpdate }: SalaryRatesCardProps) => {
 
   const [workshops, setWorkshops] = useState<Workshop[]>([]);
   const [workshopsLoading, setWorkshopsLoading] = useState(true);
+  const [workshopsError, setWorkshopsError] = useState<string | null>(null);
   const [activeWorkshopId, setActiveWorkshopId] = useState<string>('');
 
   const [rates, setRates] = useState<SalaryRate[]>([]);
   const [ratesLoading, setRatesLoading] = useState(false);
+  const [ratesError, setRatesError] = useState<string | null>(null);
 
-  useEffect(() => {
+  const loadWorkshops = () => {
+    setWorkshopsLoading(true);
     fetchWorkshops()
       .then((data) => {
+        setWorkshopsError(null);
         const active = data.filter((w) => w.isActive);
         setWorkshops(active);
         if (active.length > 0) setActiveWorkshopId(String(active[0].id));
       })
+      .catch((e) => {
+        setWorkshopsError(e instanceof Error ? e.message : 'Не удалось загрузить цеха');
+      })
       .finally(() => setWorkshopsLoading(false));
+  };
+
+  useEffect(() => {
+    loadWorkshops();
   }, []);
 
   const loadRates = () => {
     if (!activeWorkshopId) return;
     setRatesLoading(true);
     fetchSalaryRates(Number(activeWorkshopId))
-      .then(setRates)
+      .then((list) => {
+        setRatesError(null);
+        setRates(list);
+      })
+      .catch((e) => {
+        setRatesError(e instanceof Error ? e.message : 'Не удалось загрузить тарифы');
+      })
       .finally(() => setRatesLoading(false));
   };
 
@@ -140,7 +158,13 @@ const SalaryRatesCard = ({ onUpdate }: SalaryRatesCardProps) => {
         <CardTitle className="text-base">Тарифы по ролям</CardTitle>
       </CardHeader>
       <CardContent className="space-y-5">
-        {workshopsLoading ? (
+        {workshopsError ? (
+          <WarehouseFetchError
+            title="Не удалось загрузить цеха"
+            description={workshopsError}
+            onRetry={loadWorkshops}
+          />
+        ) : workshopsLoading && workshops.length === 0 ? (
           <div className="flex items-center gap-2 text-sm text-muted-foreground">
             <Icon name="Loader2" size={16} className="animate-spin" />
             Загрузка...
@@ -159,7 +183,15 @@ const SalaryRatesCard = ({ onUpdate }: SalaryRatesCardProps) => {
               </TabsList>
             </Tabs>
 
-            {ratesLoading ? (
+            {ratesError && (
+              <WarehouseFetchError
+                title="Не удалось загрузить тарифы"
+                description={ratesError}
+                onRetry={loadRates}
+              />
+            )}
+
+            {ratesLoading && rates.length === 0 ? (
               <div className="flex items-center gap-2 text-sm text-muted-foreground">
                 <Icon name="Loader2" size={16} className="animate-spin" />
                 Загрузка тарифов...

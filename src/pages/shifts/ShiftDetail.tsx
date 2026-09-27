@@ -31,6 +31,7 @@ import {
 } from '@/lib/shiftsApi';
 import { fetchEmployees, type Employee } from '@/lib/usersApi';
 import { roleLabels, type Role } from '@/lib/roles';
+import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
 
 const ShiftDetailPage = () => {
   const { id } = useParams<{ id: string }>();
@@ -40,6 +41,7 @@ const ShiftDetailPage = () => {
   const [shift, setShift] = useState<ShiftDetailData | null>(null);
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [loading, setLoading] = useState(true);
+  const [listError, setListError] = useState<string | null>(null);
   const [toggling, setToggling] = useState(false);
   const [addUserId, setAddUserId] = useState('');
   const [adding, setAdding] = useState(false);
@@ -54,11 +56,18 @@ const ShiftDetailPage = () => {
     setLoading(true);
     // Запросы идут раздельно: не дошёл список сотрудников — карточка смены всё равно
     // откроется. Раньше любой обрыв связи оставлял страницу пустой.
-    fetchEmployees().then(setEmployees).catch(() => {});
+    fetchEmployees().then(setEmployees).catch(() => {
+      // FRONTEND-ONLY: список для добавления в смену, не для самой карточки.
+    });
     // Кружок загрузки снимаем по главному запросу страницы.
     fetchShiftDetail(Number(id))
-      .then(setShift)
-      .catch(() => {})
+      .then((data) => {
+        setListError(null);
+        setShift(data);
+      })
+      .catch((e) => {
+        setListError(e instanceof Error ? e.message : 'Не удалось загрузить смену');
+      })
       .finally(() => setLoading(false));
   };
 
@@ -147,13 +156,25 @@ const ShiftDetailPage = () => {
     (e) => e.role !== 'admin' && !shift?.employees.some((se) => se.id === e.id)
   );
 
-  if (loading || !shift) {
+  if (loading && !shift) {
     return (
       <CrmLayout>
         <div className="flex items-center gap-2 text-sm text-muted-foreground">
           <Icon name="Loader2" size={16} className="animate-spin" />
           Загрузка...
         </div>
+      </CrmLayout>
+    );
+  }
+
+  if (!shift) {
+    return (
+      <CrmLayout>
+        <WarehouseFetchError
+          title="Не удалось загрузить смену"
+          description={listError || undefined}
+          onRetry={load}
+        />
       </CrmLayout>
     );
   }

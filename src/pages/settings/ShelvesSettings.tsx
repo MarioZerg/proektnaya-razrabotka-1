@@ -14,6 +14,7 @@ import Icon from '@/components/ui/icon';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/context/AuthContext';
 import { fetchShelves, createShelf, deleteShelf, renameShelf, type Shelf } from '@/lib/shelvesApi';
+import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
 
 const ShelvesSettings = () => {
   const { toast } = useToast();
@@ -21,6 +22,7 @@ const ShelvesSettings = () => {
   const isAdmin = user?.role === 'admin';
   const [shelves, setShelves] = useState<Shelf[]>([]);
   const [loading, setLoading] = useState(true);
+  const [listError, setListError] = useState<string | null>(null);
   const [name, setName] = useState('');
   const [saving, setSaving] = useState(false);
   // Какую полку сейчас переименовываем и на что. Правка идёт прямо в строке
@@ -31,7 +33,13 @@ const ShelvesSettings = () => {
   const load = () => {
     setLoading(true);
     fetchShelves()
-      .then(setShelves)
+      .then((list) => {
+        setListError(null);
+        setShelves(list);
+      })
+      .catch((e) => {
+        setListError(e instanceof Error ? e.message : 'Не удалось загрузить полки');
+      })
       .finally(() => setLoading(false));
   };
 
@@ -106,13 +114,23 @@ const ShelvesSettings = () => {
           </div>
         )}
 
-        {loading ? (
+        {listError && (
+          <WarehouseFetchError
+            title="Не удалось загрузить полки"
+            description={listError}
+            onRetry={load}
+          />
+        )}
+
+        {loading && shelves.length === 0 ? (
           <div className="flex items-center gap-2 text-sm text-muted-foreground">
             <Icon name="Loader2" size={16} className="animate-spin" />
             Загрузка...
           </div>
         ) : shelves.length === 0 ? (
+          listError ? null : (
           <p className="text-sm text-muted-foreground">Полок пока нет</p>
+          )
         ) : (
           <div className="rounded-md border border-border">
             <Table>

@@ -1,5 +1,7 @@
 const SALARY_URL = 'https://functions.poehali.dev/16c53065-6726-495b-9e59-70d16dd9328f';
 
+/** POEHALI: тарифы и зарплата. FRONTEND-ONLY: сбой GET не писать как «цехов/тарифов нет». */
+
 export interface SalaryRate {
   id: number;
   role: string;
@@ -467,8 +469,10 @@ export interface SewerBonusInfo {
  */
 export const fetchSewerBonus = async (): Promise<SewerBonusInfo | null> => {
   const res = await fetch(`${SALARY_URL}?sewerBonus=1`);
-  if (!res.ok) return null;
   const data = await res.json();
+  if (!res.ok) {
+    throw new Error(data.error || 'Не удалось загрузить премию за выработку');
+  }
   if (!data || !Array.isArray(data.sewers)) return null;
   return data as SewerBonusInfo;
 };
@@ -492,8 +496,10 @@ export interface SewerDailyInfo {
  */
 export const fetchSewerDaily = async (): Promise<SewerDailyInfo | null> => {
   const res = await fetch(`${SALARY_URL}?sewerDaily=1`);
-  if (!res.ok) return null;
   const data = await res.json();
+  if (!res.ok) {
+    throw new Error(data.error || 'Не удалось загрузить акцию дня');
+  }
   if (!data || !data.active || !Array.isArray(data.sewers)) return null;
   return data as SewerDailyInfo;
 };

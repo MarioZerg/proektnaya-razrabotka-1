@@ -28,8 +28,10 @@ const dayWord = (n: number) => {
 const HeaderSalaryWidget = () => {
   const { user } = useAuth();
   const [salary, setSalary] = useState<number | null>(null);
+  const [salaryError, setSalaryError] = useState(false);
   const [loading, setLoading] = useState(true);
   const [variki, setVariki] = useState<number | null>(null);
+  const [varikiError, setVarikiError] = useState(false);
   // Новичкам баланс закрыт первые две недели после регистрации — считает сервер.
   const [locked, setLocked] = useState(false);
   const [daysLeft, setDaysLeft] = useState(0);
@@ -44,19 +46,23 @@ const HeaderSalaryWidget = () => {
     setLoading(true);
     fetchMySalary(user.id)
       .then((data) => {
+        setSalaryError(false);
         setSalary(data.balance);
         setLocked(!!data.salaryLocked);
         setDaysLeft(data.daysLeft || 0);
       })
-      .catch(() => setSalary(null))
+      .catch(() => setSalaryError(true))
       .finally(() => setLoading(false));
   }, [user?.id]);
 
   useEffect(() => {
     if (!showVariki || !user?.id) return;
     fetchMyVariki(user.id)
-      .then((data) => setVariki(data.variki))
-      .catch(() => setVariki(null));
+      .then((data) => {
+        setVarikiError(false);
+        setVariki(data.variki);
+      })
+      .catch(() => setVarikiError(true));
   }, [showVariki, user?.id]);
 
   return (
@@ -99,7 +105,7 @@ const HeaderSalaryWidget = () => {
               /* whitespace-nowrap + неразрывный пробел: без них «12 345,67 ₽»
                  ломалось по пробелу и знак рубля уезжал на вторую строку. */
               <div className="truncate text-xs font-bold sm:text-sm">
-                {formatMoney(salary || 0)}&nbsp;₽
+                {salaryError && salary == null ? '—' : `${formatMoney(salary || 0)}\u00a0₽`}
               </div>
             )}
           </div>
@@ -119,7 +125,9 @@ const HeaderSalaryWidget = () => {
             <div className="truncate text-[10px] uppercase tracking-wide text-muted-foreground">
               Варики
             </div>
-            <div className="truncate text-xs font-bold sm:text-sm">{variki ?? 0}&nbsp;шт</div>
+            <div className="truncate text-xs font-bold sm:text-sm">
+              {varikiError && variki == null ? '—' : `${variki ?? 0}\u00a0шт`}
+            </div>
           </div>
         </Link>
       )}

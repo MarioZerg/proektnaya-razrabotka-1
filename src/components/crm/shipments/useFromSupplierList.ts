@@ -24,6 +24,7 @@ export const useFromSupplierList = () => {
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [materials, setMaterials] = useState<Material[]>([]);
   const [loading, setLoading] = useState(true);
+  const [listError, setListError] = useState<string | null>(null);
 
   const [statusFilter, setStatusFilter] = useState('all');
   const [supplierFilter, setSupplierFilter] = useState('all');
@@ -39,10 +40,14 @@ export const useFromSupplierList = () => {
     setLoading(true);
     // Справочники запрашиваем каждый сам по себе: если связь моргнула и один не дошёл,
     // список поставок всё равно покажется. Раньше один сбой оставлял страницу пустой.
-    fetchSuppliers().then(setSuppliers).catch(() => {});
+    fetchSuppliers().then(setSuppliers).catch(() => {
+      // FRONTEND-ONLY: фильтр по поставщику не критичен для списка приёмок.
+    });
     fetchMaterialsData()
       .then((materialsData) => setMaterials(materialsData.materials))
-      .catch(() => {});
+      .catch(() => {
+        // FRONTEND-ONLY: справочник материалов для формы, не для списка.
+      });
     // Кружок загрузки снимаем по главному запросу страницы.
     fetchShipments({
       type: 'from_supplier',
@@ -51,8 +56,13 @@ export const useFromSupplierList = () => {
       dateFrom: dateFrom || undefined,
       dateTo: dateTo || undefined,
     })
-      .then(setShipments)
-      .catch(() => {})
+      .then((list) => {
+        setListError(null);
+        setShipments(list);
+      })
+      .catch((e) => {
+        setListError(e instanceof Error ? e.message : 'Не удалось загрузить приёмки');
+      })
       .finally(() => setLoading(false));
   };
 
@@ -131,6 +141,7 @@ export const useFromSupplierList = () => {
     suppliers,
     materials,
     loading,
+    listError,
     statusFilter,
     setStatusFilter,
     supplierFilter,

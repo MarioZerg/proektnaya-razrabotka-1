@@ -27,6 +27,8 @@ import SuppliesCards from '@/components/crm/shipments/SuppliesCards';
 
 interface SuppliesTableProps {
   loading: boolean;
+  /** FRONTEND-ONLY: сбой GET — не писать «приёмок пока нет». */
+  error?: string | null;
   shipments: Shipment[];
   isAdmin: boolean;
   /** Кладовщик: правит и печатает стикеры, но не подтверждает приёмку. */
@@ -43,6 +45,7 @@ interface SuppliesTableProps {
 
 const SuppliesTable = ({
   loading,
+  error = null,
   shipments,
   isAdmin,
   canEditPending,
@@ -55,7 +58,7 @@ const SuppliesTable = ({
   onDelete,
 }: SuppliesTableProps) => {
   const navigate = useNavigate();
-  if (loading) {
+  if (loading && shipments.length === 0) {
     return (
       <div className="flex items-center gap-2 text-sm text-muted-foreground">
         <Icon name="Loader2" size={16} className="animate-spin" />
@@ -65,6 +68,7 @@ const SuppliesTable = ({
   }
 
   if (shipments.length === 0) {
+    if (error) return null;
     return <p className="text-sm text-muted-foreground">Приёмок пока нет</p>;
   }
 

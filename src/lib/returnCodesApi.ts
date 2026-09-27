@@ -2,6 +2,8 @@ import type { Shop } from '@/lib/marketplaceIntegrationsApi';
 
 const RETURN_CODES_URL = 'https://functions.poehali.dev/5700d90e-2549-41b2-80f3-ec7984cdea1b';
 
+/** POEHALI: коды ПВЗ и выдачи. FRONTEND-ONLY: сбой GET не писать как «забирать нечего». */
+
 export type { Shop };
 
 /** Штрихкод кабинета продавца для получения возвратов на ПВЗ. */

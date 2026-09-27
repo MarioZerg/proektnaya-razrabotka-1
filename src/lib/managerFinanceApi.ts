@@ -1,6 +1,8 @@
 const MANAGER_FINANCE_URL =
   'https://functions.poehali.dev/406daf92-dd75-4e27-946d-e90aa720fe70';
 
+/** POEHALI: выкупы и начисления. FRONTEND-ONLY: сбой ленты не писать как «выкупов нет». */
+
 /** Начисление за один недельный отчёт площадки. */
 export interface ManagerAccrual {
   id: number;

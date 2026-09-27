@@ -3,17 +3,30 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import Icon from '@/components/ui/icon';
 import { fetchWorkingToday, type WorkingShiftToday } from '@/lib/shiftsApi';
+import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
 
 /** Кто по графику должен быть в цехах сегодня. Рядом с каждой сменой — сколько человек
  * уже открыли смену: сразу видно, если бригада вышла, но не отметилась на терминале. */
 const WorkingTodayCard = () => {
   const [shifts, setShifts] = useState<WorkingShiftToday[]>([]);
   const [loading, setLoading] = useState(true);
+  const [listError, setListError] = useState<string | null>(null);
+
+  const load = () => {
+    setLoading(true);
+    fetchWorkingToday()
+      .then((list) => {
+        setListError(null);
+        setShifts(list);
+      })
+      .catch((e) => {
+        setListError(e instanceof Error ? e.message : 'Не удалось загрузить смены');
+      })
+      .finally(() => setLoading(false));
+  };
 
   useEffect(() => {
-    fetchWorkingToday()
-      .then(setShifts)
-      .finally(() => setLoading(false));
+    load();
   }, []);
 
   // «Сегодня» — по Москве: в цехе на Урале или в Сибири дата не должна убегать вперёд
@@ -34,7 +47,13 @@ const WorkingTodayCard = () => {
           <span className="text-sm text-muted-foreground">· {today}</span>
         </div>
 
-        {loading ? (
+        {listError ? (
+          <WarehouseFetchError
+            title="Не удалось загрузить смены"
+            description={listError}
+            onRetry={load}
+          />
+        ) : loading && shifts.length === 0 ? (
           <div className="flex items-center gap-2 text-sm text-muted-foreground">
             <Icon name="Loader2" size={16} className="animate-spin" />
             Загрузка...

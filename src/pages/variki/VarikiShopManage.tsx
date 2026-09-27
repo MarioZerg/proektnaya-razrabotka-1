@@ -13,6 +13,7 @@ import {
   uploadCertificates,
   type ShopItem,
 } from '@/lib/varikiApi';
+import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
 
 /**
  * Управление магазином вариков — вкладка администратора.
@@ -45,6 +46,7 @@ const VarikiShopManage = () => {
 
   const [items, setItems] = useState<ShopItem[]>([]);
   const [loading, setLoading] = useState(true);
+  const [listError, setListError] = useState<string | null>(null);
   const [dialogItem, setDialogItem] = useState<ShopItem | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [uploadingId, setUploadingId] = useState<number | null>(null);
@@ -57,8 +59,13 @@ const VarikiShopManage = () => {
     if (!user?.id) return;
     setLoading(true);
     fetchShopManage(user.id)
-      .then(setItems)
-      .catch(() => setItems([]))
+      .then((list) => {
+        setListError(null);
+        setItems(list);
+      })
+      .catch((e) => {
+        setListError(e instanceof Error ? e.message : 'Не удалось загрузить подарки');
+      })
       .finally(() => setLoading(false));
   };
 
@@ -186,7 +193,15 @@ const VarikiShopManage = () => {
           </Button>
         </div>
 
-        {loading ? (
+        {listError && (
+          <WarehouseFetchError
+            title="Не удалось загрузить подарки"
+            description={listError}
+            onRetry={load}
+          />
+        )}
+
+        {loading && items.length === 0 ? (
           <div className="flex items-center gap-2 text-sm text-muted-foreground">
             <Icon name="Loader2" size={16} className="animate-spin" />
             Загрузка...

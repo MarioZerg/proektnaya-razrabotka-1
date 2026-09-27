@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Card, CardContent } from '@/components/ui/card';
 import Icon from '@/components/ui/icon';
 import { fetchMyAward, type OneTimeAward } from '@/lib/salaryApi';
+import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
 
 const formatMoney = (value: number) =>
   new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 0 }).format(value) + ' ₽';
@@ -47,13 +48,19 @@ interface AwardCardProps {
  */
 const AwardCard = ({ userId }: AwardCardProps) => {
   const [award, setAward] = useState<OneTimeAward | null>(null);
+  const [listError, setListError] = useState<string | null>(null);
   const [now, setNow] = useState(() => Date.now());
 
   const load = useCallback(() => {
     if (!userId) return;
     fetchMyAward(userId)
-      .then(setAward)
-      .catch(() => setAward(null));
+      .then((a) => {
+        setListError(null);
+        setAward(a);
+      })
+      .catch((e) => {
+        setListError(e instanceof Error ? e.message : 'Не удалось загрузить премию');
+      });
   }, [userId]);
 
   useEffect(() => {
@@ -67,6 +74,16 @@ const AwardCard = ({ userId }: AwardCardProps) => {
     const tick = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(tick);
   }, [award]);
+
+  if (listError && !award) {
+    return (
+      <WarehouseFetchError
+        title="Не удалось загрузить премию"
+        description={listError}
+        onRetry={load}
+      />
+    );
+  }
 
   if (!award) return null;
 

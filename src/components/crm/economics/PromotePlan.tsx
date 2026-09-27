@@ -13,6 +13,7 @@ import {
 } from '@/lib/promotionApi';
 import PromoteCurrent from './PromoteCurrent';
 import { money } from './economicsShared';
+import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
 
 /**
  * План продвижения по всему материалу.
@@ -42,6 +43,7 @@ const PromotePlan = ({ material, onDone }: Props) => {
     sizes: 0,
   });
   const [loading, setLoading] = useState(false);
+  const [listError, setListError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState('');
   // Выбранная глубина скидки по каждой акции.
   //
@@ -50,19 +52,24 @@ const PromotePlan = ({ material, onDone }: Props) => {
   // Углубить можно осознанно, видя, во что это встанет.
   const [depth, setDepth] = useState<Record<string, number>>({});
 
-  useEffect(() => {
+  const load = () => {
     setLoading(true);
     fetchMaterialPlan(material, user?.id, Number(minAvg) || 0)
       .then((d) => {
+        setListError(null);
         setPlan(d.actions);
         setCurrent(d.current || []);
         setBase({ margin: d.baseAvgMargin, sizes: d.sizes });
       })
-      .catch(() => {
-        setPlan([]);
-        setCurrent([]);
+      .catch((e) => {
+        setListError(e instanceof Error ? e.message : 'Не удалось загрузить план');
       })
       .finally(() => setLoading(false));
+  };
+
+  useEffect(() => {
+    load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [material, minAvg, user?.id]);
 
   const join = async (a: PlanAction) => {
@@ -116,6 +123,14 @@ const PromotePlan = ({ material, onDone }: Props) => {
         </p>
       )}
 
+      {listError && (
+        <WarehouseFetchError
+          title="Не удалось загрузить план акций"
+          description={listError}
+          onRetry={load}
+        />
+      )}
+
       {loading && (
         <div className="flex items-center gap-2 text-sm text-muted-foreground">
           <Icon name="Loader2" size={14} className="animate-spin" />
@@ -127,7 +142,7 @@ const PromotePlan = ({ material, onDone }: Props) => {
           Прежде чем заводить новое, надо видеть текущую картину: где товар
           уже продаётся со скидкой и во что это обходится. Иначе решение
           принимается вслепую. */}
-      {!loading && (
+      {!loading && !listError && (
         <div className="space-y-1.5">
           <p className="text-xs font-medium">Уже участвуют</p>
           <PromoteCurrent actions={current} />
@@ -138,7 +153,7 @@ const PromotePlan = ({ material, onDone }: Props) => {
         <p className="pt-1 text-xs font-medium">Можно завести</p>
       )}
 
-      {!loading && plan.length === 0 && (
+      {!loading && !listError && plan.length === 0 && (
         <p className="text-xs text-muted-foreground">
           Площадка не предлагает размеры этого материала ни в одну акцию
         </p>

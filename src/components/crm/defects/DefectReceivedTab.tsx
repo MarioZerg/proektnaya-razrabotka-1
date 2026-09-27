@@ -16,6 +16,7 @@ import {
 import { fetchDefectHistory, type DefectHistoryRow } from '@/lib/kioskApi';
 import { roleLabels, formatQty, formatDate } from './defectShared';
 import DefectReceivedCards from './DefectReceivedCards';
+import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
 
 /**
  * Вкладка «Принятый брак».
@@ -28,6 +29,7 @@ const DefectReceivedTab = () => {
   const [rows, setRows] = useState<DefectHistoryRow[]>([]);
   const [totalQuantity, setTotalQuantity] = useState(0);
   const [loading, setLoading] = useState(true);
+  const [listError, setListError] = useState<string | null>(null);
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
   // Поиск по сотруднику, материалу, рулону и поставщику — сразу по всей таблице.
@@ -39,12 +41,12 @@ const DefectReceivedTab = () => {
       dateFrom || dateTo ? { dateFrom, dateTo } : { days: 90 },
     )
       .then((d) => {
+        setListError(null);
         setRows(d.items);
         setTotalQuantity(d.totalQuantity);
       })
-      .catch(() => {
-        setRows([]);
-        setTotalQuantity(0);
+      .catch((e) => {
+        setListError(e instanceof Error ? e.message : 'Не удалось загрузить принятый брак');
       })
       .finally(() => setLoading(false));
   };
@@ -118,15 +120,25 @@ const DefectReceivedTab = () => {
         </span>
       </div>
 
-      {loading ? (
+      {listError && (
+        <WarehouseFetchError
+          title="Не удалось загрузить принятый брак"
+          description={listError}
+          onRetry={load}
+        />
+      )}
+
+      {loading && rows.length === 0 ? (
         <div className="flex items-center gap-2 py-8 text-sm text-muted-foreground">
           <Icon name="Loader2" size={16} className="animate-spin" />
           Загрузка…
         </div>
       ) : visible.length === 0 ? (
+        listError ? null : (
         <p className="py-8 text-center text-sm text-muted-foreground">
           За выбранный период принятого брака нет
         </p>
+        )
       ) : (
         <>
           <div className="md:hidden">

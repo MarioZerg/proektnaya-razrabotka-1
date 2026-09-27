@@ -2,6 +2,13 @@ import { withActor } from '@/lib/actor';
 
 const SHIPMENTS_URL = 'https://functions.poehali.dev/a68cce8d-f3b0-4f06-a66a-305eeacd17bb';
 
+/**
+ * Клиент отгрузок.
+ *
+ * POEHALI: живая функция shipments. Новые типы и action — сначала там.
+ * FRONTEND-ONLY: ошибка загрузки списка — не писать «заявок / приёмок нет».
+ */
+
 export type ShipmentType =
   | 'from_supplier'
   | 'to_workshop'

@@ -14,6 +14,8 @@ import EmployeeCard from '@/components/crm/users/EmployeeCard';
 
 interface EmployeesTableProps {
   loading: boolean;
+  /** FRONTEND-ONLY: сбой GET — не писать «сотрудников пока нет». */
+  error?: string | null;
   filtered: Employee[];
   roleFilter: string;
   setRoleFilter: (value: string) => void;
@@ -49,6 +51,7 @@ interface EmployeesTableProps {
  */
 const EmployeesTable = ({
   loading,
+  error = null,
   filtered,
   roleFilter,
   setRoleFilter,
@@ -128,12 +131,13 @@ const EmployeesTable = ({
         )}
       </div>
 
-      {loading ? (
+      {loading && filtered.length === 0 ? (
         <div className="flex items-center gap-2 text-sm text-muted-foreground">
           <Icon name="Loader2" size={16} className="animate-spin" />
           Загрузка...
         </div>
       ) : filtered.length === 0 ? (
+        error ? null : (
         <p className="text-sm text-muted-foreground">
           {search.trim()
             ? 'По этому запросу никого не нашлось'
@@ -141,6 +145,7 @@ const EmployeesTable = ({
               ? 'Архив пуст — уволенных сотрудников нет.'
               : 'Сотрудников пока нет.'}
         </p>
+        )
       ) : (
         <div className="space-y-2">
           {filtered.map((emp) => (

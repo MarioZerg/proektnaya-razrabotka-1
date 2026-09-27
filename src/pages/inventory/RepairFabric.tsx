@@ -16,6 +16,7 @@ import Icon from '@/components/ui/icon';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/context/AuthContext';
 import { formatDateTime } from '@/lib/dateUtils';
+import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
 import {
   deleteRepairPiece,
   fetchRepairPieces,
@@ -71,6 +72,7 @@ const RepairFabric = () => {
   const [pieces, setPieces] = useState<RepairPiece[]>([]);
   const [summary, setSummary] = useState<Array<{ material: string; count: number }>>([]);
   const [loading, setLoading] = useState(true);
+  const [listError, setListError] = useState<string | null>(null);
   const [tab, setTab] = useState<RepairPieceStatus | 'all'>('available');
   const [material, setMaterial] = useState('all');
   const [writingOff, setWritingOff] = useState<number | null>(null);
@@ -81,10 +83,13 @@ const RepairFabric = () => {
     setLoading(true);
     fetchRepairPieces({ status: tab })
       .then((r) => {
+        setListError(null);
         setPieces(r.pieces);
         setSummary(r.summary);
       })
-      .catch(() => setPieces([]))
+      .catch((e) => {
+        setListError(e instanceof Error ? e.message : 'Не удалось загрузить куски');
+      })
       .finally(() => setLoading(false));
   };
 
@@ -183,6 +188,14 @@ const RepairFabric = () => {
           </p>
         </div>
 
+        {listError && (
+          <WarehouseFetchError
+            title="Не удалось загрузить куски"
+            description={listError}
+            onRetry={load}
+          />
+        )}
+
         {/* Сводка по материалам — главное, что нужно закройщику: сколько
             чего есть в цехе, без вчитывания в строки. */}
         {summary.length > 0 && tab === 'available' && (
@@ -243,6 +256,7 @@ const RepairFabric = () => {
             Загрузка…
           </p>
         ) : visible.length === 0 ? (
+          listError ? null : (
           <div className="rounded-lg border border-dashed border-border p-8 text-center">
             <Icon name="Scissors" size={32} className="mx-auto mb-2 text-muted-foreground" />
             <p className="font-medium">
@@ -256,6 +270,7 @@ const RepairFabric = () => {
               Куски появляются здесь, когда упаковщица отправляет их с перепаковки
             </p>
           </div>
+          )
         ) : (
           <>
             {/* Мобильные карточки: в цехе смотрят с телефона, таблица там не читается. */}

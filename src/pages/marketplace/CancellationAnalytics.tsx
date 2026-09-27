@@ -22,6 +22,7 @@ import {
   downloadCancellationArchive,
   type CancellationReport,
 } from '@/lib/cancellationAnalyticsApi';
+import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
 
 const PERIODS = [
   { days: 30, label: '30 дней' },
@@ -59,23 +60,28 @@ const CancellationAnalytics = () => {
   const [onlyNever, setOnlyNever] = useState(false);
   const [data, setData] = useState<CancellationReport | null>(null);
   const [loading, setLoading] = useState(true);
+  const [listError, setListError] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
   const [archiving, setArchiving] = useState(false);
 
-  useEffect(() => {
+  const load = () => {
     if (!canView) return;
     setLoading(true);
     fetchCancellationReport(days, minItems, onlyNever)
-      .then(setData)
-      .catch((e) =>
-        toast({
-          title: 'Не удалось загрузить отчёт',
-          description: e instanceof Error ? e.message : undefined,
-          variant: 'destructive',
-        }),
-      )
+      .then((d) => {
+        setListError(null);
+        setData(d);
+      })
+      .catch((e) => {
+        setListError(e instanceof Error ? e.message : 'Не удалось загрузить отчёт');
+      })
       .finally(() => setLoading(false));
-  }, [days, minItems, onlyNever, canView, toast]);
+  };
+
+  useEffect(() => {
+    load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [days, minItems, onlyNever, canView]);
 
   const downloadArchive = async () => {
     setArchiving(true);
@@ -205,9 +211,17 @@ const CancellationAnalytics = () => {
           </div>
         </div>
 
-        {loading && <p className="text-muted-foreground">Загружаю…</p>}
+        {listError && (
+          <WarehouseFetchError
+            title="Не удалось загрузить отчёт"
+            description={listError}
+            onRetry={load}
+          />
+        )}
 
-        {!loading && s && (
+        {loading && !data && <p className="text-muted-foreground">Загружаю…</p>}
+
+        {s && (
           <>
             {/* Главная цифра отчёта — сразу вверху: сколько случаев не объясняются
                 обычным поведением покупателя и на сколько вещей они наели. */}

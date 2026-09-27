@@ -17,6 +17,7 @@ import {
   dismissPenalty,
   type PendingPenalty,
 } from '@/lib/rollsApi';
+import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
 
 const money = (v: number) =>
   v.toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -38,6 +39,7 @@ const ShortagePenaltyCard = () => {
   const { toast } = useToast();
   const [items, setItems] = useState<PendingPenalty[]>([]);
   const [loading, setLoading] = useState(true);
+  const [listError, setListError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<number | null>(null);
   const [bulkBusy, setBulkBusy] = useState(false);
   const [open, setOpen] = useState(false);
@@ -45,8 +47,13 @@ const ShortagePenaltyCard = () => {
   const load = () => {
     setLoading(true);
     fetchPendingPenalties()
-      .then(setItems)
-      .catch(() => setItems([]))
+      .then((list) => {
+        setListError(null);
+        setItems(list);
+      })
+      .catch((e) => {
+        setListError(e instanceof Error ? e.message : 'Не удалось загрузить недостачи');
+      })
       .finally(() => setLoading(false));
   };
 
@@ -128,7 +135,17 @@ const ShortagePenaltyCard = () => {
     }
   };
 
-  if (!loading && items.length === 0) return null;
+  if (!loading && items.length === 0 && !listError) return null;
+
+  if (listError && items.length === 0) {
+    return (
+      <WarehouseFetchError
+        title="Не удалось загрузить очередь недостач"
+        description={listError}
+        onRetry={load}
+      />
+    );
+  }
 
   return (
     <>

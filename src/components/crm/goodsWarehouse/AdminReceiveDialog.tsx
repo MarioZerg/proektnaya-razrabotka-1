@@ -24,6 +24,7 @@ import { fetchMarketplaceItems, type MarketplaceItem, type Shop } from '@/lib/ma
 import ShopBadge from '@/components/crm/ShopBadge';
 import { adminReceiveGoods, findItemByCode } from '@/lib/goodsWarehouseApi';
 import { printStorageStickers } from '@/lib/printStorageSticker';
+import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
 
 interface AdminReceiveDialogProps {
   open: boolean;
@@ -55,6 +56,7 @@ const AdminReceiveDialog = ({ open, onOpenChange, shelves, onDone }: AdminReceiv
   const { toast } = useToast();
   const { user } = useAuth();
   const [items, setItems] = useState<MarketplaceItem[]>([]);
+  const [listError, setListError] = useState<string | null>(null);
   // Магазины нужны, чтобы в поиске было видно, чья это карточка: у МЕГАТЮЛЬ и
   // ДЮНЫ бывают товары с одинаковым названием и размером, но разными кодами.
   const [shops, setShops] = useState<Shop[]>([]);
@@ -69,14 +71,21 @@ const AdminReceiveDialog = ({ open, onOpenChange, shelves, onDone }: AdminReceiv
   /** Печатать ленту стикеров сразу после приёмки — обычно это и нужно. */
   const [autoPrint, setAutoPrint] = useState(true);
 
-  useEffect(() => {
-    if (!open) return;
+  const loadItems = () => {
     fetchMarketplaceItems()
       .then(({ items: list, shops: shopList }) => {
+        setListError(null);
         setItems(list);
         setShops(shopList);
       })
-      .catch(() => setItems([]));
+      .catch((e) => {
+        setListError(e instanceof Error ? e.message : 'Не удалось загрузить товары');
+      });
+  };
+
+  useEffect(() => {
+    if (!open) return;
+    loadItems();
   }, [open]);
 
   const found = useMemo(() => {
@@ -279,6 +288,13 @@ const AdminReceiveDialog = ({ open, onOpenChange, shelves, onDone }: AdminReceiv
           <DialogTitle>Принять товары на склад вручную</DialogTitle>
         </DialogHeader>
         <div className="space-y-4">
+          {listError && (
+            <WarehouseFetchError
+              title="Не удалось загрузить товары"
+              description={listError}
+              onRetry={loadItems}
+            />
+          )}
           <p className="text-sm text-muted-foreground">
             Для вещей без заказа с маркетплейса — излишек с производства или найденный товар.
             Пикайте FBO-стикер каждой вещи: система сама определит товар, заведёт вещи на

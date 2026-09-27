@@ -13,6 +13,8 @@ import { stageIcons, type LogEvent } from '@/lib/logsApi';
 interface LogsTableProps {
   items: LogEvent[];
   loading: boolean;
+  /** FRONTEND-ONLY: сбой GET — не писать «записей нет». */
+  error?: string | null;
 }
 
 /** Категория события → иконка. По ней взгляд цепляется быстрее, чем по тексту. */
@@ -41,8 +43,8 @@ const formatAt = (at: string) => {
   });
 };
 
-const LogsTable = ({ items, loading }: LogsTableProps) => {
-  if (loading) {
+const LogsTable = ({ items, loading, error = null }: LogsTableProps) => {
+  if (loading && items.length === 0) {
     return (
       <div className="flex items-center gap-2 py-10 text-sm text-muted-foreground">
         <Icon name="Loader2" size={16} className="animate-spin" />
@@ -52,6 +54,7 @@ const LogsTable = ({ items, loading }: LogsTableProps) => {
   }
 
   if (items.length === 0) {
+    if (error) return null;
     return (
       <div className="rounded-lg border border-border p-8 text-center">
         <Icon name="ScrollText" size={28} className="mx-auto text-muted-foreground" />

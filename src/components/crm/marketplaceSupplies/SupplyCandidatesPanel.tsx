@@ -8,15 +8,25 @@ import { Badge } from '@/components/ui/badge';
 import Icon from '@/components/ui/icon';
 import type { SupplyCandidate } from '@/lib/marketplaceSuppliesApi';
 import { candidateStatusVariant } from '@/components/crm/marketplaceSupplies/marketplaceSuppliesShared';
+import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
 
 interface SupplyCandidatesPanelProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   candidates: SupplyCandidate[];
   loading: boolean;
+  listError?: string | null;
+  onRetry?: () => void;
 }
 
-const SupplyCandidatesPanel = ({ open, onOpenChange, candidates, loading }: SupplyCandidatesPanelProps) => {
+const SupplyCandidatesPanel = ({
+  open,
+  onOpenChange,
+  candidates,
+  loading,
+  listError,
+  onRetry,
+}: SupplyCandidatesPanelProps) => {
   return (
     <Collapsible open={open} onOpenChange={onOpenChange}>
       <CollapsibleTrigger asChild>
@@ -30,10 +40,18 @@ const SupplyCandidatesPanel = ({ open, onOpenChange, candidates, loading }: Supp
       </CollapsibleTrigger>
       <CollapsibleContent className="mt-2">
         <div className="max-h-96 overflow-y-auto rounded-md border border-border">
-          {loading ? (
+          {loading && candidates.length === 0 ? (
             <div className="flex items-center gap-2 p-4 text-sm text-muted-foreground">
               <Icon name="Loader2" size={16} className="animate-spin" />
               Загрузка...
+            </div>
+          ) : listError && candidates.length === 0 ? (
+            <div className="p-3">
+              <WarehouseFetchError
+                title="Не удалось загрузить товары поставки"
+                description={listError}
+                onRetry={onRetry || (() => {})}
+              />
             </div>
           ) : candidates.length === 0 ? (
             <p className="p-4 text-sm text-muted-foreground">

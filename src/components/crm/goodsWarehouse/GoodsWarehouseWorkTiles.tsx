@@ -17,6 +17,8 @@ interface GoodsWarehouseWorkTilesProps {
   stocktakeActive?: boolean;
   /** Сколько вещей ещё не сосчитано в текущем пересчёте. */
   stocktakeLeft?: number;
+  /** FRONTEND-ONLY: очередь ещё грузится — не показывать 0 как «пусто». */
+  queuesLoading?: boolean;
   onPlace: () => void;
   onPickup: () => void;
   onPlaceInspected: () => void;
@@ -37,6 +39,7 @@ const GoodsWarehouseWorkTiles = ({
   pickingFbs = 0,
   stocktakeActive = false,
   stocktakeLeft = 0,
+  queuesLoading = false,
   onPlace,
   onPickup,
   onPlaceInspected,
@@ -78,6 +81,7 @@ const GoodsWarehouseWorkTiles = ({
           title="Разложить по полкам"
           hint="Отказы клиентов из цеха"
           count={pendingShelfCount}
+          loading={queuesLoading}
           zone="both"
           onClick={onPlace}
           stepLabel="Принять осмотренные из цеха"
@@ -94,6 +98,7 @@ const GoodsWarehouseWorkTiles = ({
           title="Разобрать возвраты"
           hint="Решить: в цех на осмотр или на полку"
           count={pendingReturnsCount}
+          loading={queuesLoading}
           zone="both"
           onClick={() =>
             navigate('/crm/inventory/returns-inspection?stage=fromMarketplace')

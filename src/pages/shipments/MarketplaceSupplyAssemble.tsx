@@ -12,6 +12,7 @@ import SupplyBoxesSection from '@/components/crm/marketplaceSupplies/SupplyBoxes
 import SupplyAssembleFooter from '@/components/crm/marketplaceSupplies/SupplyAssembleFooter';
 import SupplyLockedScreen from '@/components/crm/marketplaceSupplies/SupplyLockedScreen';
 import { useSupplyAssemble } from '@/components/crm/marketplaceSupplies/useSupplyAssemble';
+import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
 
 /**
  * Экран сборки поставки: кладовщик раскладывает вещи по коробам.
@@ -28,12 +29,15 @@ const MarketplaceSupplyAssemble = () => {
     navigate,
     supply,
     loading,
+    listError,
     addingBox,
     completing,
     candidatesOpen,
     setCandidatesOpen,
     candidates,
     candidatesLoading,
+    candidatesError,
+    loadCandidates,
     closingBoxes,
     cargoType,
     lockedByOther,
@@ -55,13 +59,25 @@ const MarketplaceSupplyAssemble = () => {
     handleUploadSticker,
   } = useSupplyAssemble(supplyId);
 
-  if (loading || !supply) {
+  if (loading && !supply) {
     return (
       <CrmLayout>
         <div className="flex items-center gap-2 text-sm text-muted-foreground">
           <Icon name="Loader2" size={16} className="animate-spin" />
           Загрузка...
         </div>
+      </CrmLayout>
+    );
+  }
+
+  if (!supply) {
+    return (
+      <CrmLayout>
+        <WarehouseFetchError
+          title="Не удалось загрузить поставку"
+          description={listError || undefined}
+          onRetry={() => reload()}
+        />
       </CrmLayout>
     );
   }
@@ -131,6 +147,8 @@ const MarketplaceSupplyAssemble = () => {
           onOpenChange={setCandidatesOpen}
           candidates={candidates}
           loading={candidatesLoading}
+          listError={candidatesError}
+          onRetry={loadCandidates}
         />
 
         <SupplyBoxesSection

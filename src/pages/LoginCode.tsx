@@ -66,7 +66,9 @@ const LoginCode = () => {
           setLoginToken(fresh);
         }
       })
-      .catch(() => setBotUrl(null));
+      .catch(() => {
+        // FRONTEND-ONLY: не прячем уже полученную ссылку на бота.
+      });
     // Ссылку тянем один раз: новая метка при каждом рендере обесценивала бы старую.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);

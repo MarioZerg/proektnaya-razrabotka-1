@@ -10,6 +10,7 @@ import { fetchEmployees, type Employee } from '@/lib/usersApi';
 export const useEmployeesData = () => {
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [loading, setLoading] = useState(true);
+  const [listError, setListError] = useState<string | null>(null);
   const [roleFilter, setRoleFilter] = useState<string>('all');
   const [search, setSearch] = useState('');
   const [workshopFilter, setWorkshopFilter] = useState<string>('all');
@@ -21,7 +22,13 @@ export const useEmployeesData = () => {
   const load = () => {
     setLoading(true);
     fetchEmployees()
-      .then(setEmployees)
+      .then((list) => {
+        setListError(null);
+        setEmployees(list);
+      })
+      .catch((e) => {
+        setListError(e instanceof Error ? e.message : 'Не удалось загрузить сотрудников');
+      })
       .finally(() => setLoading(false));
   };
 
@@ -56,6 +63,7 @@ export const useEmployeesData = () => {
     employees,
     setEmployees,
     loading,
+    listError,
     load,
     roleFilter,
     setRoleFilter,

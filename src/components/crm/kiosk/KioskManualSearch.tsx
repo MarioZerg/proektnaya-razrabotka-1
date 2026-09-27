@@ -18,6 +18,7 @@ import {
   fetchStickeringSewers,
   type KioskOrder,
 } from '@/lib/kioskApi';
+import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
 
 const ANY = 'any';
 
@@ -44,13 +45,24 @@ const KioskManualSearch = ({ onSelect, workshopId, role }: KioskManualSearchProp
   // было закрыть чужой заказ. Имя швеи известно наверняка — по нему и ищем.
   const [sewerId, setSewerId] = useState(ANY);
   const [sewers, setSewers] = useState<Array<{ id: number; name: string; count: number }>>([]);
+  const [sewersError, setSewersError] = useState<string | null>(null);
 
   // Список тянем при открытии поиска: за смену он меняется, держать его заранее незачем.
+  const loadSewers = () => {
+    fetchStickeringSewers(workshopId)
+      .then((list) => {
+        setSewersError(null);
+        setSewers(list);
+      })
+      .catch((e) => {
+        setSewersError(e instanceof Error ? e.message : 'Не удалось загрузить швей');
+      });
+  };
+
   useEffect(() => {
     if (!open) return;
-    fetchStickeringSewers(workshopId)
-      .then(setSewers)
-      .catch(() => setSewers([]));
+    loadSewers();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, workshopId]);
 
   const handleSearch = async () => {
@@ -108,6 +120,13 @@ const KioskManualSearch = ({ onSelect, workshopId, role }: KioskManualSearchProp
         {/* Швея — первый и самый надёжный фильтр: кто сшил вещь, известно точно,
             а размер на глаз определить сложнее. Рядом с именем — сколько у неё
             вещей на стикеровке, чтобы сразу видеть, есть ли там работа. */}
+        {sewersError && (
+          <WarehouseFetchError
+            title="Не удалось загрузить список швей"
+            description={sewersError}
+            onRetry={loadSewers}
+          />
+        )}
         <div className="space-y-1.5">
           <Label className="text-base">Швея</Label>
           <Select value={sewerId} onValueChange={setSewerId}>

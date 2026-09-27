@@ -9,6 +9,7 @@ import {
   logKioskCutterSheet,
   type KioskCutter,
 } from '@/lib/kioskApi';
+import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
 
 interface KioskCutterSheetScreenProps {
   /** Цех терминала: закройщики и их стеки у каждого цеха свои. */
@@ -33,19 +34,16 @@ const KioskCutterSheetScreen = ({ workshopId, currentUserId }: KioskCutterSheetS
   const { toast } = useToast();
   const [cutters, setCutters] = useState<KioskCutter[]>([]);
   const [loading, setLoading] = useState(true);
+  const [listError, setListError] = useState<string | null>(null);
   const [printingId, setPrintingId] = useState<number | null>(null);
 
   const load = async () => {
     setLoading(true);
     try {
       setCutters(await fetchKioskCutters(workshopId));
+      setListError(null);
     } catch (e) {
-      toast({
-        title: 'Не удалось загрузить список',
-        description: e instanceof Error ? e.message : undefined,
-        variant: 'destructive',
-      });
-      setCutters([]);
+      setListError(e instanceof Error ? e.message : 'Не удалось загрузить список');
     } finally {
       setLoading(false);
     }
@@ -111,11 +109,19 @@ const KioskCutterSheetScreen = ({ workshopId, currentUserId }: KioskCutterSheetS
         </Button>
       </div>
 
-      {loading && (
+      {loading && cutters.length === 0 && (
         <div className="py-16 text-center text-xl text-muted-foreground">Загружаем…</div>
       )}
 
-      {!loading && sorted.length === 0 && (
+      {listError && (
+        <WarehouseFetchError
+          title="Не удалось загрузить список закройщиков"
+          description={listError}
+          onRetry={load}
+        />
+      )}
+
+      {!loading && !listError && sorted.length === 0 && (
         <div className="rounded-lg border border-amber-300 bg-amber-50 p-6 text-amber-900">
           <p className="text-2xl font-bold">Никто не держит стек</p>
           <p className="mt-1 text-lg">

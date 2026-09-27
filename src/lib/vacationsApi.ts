@@ -1,5 +1,7 @@
 const VACATIONS_URL = 'https://functions.poehali.dev/357a4c05-fc74-4149-bf03-ecb7b9d895d7';
 
+/** POEHALI: отпуска. FRONTEND-ONLY: сбой GET не писать как «никто не в отпуске». */
+
 /** Оформленный отпуск сотрудника. */
 export interface Vacation {
   id: number;

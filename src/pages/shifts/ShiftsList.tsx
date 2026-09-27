@@ -41,6 +41,7 @@ import { useToast } from '@/hooks/use-toast';
 import { fetchWorkshops, type Workshop } from '@/lib/workshopsApi';
 import { fetchShifts, createShift, deleteShift, type ShiftListItem } from '@/lib/shiftsApi';
 import { autoCloseShifts } from '@/lib/shiftSessionsApi';
+import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
 
 const ShiftsList = () => {
   const navigate = useNavigate();
@@ -48,6 +49,7 @@ const ShiftsList = () => {
   const [shifts, setShifts] = useState<ShiftListItem[]>([]);
   const [workshops, setWorkshops] = useState<Workshop[]>([]);
   const [loading, setLoading] = useState(true);
+  const [listError, setListError] = useState<string | null>(null);
 
   const [autoClosing, setAutoClosing] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
@@ -62,11 +64,18 @@ const ShiftsList = () => {
     setLoading(true);
     // Каждый запрос идёт сам по себе: если связь моргнула и справочник цехов не дошёл,
     // список смен всё равно покажется. Раньше один сбой оставлял страницу пустой.
-    fetchWorkshops().then(setWorkshops).catch(() => {});
+    fetchWorkshops().then(setWorkshops).catch(() => {
+      // FRONTEND-ONLY: справочник цехов для формы, не для списка смен.
+    });
     // Кружок загрузки снимаем по главному запросу страницы.
     fetchShifts()
-      .then(setShifts)
-      .catch(() => {})
+      .then((list) => {
+        setListError(null);
+        setShifts(list);
+      })
+      .catch((e) => {
+        setListError(e instanceof Error ? e.message : 'Не удалось загрузить смены');
+      })
       .finally(() => setLoading(false));
   };
 
@@ -220,13 +229,23 @@ const ShiftsList = () => {
           </div>
         </div>
 
-        {loading ? (
+        {listError && (
+          <WarehouseFetchError
+            title="Не удалось загрузить смены"
+            description={listError}
+            onRetry={load}
+          />
+        )}
+
+        {loading && shifts.length === 0 ? (
           <div className="flex items-center gap-2 text-sm text-muted-foreground">
             <Icon name="Loader2" size={16} className="animate-spin" />
             Загрузка...
           </div>
         ) : shifts.length === 0 ? (
+          listError ? null : (
           <p className="text-sm text-muted-foreground">Смен пока нет.</p>
+          )
         ) : (
           <div className="rounded-md border border-border">
             <Table>

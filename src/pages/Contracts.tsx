@@ -20,6 +20,7 @@ import TerminationPanel from '@/components/crm/contracts/TerminationPanel';
 import TerminationsAdmin from '@/components/crm/contracts/TerminationsAdmin';
 import UploadContractDialog from '@/components/crm/contracts/UploadContractDialog';
 import PersonalDataPanel from '@/components/crm/personal/PersonalDataPanel';
+import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
 
 const statusInfo: Record<Contract['status'], { label: string; variant: 'default' | 'secondary' | 'destructive' | 'outline' }> = {
   pending: { label: 'Ждёт подписи', variant: 'destructive' },
@@ -36,6 +37,7 @@ const Contracts = () => {
 
   const [items, setItems] = useState<Contract[]>([]);
   const [loading, setLoading] = useState(true);
+  const [listError, setListError] = useState<string | null>(null);
   const [signing, setSigning] = useState<Contract | null>(null);
   const [uploadOpen, setUploadOpen] = useState(false);
 
@@ -43,8 +45,13 @@ const Contracts = () => {
     if (!user) return;
     setLoading(true);
     (isAdmin ? fetchAllContracts(user.id) : fetchMyContracts(user.id))
-      .then(setItems)
-      .catch(() => setItems([]))
+      .then((list) => {
+        setListError(null);
+        setItems(list);
+      })
+      .catch((e) => {
+        setListError(e instanceof Error ? e.message : 'Не удалось загрузить договоры');
+      })
       .finally(() => setLoading(false));
   };
 
@@ -123,12 +130,21 @@ const Contracts = () => {
             а от него зависит, работает он завтра или нет. */}
         {isAdmin && <TerminationsAdmin onChanged={load} />}
 
-        {loading ? (
+        {listError && (
+          <WarehouseFetchError
+            title="Не удалось загрузить договоры"
+            description={listError}
+            onRetry={load}
+          />
+        )}
+
+        {loading && items.length === 0 ? (
           <div className="flex items-center gap-2 text-sm text-muted-foreground">
             <Icon name="Loader2" size={16} className="animate-spin" />
             Загрузка...
           </div>
         ) : items.length === 0 ? (
+          listError ? null : (
           <div className="rounded-md border border-dashed border-border p-10 text-center">
             <Icon name="FileText" size={40} className="mx-auto text-muted-foreground" />
             <p className="mt-3 font-semibold">Документов пока нет</p>
@@ -138,6 +154,7 @@ const Contracts = () => {
                 : 'Когда администратор направит документ, он появится здесь'}
             </p>
           </div>
+          )
         ) : (
           <div className="space-y-3">
             {items.map((c) => (

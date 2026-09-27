@@ -14,7 +14,11 @@ const CrmDashboard = () => {
     canSeeFboBoard,
     canSeeWorkingToday,
     dataLoading,
+    summaryError,
+    loadSummary,
+    loadShifts,
     shiftsLoading,
+    shiftsError,
     employeeShifts,
     togglingId,
     allShifts,
@@ -38,6 +42,8 @@ const CrmDashboard = () => {
         isStorekeeper={isStorekeeper}
         myShiftStatus={myShiftStatus}
         shiftsLoading={shiftsLoading}
+        shiftsError={shiftsError}
+        onRetryShifts={loadShifts}
       />
 
       <CrmDashboardSections
@@ -48,9 +54,13 @@ const CrmDashboard = () => {
         canSeeShiftCalendar={canSeeShiftCalendar}
         widgets={widgets}
         dataLoading={dataLoading}
+        summaryError={summaryError}
+        onRetrySummary={loadSummary}
         employeeShifts={employeeShifts}
         allShifts={allShifts}
         shiftsLoading={shiftsLoading}
+        shiftsError={shiftsError}
+        onRetryShifts={loadShifts}
         togglingId={togglingId}
         onToggleShift={handleToggleShift}
         onSwitchShift={handleSwitchShift}

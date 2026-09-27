@@ -19,6 +19,7 @@ import SupplyShowHeader, {
 import SupplyShowSummary from '@/components/crm/shipments/SupplyShowSummary';
 import SupplyShowCards from '@/components/crm/shipments/SupplyShowCards';
 import SupplyShowTable from '@/components/crm/shipments/SupplyShowTable';
+import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
 
 /**
  * Карточка приёмки от поставщика.
@@ -42,6 +43,7 @@ const SupplyShow = () => {
 
   const [detail, setDetail] = useState<ShipmentDetail | null>(null);
   const [loading, setLoading] = useState(true);
+  const [listError, setListError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
 
   // Правка метража: держим только одну открытую строку — так меньше шансов
@@ -57,14 +59,13 @@ const SupplyShow = () => {
     if (!id) return;
     setLoading(true);
     fetchShipmentDetail(Number(id))
-      .then(setDetail)
-      .catch((e) =>
-        toast({
-          title: 'Не удалось открыть приёмку',
-          description: e instanceof Error ? e.message : undefined,
-          variant: 'destructive',
-        }),
-      )
+      .then((d) => {
+        setListError(null);
+        setDetail(d);
+      })
+      .catch((e) => {
+        setListError(e instanceof Error ? e.message : 'Не удалось открыть приёмку');
+      })
       .finally(() => setLoading(false));
   }, [id, toast]);
 
@@ -207,7 +208,15 @@ const SupplyShow = () => {
           onPrintAllFound={printAllFound}
         />
 
-        {loading && <p className="text-muted-foreground">Загрузка...</p>}
+        {listError && !detail && (
+          <WarehouseFetchError
+            title="Не удалось открыть приёмку"
+            description={listError}
+            onRetry={load}
+          />
+        )}
+
+        {loading && !detail && <p className="text-muted-foreground">Загрузка...</p>}
 
         {detail && (
           <>

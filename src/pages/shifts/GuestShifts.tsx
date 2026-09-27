@@ -13,6 +13,7 @@ import Icon from '@/components/ui/icon';
 import { Badge } from '@/components/ui/badge';
 import { roleLabels, type Role } from '@/lib/roles';
 import { fetchGuestShiftHistory, type GuestShiftSession } from '@/lib/shiftSessionsApi';
+import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
 
 const PERIODS = [
   { days: 7, label: 'Неделя' },
@@ -52,13 +53,24 @@ const GuestShifts = () => {
   const [sessions, setSessions] = useState<GuestShiftSession[]>([]);
   const [days, setDays] = useState(30);
   const [loading, setLoading] = useState(true);
+  const [listError, setListError] = useState<string | null>(null);
 
-  useEffect(() => {
+  const load = () => {
     setLoading(true);
     fetchGuestShiftHistory(days)
-      .then(setSessions)
-      .catch(() => setSessions([]))
+      .then((list) => {
+        setListError(null);
+        setSessions(list);
+      })
+      .catch((e) => {
+        setListError(e instanceof Error ? e.message : 'Не удалось загрузить гостевые смены');
+      })
       .finally(() => setLoading(false));
+  };
+
+  useEffect(() => {
+    load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [days]);
 
   return (
@@ -98,10 +110,20 @@ const GuestShifts = () => {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {loading ? (
+              {loading && sessions.length === 0 ? (
                 <TableRow>
                   <TableCell colSpan={7} className="text-center text-muted-foreground">
                     Загрузка…
+                  </TableCell>
+                </TableRow>
+              ) : listError && sessions.length === 0 ? (
+                <TableRow>
+                  <TableCell colSpan={7} className="p-4">
+                    <WarehouseFetchError
+                      title="Не удалось загрузить гостевые смены"
+                      description={listError}
+                      onRetry={load}
+                    />
                   </TableCell>
                 </TableRow>
               ) : sessions.length === 0 ? (

@@ -1,5 +1,7 @@
 const VARIKI_URL = 'https://functions.poehali.dev/2ad91f9f-97d9-46d1-a9f4-06ee696d5ec5';
 
+/** POEHALI: магазин вариков. FRONTEND-ONLY: сбой GET не писать как «подарков нет». */
+
 export interface MyVariki {
   variki: number;
   threshold: number;

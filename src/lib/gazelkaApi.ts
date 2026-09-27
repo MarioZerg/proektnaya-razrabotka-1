@@ -1,5 +1,7 @@
 const GAZELKA_URL = 'https://functions.poehali.dev/919a040d-f5ad-4fcb-98ee-a0cf8e28b99e';
 
+/** POEHALI: заявки Газельки. FRONTEND-ONLY: сбой GET не писать как «менеджер не заполнил поля». */
+
 export interface GazelkaPlan {
   id: number;
   applicationDate: string | null;

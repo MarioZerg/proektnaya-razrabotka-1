@@ -25,11 +25,13 @@ import {
   hangerLabel,
   type Hanger,
 } from '@/lib/hangersApi';
+import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
 
 const HangersSettings = () => {
   const { toast } = useToast();
   const [hangers, setHangers] = useState<Hanger[]>([]);
   const [loading, setLoading] = useState(true);
+  const [listError, setListError] = useState<string | null>(null);
   const [name, setName] = useState('');
   const [saving, setSaving] = useState(false);
   const [deleteId, setDeleteId] = useState<number | null>(null);
@@ -40,7 +42,13 @@ const HangersSettings = () => {
   const load = () => {
     setLoading(true);
     fetchHangers()
-      .then(setHangers)
+      .then((list) => {
+        setListError(null);
+        setHangers(list);
+      })
+      .catch((e) => {
+        setListError(e instanceof Error ? e.message : 'Не удалось загрузить вешалки');
+      })
       .finally(() => setLoading(false));
   };
 
@@ -147,15 +155,24 @@ const HangersSettings = () => {
             <CardTitle className="text-sm">Список вешалок</CardTitle>
           </CardHeader>
           <CardContent>
-            {loading ? (
+            {listError && (
+              <WarehouseFetchError
+                title="Не удалось загрузить вешалки"
+                description={listError}
+                onRetry={load}
+              />
+            )}
+            {loading && hangers.length === 0 ? (
               <div className="flex items-center gap-2 text-sm text-muted-foreground">
                 <Icon name="Loader2" size={16} className="animate-spin" />
                 Загрузка...
               </div>
             ) : hangers.length === 0 ? (
+              listError ? null : (
               <p className="text-sm text-muted-foreground">
                 Вешалок пока нет — добавьте первую. Название можно менять: нажмите на него.
               </p>
+              )
             ) : (
               <div className="flex flex-wrap gap-2">
                 {hangers.map((h) => (

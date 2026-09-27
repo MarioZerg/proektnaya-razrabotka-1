@@ -13,6 +13,7 @@ import {
   type Vacation,
   type VacationRight,
 } from '@/lib/vacationsApi';
+import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
 
 /** Должности, которым отпуск оформляется по графику. */
 const VACATION_ROLES = ['sewer', 'cutter', 'packer', 'storekeeper', 'senior_storekeeper', 'cleaner'];
@@ -41,6 +42,7 @@ const VacationSection = ({ userId, role, actorId }: VacationSectionProps) => {
   const [startsOn, setStartsOn] = useState('');
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [listError, setListError] = useState<string | null>(null);
 
   const load = () => {
     setLoading(true);
@@ -52,10 +54,13 @@ const VacationSection = ({ userId, role, actorId }: VacationSectionProps) => {
     // Кружок загрузки снимаем по главному запросу блока.
     fetchVacationRight(userId)
       .then((r) => {
+        setListError(null);
         setRight(r);
         if (r.nextDate) setStartsOn(r.nextDate.slice(0, 10));
       })
-      .catch(() => setRight(null))
+      .catch((e) => {
+        setListError(e instanceof Error ? e.message : 'Не удалось загрузить отпуск');
+      })
       .finally(() => setLoading(false));
   };
 
@@ -110,8 +115,14 @@ const VacationSection = ({ userId, role, actorId }: VacationSectionProps) => {
         )}
       </div>
 
-      {loading ? (
+      {loading && !right ? (
         <p className="text-sm text-muted-foreground">Загрузка…</p>
+      ) : listError && !right ? (
+        <WarehouseFetchError
+          title="Не удалось загрузить отпуск"
+          description={listError}
+          onRetry={load}
+        />
       ) : (
         <>
           {/* Без даты первого отпуска отсчёт рабочего года вести не от чего —

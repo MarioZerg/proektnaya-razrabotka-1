@@ -3,6 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import Icon from '@/components/ui/icon';
 import { fetchStorageReport, type StorageReport } from '@/lib/unitEconomicsApi';
+import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
 
 const money = (v: number) => Math.round(v).toLocaleString('ru-RU');
 
@@ -20,16 +21,27 @@ const money = (v: number) => Math.round(v).toLocaleString('ru-RU');
 const StorageByItemPanel = ({ marketplace }: { marketplace: string }) => {
   const [data, setData] = useState<StorageReport | null>(null);
   const [loading, setLoading] = useState(true);
+  const [listError, setListError] = useState<string | null>(null);
 
-  useEffect(() => {
+  const load = () => {
     setLoading(true);
     fetchStorageReport(marketplace, 30)
-      .then(setData)
-      .catch(() => setData(null))
+      .then((d) => {
+        setListError(null);
+        setData(d);
+      })
+      .catch((e) => {
+        setListError(e instanceof Error ? e.message : 'Не удалось загрузить хранение');
+      })
       .finally(() => setLoading(false));
+  };
+
+  useEffect(() => {
+    load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [marketplace]);
 
-  if (loading) {
+  if (loading && !data) {
     return (
       <Card className="border-border shadow-none">
         <CardContent className="flex items-center gap-2 py-6 text-sm text-muted-foreground">
@@ -37,6 +49,16 @@ const StorageByItemPanel = ({ marketplace }: { marketplace: string }) => {
           Считаю хранение по товарам...
         </CardContent>
       </Card>
+    );
+  }
+
+  if (listError && !data) {
+    return (
+      <WarehouseFetchError
+        title="Не удалось загрузить хранение по товарам"
+        description={listError}
+        onRetry={load}
+      />
     );
   }
 

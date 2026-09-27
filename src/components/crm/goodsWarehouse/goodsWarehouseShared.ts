@@ -50,6 +50,9 @@ export const canPrintMarketplaceLabel = (item: GoodsWarehouseItem): boolean =>
  * Наклейку негде напечатать, вещь некуда положить. Поэтому печать оставляем:
  * решение о том, лежит ли вещь на складе, принимает человек, который держит её
  * в руках, а не строка статуса.
+ *
+ * FRONTEND-ONLY: кнопка печати для shipped. POEHALI статус не менять и поле
+ * «физически на складе» в базу не заводить — это правило экрана.
  */
 export const canPrintStorageSticker = (item: GoodsWarehouseItem): boolean =>
   item.status !== 'lost';

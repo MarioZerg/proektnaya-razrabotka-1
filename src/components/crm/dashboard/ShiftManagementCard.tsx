@@ -29,11 +29,14 @@ import type { EmployeeShiftStatus } from '@/lib/shiftSessionsApi';
 import type { ShiftListItem } from '@/lib/shiftsApi';
 import { formatTime } from '@/components/crm/dashboard/dashboardShared';
 import StorekeeperTaskChecklistDialog from '@/components/crm/dashboard/StorekeeperTaskChecklistDialog';
+import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
 
 interface ShiftManagementCardProps {
   employees: EmployeeShiftStatus[];
   shifts: ShiftListItem[];
   loading: boolean;
+  error?: string | null;
+  onRetry?: () => void;
   togglingId: number | null;
   onToggle: (employee: EmployeeShiftStatus) => void;
   onSwitchShift: (employeeId: number, shiftId: number) => Promise<void>;
@@ -58,6 +61,8 @@ const ShiftManagementCard = ({
   employees,
   shifts,
   loading,
+  error = null,
+  onRetry,
   togglingId,
   onToggle,
   onSwitchShift,
@@ -180,10 +185,18 @@ const ShiftManagementCard = ({
       </CardHeader>
 
       <CardContent className="p-0">
-        {loading ? (
+        {loading && employees.length === 0 ? (
           <div className="flex items-center gap-2 p-4 text-sm text-muted-foreground">
             <Icon name="Loader2" size={16} className="animate-spin" />
             Загрузка...
+          </div>
+        ) : error && employees.length === 0 && onRetry ? (
+          <div className="p-4">
+            <WarehouseFetchError
+              title="Не удалось загрузить смены"
+              description={error}
+              onRetry={onRetry}
+            />
           </div>
         ) : visibleEmployees.length === 0 ? (
           <p className="p-4 text-sm text-muted-foreground">

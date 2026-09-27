@@ -2,6 +2,8 @@ import { cachedRequest, invalidateCache } from '@/lib/requestCache';
 
 const PERSONAL_DATA_URL = 'https://functions.poehali.dev/ec5431c3-28ca-48c0-aabe-1ec7a5136923';
 
+/** POEHALI: документы сотрудника. FRONTEND-ONLY: сбой GET не прятать счётчик срока. */
+
 /** Тип документа, который сотрудник загружает в профиле. */
 export type DocType = 'passport_main' | 'passport_registration' | 'snils';
 

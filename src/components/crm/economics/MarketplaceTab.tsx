@@ -21,6 +21,7 @@ import MonthlySizesReport from './MonthlySizesReport';
 import PlatformFeesPanel from './PlatformFeesPanel';
 import StorageByItemPanel from './StorageByItemPanel';
 import { moneyShort } from './economicsShared';
+import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
 
 /**
  * Вкладка одной площадки.
@@ -36,6 +37,7 @@ const MarketplaceTab = ({ code }: { code: MarketplaceCode }) => {
   const [scheme, setScheme] = useState<Scheme>('FBS');
   const [data, setData] = useState<EconomicsResponse | null>(null);
   const [loading, setLoading] = useState(true);
+  const [listError, setListError] = useState<string | null>(null);
   const [syncing, setSyncing] = useState(false);
   const [syncProgress, setSyncProgress] = useState(0);
   const [search, setSearch] = useState('');
@@ -58,14 +60,13 @@ const MarketplaceTab = ({ code }: { code: MarketplaceCode }) => {
       scheme,
       buyout: buyoutOverride ? Number(buyoutOverride) : undefined,
     })
-      .then(setData)
-      .catch((e) =>
-        toast({
-          title: 'Не удалось загрузить',
-          description: e instanceof Error ? e.message : undefined,
-          variant: 'destructive',
-        }),
-      )
+      .then((d) => {
+        setListError(null);
+        setData(d);
+      })
+      .catch((e) => {
+        setListError(e instanceof Error ? e.message : 'Не удалось загрузить экономику');
+      })
       .finally(() => setLoading(false));
   };
 
@@ -150,8 +151,16 @@ const MarketplaceTab = ({ code }: { code: MarketplaceCode }) => {
         )}
       </div>
 
+      {listError && (
+        <WarehouseFetchError
+          title="Не удалось загрузить экономику"
+          description={listError}
+          onRetry={load}
+        />
+      )}
+
       {/* Сводка по площадке. */}
-      {!loading && data && (
+      {data && (
         <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
           <div className="rounded-lg border border-border p-3">
             <p className="text-xs text-muted-foreground">Позиций с ценой</p>
@@ -286,12 +295,13 @@ const MarketplaceTab = ({ code }: { code: MarketplaceCode }) => {
         <TariffsPanel marketplaceCode={code} tariffs={data.tariffs} onSaved={load} />
       )}
 
-      {loading ? (
+      {loading && !data ? (
         <div className="flex items-center gap-2 py-8 text-sm text-muted-foreground">
           <Icon name="Loader2" size={16} className="animate-spin" />
           Считаем экономику…
         </div>
       ) : priced.length === 0 ? (
+        listError ? null : (
         <div className="rounded-lg border border-amber-300 bg-amber-50 p-4">
           <p className="font-bold text-amber-900">Нет цен с площадки</p>
           <p className="mt-1 text-sm text-amber-900">
@@ -299,6 +309,7 @@ const MarketplaceTab = ({ code }: { code: MarketplaceCode }) => {
             кабинета {MARKETPLACE_LABELS[code]}. Без цен посчитать прибыль нельзя
           </p>
         </div>
+        )
       ) : (
         <div className="grid grid-cols-1 gap-3 lg:grid-cols-2 2xl:grid-cols-3">
           {visible.map((r) => (

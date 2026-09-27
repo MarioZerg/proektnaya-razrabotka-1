@@ -1,5 +1,7 @@
 const MATERIALS_URL = 'https://functions.poehali.dev/642e7cf2-2a7e-4c6e-81c6-c31c19737524';
 
+/** POEHALI: справочник материалов. FRONTEND-ONLY: пустой список при сбое не писать как «материалов нет». */
+
 import type { Shop } from '@/lib/marketplaceIntegrationsApi';
 
 export type { Shop };

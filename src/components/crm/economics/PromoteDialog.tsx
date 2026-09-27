@@ -28,6 +28,7 @@ import {
 } from '@/lib/promotionApi';
 import { money } from './economicsShared';
 import PromotePlan from './PromotePlan';
+import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
 
 /**
  * Заведение товаров в акцию площадки.
@@ -67,6 +68,8 @@ const PromoteDialog = ({ offerIds, title, material }: Props) => {
     totalItems?: number;
   }>({});
   const [loading, setLoading] = useState(false);
+  const [listError, setListError] = useState<string | null>(null);
+  const [promosError, setPromosError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   // План по материалу — вкладка по умолчанию: решение о скидках принимается
   // по материалу целиком, а не по одной ширине.
@@ -77,14 +80,20 @@ const PromoteDialog = ({ offerIds, title, material }: Props) => {
   useEffect(() => {
     if (!open) return;
     fetchPromotions(user?.id)
-      .then((p) => setPromos(p.filter((x) => x.marketplaceCode === 'ozon')))
-      .catch(() => setPromos([]));
+      .then((p) => {
+        setPromosError(null);
+        setPromos(p.filter((x) => x.marketplaceCode === 'ozon'));
+      })
+      .catch((e) => {
+        setPromosError(e instanceof Error ? e.message : 'Не удалось загрузить акции');
+      });
   }, [open, user?.id]);
 
   // Кандидаты пересчитываются при смене акции или порога прибыли.
   useEffect(() => {
     if (!actionId) {
       setItems([]);
+      setListError(null);
       return;
     }
     setLoading(true);
@@ -92,6 +101,7 @@ const PromoteDialog = ({ offerIds, title, material }: Props) => {
       actionId, user?.id, Number(minMargin) || 0, Number(extra) || 0,
     )
       .then((d) => {
+        setListError(null);
         setItems(d.items);
         setQuota({
           busyShort: d.busyShort,
@@ -99,7 +109,9 @@ const PromoteDialog = ({ offerIds, title, material }: Props) => {
           totalItems: d.totalItems,
         });
       })
-      .catch(() => setItems([]))
+      .catch((e) => {
+        setListError(e instanceof Error ? e.message : 'Не удалось загрузить кандидатов');
+      })
       .finally(() => setLoading(false));
   }, [actionId, minMargin, extra, user?.id]);
 
@@ -182,6 +194,22 @@ const PromoteDialog = ({ offerIds, title, material }: Props) => {
         <div className="space-y-3">
           <div className="space-y-1.5">
             <Label>Акция площадки</Label>
+            {promosError ? (
+              <WarehouseFetchError
+                title="Не удалось загрузить акции"
+                description={promosError}
+                onRetry={() => {
+                  fetchPromotions(user?.id)
+                    .then((p) => {
+                      setPromosError(null);
+                      setPromos(p.filter((x) => x.marketplaceCode === 'ozon'));
+                    })
+                    .catch((e) => {
+                      setPromosError(e instanceof Error ? e.message : 'Не удалось загрузить акции');
+                    });
+                }}
+              />
+            ) : (
             <Select value={actionId} onValueChange={setActionId}>
               <SelectTrigger>
                 <SelectValue placeholder="Выберите акцию" />
@@ -195,6 +223,7 @@ const PromoteDialog = ({ offerIds, title, material }: Props) => {
                 ))}
               </SelectContent>
             </Select>
+            )}
           </div>
 
           <div className="space-y-1.5">
@@ -239,6 +268,33 @@ const PromoteDialog = ({ offerIds, title, material }: Props) => {
             </p>
           </div>
 
+          {listError && (
+            <WarehouseFetchError
+              title="Не удалось посчитать кандидатов"
+              description={listError}
+              onRetry={() => {
+                if (!actionId) return;
+                setLoading(true);
+                fetchActionCandidates(
+                  actionId, user?.id, Number(minMargin) || 0, Number(extra) || 0,
+                )
+                  .then((d) => {
+                    setListError(null);
+                    setItems(d.items);
+                    setQuota({
+                      busyShort: d.busyShort,
+                      limitItems: d.limitItems,
+                      totalItems: d.totalItems,
+                    });
+                  })
+                  .catch((e) => {
+                    setListError(e instanceof Error ? e.message : 'Не удалось загрузить кандидатов');
+                  })
+                  .finally(() => setLoading(false));
+              }}
+            />
+          )}
+
           {loading && (
             <div className="flex items-center gap-2 text-sm text-muted-foreground">
               <Icon name="Loader2" size={14} className="animate-spin" />
@@ -246,7 +302,7 @@ const PromoteDialog = ({ offerIds, title, material }: Props) => {
             </div>
           )}
 
-          {!loading && !!actionId && (
+          {!loading && !!actionId && !listError && (
             <div className="max-h-64 space-y-1 overflow-y-auto rounded-md border border-border p-2">
               {mine.length === 0 && (
                 <p className="text-xs text-muted-foreground">

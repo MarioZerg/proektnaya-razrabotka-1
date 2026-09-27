@@ -14,6 +14,9 @@ import { useAuth } from '@/context/AuthContext';
  *
  * Вынесено из страницы без изменений логики — порядок вызовов и зависимости
  * эффектов те же, иначе сверка и опрос списка начнут срабатывать в другой момент.
+ *
+ * POEHALI: fetchPickingOrders / verifyPicking / rematchStock уже есть.
+ * FRONTEND-ONLY: ошибка загрузки и опрос раз в минуту — только экран, не новый action.
  */
 export const useGoodsPicking = () => {
   const { toast } = useToast();
@@ -21,6 +24,7 @@ export const useGoodsPicking = () => {
 
   const [orders, setOrders] = useState<PickingOrder[]>([]);
   const [loading, setLoading] = useState(true);
+  const [listError, setListError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [scanOpen, setScanOpen] = useState(false);
   const [rematching, setRematching] = useState(false);
@@ -33,8 +37,13 @@ export const useGoodsPicking = () => {
   const load = () => {
     setLoading(true);
     fetchPickingOrders()
-      .then(setOrders)
-      .catch(() => setOrders([]))
+      .then((list) => {
+        setListError(null);
+        setOrders(list);
+      })
+      .catch((e) => {
+        setListError(e instanceof Error ? e.message : 'Не удалось загрузить подбор');
+      })
       .finally(() => setLoading(false));
   };
 
@@ -100,7 +109,10 @@ export const useGoodsPicking = () => {
         }
         if (res.total > 0 || res.restored) load();
       })
-      .catch(() => undefined);
+      .catch(() => {
+        // FRONTEND-ONLY: сверка с площадкой — подсказка при входе. Сбой не
+        // должен обнулять список подбора; POEHALI action verify_picking уже есть.
+      });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -178,6 +190,7 @@ export const useGoodsPicking = () => {
 
   return {
     loading,
+    listError,
     search,
     setSearch,
     scanOpen,

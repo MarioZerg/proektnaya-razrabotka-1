@@ -1,5 +1,7 @@
 const STAFF_EFFICIENCY_URL = 'https://functions.poehali.dev/cdb282a1-8df9-4ea8-b57d-0e38e50cf53a';
 
+/** POEHALI: эффективность цеха. FRONTEND-ONLY: сбой GET не писать как «данных нет». */
+
 export interface StaffEfficiencyRow {
   userId: number;
   userName: string;

@@ -31,6 +31,7 @@ import {
 } from '@/lib/workshopsApi';
 import { fetchMaterialsData, type Material } from '@/lib/materialsApi';
 import { workshopSettingsConfig } from '@/lib/workshopSettingsConfig';
+import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
 
 const WorkshopEdit = () => {
   const { id } = useParams<{ id: string }>();
@@ -40,6 +41,7 @@ const WorkshopEdit = () => {
   const [workshop, setWorkshop] = useState<WorkshopDetail | null>(null);
   const [materials, setMaterials] = useState<Material[]>([]);
   const [loading, setLoading] = useState(true);
+  const [listError, setListError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
   const [name, setName] = useState('');
@@ -48,17 +50,20 @@ const WorkshopEdit = () => {
   const [allowedMaterials, setAllowedMaterials] = useState<Set<number>>(new Set());
   const [settingsValues, setSettingsValues] = useState<Record<string, string>>({});
 
-  useEffect(() => {
+  const load = () => {
     if (!id) return;
     setLoading(true);
     // Справочник материалов грузим отдельно: если связь моргнула и он не дошёл, карточка
     // цеха всё равно откроется. Раньше один сбой оставлял страницу пустой.
     fetchMaterialsData()
       .then((materialsData) => setMaterials(materialsData.materials.filter((m) => m.status === 'active')))
-      .catch(() => {});
+      .catch(() => {
+        // FRONTEND-ONLY: материалы для галочек, не для самой карточки цеха.
+      });
     // Кружок загрузки снимаем по главному запросу страницы.
     fetchWorkshopDetail(Number(id))
       .then((w) => {
+        setListError(null);
         setWorkshop(w);
         setName(w.name);
         setStatus(w.isActive ? 'active' : 'inactive');
@@ -70,8 +75,15 @@ const WorkshopEdit = () => {
         });
         setSettingsValues(initialValues);
       })
-      .catch(() => {})
+      .catch((e) => {
+        setListError(e instanceof Error ? e.message : 'Не удалось загрузить цех');
+      })
       .finally(() => setLoading(false));
+  };
+
+  useEffect(() => {
+    load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
   const toggleSet = (set: Set<number>, value: number, setter: (s: Set<number>) => void) => {
@@ -120,13 +132,25 @@ const WorkshopEdit = () => {
     }
   };
 
-  if (loading || !workshop) {
+  if (loading && !workshop) {
     return (
       <CrmLayout>
         <div className="flex items-center gap-2 text-sm text-muted-foreground">
           <Icon name="Loader2" size={16} className="animate-spin" />
           Загрузка...
         </div>
+      </CrmLayout>
+    );
+  }
+
+  if (!workshop) {
+    return (
+      <CrmLayout>
+        <WarehouseFetchError
+          title="Не удалось загрузить цех"
+          description={listError || undefined}
+          onRetry={load}
+        />
       </CrmLayout>
     );
   }

@@ -20,6 +20,7 @@ import { useAuth } from '@/context/AuthContext';
 import { fetchShelves, type Shelf } from '@/lib/shelvesApi';
 import { cancelledScanToShelf } from '@/lib/marketplaceSuppliesApi';
 import { printStorageSticker } from '@/lib/printStorageSticker';
+import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
 
 export interface CancelledScanInfo {
   orderNumber?: string | null;
@@ -59,19 +60,29 @@ const CancelledScanDialog = ({ info, onClose }: Props) => {
   const { user } = useAuth();
 
   const [shelves, setShelves] = useState<Shelf[]>([]);
+  const [shelvesError, setShelvesError] = useState<string | null>(null);
   const [shelfId, setShelfId] = useState('');
   const [saving, setSaving] = useState(false);
   /** Полка записана — окно показывает подтверждение вместо кнопок. */
   const [placedOn, setPlacedOn] = useState<string | null>(null);
+
+  const loadShelves = () => {
+    fetchShelves()
+      .then((list) => {
+        setShelvesError(null);
+        setShelves(list);
+      })
+      .catch((e) => {
+        setShelvesError(e instanceof Error ? e.message : 'Не удалось загрузить полки');
+      });
+  };
 
   // Полки грузим при открытии окна: кладовщик выбирает место, пока вещь в руках.
   useEffect(() => {
     if (!info) return;
     setShelfId('');
     setPlacedOn(null);
-    fetchShelves()
-      .then(setShelves)
-      .catch(() => setShelves([]));
+    loadShelves();
   }, [info]);
 
   const handlePrint = () => {
@@ -174,6 +185,13 @@ const CancelledScanDialog = ({ info, onClose }: Props) => {
               {info?.goodsId && (
                 <div className="space-y-2">
                   <p className="text-sm font-medium">Куда кладёте?</p>
+                  {shelvesError ? (
+                    <WarehouseFetchError
+                      title="Не удалось загрузить полки"
+                      description={shelvesError}
+                      onRetry={loadShelves}
+                    />
+                  ) : (
                   <Select value={shelfId} onValueChange={setShelfId}>
                     <SelectTrigger>
                       <SelectValue placeholder="Выберите полку" />
@@ -186,6 +204,7 @@ const CancelledScanDialog = ({ info, onClose }: Props) => {
                       ))}
                     </SelectContent>
                   </Select>
+                  )}
                 </div>
               )}
             </>

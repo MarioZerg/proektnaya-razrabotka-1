@@ -3,6 +3,7 @@ import CrmLayout from '@/components/crm/CrmLayout';
 import { Input } from '@/components/ui/input';
 import Icon from '@/components/ui/icon';
 import { fetchPackagingGuide, type PackagingGuide as Guide } from '@/lib/materialsApi';
+import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
 
 /**
  * Справочник упаковки для упаковщицы: какой пакет брать под какой товар.
@@ -27,12 +28,24 @@ const shortBag = (bag: string) => bag.replace(/^Пакет\s*/i, '');
 const PackagingGuidePage = () => {
   const [guide, setGuide] = useState<Guide | null>(null);
   const [loading, setLoading] = useState(true);
+  const [listError, setListError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
 
-  useEffect(() => {
+  const load = () => {
+    setLoading(true);
     fetchPackagingGuide()
-      .then(setGuide)
+      .then((g) => {
+        setListError(null);
+        setGuide(g);
+      })
+      .catch((e) => {
+        setListError(e instanceof Error ? e.message : 'Не удалось загрузить справочник');
+      })
       .finally(() => setLoading(false));
+  };
+
+  useEffect(() => {
+    load();
   }, []);
 
   // Быстрый доступ «ткань + ширина → пакет».
@@ -68,14 +81,24 @@ const PackagingGuidePage = () => {
           </p>
         </div>
 
-        {loading ? (
+        {listError && (
+          <WarehouseFetchError
+            title="Не удалось загрузить справочник"
+            description={listError}
+            onRetry={load}
+          />
+        )}
+
+        {loading && !guide ? (
           <div className="flex justify-center py-12">
             <Icon name="Loader2" size={28} className="animate-spin text-muted-foreground" />
           </div>
         ) : !guide || guide.rows.length === 0 ? (
+          listError ? null : (
           <p className="py-12 text-center text-sm text-muted-foreground">
             Справочник пуст: у товаров пока не указана упаковка
           </p>
+          )
         ) : (
           <>
             <div className="flex flex-wrap items-center gap-3">

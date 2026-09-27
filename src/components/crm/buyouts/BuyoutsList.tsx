@@ -19,6 +19,8 @@ import { MP, fullDate, money } from './buyoutsShared';
 interface Props {
   items: BoughtOrder[];
   loading: boolean;
+  /** FRONTEND-ONLY: сбой GET — не писать «выкупов пока нет». */
+  error?: string | null;
 }
 
 /** Прибыль с вещи: зелёным, если заработали, красным — если ушли в минус. */
@@ -42,16 +44,16 @@ const marginCell = (o: BoughtOrder) => {
   );
 };
 
-const BuyoutsList = ({ items, loading }: Props) => (
+const BuyoutsList = ({ items, loading, error = null }: Props) => (
   <>
-    {loading && (
+    {loading && items.length === 0 && (
       <div className="flex items-center gap-2 text-sm text-muted-foreground">
         <Icon name="Loader2" size={16} className="animate-spin" />
         Загружаем…
       </div>
     )}
 
-    {!loading && items.length === 0 && (
+    {!loading && items.length === 0 && !error && (
       <p className="text-sm text-muted-foreground">
         Выкупленных заказов пока нет
       </p>
@@ -59,7 +61,7 @@ const BuyoutsList = ({ items, loading }: Props) => (
 
     {/* Телефон: шесть колонок в строку не помещаются — показываем то же
         самое карточками. На компьютере остаётся обычная таблица. */}
-    {!loading && items.length > 0 && (
+    {items.length > 0 && (
       <>
         <div className="space-y-2 md:hidden">
           {items.map((o) => (

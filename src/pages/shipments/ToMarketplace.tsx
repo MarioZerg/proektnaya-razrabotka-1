@@ -20,6 +20,7 @@ import ToMarketplaceTable from '@/components/crm/marketplaceSupplies/ToMarketpla
 import ConfirmFbsSupplyDialog from '@/components/crm/marketplaceSupplies/ConfirmFbsSupplyDialog';
 import { createOptions } from '@/components/crm/marketplaceSupplies/toMarketplaceConstants';
 import { importOzonFboComposition } from '@/lib/ozonFboApi';
+import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
 
 const ToMarketplace = () => {
   const { toast } = useToast();
@@ -28,6 +29,7 @@ const ToMarketplace = () => {
   /** Полный список по текущим фильтрам, кроме схемы: по нему считаются плашки FBS/FBO. */
   const [allSupplies, setAllSupplies] = useState<Supply[]>([]);
   const [loading, setLoading] = useState(true);
+  const [listError, setListError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   // Поставка FBS, которую кладовщик собирается создать: ждём подтверждения, что
   // он понимает — до её отгрузки смену закрыть не получится.
@@ -74,12 +76,15 @@ const ToMarketplace = () => {
       search: search || undefined,
       shopId: shopId || undefined,
     })
-      .then((data) =>
+      .then((data) => {
+        setListError(null);
         setAllSupplies(
           statusFilter === 'open' ? data.filter((s) => s.status !== 'Выполнена') : data,
-        ),
-      )
-      .catch(() => undefined)
+        );
+      })
+      .catch((e) => {
+        setListError(e instanceof Error ? e.message : 'Не удалось загрузить поставки');
+      })
       .finally(() => setLoading(false));
   };
 
@@ -257,8 +262,17 @@ const ToMarketplace = () => {
           onReset={resetFilters}
         />
 
+        {listError && (
+          <WarehouseFetchError
+            title="Не удалось загрузить поставки"
+            description={listError}
+            onRetry={load}
+          />
+        )}
+
         <ToMarketplaceTable
           loading={loading}
+          error={listError}
           supplies={supplies}
           onOpen={(id) => navigate(`/crm/shipments/to-marketplace/${id}`)}
         />

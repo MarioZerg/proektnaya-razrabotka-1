@@ -14,6 +14,7 @@ import type { Employee } from '@/lib/usersApi';
 import type { Workshop } from '@/lib/workshopsApi';
 import type { EmployeeShiftStatus } from '@/lib/shiftSessionsApi';
 import { statusOptions, employeeLabel } from '@/components/crm/sewingItems/sewingItemsShared';
+import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
 
 interface AdminActionsCardProps {
   selectedOrder: Order;
@@ -29,6 +30,8 @@ interface AdminActionsCardProps {
   assignedShift?: EmployeeShiftStatus;
   assignedNotOnShift: boolean;
   assignedOtherWorkshop: boolean;
+  shiftsError?: string | null;
+  onRetryShifts?: () => void;
 }
 
 /** Блок администратора: статус пошива, назначение сотрудника и цеха, ручной раскрой. */
@@ -46,6 +49,8 @@ const AdminActionsCard = ({
   assignedShift,
   assignedNotOnShift,
   assignedOtherWorkshop,
+  shiftsError,
+  onRetryShifts,
 }: AdminActionsCardProps) => (
   <Card className="border-border shadow-none">
     <CardHeader className="pb-3">
@@ -97,6 +102,13 @@ const AdminActionsCard = ({
 
         {/* Назначить мало — человек должен увидеть заказ у себя. Пока смена
             не открыта, конвейер у него пуст, и работа стоит. */}
+        {shiftsError && (
+          <WarehouseFetchError
+            title="Не удалось проверить смены"
+            description={shiftsError}
+            onRetry={onRetryShifts || (() => {})}
+          />
+        )}
         {assignedNotOnShift && (
           <p className="flex items-start gap-1.5 rounded-md bg-amber-50 p-2 text-xs text-amber-900">
             <Icon name="TriangleAlert" size={14} className="mt-0.5 shrink-0" />

@@ -1,5 +1,7 @@
 const RETURNS_URL = 'https://functions.poehali.dev/015dbb02-13c9-49de-8718-8fe37c329b30';
 
+/** POEHALI: заявки на возврат с площадок. FRONTEND-ONLY: сбой GET не писать как «возвратов нет». */
+
 /** Заявка на возврат, загруженная с маркетплейса по API. */
 export interface MarketplaceReturn {
   id: number;

@@ -11,6 +11,7 @@ import Icon from '@/components/ui/icon';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/context/AuthContext';
 import { packerReturnToRoll, fetchSuitableRolls } from '@/lib/rollsApi';
+import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
 
 interface KioskReturnToRollDialogProps {
   open: boolean;
@@ -68,30 +69,38 @@ const KioskReturnToRollDialog = ({
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(false);
   const [rolls, setRolls] = useState<SuitableRoll[]>([]);
+  const [listError, setListError] = useState<string | null>(null);
   const [material, setMaterial] = useState<string | null>(null);
   const [width, setWidth] = useState<number | null>(null);
   const [quantity, setQuantity] = useState<number | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  const loadRolls = () => {
+    if (!goodsWarehouseId) return;
+    setLoading(true);
+    fetchSuitableRolls({ goodsWarehouseId, userId: user?.id })
+      .then((d) => {
+        setListError(null);
+        setRolls(d.rolls || []);
+        setMaterial(d.material);
+        setWidth(d.width);
+        setQuantity(d.quantity);
+      })
+      .catch((e) => {
+        setListError(e instanceof Error ? e.message : 'Не удалось загрузить рулоны');
+      })
+      .finally(() => setLoading(false));
+  };
 
   // Открыли окно — сразу спрашиваем, какие рулоны подходят, и ставим курсор
   // в поле сканера: упаковщица пикает рулон, не касаясь экрана в перчатках.
   useEffect(() => {
     if (!open) return;
     setBarcode('');
-    setRolls([]);
+    setListError(null);
     setTimeout(() => inputRef.current?.focus(), 100);
-
-    if (!goodsWarehouseId) return;
-    setLoading(true);
-    fetchSuitableRolls({ goodsWarehouseId, userId: user?.id })
-      .then((d) => {
-        setRolls(d.rolls || []);
-        setMaterial(d.material);
-        setWidth(d.width);
-        setQuantity(d.quantity);
-      })
-      .catch(() => setRolls([]))
-      .finally(() => setLoading(false));
+    loadRolls();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, goodsWarehouseId, user?.id]);
 
   const save = async (code: string) => {
@@ -177,6 +186,12 @@ const KioskReturnToRollDialog = ({
                 <Icon name="Loader2" size={18} className="animate-spin" />
                 Ищем рулоны вашей смены...
               </div>
+            ) : listError ? (
+              <WarehouseFetchError
+                title="Не удалось загрузить рулоны"
+                description={listError}
+                onRetry={loadRolls}
+              />
             ) : rolls.length === 0 ? (
               <p className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
                 В вашем цехе и смене нет открытых рулонов

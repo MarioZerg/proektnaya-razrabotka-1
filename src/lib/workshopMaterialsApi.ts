@@ -1,5 +1,7 @@
 const WORKSHOP_MATERIALS_URL = 'https://functions.poehali.dev/db49c8fd-1344-4e72-a6e8-5a2c90a2656a';
 
+/** POEHALI: остатки материалов в цехах. FRONTEND-ONLY: ошибка загрузки — только экран. */
+
 export interface WorkshopMaterialCell {
   workshopId: number;
   shiftNumber: number | null;

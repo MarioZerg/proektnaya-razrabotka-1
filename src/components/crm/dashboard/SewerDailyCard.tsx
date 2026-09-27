@@ -3,6 +3,7 @@ import { usePolling } from '@/hooks/usePolling';
 import { Card, CardContent } from '@/components/ui/card';
 import Icon from '@/components/ui/icon';
 import { fetchSewerDaily, type SewerDailyInfo } from '@/lib/salaryApi';
+import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
 
 const formatMoney = (value: number) =>
   new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 0 }).format(value) + ' ₽';
@@ -31,17 +32,33 @@ interface SewerDailyCardProps {
  */
 const SewerDailyCard = ({ onlyUserId }: SewerDailyCardProps) => {
   const [info, setInfo] = useState<SewerDailyInfo | null>(null);
+  const [listError, setListError] = useState<string | null>(null);
 
   // Через usePolling, а не свой setInterval: тот продолжал опрашивать сервер и в
   // свёрнутой вкладке, и ночью — дашборд у многих открыт весь день. Шкала акции
   // раз в две минуты — этого достаточно, метраж растёт постепенно.
   const load = useCallback(() => {
     fetchSewerDaily()
-      .then(setInfo)
-      .catch(() => setInfo(null));
+      .then((d) => {
+        setListError(null);
+        setInfo(d);
+      })
+      .catch((e) => {
+        setListError(e instanceof Error ? e.message : 'Не удалось загрузить акцию дня');
+      });
   }, []);
 
   usePolling(load, 120000);
+
+  if (listError && !info) {
+    return (
+      <WarehouseFetchError
+        title="Не удалось загрузить акцию дня"
+        description={listError}
+        onRetry={load}
+      />
+    );
+  }
 
   if (!info) return null;
 

@@ -66,14 +66,29 @@ const SewingItemActionsSection = ({
 }: SewingItemActionsSectionProps) => {
   const [selectedRollId, setSelectedRollId] = useState<string>('');
   const [hangers, setHangers] = useState<Hanger[]>([]);
+  const [hangersError, setHangersError] = useState<string | null>(null);
   const [selectedHanger, setSelectedHanger] = useState<string>('');
   // Кто сейчас реально на смене. Нужно, чтобы предупредить админа: назначенный
   // сотрудник смену не открывал и заказ у себя не увидит.
   const [shifts, setShifts] = useState<EmployeeShiftStatus[]>([]);
+  const [shiftsError, setShiftsError] = useState<string | null>(null);
+  const [shiftsLoaded, setShiftsLoaded] = useState(false);
+
+  const loadShifts = () => {
+    fetchEmployeeShifts()
+      .then((list) => {
+        setShiftsError(null);
+        setShifts(list);
+        setShiftsLoaded(true);
+      })
+      .catch((e) => {
+        setShiftsError(e instanceof Error ? e.message : 'Не удалось загрузить смены');
+      });
+  };
 
   useEffect(() => {
     if (!dialogOpen) return;
-    fetchEmployeeShifts().then(setShifts).catch(() => setShifts([]));
+    loadShifts();
   }, [dialogOpen]);
 
   // НАЗНАЧИЛИ НА ЧЕЛОВЕКА, КОТОРОГО НЕТ НА СМЕНЕ.
@@ -88,18 +103,31 @@ const SewingItemActionsSection = ({
   const assignedShift = selectedOrder.assignedUserId
     ? shifts.find((s) => s.id === selectedOrder.assignedUserId)
     : undefined;
-  const assignedNotOnShift = Boolean(selectedOrder.assignedUserId) && !assignedShift?.isOpen;
+  const assignedNotOnShift =
+    shiftsLoaded && Boolean(selectedOrder.assignedUserId) && !assignedShift?.isOpen;
   const assignedOtherWorkshop = Boolean(
-    assignedShift?.isOpen &&
+    shiftsLoaded &&
+      assignedShift?.isOpen &&
       selectedOrder.workshopId &&
       assignedShift.sessionWorkshopId &&
       assignedShift.sessionWorkshopId !== selectedOrder.workshopId
   );
 
+  const loadHangers = () => {
+    fetchHangers()
+      .then((list) => {
+        setHangersError(null);
+        setHangers(list);
+      })
+      .catch((e) => {
+        setHangersError(e instanceof Error ? e.message : 'Не удалось загрузить вешалки');
+      });
+  };
+
   // Список вешалок нужен только закройщику при раскрое.
   useEffect(() => {
     if (isCutterView && dialogOpen) {
-      fetchHangers().then(setHangers).catch(() => setHangers([]));
+      loadHangers();
     }
   }, [isCutterView, dialogOpen]);
 
@@ -166,6 +194,8 @@ const SewingItemActionsSection = ({
         selectedRollId={selectedRollId}
         setSelectedRollId={setSelectedRollId}
         hangers={hangers}
+        hangersError={hangersError}
+        onRetryHangers={loadHangers}
         selectedHanger={selectedHanger}
         setSelectedHanger={setSelectedHanger}
         onCut={onCut}
@@ -208,6 +238,8 @@ const SewingItemActionsSection = ({
       assignedShift={assignedShift}
       assignedNotOnShift={assignedNotOnShift}
       assignedOtherWorkshop={assignedOtherWorkshop}
+      shiftsError={shiftsError}
+      onRetryShifts={loadShifts}
     />
   );
 };

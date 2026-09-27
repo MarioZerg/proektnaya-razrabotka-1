@@ -27,6 +27,7 @@ import {
 } from '@/lib/shiftsApi';
 import ShiftCycleSetup from '@/components/crm/shifts/ShiftCycleSetup';
 import { fetchVacations, type Vacation } from '@/lib/vacationsApi';
+import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
 
 const weekDays = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];
 
@@ -73,6 +74,7 @@ const ShiftsCalendar = () => {
   const [shifts, setShifts] = useState<ShiftListItem[]>([]);
   const [shiftId, setShiftId] = useState('');
   const [loading, setLoading] = useState(true);
+  const [listError, setListError] = useState<string | null>(null);
   const [daysOff, setDaysOff] = useState<Set<string>>(new Set());
   const [savingDate, setSavingDate] = useState<string | null>(null);
   // Цикличный график смены (2/2 и т.п.): если задан, выходные считает система, а клики
@@ -86,7 +88,8 @@ const ShiftsCalendar = () => {
   useEffect(() => {
     fetchVacations()
       .then((list) => setVacations(list.filter((v) => !v.cancelled)))
-      .catch(() => setVacations([]));
+      // FRONTEND-ONLY: отпуска на календаре. Сбой не обнуляет уже показанных.
+      .catch(() => undefined);
   }, []);
 
   const today = new Date();
@@ -99,13 +102,22 @@ const ShiftsCalendar = () => {
   );
   const weeks = useMemo(() => buildMonthGrid(viewDate.getFullYear(), viewDate.getMonth()), [viewDate]);
 
-  useEffect(() => {
+  const load = () => {
+    setLoading(true);
     fetchShifts()
       .then((data) => {
+        setListError(null);
         setShifts(data);
         if (data.length > 0) setShiftId(String(data[0].id));
       })
+      .catch((e) => {
+        setListError(e instanceof Error ? e.message : 'Не удалось загрузить смены');
+      })
       .finally(() => setLoading(false));
+  };
+
+  useEffect(() => {
+    load();
   }, []);
 
   const selectedShift = shifts.find((s) => String(s.id) === shiftId);
@@ -221,13 +233,23 @@ const ShiftsCalendar = () => {
           </span>
         </div>
 
-        {loading ? (
+        {listError && (
+          <WarehouseFetchError
+            title="Не удалось загрузить смены"
+            description={listError}
+            onRetry={load}
+          />
+        )}
+
+        {loading && shifts.length === 0 ? (
           <div className="flex items-center gap-2 text-sm text-muted-foreground">
             <Icon name="Loader2" size={16} className="animate-spin" />
             Загрузка...
           </div>
         ) : shifts.length === 0 ? (
+          listError ? null : (
           <p className="text-sm text-muted-foreground">Сначала создайте смену на вкладке «Смены».</p>
+          )
         ) : (
           <div className="rounded-md border border-border">
             <Table>

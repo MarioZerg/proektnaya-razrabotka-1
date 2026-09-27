@@ -15,6 +15,11 @@ interface WorkTileProps {
   hint: string;
   count: number;
   onClick: () => void;
+  /**
+   * FRONTEND-ONLY: пока очередь ещё не пришла, не рисуем 0 — это выглядит как
+   * «работы нет». На poehali отдельного флага загрузки нет, кружок только здесь.
+   */
+  loading?: boolean;
   /** Чья это работа: цех, склад или передача между ними. Задаёт цвет плитки. */
   zone?: WorkZone;
   /** Подпись кнопки шага, который идёт ПЕРЕД этой плиткой (рисуется сверху со стрелкой). */
@@ -47,6 +52,7 @@ const WorkTile = ({
   hint,
   count,
   onClick,
+  loading = false,
   zone = 'warehouse',
   stepLabel,
   stepIcon,
@@ -57,15 +63,16 @@ const WorkTile = ({
   afterCount,
   onAfter,
 }: WorkTileProps) => {
-  const active = count > 0;
+  const active = !loading && count > 0;
 
   const tile = (
     <button
       type="button"
       onClick={onClick}
+      disabled={loading}
       className={`relative flex w-full items-center gap-3 overflow-hidden rounded-lg border p-4 pl-5 text-left transition ${
         active ? zoneTileClass[zone] : 'border-border bg-card hover:bg-muted/50'
-      }`}
+      } ${loading ? 'cursor-wait opacity-80' : ''}`}
       title={zoneLabels[zone]}
     >
       {/* Полоса зоны: фиолетовая — производство, зелёная — склад, двухцветная —
@@ -83,11 +90,15 @@ const WorkTile = ({
         <p className="mt-0.5 text-xs leading-tight text-muted-foreground">{hint}</p>
       </div>
       <span
-        className={`shrink-0 text-2xl font-bold ${
+        className={`flex h-8 w-10 shrink-0 items-center justify-center text-2xl font-bold ${
           active ? zoneTextClass[zone] : 'text-muted-foreground/50'
         }`}
       >
-        {count}
+        {loading ? (
+          <Icon name="Loader2" size={22} className="animate-spin text-muted-foreground" />
+        ) : (
+          count
+        )}
       </span>
     </button>
   );

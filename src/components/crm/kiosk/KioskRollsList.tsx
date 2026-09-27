@@ -5,9 +5,13 @@ import { Input } from '@/components/ui/input';
 import type { Roll } from '@/lib/rollsApi';
 import type { MaterialType } from '@/lib/materialsApi';
 import { formatQuantity } from '@/lib/formatQuantity';
+import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
 
 interface KioskRollsListProps {
   loading: boolean;
+  /** FRONTEND-ONLY: сбой GET — не писать «нет открытых рулонов». */
+  error?: string | null;
+  onRetry?: () => void;
   /** Типы материалов, доступные роли: закройщик — ткань, швея — тесьма, упаковщица — упаковка. */
   visibleTypes: MaterialType[];
   typeFilter: number | 'all';
@@ -26,6 +30,8 @@ interface KioskRollsListProps {
  * материала, поиск по номеру и названию, список рулонов смены. */
 const KioskRollsList = ({
   loading,
+  error = null,
+  onRetry,
   visibleTypes,
   typeFilter,
   setTypeFilter,
@@ -76,12 +82,20 @@ const KioskRollsList = ({
       className="h-16 text-xl"
     />
 
+    {error && onRetry && (
+      <WarehouseFetchError
+        title="Не удалось загрузить рулоны смены"
+        description={error}
+        onRetry={onRetry}
+      />
+    )}
+
     {loading ? (
       <div className="flex items-center justify-center gap-2 py-10 text-muted-foreground">
         <Icon name="Loader2" size={24} className="animate-spin" />
         Загрузка…
       </div>
-    ) : visibleRolls.length === 0 ? (
+    ) : error && visibleRolls.length === 0 ? null : visibleRolls.length === 0 ? (
       <p className="py-10 text-center text-2xl text-muted-foreground">
         {search.trim()
           ? 'Рулон не найден — проверьте номер'

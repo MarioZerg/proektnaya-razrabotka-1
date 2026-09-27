@@ -33,12 +33,14 @@ import { Badge } from '@/components/ui/badge';
 import Icon from '@/components/ui/icon';
 import { useToast } from '@/hooks/use-toast';
 import { fetchWorkshops, createWorkshop, deleteWorkshop, type Workshop } from '@/lib/workshopsApi';
+import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
 
 const Workshops = () => {
   const { toast } = useToast();
   const navigate = useNavigate();
   const [workshops, setWorkshops] = useState<Workshop[]>([]);
   const [loading, setLoading] = useState(true);
+  const [listError, setListError] = useState<string | null>(null);
 
   const [createOpen, setCreateOpen] = useState(false);
   const [createName, setCreateName] = useState('');
@@ -51,7 +53,13 @@ const Workshops = () => {
   const load = () => {
     setLoading(true);
     fetchWorkshops()
-      .then(setWorkshops)
+      .then((list) => {
+        setListError(null);
+        setWorkshops(list);
+      })
+      .catch((e) => {
+        setListError(e instanceof Error ? e.message : 'Не удалось загрузить цеха');
+      })
       .finally(() => setLoading(false));
   };
 
@@ -148,7 +156,15 @@ const Workshops = () => {
           </DialogContent>
         </Dialog>
 
-        {loading ? (
+        {listError && (
+          <WarehouseFetchError
+            title="Не удалось загрузить цеха"
+            description={listError}
+            onRetry={load}
+          />
+        )}
+
+        {loading && workshops.length === 0 ? (
           <div className="flex items-center gap-2 text-sm text-muted-foreground">
             <Icon name="Loader2" size={16} className="animate-spin" />
             Загрузка...

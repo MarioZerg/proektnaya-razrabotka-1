@@ -5,6 +5,7 @@ import LogsFilters from '@/components/crm/logs/LogsFilters';
 import LogsSummaryTiles from '@/components/crm/logs/LogsSummaryTiles';
 import LogsTable from '@/components/crm/logs/LogsTable';
 import { useLogsState } from '@/components/crm/logs/useLogsState';
+import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
 
 /** Журнал действий — что происходило в цехе: смены, раскрой, пошив, стикеровка. */
 const Logs = () => {
@@ -45,7 +46,15 @@ const Logs = () => {
           onReload={s.reload}
         />
 
-        <LogsTable items={s.items} loading={s.loading} />
+        {s.listError && (
+          <WarehouseFetchError
+            title="Не удалось загрузить журнал"
+            description={s.listError}
+            onRetry={s.reload}
+          />
+        )}
+
+        <LogsTable items={s.items} loading={s.loading} error={s.listError} />
 
         <TablePager
           page={s.page}

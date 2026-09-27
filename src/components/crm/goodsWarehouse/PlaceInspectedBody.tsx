@@ -9,6 +9,7 @@ import { useScannerAutoSubmit } from '@/hooks/useScannerAutoSubmit';
 import { fetchInspection, placeInspectedBatch } from '@/lib/goodsWarehouseApi';
 import { playScanSound, playScanErrorSound, primeScanSounds } from '@/lib/scanSound';
 import { shortProductName } from '@/lib/shortProductName';
+import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
 
 interface PlaceInspectedBodyProps {
   /** Вкладка открыта: по этому признаку перезагружаем список и ставим фокус. */
@@ -39,6 +40,10 @@ interface ScannedRow {
  *
  * Это внутренняя часть окна «Разложить по полкам» — вторая вкладка. Оба дела кладовщик
  * делает у одного стеллажа с одним сканером, поэтому и живут они в одном окне.
+ *
+ * POEHALI: fetchInspection('readyShelf') и placeInspectedBatch уже есть.
+ * FRONTEND-ONLY: список сканов собирается в браузере; сбой загрузки ready не
+ * должен звучать как «все стикеры чужие».
  */
 const PlaceInspectedBody = ({ active, onClose, onDone }: PlaceInspectedBodyProps) => {
   const { toast } = useToast();
@@ -63,18 +68,13 @@ const PlaceInspectedBody = ({ active, onClose, onDone }: PlaceInspectedBodyProps
       clientOrderNumber?: string | null;
     }[]
   >([]);
+  const [readyError, setReadyError] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const focusInput = () => setTimeout(() => inputRef.current?.focus(), 0);
 
-  useEffect(() => {
-    if (!active) return;
-    primeScanSounds();
-    setRows([]);
-    setBarcode('');
-    setError(null);
-    // Готовые к укладке вещи загружаем один раз: дальше сверяем сканы прямо в браузере,
-    // и кладовщик получает ответ мгновенно, даже если связь в цехе слабая.
+  const loadReady = () => {
+    setReadyError(null);
     fetchInspection('readyShelf')
       .then((d) =>
         setReady(
@@ -92,7 +92,22 @@ const PlaceInspectedBody = ({ active, onClose, onDone }: PlaceInspectedBodyProps
           })),
         ),
       )
-      .catch(() => setReady([]));
+      .catch((e) => {
+        setReadyError(
+          e instanceof Error ? e.message : 'Не удалось загрузить осмотренные вещи',
+        );
+      });
+  };
+
+  useEffect(() => {
+    if (!active) return;
+    primeScanSounds();
+    setRows([]);
+    setBarcode('');
+    setError(null);
+    // Готовые к укладке вещи загружаем один раз: дальше сверяем сканы прямо в браузере,
+    // и кладовщик получает ответ мгновенно, даже если связь в цехе слабая.
+    loadReady();
     setTimeout(() => inputRef.current?.focus(), 80);
   }, [active]);
 
@@ -101,6 +116,13 @@ const PlaceInspectedBody = ({ active, onClose, onDone }: PlaceInspectedBodyProps
     if (!code) return;
     setBarcode('');
     setError(null);
+
+    if (readyError) {
+      setError('Список осмотренных не загрузился — нажмите «Повторить»');
+      playScanErrorSound();
+      focusInput();
+      return;
+    }
 
     if (rows.some((r) => r.barcode === code)) {
       setError(`Стикер ${code} уже в списке`);
@@ -186,6 +208,14 @@ const PlaceInspectedBody = ({ active, onClose, onDone }: PlaceInspectedBodyProps
           Готово к укладке: <span className="font-semibold">{ready.length}</span>
         </p>
       </div>
+
+      {readyError && (
+        <WarehouseFetchError
+          title="Не удалось загрузить осмотренные вещи"
+          description={readyError}
+          onRetry={loadReady}
+        />
+      )}
 
       {/* СПИСОК ТОГО, ЧТО ПРИНИМАЕМ ИЗ ЦЕХА.
           Раньше здесь было только число — кладовщик забирал тележку и не мог

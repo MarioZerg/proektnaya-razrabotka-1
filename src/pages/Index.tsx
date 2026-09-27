@@ -9,6 +9,7 @@ import { fetchMaxBotUrl, enterRole, type UserRoleEntry } from '@/lib/authApi';
 import OnlineNowBadge from '@/components/auth/OnlineNowBadge';
 import RoleSelectScreen from '@/components/auth/RoleSelectScreen';
 import PendingApprovalScreen from '@/components/auth/PendingApprovalScreen';
+import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
 
 type Step =
   | 'start'
@@ -23,6 +24,7 @@ const Index = () => {
   // поэтому хранить шаг между перезагрузками больше не нужно.
   const [step, setStep] = useState<Step>('start');
   const [botUrl, setBotUrl] = useState<string | null>(null);
+  const [botError, setBotError] = useState<string | null>(null);
   const [error, setError] = useState('');
 
   const [pendingUser, setPendingUser] = useState<{
@@ -44,18 +46,23 @@ const Index = () => {
     if (user) navigate('/crm', { replace: true });
   }, [user, navigate]);
 
+  const loadBot = () => {
+    fetchMaxBotUrl()
+      .then(({ botUrl: url, loginToken }) => {
+        setBotError(null);
+        setBotUrl(url);
+        if (loginToken) sessionStorage.setItem('maxLoginToken', loginToken);
+      })
+      .catch((e) => {
+        setBotError(e instanceof Error ? e.message : 'Не удалось получить ссылку на бота');
+      });
+  };
+
   useEffect(() => {
     // Ссылка на бота — необязательная деталь: если сервер молчит, экран входа всё равно
     // должен открыться. Без перехвата ошибка всплывала наверх и оставляла страницу
     // в состоянии загрузки.
-    fetchMaxBotUrl()
-      .then(({ botUrl: url, loginToken }) => {
-        setBotUrl(url);
-        // Метку этой вкладки передаём странице ввода кода: по ней она заберёт
-        // готовый код у бота, и человеку не придётся переписывать шесть цифр.
-        if (loginToken) sessionStorage.setItem('maxLoginToken', loginToken);
-      })
-      .catch(() => setBotUrl(null));
+    loadBot();
   }, []);
 
   const handleOpenBot = () => {
@@ -176,6 +183,13 @@ const Index = () => {
 
         {step === 'start' && (
           <div className="space-y-4">
+            {botError && !botUrl && (
+              <WarehouseFetchError
+                title="Не удалось получить ссылку на бота"
+                description={botError}
+                onRetry={loadBot}
+              />
+            )}
             <Button
               type="button"
               onClick={handleOpenBot}

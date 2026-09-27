@@ -1,6 +1,10 @@
 const REPAIR_FABRIC_URL = 'https://functions.poehali.dev/580fc69a-16df-4299-ae73-af0a840f29d1';
 
 /**
+ * POEHALI: куски на перешив. FRONTEND-ONLY: ошибка загрузки списка — только экран.
+ */
+
+/**
  * ПУТЬ КУСКА: available → reserved → used.
  *
  * available — лежит в цехе, доступен всем закройщицам;

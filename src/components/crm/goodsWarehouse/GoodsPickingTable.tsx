@@ -28,6 +28,8 @@ const formatDate = (value: string | null) => {
 
 interface GoodsPickingTableProps {
   loading: boolean;
+  /** FRONTEND-ONLY: сбой GET подбора — не писать «заказов нет». */
+  error?: string | null;
   search: string;
   /** Настоящая работа кладовщика — без «лишних» вещей FBO. */
   workOrders: PickingOrder[];
@@ -42,6 +44,7 @@ interface GoodsPickingTableProps {
 /** Таблица подбора: сводка по схемам сверху и строки вещей с полками. */
 const GoodsPickingTable = ({
   loading,
+  error = null,
   search,
   workOrders,
   filtered,
@@ -58,6 +61,7 @@ const GoodsPickingTable = ({
   }
 
   if (filtered.length === 0) {
+    if (error) return null;
     return (
       <p className="text-sm text-muted-foreground">
         {search ? 'По запросу ничего не найдено' : 'Заказов к подбору нет'}

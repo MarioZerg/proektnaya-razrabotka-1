@@ -4,6 +4,7 @@ import Icon from '@/components/ui/icon';
 import { useToast } from '@/hooks/use-toast';
 import { fetchMaterialsData, type Material } from '@/lib/materialsApi';
 import { printFlyerSticker } from '@/lib/printFlyerSticker';
+import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
 
 /** Тип материала «Тюль» — только из него шьют изделия, состав которых идёт на листовку. */
 const TULLE_TYPE_ID = 1;
@@ -31,16 +32,26 @@ const KioskFlyerStickersScreen = ({ onBack }: KioskFlyerStickersScreenProps) => 
   const { toast } = useToast();
   const [materials, setMaterials] = useState<Material[]>([]);
   const [loading, setLoading] = useState(true);
+  const [listError, setListError] = useState<string | null>(null);
   const [printed, setPrinted] = useState<number | null>(null);
 
-  useEffect(() => {
+  const load = () => {
+    setLoading(true);
     fetchMaterialsData()
-      .then((data) => setMaterials(data.materials))
-      .catch(() =>
-        toast({ title: 'Не удалось загрузить материалы', variant: 'destructive' }),
-      )
+      .then((data) => {
+        setListError(null);
+        setMaterials(data.materials);
+      })
+      .catch((e) => {
+        setListError(e instanceof Error ? e.message : 'Не удалось загрузить материалы');
+      })
       .finally(() => setLoading(false));
-  }, [toast]);
+  };
+
+  useEffect(() => {
+    load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Показываем только действующие виды тюли: архивные материалы больше не шьются,
   // и наклейка на них — это брак упаковки.
@@ -90,7 +101,15 @@ const KioskFlyerStickersScreen = ({ onBack }: KioskFlyerStickersScreenProps) => 
 
       {loading && <p className="text-muted-foreground">Загрузка материалов...</p>}
 
-      {!loading && tulle.length === 0 && (
+      {listError && (
+        <WarehouseFetchError
+          title="Не удалось загрузить материалы"
+          description={listError}
+          onRetry={load}
+        />
+      )}
+
+      {!loading && !listError && tulle.length === 0 && (
         <p className="text-muted-foreground">Виды тюли не найдены</p>
       )}
 

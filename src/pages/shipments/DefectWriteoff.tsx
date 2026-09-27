@@ -35,6 +35,7 @@ import { fetchShipments, createShipmentDefectWriteoff, type Shipment } from '@/l
 import { fetchRolls, type Roll } from '@/lib/rollsApi';
 import { formatDateTime as formatDate } from '@/lib/dateUtils';
 import { formatQuantity } from '@/lib/formatQuantity';
+import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
 
 interface ItemRow {
   rollId: string;
@@ -61,6 +62,7 @@ const DefectWriteoff = () => {
   const [shipments, setShipments] = useState<Shipment[]>([]);
   const [rolls, setRolls] = useState<Roll[]>([]);
   const [loading, setLoading] = useState(true);
+  const [listError, setListError] = useState<string | null>(null);
 
   const [dialogOpen, setDialogOpen] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -73,11 +75,18 @@ const DefectWriteoff = () => {
     // список отгрузок всё равно покажется. Раньше один сбой оставлял страницу пустой.
     fetchRolls()
       .then((rollsData) => setRolls(rollsData.filter((r) => r.status !== 'completed')))
-      .catch(() => {});
+      .catch(() => {
+        // FRONTEND-ONLY: рулоны нужны только при создании списания.
+      });
     // Кружок загрузки снимаем по главному запросу страницы.
     fetchShipments('defect_writeoff')
-      .then(setShipments)
-      .catch(() => {})
+      .then((list) => {
+        setListError(null);
+        setShipments(list);
+      })
+      .catch((e) => {
+        setListError(e instanceof Error ? e.message : 'Не удалось загрузить списания');
+      })
       .finally(() => setLoading(false));
   };
 
@@ -201,13 +210,23 @@ const DefectWriteoff = () => {
           </Dialog>
         </div>
 
-        {loading ? (
+        {listError && (
+          <WarehouseFetchError
+            title="Не удалось загрузить списания"
+            description={listError}
+            onRetry={load}
+          />
+        )}
+
+        {loading && shipments.length === 0 ? (
           <div className="flex items-center gap-2 text-sm text-muted-foreground">
             <Icon name="Loader2" size={16} className="animate-spin" />
             Загрузка...
           </div>
         ) : shipments.length === 0 ? (
+          listError ? null : (
           <p className="text-sm text-muted-foreground">Списаний пока нет</p>
+          )
         ) : (
           <div className="rounded-md border border-border">
             <Table>

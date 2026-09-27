@@ -47,6 +47,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import SupplierPricesDialog from '@/components/crm/suppliers/SupplierPricesDialog';
+import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
 
 interface SupplierFormState {
   name: string;
@@ -76,6 +77,7 @@ const SuppliersSettings = () => {
   const { toast } = useToast();
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [loading, setLoading] = useState(true);
+  const [listError, setListError] = useState<string | null>(null);
   const [page, setPage] = useState(1);
 
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -89,7 +91,13 @@ const SuppliersSettings = () => {
   const load = () => {
     setLoading(true);
     fetchSuppliers()
-      .then(setSuppliers)
+      .then((list) => {
+        setListError(null);
+        setSuppliers(list);
+      })
+      .catch((e) => {
+        setListError(e instanceof Error ? e.message : 'Не удалось загрузить поставщиков');
+      })
       .finally(() => setLoading(false));
   };
 
@@ -305,13 +313,23 @@ const SuppliersSettings = () => {
           </Dialog>
         </div>
 
-        {loading ? (
+        {listError && (
+          <WarehouseFetchError
+            title="Не удалось загрузить поставщиков"
+            description={listError}
+            onRetry={load}
+          />
+        )}
+
+        {loading && suppliers.length === 0 ? (
           <div className="flex items-center gap-2 text-sm text-muted-foreground">
             <Icon name="Loader2" size={16} className="animate-spin" />
             Загрузка...
           </div>
         ) : suppliers.length === 0 ? (
+          listError ? null : (
           <p className="text-sm text-muted-foreground">Поставщиков пока нет.</p>
+          )
         ) : (
           <div className="rounded-md border border-border">
             <Table>

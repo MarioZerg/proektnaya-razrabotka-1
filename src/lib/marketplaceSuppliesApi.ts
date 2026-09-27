@@ -1,5 +1,12 @@
 const SUPPLIES_URL = 'https://functions.poehali.dev/d0a75e82-2c63-440c-8eae-dd036df61fac';
 
+/**
+ * Клиент поставок на маркетплейс.
+ *
+ * POEHALI: живая функция marketplace_supplies. Новые статусы — сначала там.
+ * FRONTEND-ONLY: ошибка загрузки — не писать «поставок пока нет».
+ */
+
 export type SupplyStatus = 'Открытая' | 'На сборке' | 'Отгрузка' | 'Выполнена';
 export type SupplyType = 'FBO' | 'FBS';
 export type OzonDeliveryMethod = 'direct' | 'cross_docking';

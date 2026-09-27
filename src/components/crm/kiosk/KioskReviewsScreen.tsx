@@ -3,25 +3,48 @@ import { Badge } from '@/components/ui/badge';
 import Icon from '@/components/ui/icon';
 import { fetchReviews, type Review } from '@/lib/reviewsApi';
 import { formatDate } from '@/lib/dateUtils';
+import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
 
 /** Экран отзывов на терминале: последние отзывы с маркетплейсов, чтобы цех видел оценки
  * покупателей и кто участвовал в производстве заказа. */
 const KioskReviewsScreen = () => {
   const [reviews, setReviews] = useState<Review[]>([]);
   const [loading, setLoading] = useState(true);
+  const [listError, setListError] = useState<string | null>(null);
+
+  const load = () => {
+    setLoading(true);
+    fetchReviews()
+      .then((list) => {
+        setListError(null);
+        setReviews(list.slice(0, 50));
+      })
+      .catch((e) => {
+        setListError(e instanceof Error ? e.message : 'Не удалось загрузить отзывы');
+      })
+      .finally(() => setLoading(false));
+  };
 
   useEffect(() => {
-    fetchReviews()
-      .then((list) => setReviews(list.slice(0, 50)))
-      .finally(() => setLoading(false));
+    load();
   }, []);
 
-  if (loading) {
+  if (loading && reviews.length === 0) {
     return (
       <div className="flex items-center justify-center gap-2 py-10 text-muted-foreground">
         <Icon name="Loader2" size={24} className="animate-spin" />
         Загрузка…
       </div>
+    );
+  }
+
+  if (listError && reviews.length === 0) {
+    return (
+      <WarehouseFetchError
+        title="Не удалось загрузить отзывы"
+        description={listError}
+        onRetry={load}
+      />
     );
   }
 

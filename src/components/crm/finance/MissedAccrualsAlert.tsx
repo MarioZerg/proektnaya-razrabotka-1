@@ -9,6 +9,7 @@ import {
   type MissedAccrual,
 } from '@/lib/salaryApi';
 import { formatDate } from '@/lib/dateUtils';
+import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
 
 /**
  * Предупреждение: люди работали, а денег им не начислили.
@@ -30,13 +31,19 @@ const MissedAccrualsAlert = () => {
   const { toast } = useToast();
   const { user } = useAuth();
   const [items, setItems] = useState<MissedAccrual[]>([]);
+  const [listError, setListError] = useState<string | null>(null);
   const [hiding, setHiding] = useState<string | null>(null);
   const [accruing, setAccruing] = useState<string | null>(null);
 
   const load = () =>
     fetchMissedAccruals()
-      .then(setItems)
-      .catch(() => setItems([]));
+      .then((list) => {
+        setListError(null);
+        setItems(list);
+      })
+      .catch((e) => {
+        setListError(e instanceof Error ? e.message : 'Не удалось загрузить пропуски');
+      });
 
   useEffect(() => {
     load();
@@ -95,6 +102,16 @@ const MissedAccrualsAlert = () => {
       setHiding(null);
     }
   };
+
+  if (listError && items.length === 0) {
+    return (
+      <WarehouseFetchError
+        title="Не удалось проверить пропущенные начисления"
+        description={listError}
+        onRetry={load}
+      />
+    );
+  }
 
   if (items.length === 0) return null;
 

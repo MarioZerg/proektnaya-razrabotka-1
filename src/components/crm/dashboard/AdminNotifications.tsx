@@ -17,6 +17,7 @@ import {
   dismissNotifications,
   type AdminNotification,
 } from '@/lib/goodsWarehouseApi';
+import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
 import { formatDateTime } from '@/lib/dateUtils';
 
 /** Иконка и человеческое имя типа события — админ узнаёт его с одного взгляда. */
@@ -50,13 +51,19 @@ const AdminNotifications = () => {
   const navigate = useNavigate();
 
   const [items, setItems] = useState<AdminNotification[]>([]);
+  const [listError, setListError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [open, setOpen] = useState(false);
 
   const load = () => {
     fetchAdminNotifications()
-      .then((d) => setItems(d.items))
-      .catch(() => setItems([]));
+      .then((d) => {
+        setListError(null);
+        setItems(d.items);
+      })
+      .catch((e) => {
+        setListError(e instanceof Error ? e.message : 'Не удалось загрузить уведомления');
+      });
   };
 
   useEffect(load, []);
@@ -77,7 +84,17 @@ const AdminNotifications = () => {
     }
   };
 
-  if (items.length === 0) return null;
+  if (items.length === 0 && !listError) return null;
+
+  if (listError && items.length === 0) {
+    return (
+      <WarehouseFetchError
+        title="Не удалось загрузить уведомления склада"
+        description={listError}
+        onRetry={load}
+      />
+    );
+  }
 
   // Счётчики по типам: «5 не нашли на полке, 2 недостачи» полезнее, чем семь
   // строк подряд, из которых надо самому вылавливать закономерность.

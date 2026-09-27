@@ -5,10 +5,13 @@ import { Card, CardContent } from '@/components/ui/card';
 import Icon from '@/components/ui/icon';
 import { formatRub, normalizeSearch } from '@/components/crm/promotion/raiseShared';
 import type { PriceAdvice } from '@/lib/promotionApi';
+import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
 
 interface Props {
   /** Все советы площадки: считаются по марже, рекламе и скидке площадки. */
   advice: PriceAdvice[] | null;
+  adviceError?: string | null;
+  onRetryAdvice?: () => void;
   /** Включён ли фильтр «только требующие подъёма» в таблице ниже. */
   onlyAdvice: boolean;
   onOnlyAdviceChange: (on: boolean) => void;
@@ -26,7 +29,13 @@ interface Props {
  * здесь смотрят, что вообще стоит трогать. Кнопка связывает одно с другим —
  * оставляет в таблице только эти карточки.
  */
-const RobotAdviceCard = ({ advice, onlyAdvice, onOnlyAdviceChange }: Props) => {
+const RobotAdviceCard = ({
+  advice,
+  adviceError,
+  onRetryAdvice,
+  onlyAdvice,
+  onOnlyAdviceChange,
+}: Props) => {
   const [search, setSearch] = useState('');
   const [expanded, setExpanded] = useState(false);
 
@@ -45,6 +54,16 @@ const RobotAdviceCard = ({ advice, onlyAdvice, onOnlyAdviceChange }: Props) => {
 
   const shown = expanded ? visible : visible.slice(0, 10);
 
+  if (advice === null && adviceError) {
+    return (
+      <WarehouseFetchError
+        title="Не удалось загрузить советы по ценам"
+        description={adviceError}
+        onRetry={onRetryAdvice || (() => {})}
+      />
+    );
+  }
+
   if (advice === null) {
     return (
       <Card>
@@ -57,6 +76,15 @@ const RobotAdviceCard = ({ advice, onlyAdvice, onOnlyAdviceChange }: Props) => {
   }
 
   if (raiseItems.length === 0) {
+    if (adviceError) {
+      return (
+        <WarehouseFetchError
+          title="Не удалось загрузить советы по ценам"
+          description={adviceError}
+          onRetry={onRetryAdvice || (() => {})}
+        />
+      );
+    }
     return (
       <Card>
         <CardContent className="p-4">
