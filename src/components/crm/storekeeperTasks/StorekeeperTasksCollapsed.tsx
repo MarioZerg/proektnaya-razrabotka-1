@@ -5,6 +5,7 @@ interface StorekeeperTasksCollapsedProps {
   total: number;
   allDone: boolean;
   blockingCount: number;
+  topOffset: number;
   onExpand: () => void;
 }
 
@@ -19,13 +20,15 @@ const StorekeeperTasksCollapsed = ({
   total,
   allDone,
   blockingCount,
+  topOffset,
   onExpand,
 }: StorekeeperTasksCollapsedProps) => (
   <button
     type="button"
     onClick={onExpand}
     title={`Задания смены: выполнено ${doneCount} из ${total}`}
-    className={`fixed top-16 right-3 z-40 flex items-center gap-1.5 rounded-full border px-2.5 py-1.5 shadow-lg backdrop-blur transition-colors sm:right-4 ${
+    style={{ top: topOffset }}
+    className={`fixed right-3 z-40 flex items-center gap-1.5 rounded-full border px-2.5 py-1.5 shadow-lg backdrop-blur transition-colors sm:right-4 ${
       allDone
         ? 'border-emerald-300 bg-emerald-50 text-emerald-700'
         : blockingCount > 0

@@ -1,4 +1,4 @@
-import { ReactNode, useEffect, useState } from 'react';
+import { ReactNode, useEffect, useRef, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import {
   Sidebar,
@@ -61,6 +61,11 @@ const CrmLayout = ({ children }: { children: ReactNode }) => {
   // Срок на загрузку документов вышел, а комплекта нет — доступ приостанавливается.
   // Проверяем при входе: отдельный планировщик ради этого держать незачем.
   const [docsBlocked, setDocsBlocked] = useState(false);
+  // Низ шапки в пикселях: виджет заданий смены ставится сразу под неё.
+  // Фиксированный top-16 залезал на меню и баланс, особенно когда сверху
+  // висит баннер про документы.
+  const headerRef = useRef<HTMLDivElement>(null);
+  const [headerOffset, setHeaderOffset] = useState(72);
 
   // Договоры и срок документов — ОДНИМ запросом вместо двух отдельных вызовов
   // к разным функциям. Оба вопроса про одного человека и решаются одним походом
@@ -84,6 +89,16 @@ const CrmLayout = ({ children }: { children: ReactNode }) => {
       navigate('/');
     }
   }, [user, navigate]);
+
+  useEffect(() => {
+    const el = headerRef.current;
+    if (!el) return;
+    const measure = () => setHeaderOffset(el.getBoundingClientRect().height + 8);
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [user]);
 
   useEffect(() => {
     if (user && user.availableRoles.length === 0 && location.pathname !== '/crm') {
@@ -293,8 +308,8 @@ const CrmLayout = ({ children }: { children: ReactNode }) => {
           и на телефоне появляется горизонтальная прокрутка всего экрана вместо
           аккуратной прокрутки самой таблицы. */}
       <main className="w-full min-w-0 flex-1 overflow-x-hidden">
-        {/* Счётчик срока на документы — над всем содержимым, чтобы новичок видел его
-            на любой странице, а не только там, где документы загружаются. */}
+        {/* Шапка липкая и выше виджета заданий: меню и баланс всегда нажимаются. */}
+        <div ref={headerRef} className="sticky top-0 z-50 bg-background">
         <DocsCountdownBanner />
         {/* min-w-0 на шапке: без него виджеты с крупным балансом раздвигали
             строку и правый край уезжал за экран телефона. */}
@@ -313,10 +328,11 @@ const CrmLayout = ({ children }: { children: ReactNode }) => {
             <HeaderSalaryWidget />
           </div>
         </div>
+        </div>
         {/* Задания смены кладовщика — полупрозрачный список под балансом.
             Сам решает, показываться ли: только кладовщику и только при
             открытой смене. */}
-        <StorekeeperTasksWidget />
+        <StorekeeperTasksWidget topOffset={headerOffset} />
         {/* Сбой внутри страницы не должен гасить меню и весь экран. */}
         <div className="p-3 sm:p-6">
           {/* key по адресу: при переходе на другую страницу защита пересоздаётся,

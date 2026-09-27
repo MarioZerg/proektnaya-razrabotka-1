@@ -37,7 +37,7 @@ import {
  * Показывается только кладовщику и только при открытой смене: пришёл на работу —
  * задания появились, закрыл смену — исчезли.
  */
-const StorekeeperTasksWidget = () => {
+const StorekeeperTasksWidget = ({ topOffset }: { topOffset: number }) => {
   const { user } = useAuth();
   const { toast } = useToast();
   const navigate = useNavigate();
@@ -207,6 +207,7 @@ const StorekeeperTasksWidget = () => {
         total={shown.length}
         allDone={allDone}
         blockingCount={blocking.length}
+        topOffset={topOffset}
         onExpand={() => toggleCollapsed(false)}
       />
     );
@@ -220,13 +221,14 @@ const StorekeeperTasksWidget = () => {
       // На телефоне тянем во всю ширину (left+right вместо жёстких 21rem) и не
       // приглушаем: полупрозрачная карточка поверх узкого экрана мешает читать
       // и то, что под ней, и сам список.
-      className={`fixed top-16 z-40 rounded-xl border shadow-lg backdrop-blur transition-all duration-200 ${
+      className={`fixed z-40 rounded-xl border shadow-lg backdrop-blur transition-all duration-200 ${
         isMobile ? 'inset-x-2' : 'right-3 w-[21rem] sm:right-4'
       } ${
         open || isMobile
           ? 'border-border bg-card opacity-100'
           : 'border-border/50 bg-card/60 opacity-60 hover:opacity-100'
       }`}
+      style={{ top: topOffset }}
       // Мышью раскрываем только на компьютере: на сенсорном экране события
       // наведения срабатывают от случайного касания и список прыгает сам.
       onMouseEnter={isMobile ? undefined : () => setOpen(true)}

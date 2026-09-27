@@ -29,19 +29,11 @@ const StorekeeperTasksHeader = ({
         картинка исчезает сама и вернётся, только когда список снова закрыт.
         pointer-events-none: не перехватывает клики по заданиям под ней. */}
     {allDone && (
-      // Два слоя, потому что анимации разные по смыслу: внешний выскакивает
-      // один раз, внутренний качается бесконечно. В одном элементе они
-      // затирали бы друг друга — вторая анимация сбрасывала бы transform.
-      <span
-        aria-hidden
-        className="pointer-events-none absolute -top-12 right-2 z-10 animate-cheer-pop motion-reduce:animate-none sm:-top-16"
-      >
-        <img
-          src="/happy-done.png"
-          alt=""
-          className="h-16 w-auto animate-cheer-idle drop-shadow-[0_6px_12px_rgba(0,0,0,0.25)] motion-reduce:animate-none sm:h-24"
-        />
-      </span>
+      <img
+        src="/happy-done.png"
+        alt=""
+        className="pointer-events-none absolute -left-1 top-1 h-8 w-auto drop-shadow-sm motion-reduce:hidden"
+      />
     )}
     <button
       type="button"

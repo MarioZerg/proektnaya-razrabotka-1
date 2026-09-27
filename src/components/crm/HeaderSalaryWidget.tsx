@@ -5,6 +5,8 @@ import { useAuth } from '@/context/AuthContext';
 import { fetchMySalary } from '@/lib/salaryApi';
 import { fetchMyVariki } from '@/lib/varikiApi';
 import { formatMoney } from '@/components/crm/dashboard/dashboardShared';
+import SalarySalute from '@/components/crm/SalarySalute';
+import { playSalaryOpenSound } from '@/lib/salarySound';
 
 const PRODUCTION_ROLES = ['sewer', 'cutter', 'packer'];
 
@@ -35,6 +37,7 @@ const HeaderSalaryWidget = () => {
   // Новичкам баланс закрыт первые две недели после регистрации — считает сервер.
   const [locked, setLocked] = useState(false);
   const [daysLeft, setDaysLeft] = useState(0);
+  const [salute, setSalute] = useState(false);
 
   const showVariki = !!user && PRODUCTION_ROLES.includes(user.role);
 
@@ -88,7 +91,17 @@ const HeaderSalaryWidget = () => {
           </div>
         </div>
       ) : (
-        <div className="relative flex min-w-0 items-center gap-1.5 overflow-hidden rounded-lg border border-border bg-card px-2 py-1.5 sm:gap-2 sm:px-3">
+        <div className="relative min-w-0">
+        <button
+          type="button"
+          onClick={() => {
+            if (salary == null || salaryError || salute) return;
+            playSalaryOpenSound();
+            setSalute(true);
+          }}
+          className="relative flex min-w-0 items-center gap-1.5 overflow-hidden rounded-lg border border-border bg-card px-2 py-1.5 text-left transition hover:bg-muted/50 sm:gap-2 sm:px-3"
+          title="Показать, как набежала сумма"
+        >
           {/* Изредка переливающийся блик по виджету */}
           <div className="pointer-events-none absolute inset-0 -skew-x-12 animate-shimmer bg-gradient-to-r from-transparent via-emerald-400/25 to-transparent" />
           <Icon name="Wallet" size={16} className="shrink-0 text-emerald-600" />
@@ -109,6 +122,10 @@ const HeaderSalaryWidget = () => {
               </div>
             )}
           </div>
+        </button>
+        {salute && salary != null && (
+          <SalarySalute amount={salary} onDone={() => setSalute(false)} />
+        )}
         </div>
       )}
 
