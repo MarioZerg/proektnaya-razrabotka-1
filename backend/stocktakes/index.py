@@ -438,22 +438,28 @@ def handler(event: dict, context) -> dict:
                 })
 
             # 1. Ненайденные вещи списываем: физически их на складе нет.
-            disposed = 0
-            for m in report['missing']:
-                cur.execute(
-                    "UPDATE goods_warehouse SET status = 'lost', "
-                    "  lost_reason = %s, lost_at = now(), "
-                    "  dispose_reason = %s, disposed_at = now(), disposed_by = %s, "
-                    "  shelf_id = NULL, reserved_order_id = NULL, matched_at = NULL "
-                    "WHERE id = %s",
-                    (
-                        f'Не найдена при инвентаризации №{stocktake_id}',
-                        f'Утилизирована по инвентаризации №{stocktake_id}',
-                        int(actor_id) if actor_id else None,
-                        int(m['goodsWarehouseId']),
-                    ),
-                )
-                disposed += 1
+            #    Списываем ОДНИМ запросом. Раньше здесь был цикл по вещам — на
+            #    складе в несколько сотен позиций он не укладывался в лимит
+            #    времени функции, подтверждение обрывалось на полпути, и админ
+            #    видел ошибку запроса, хотя часть товара уже списалась.
+            cur.execute(
+                "UPDATE goods_warehouse gw SET status = 'lost', "
+                "  lost_reason = %s, lost_at = now(), "
+                "  dispose_reason = %s, disposed_at = now(), disposed_by = %s, "
+                "  shelf_id = NULL, reserved_order_id = NULL, matched_at = NULL "
+                "WHERE gw.status = %s "
+                "  AND NOT EXISTS (SELECT 1 FROM stocktake_scans s "
+                "                  WHERE s.stocktake_id = %s AND s.goods_warehouse_id = gw.id) "
+                "RETURNING gw.id",
+                (
+                    f'Не найдена при инвентаризации №{stocktake_id}',
+                    f'Утилизирована по инвентаризации №{stocktake_id}',
+                    int(actor_id) if actor_id else None,
+                    COUNTABLE_STATUS,
+                    int(stocktake_id),
+                ),
+            )
+            disposed = len(cur.fetchall())
 
             # 2. Вещи, найденные на чужой полке, переставляем по факту: пересчёт
             #    заодно наводит порядок в адресах хранения.
