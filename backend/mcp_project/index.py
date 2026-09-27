@@ -46,7 +46,8 @@ CORS_HEADERS = {
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Authorization, '
-                                    'X-Agent-Token, Mcp-Session-Id, Mcp-Protocol-Version',
+                                    'X-Agent-Token, X-Github-Token, '
+                                    'Mcp-Session-Id, Mcp-Protocol-Version',
     'Access-Control-Max-Age': '86400',
 }
 
@@ -137,16 +138,42 @@ def _check_token(event):
 # запускается отдельно от них и своего дерева исходников не видит.
 # --------------------------------------------------------------------------
 
+# Токен GitHub на время одного запроса. Кладём в переменную, а не таскаем
+# параметром через все инструменты: иначе его пришлось бы протаскивать сквозь
+# десяток вызовов, и один забытый аргумент ломал бы чтение кода целиком.
+_github_token = None
+
+
+def _set_github_token(event):
+    """Запоминает токен GitHub для текущего запроса.
+
+    Токен берётся ИЗ ЗАГОЛОВКА запроса, а если его там нет — из секрета проекта.
+    Заголовок нужен потому, что сохранить такой секрет в проекте сейчас не
+    получается (платформа отклоняет значение), а работать надо уже сегодня:
+    Cursor присылает токен сам, вместе с паролем агента.
+
+    Наружу токен не возвращается ни в одном ответе — он только уходит в GitHub.
+    """
+    global _github_token
+    headers = {str(k).lower(): str(v) for k, v in (event.get('headers') or {}).items()}
+    from_header = (headers.get('x-github-token') or '').strip()
+    _github_token = from_header or os.environ.get('MCP_GITHUB_TOKEN') or ''
+
+
 def _gh(path, params=None):
+    if not _github_token:
+        raise PermissionError(
+            'Нет токена GitHub. Добавьте его в настройки MCP-сервера в Cursor: '
+            'заголовок X-Github-Token со значением вида github_pat_... '
+            '(права: Contents Read-only на репозиторий проекта). '
+            'Инструменты по базе и журналу сбоев работают и без него.'
+        )
     url = f'https://api.github.com{path}'
     if params:
         url += '?' + urllib.parse.urlencode(params)
     req = urllib.request.Request(url, headers={
         'Accept': 'application/vnd.github+json',
-        # Имя MCP_GITHUB_TOKEN, а не GITHUB_TOKEN: короткое имя занято самой
-        # платформой под её собственную интеграцию с GitHub, и секрет с таким
-        # именем в проект не добавляется.
-        'Authorization': f'Bearer {os.environ["MCP_GITHUB_TOKEN"]}',
+        'Authorization': f'Bearer {_github_token}',
         'User-Agent': 'poehali-mcp',
         'X-GitHub-Api-Version': '2022-11-28',
     })
@@ -563,6 +590,8 @@ def handler(event: dict, context) -> dict:
     действий. Секреты, личные документы и токены входа наружу не отдаются.
 
     Доступ по паролю MCP_AGENT_TOKEN в заголовке Authorization: Bearer <...>.
+    Токен GitHub для чтения кода — в заголовке X-Github-Token (или в секрете
+    MCP_GITHUB_TOKEN). Без него работают инструменты по базе и журналу сбоев.
 
     Инструменты: list_files, read_file, search_code, db_schema, db_query,
     audit_log, app_errors.
@@ -577,6 +606,8 @@ def handler(event: dict, context) -> dict:
             'id': None,
             'error': {'code': -32001, 'message': 'Нужен пароль агента в заголовке Authorization'},
         })
+
+    _set_github_token(event)
 
     # Проверка живости и SSE-ручка: агент иногда дёргает GET, прежде чем начать.
     if method == 'GET':
@@ -655,6 +686,10 @@ def _handle_rpc(rpc):
         args = params.get('arguments') or {}
         try:
             return {'jsonrpc': '2.0', 'id': req_id, 'result': tool['handler'](args)}
+        except PermissionError as e:
+            # Нет токена GitHub. Говорим это прямым текстом и подсказываем, что
+            # делать: иначе агент решит, что сломан код, и начнёт чинить не то.
+            return {'jsonrpc': '2.0', 'id': req_id, 'result': _text_result(str(e), True)}
         except KeyError as e:
             # Не хватает секрета — говорим прямо, иначе агент решит, что сломан код.
             return {'jsonrpc': '2.0', 'id': req_id,
