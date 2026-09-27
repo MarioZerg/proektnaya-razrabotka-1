@@ -2654,6 +2654,166 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                                    ensure_ascii=False),
             }
 
+        if action == 'repick_to_free':
+            # ВЕЩЬ НЕ НАШЛИ, НО ТАКАЯ ЖЕ СВОБОДНО ЛЕЖИТ НА СКЛАДЕ.
+            #
+            # Вещи одного товара физически неотличимы — на полке это один и тот же
+            # «Лен 300x245». Поэтому, когда конкретную коробку найти не удалось, а
+            # рядом лежит такая же свободная, отправлять заказ в пошив незачем:
+            # покупатель получит ровно то, что заказал, а мы не потратим второй раз
+            # ткань и работу цеха. Шить заново нужно только когда замены нет.
+            #
+            # Заказ перецепляется на свободную вещь, а ненайденная списывается со
+            # склада: иначе она вернётся в подбор назавтра и кладовщик пойдёт искать
+            # её по стеллажам снова. Пошив при этом НЕ запускается.
+            item_id = body_data.get('id')
+            note = (body_data.get('note') or '').strip()
+            if not item_id:
+                return {'statusCode': 400, 'headers': headers,
+                        'body': json.dumps({'error': 'Укажите id'})}
+
+            # Право то же, что у списания: решение меняет остатки склада и означает,
+            # что вещь физически потерялась. Проверяем на СЕРВЕРЕ — спрятанной
+            # кнопки для защиты мало.
+            if not is_admin_or_senior(cur, actor_id):
+                return {
+                    'statusCode': 403, 'headers': headers,
+                    'body': json.dumps(
+                        {'error': 'Перецепить заказ может только старший кладовщик '
+                                  'или администратор'},
+                        ensure_ascii=False),
+                }
+
+            cur.execute(
+                "SELECT gw.status, gw.reserved_order_id, gw.storage_barcode, "
+                "       gw.shipping_labeled_at, sh.name, ro.order_number, ro.product, "
+                "       ro.material, ro.width, ro.height "
+                "FROM goods_warehouse gw "
+                "LEFT JOIN orders ro ON ro.id = gw.reserved_order_id "
+                "LEFT JOIN shelves sh ON sh.id = gw.shelf_id "
+                "WHERE gw.id = %s",
+                (int(item_id),),
+            )
+            row = cur.fetchone()
+            if not row:
+                return {'statusCode': 404, 'headers': headers,
+                        'body': json.dumps({'error': 'Запись не найдена'})}
+            (rp_status, rp_order_id, rp_barcode, rp_labeled, rp_shelf,
+             rp_order_num, rp_product, rp_material, rp_width, rp_height) = row
+
+            if not rp_order_id:
+                return {'statusCode': 409, 'headers': headers,
+                        'body': json.dumps(
+                            {'error': 'За вещью не закреплён заказ — перецеплять нечего'},
+                            ensure_ascii=False)}
+            if rp_status != 'picking':
+                return {'statusCode': 409, 'headers': headers,
+                        'body': json.dumps(
+                            {'error': 'Перецепить можно только вещь, которая ждёт '
+                                      'подбора на полке'},
+                            ensure_ascii=False)}
+            # Ярлык уже наклеен — значит вещь нашли. Перецеплять нельзя: ярлык
+            # отправления уедет с этой вещью, а не с той, что мы подставим.
+            if rp_labeled:
+                return {'statusCode': 409, 'headers': headers,
+                        'body': json.dumps(
+                            {'error': 'На вещь уже наклеен ярлык отправления — значит '
+                                      'её нашли. Отсканируйте её в поставку'},
+                            ensure_ascii=False)}
+
+            # Ищем замену: свободная вещь того же товара, реально лежащая на полке.
+            # SKIP LOCKED — чтобы два старших кладовщика не забрали одну коробку.
+            cur.execute(
+                "SELECT gw.id, gw.storage_barcode, sh.name FROM goods_warehouse gw "
+                "JOIN orders src ON src.id = gw.order_id "
+                "LEFT JOIN shelves sh ON sh.id = gw.shelf_id "
+                "WHERE gw.status = 'in_stock' AND gw.reserved_order_id IS NULL "
+                "  AND gw.shelf_id IS NOT NULL AND gw.id <> %s "
+                "  AND src.product = %s "
+                "  AND NOT " + GOODS_IN_LIVE_SUPPLY_SQL.format(gw='gw') + " "
+                # FIFO: первой уходит вещь, дольше всех лежащая на полке.
+                "ORDER BY gw.received_at ASC "
+                "FOR UPDATE OF gw SKIP LOCKED LIMIT 1",
+                (int(item_id), rp_product),
+            )
+            free_row = cur.fetchone()
+            if not free_row:
+                return {
+                    'statusCode': 409, 'headers': headers,
+                    'body': json.dumps(
+                        {'error': 'Свободной такой вещи на складе нет — заказ придётся '
+                                  'отправить в пошив',
+                         'noFree': True},
+                        ensure_ascii=False),
+                }
+            new_gw_id, new_barcode, new_shelf = free_row
+
+            item_txt = ' '.join(str(x) for x in [
+                rp_material,
+                f'{rp_width}×{rp_height}' if rp_width and rp_height else None,
+            ] if x) or (rp_product or rp_order_num or 'Товар')
+
+            # Заказ переезжает на найденную вещь: она встаёт в подбор вместо старой.
+            cur.execute(
+                "UPDATE goods_warehouse SET status = 'picking', reserved_order_id = %s, "
+                "matched_at = now() WHERE id = %s",
+                (int(rp_order_id), int(new_gw_id)),
+            )
+            cur.execute(
+                "UPDATE orders SET fulfilled_from_stock_id = %s, sewing_status = 'Со склада' "
+                "WHERE id = %s",
+                (int(new_gw_id), int(rp_order_id)),
+            )
+
+            # Ненайденную списываем — иначе она снова попадёт в подбор назавтра.
+            # Причина пишется полностью: по ней потом разбирают расхождение остатков.
+            shelf_txt = f'полка «{rp_shelf}»' if rp_shelf else 'полка не указана'
+            lost_reason = (
+                f'Не найден на складе ({shelf_txt}). '
+                + (f'{note}. ' if note else '')
+                + f'Заказ {rp_order_num or ""} перецеплен на {new_barcode}'
+            ).replace("'", "''")
+            cur.execute(
+                f"UPDATE goods_warehouse SET status = 'lost', reserved_order_id = NULL, "
+                f"matched_at = NULL, shipping_labeled_at = NULL, "
+                f"shipping_labeled_by = NULL, shipping_labeled_by_name = NULL, "
+                f"lost_reason = '{lost_reason}', lost_at = now() "
+                f"WHERE id = {int(item_id)}"
+            )
+
+            log_action(
+                cur, actor_id, actor_name, 'repick_to_free', 'goods_warehouse', item_id,
+                f'Товар {rp_barcode} ({item_txt}) не найден, {shelf_txt}. Заказ '
+                f'{rp_order_num} перецеплен на свободную вещь {new_barcode}'
+                + (f' (полка «{new_shelf}»)' if new_shelf else '')
+                + '. Ненайденная вещь списана со склада, пошив не запускался',
+            )
+
+            # Админу сообщаем всё равно: пошив мы сэкономили, но вещь со склада
+            # пропала — это расхождение остатков, и разбирать его ему.
+            notify_admin(
+                cur, 'not_found',
+                'Товар не найден — заказ закрыт другой вещью',
+                f'{item_txt} ({rp_barcode}), {shelf_txt}. '
+                + (f'{note}. ' if note else '')
+                + f'Заказ {rp_order_num} перецеплен на {new_barcode}'
+                + (f', полка «{new_shelf}»' if new_shelf else '')
+                + '. В пошив не отправлялся',
+                actor_id, actor_name,
+                link=f'/crm/inventory/goods/{int(item_id)}',
+                entity_type='goods_warehouse', entity_id=item_id,
+            )
+            conn.commit()
+            return {
+                'statusCode': 200, 'headers': headers,
+                'body': json.dumps({
+                    'success': True,
+                    'orderNumber': rp_order_num,
+                    'newBarcode': new_barcode,
+                    'newShelfName': new_shelf,
+                }, ensure_ascii=False),
+            }
+
         if action == 'send_to_sewing':
             # Вещь с полки испорчена (порвана, пятно, брак) — отгружать её нельзя.
             # Списываем вещь со склада и возвращаем заказ в производство: его сошьют заново.

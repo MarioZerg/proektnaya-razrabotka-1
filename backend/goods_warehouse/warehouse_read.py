@@ -8,7 +8,7 @@ import json
 
 import psycopg2
 
-from shared import RESERVE_ALIVE_SQL
+from shared import GOODS_IN_LIVE_SUPPLY_SQL, RESERVE_ALIVE_SQL
 from exports import export_stock_ozon_xlsx, export_stock_wb_xlsx, export_stock_xlsx
 
 
@@ -208,6 +208,102 @@ def handle_get(event: dict, headers: dict, dsn: str) -> dict:
             ]
             return {'statusCode': 200, 'headers': headers, 'body': json.dumps(
                 {'items': items, 'count': len(items)}, ensure_ascii=False)}
+
+        if params.get('stale_picking'):
+            # ВЕЩЬ НЕ НАШЛИ НА СКЛАДЕ: СТРОКА ВИСИТ В ПОДБОРЕ СО ВЧЕРА И РАНЬШЕ.
+            #
+            # Подбор — работа одного дня: кладовщик идёт по списку вдоль стеллажа,
+            # находит вещи и клеит на них ярлыки. Если строка дожила до следующего
+            # дня и на вещь так и не наклеен ярлык — по ней уже прошли и не нашли.
+            # Дальше она не двигается сама: назавтра автоподбор предложит её снова,
+            # кладовщик снова обойдёт стеллаж, а заказ покупателя всё это время стоит.
+            # Так накапливались «висяки», которые искали больше месяца.
+            #
+            # Порог — КАЛЕНДАРНЫЙ ДЕНЬ, а не «24 часа»: смена заканчивается вечером,
+            # и вещь, подобранная в 21:40, к утру не считается ненайденной. Дату
+            # берём по московскому времени (now() + 3 часа) — по нему живёт склад.
+            #
+            # Берём только 'picking' без ярлыка. 'awaiting_supply' значит, что вещь
+            # нашли и застикеровали: там работа идёт, просто ещё не в коробе.
+            stale_where = (
+                "WHERE gw.status = 'picking' "
+                "  AND gw.shipping_labeled_at IS NULL "
+                "  AND gw.shipped_at IS NULL "
+                "  AND gw.reserved_order_id IS NOT NULL "
+                "  AND gw.matched_at IS NOT NULL "
+                "  AND (gw.matched_at + interval '3 hours')::date "
+                "      < (now() + interval '3 hours')::date "
+                # Живая бронь: заказ действительно ждёт вещь с полки. Мёртвые брони
+                # разбираются другими панелями — «уехало к клиенту» и «отменено».
+                f"  AND {RESERVE_ALIVE_SQL} "
+                # Вещь в коробе живой поставки — значит её нашли и уложили.
+                "  AND NOT EXISTS (SELECT 1 FROM marketplace_supply_items msi "
+                "        JOIN marketplace_supplies ms ON ms.id = msi.supply_id "
+                "        WHERE msi.goods_warehouse_id = gw.id "
+                "          AND COALESCE(ms.status, '') NOT IN ('Выполнена', 'Отменена')) "
+                # WB держит состав поставки в своей таблице — связь через заказ.
+                "  AND NOT EXISTS (SELECT 1 FROM wb_supply_orders wso "
+                "        JOIN marketplace_supplies wms ON wms.id = wso.supply_id "
+                "        WHERE wso.order_id = ro.id "
+                "          AND COALESCE(wms.status, '') NOT IN ('Выполнена', 'Отменена')) "
+            )
+
+            cur.execute(
+                "SELECT gw.id, gw.storage_barcode, sh.name, gw.matched_at, "
+                "       ro.id, ro.order_number, ro.product, ro.material, "
+                "       ro.width, ro.height, ro.marketplace, ro.order_type, "
+                "       (now() + interval '3 hours')::date "
+                "         - (gw.matched_at + interval '3 hours')::date, "
+                # ЕСТЬ ЛИ НА СКЛАДЕ ТАКАЯ ЖЕ СВОБОДНАЯ ВЕЩЬ.
+                #
+                # Вещи одного товара физически неотличимы: если на полке лежит
+                # такая же свободная, заказ закрывается ею — шить заново нечего.
+                # Показываем это число прямо в строке, чтобы решение было видно
+                # без похода на склад.
+                "       (SELECT COUNT(*) FROM goods_warehouse g2 "
+                "          JOIN orders o2 ON o2.id = g2.order_id "
+                "          WHERE g2.status = 'in_stock' "
+                "            AND g2.reserved_order_id IS NULL "
+                "            AND g2.shelf_id IS NOT NULL "
+                "            AND o2.product = ro.product "
+                "            AND NOT " + GOODS_IN_LIVE_SUPPLY_SQL.format(gw='g2') + ") "
+                "FROM goods_warehouse gw "
+                "JOIN orders ro ON ro.id = gw.reserved_order_id "
+                "LEFT JOIN shelves sh ON sh.id = gw.shelf_id "
+                + stale_where +
+                "ORDER BY gw.matched_at ASC LIMIT 50"
+            )
+            items = [
+                {
+                    'id': r[0],
+                    'storageBarcode': r[1],
+                    'shelfName': r[2],
+                    'matchedAt': (r[3].isoformat() + 'Z') if r[3] else None,
+                    'orderId': r[4],
+                    'orderNumber': r[5],
+                    'product': r[6],
+                    'material': r[7],
+                    'width': r[8],
+                    'height': r[9],
+                    'marketplace': r[10],
+                    'orderType': r[11],
+                    'daysInPicking': int(r[12] or 0),
+                    'freeSameCount': int(r[13] or 0),
+                }
+                for r in cur.fetchall()
+            ]
+
+            # Сколько их всего — отдельным запросом, без лимита: по длине списка
+            # считать нельзя, иначе на панели навсегда застынет «50».
+            cur.execute(
+                "SELECT COUNT(*) FROM goods_warehouse gw "
+                "JOIN orders ro ON ro.id = gw.reserved_order_id "
+                + stale_where
+            )
+            total = int(cur.fetchone()[0])
+
+            return {'statusCode': 200, 'headers': headers, 'body': json.dumps(
+                {'items': items, 'count': total}, ensure_ascii=False)}
 
         if params.get('pending_count'):
             # Этот счётчик висит в меню у каждого кладовщика весь день — самый

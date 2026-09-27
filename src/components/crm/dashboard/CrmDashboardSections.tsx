@@ -6,6 +6,7 @@ import AdminPeoplePanel from '@/components/crm/dashboard/AdminPeoplePanel';
 import ShortagePenaltyCard from '@/components/crm/dashboard/ShortagePenaltyCard';
 import FboShipmentsCard from '@/components/crm/dashboard/FboShipmentsCard';
 import StalledShipmentsCard from '@/components/crm/dashboard/StalledShipmentsCard';
+import StalePickingPanel from '@/components/crm/goodsWarehouse/StalePickingPanel';
 import { type DashboardWidgetData } from '@/components/crm/dashboard/dashboardShared';
 import {
   type EmployeeShiftStatus,
@@ -62,6 +63,13 @@ const CrmDashboardSections = ({
         заказы, а по ним никто не работает. Видят те, кто может это разобрать:
         администратор и склад. Пусто — блок не рисуется. */}
     {canSeeFboBoard && <StalledShipmentsCard />}
+
+    {/* Вещи, которые искали и не нашли: висят в подборе со вчера и раньше. Панель
+        сама решает, кому показаться (админ и старший кладовщик) и рисуется только
+        когда такие строки есть — пустой склад главную не засоряет. Здесь она
+        потому, что заказ покупателя стоит, а увидеть это иначе можно только
+        зайдя в подбор. */}
+    <StalePickingPanel />
 
     {widgets.length > 0 && <DashboardWidgetsGrid widgets={widgets} loading={dataLoading} />}
 

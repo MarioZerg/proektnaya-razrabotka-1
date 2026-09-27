@@ -184,6 +184,32 @@
       "expectedStatus": 403
     },
     {
+      "name": "Stale picking list works",
+      "method": "GET",
+      "path": "/?stale_picking=1",
+      "expectedStatus": 200
+    },
+    {
+      "name": "Repick without id fails",
+      "method": "POST",
+      "path": "/",
+      "body": {
+        "action": "repick_to_free"
+      },
+      "expectedStatus": 400
+    },
+    {
+      "name": "Repick without rights fails",
+      "method": "POST",
+      "path": "/",
+      "body": {
+        "action": "repick_to_free",
+        "id": 999999,
+        "actorId": 0
+      },
+      "expectedStatus": 403
+    },
+    {
       "name": "Stuck cancelled list works",
       "method": "GET",
       "path": "/?stuck_cancelled=1",
