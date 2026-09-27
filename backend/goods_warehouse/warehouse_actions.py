@@ -1999,8 +1999,16 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                         "shipping_labeled_by_name = NULL WHERE id = %s",
                         (int(gw_id),),
                     )
+                    # Статус сбрасываем ВМЕСТЕ со ссылкой.
+                    #
+                    # «Со склада» без вещи — это заказ-невидимка: в цех он не
+                    # уходит (статус не «Новый»), в подборе не показывается
+                    # (вещи за ним нет) и просто выпадает из работы, пока
+                    # маркетплейс не начнёт считать просрочку.
                     cur.execute(
-                        "UPDATE orders SET fulfilled_from_stock_id = NULL "
+                        "UPDATE orders SET fulfilled_from_stock_id = NULL, "
+                        "  sewing_status = CASE WHEN sewing_status = 'Со склада' "
+                        "                       THEN 'Новый' ELSE sewing_status END "
                         "WHERE fulfilled_from_stock_id = %s",
                         (int(gw_id),),
                     )
@@ -2108,7 +2116,9 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                 # убираем обратную ссылку у заказа: иначе он остаётся «закрытым
                 # складом» без вещи и просто исчезает из работы.
                 cur.execute(
-                    "UPDATE orders SET fulfilled_from_stock_id = NULL "
+                    "UPDATE orders SET fulfilled_from_stock_id = NULL, "
+                    "  sewing_status = CASE WHEN sewing_status = 'Со склада' "
+                    "                       THEN 'Новый' ELSE sewing_status END "
                     f"WHERE id = {int(gw_reserved)} AND fulfilled_from_stock_id = {int(gw_id)}"
                 )
                 cur.execute(
@@ -2384,8 +2394,14 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
 
             # Заказ больше не считается закрытым этой вещью: иначе он повиснет
             # «собранным со склада» без товара и выпадет из работы совсем.
+            #
+            # Поэтому вместе со ссылкой снимаем и статус: раньше сбрасывалась
+            # только ссылка, и заказ оставался «Со склада» — ровно тем самым
+            # невидимкой, от которого этот комментарий и предостерегал.
             cur.execute(
-                "UPDATE orders SET fulfilled_from_stock_id = NULL "
+                "UPDATE orders SET fulfilled_from_stock_id = NULL, "
+                "  sewing_status = CASE WHEN sewing_status = 'Со склада' "
+                "                       THEN 'Новый' ELSE sewing_status END "
                 "WHERE fulfilled_from_stock_id = %s",
                 (int(item_id),),
             )
@@ -3057,8 +3073,12 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
             released = cur.fetchall()
             if released:
                 rel_csv = ','.join(str(int(r[0])) for r in released)
+                # Ссылка и статус — вместе: заказ, оставшийся «Со склада» без
+                # вещи, выпадает из работы и всплывает на панели как зависший.
                 cur.execute(
-                    "UPDATE orders SET fulfilled_from_stock_id = NULL "
+                    "UPDATE orders SET fulfilled_from_stock_id = NULL, "
+                    "  sewing_status = CASE WHEN sewing_status = 'Со склада' "
+                    "                       THEN 'Новый' ELSE sewing_status END "
                     f"WHERE fulfilled_from_stock_id IN ({rel_csv})"
                 )
 

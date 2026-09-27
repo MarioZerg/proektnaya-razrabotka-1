@@ -352,12 +352,12 @@ def handle_get(event: dict, headers: dict, dsn: str) -> dict:
             #
             # Заказ в работе цеха (раскроен, шьётся, стикеруется) зависшим НЕ
             # считается — он идёт своим ходом по конвейеру.
-            cur.execute(
-                "SELECT o.id, o.order_number, o.marketplace, o.product, "
-                "       o.created_at, gw.id, gw.status, sh.name "
-                "FROM orders o "
-                "LEFT JOIN goods_warehouse gw ON gw.id = o.fulfilled_from_stock_id "
-                "LEFT JOIN shelves sh ON sh.id = gw.shelf_id "
+            # Условие целиком — одной строкой, чтобы список и счётчик считались
+            # ПО ОДНОМУ И ТОМУ ЖЕ правилу. Раньше счётчик брался как длина
+            # списка, а список ограничен LIMIT 50: при 181 зависшем заказе на
+            # панели горело ровно «50», и понять по ней реальный масштаб было
+            # нельзя — цифра упиралась в лимит и не двигалась.
+            stalled_where = (
                 "WHERE COALESCE(o.status, '') NOT IN ('Отменён', 'Отгружен', 'Доставлен') "
                 "  AND COALESCE(o.ozon_status, '') NOT IN "
                 "      ('awaiting_deliver', 'delivering', 'delivered', 'cancelled', "
@@ -368,6 +368,21 @@ def handle_get(event: dict, headers: dict, dsn: str) -> dict:
                 # числится свободным остатком или вовсе не на складе.
                 "  AND o.sewing_status = 'Со склада' "
                 "  AND (gw.id IS NULL OR gw.status NOT IN ('picking', 'awaiting_supply', 'shipped')) "
+                # ЗАКАЗЫ ЗАКРЫТОЙ ЗАЯВКИ FBO — НЕ НАША РАБОТА.
+                #
+                # В FBO товар обезличен и привязан к строке заявки, а не к
+                # отправлению. Когда заявка уехала и закрыта, её заказы разбирать
+                # уже нечем: вернуть в цех нельзя (это второй пошив того, что
+                # отгружено), а инструмент разбора зависших такие заказы и сам
+                # отказывается трогать — «разбирается через карточку поставки».
+                #
+                # Получалось, что панель горит красным на 179 заказов одной
+                # уехавшей заявки, а кнопка «вернуть в цех» по ним не работает.
+                # Живые заявки при этом остаются под присмотром: условие
+                # отсекает только выполненные и отменённые.
+                "  AND NOT EXISTS (SELECT 1 FROM marketplace_supplies ms3 "
+                "        WHERE ms3.id = o.supply_id "
+                "          AND COALESCE(ms3.status, '') IN ('Выполнена', 'Отменена')) "
                 "  AND NOT EXISTS (SELECT 1 FROM marketplace_supply_items msi "
                 "        JOIN marketplace_supplies ms ON ms.id = msi.supply_id "
                 "        WHERE msi.goods_warehouse_id = gw.id "
@@ -389,6 +404,15 @@ def handle_get(event: dict, headers: dict, dsn: str) -> dict:
                 "        JOIN marketplace_supplies ms2 ON ms2.id = msi2.supply_id "
                 "        WHERE COALESCE(g2.reserved_order_id, g2.order_id) = o.id "
                 "          AND COALESCE(ms2.status, '') NOT IN ('Отменена')) "
+            )
+
+            cur.execute(
+                "SELECT o.id, o.order_number, o.marketplace, o.product, "
+                "       o.created_at, gw.id, gw.status, sh.name "
+                "FROM orders o "
+                "LEFT JOIN goods_warehouse gw ON gw.id = o.fulfilled_from_stock_id "
+                "LEFT JOIN shelves sh ON sh.id = gw.shelf_id "
+                + stalled_where +
                 "ORDER BY o.created_at ASC LIMIT 50"
             )
             items = [
@@ -404,10 +428,19 @@ def handle_get(event: dict, headers: dict, dsn: str) -> dict:
                 }
                 for r in cur.fetchall()
             ]
+
+            # Сколько их всего — отдельным запросом, без лимита.
+            cur.execute(
+                "SELECT COUNT(*) FROM orders o "
+                "LEFT JOIN goods_warehouse gw ON gw.id = o.fulfilled_from_stock_id "
+                + stalled_where
+            )
+            total = int(cur.fetchone()[0])
+
             return {
                 'statusCode': 200,
                 'headers': headers,
-                'body': json.dumps({'items': items, 'count': len(items)},
+                'body': json.dumps({'items': items, 'count': total},
                                    ensure_ascii=False),
             }
 

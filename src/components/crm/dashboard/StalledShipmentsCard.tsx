@@ -22,11 +22,25 @@ import { formatDate } from '@/lib/dateUtils';
  */
 const StalledShipmentsCard = () => {
   const [items, setItems] = useState<StalledShipment[]>([]);
+  /**
+   * Сколько их всего по базе.
+   *
+   * Список сервер отдаёт не целиком (до 50 строк), поэтому считать по его длине
+   * нельзя: при 181 зависшем заказе на панели горело ровно «50» и не двигалось,
+   * сколько бы их ни накопилось.
+   */
+  const [total, setTotal] = useState(0);
 
   useEffect(() => {
     fetchStalledShipments()
-      .then((r) => setItems(r.items))
-      .catch(() => setItems([]));
+      .then((r) => {
+        setItems(r.items);
+        setTotal(r.count);
+      })
+      .catch(() => {
+        setItems([]);
+        setTotal(0);
+      });
   }, []);
 
   if (items.length === 0) return null;
@@ -37,7 +51,7 @@ const StalledShipmentsCard = () => {
         <Icon name="PackageX" size={20} className="mt-0.5 shrink-0 text-red-600" />
         <div className="min-w-0 flex-1">
           <p className="font-semibold text-red-900">
-            Зависшие отправления: {items.length} шт
+            Зависшие отправления: {total || items.length} шт
           </p>
           <p className="mt-0.5 text-sm text-red-900">
             Маркетплейс ждёт эти заказы, но по ним никто не работает: в цех они не
@@ -68,6 +82,14 @@ const StalledShipmentsCard = () => {
               </div>
             ))}
           </div>
+
+          {/* Показали не всё: список ограничен, а цифра выше — полная. Молчать
+              нельзя, иначе человек решит, что разобрал всё, пересмотрев строки. */}
+          {total > items.length && (
+            <p className="mt-2 text-xs text-red-800">
+              Показаны первые {items.length} — всего {total}
+            </p>
+          )}
 
           <Link
             to="/crm/inventory/goods-picking"
