@@ -1,0 +1,31 @@
+{
+  "tests": [
+    {
+      "name": "OPTIONS preflight",
+      "method": "OPTIONS",
+      "path": "/",
+      "expectedStatus": 200
+    },
+    {
+      "name": "Without token access denied",
+      "method": "POST",
+      "path": "/",
+      "body": {"jsonrpc": "2.0", "id": 1, "method": "tools/list"},
+      "expectedStatus": 401
+    },
+    {
+      "name": "GET without token denied",
+      "method": "GET",
+      "path": "/",
+      "expectedStatus": 401
+    },
+    {
+      "name": "Wrong token denied",
+      "method": "POST",
+      "path": "/",
+      "headers": {"Authorization": "Bearer wrong-token-value"},
+      "body": {"jsonrpc": "2.0", "id": 1, "method": "initialize"},
+      "expectedStatus": 401
+    }
+  ]
+}
