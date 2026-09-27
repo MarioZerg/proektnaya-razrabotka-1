@@ -1,0 +1,38 @@
+{
+  "tests": [
+    {
+      "name": "OPTIONS preflight",
+      "method": "OPTIONS",
+      "path": "/",
+      "expectedStatus": 200
+    },
+    {
+      "name": "Accept error without auth",
+      "method": "POST",
+      "path": "/",
+      "body": {"errors": [{"message": "Проверка журнала сбоев", "page": "/tests"}]},
+      "expectedStatus": 200
+    },
+    {
+      "name": "Empty message not saved",
+      "method": "POST",
+      "path": "/",
+      "body": {"errors": [{"message": "   "}]},
+      "expectedStatus": 200,
+      "expectedBody": {"saved": 0},
+      "bodyMatcher": "partial"
+    },
+    {
+      "name": "Read requires admin",
+      "method": "GET",
+      "path": "/?limit=5",
+      "expectedStatus": 403
+    },
+    {
+      "name": "Summary requires admin",
+      "method": "GET",
+      "path": "/?summary=1",
+      "expectedStatus": 403
+    }
+  ]
+}

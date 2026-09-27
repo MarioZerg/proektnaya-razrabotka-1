@@ -3,6 +3,7 @@ import App from './App'
 import AppErrorBoundary from './components/AppErrorBoundary'
 import AppUpdateBanner from './components/AppUpdateBanner'
 import { setupChunkReload } from './lib/chunkReload'
+import { setupErrorReporter } from './lib/errorReporter'
 import { setupResilientFetch } from './lib/resilientFetch'
 import './index.css'
 
@@ -13,6 +14,11 @@ setupChunkReload();
 // Тоже до отрисовки: в цехе связь моргает, и одного мига хватало, чтобы раздел
 // остался пустым. Короткие обрывы теперь переживаются молча, без участия человека.
 setupResilientFetch();
+
+// Тоже до отрисовки: сбой может случиться на первой же секунде, и именно такие
+// ошибки раньше пропадали бесследно — сотрудник видел белый экран, а причина
+// оставалась в консоли его планшета.
+setupErrorReporter();
 
 createRoot(document.getElementById("root")!).render(
   <AppErrorBoundary>

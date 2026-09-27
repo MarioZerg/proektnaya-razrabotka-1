@@ -78,10 +78,18 @@ FORBIDDEN_TABLES = (
 )
 
 # Колонки, которые вырезаются из любой выдачи, в какой таблице бы ни встретились.
+# Список намеренно шире, чем кажется нужным: лишняя скрытая колонка агенту не
+# помешает разобраться в логике, а утёкший паспорт сотрудника вернуть нельзя.
 FORBIDDEN_COLUMNS = (
-    'password', 'password_hash', 'token', 'access_token', 'refresh_token',
-    'api_key', 'secret', 'passport', 'passport_number', 'passport_series',
-    'inn', 'snils', 'card_number', 'phone', 'address', 'birth_date',
+    'password', 'password_hash', 'password_salt',
+    'token', 'access_token', 'refresh_token', 'max_pending_token',
+    'api_key', 'secret',
+    'passport', 'passport_number', 'passport_series', 'passport_issued_by',
+    'passport_issued_date', 'passport_department_code',
+    'inn', 'snils', 'card_number', 'account_number',
+    'phone', 'sbp_phone', 'email',
+    'address', 'registration_address', 'birth_date',
+    'salary',
 )
 
 MAX_ROWS = 200
@@ -384,6 +392,72 @@ def tool_audit_log(args):
     return _text_result('\n'.join(lines))
 
 
+def tool_app_errors(args):
+    """Сбои приложения: что падает у сотрудников и в облачных функциях."""
+    limit = args.get('limit')
+    try:
+        limit = min(int(limit), MAX_ROWS) if limit else 30
+    except (TypeError, ValueError):
+        limit = 30
+
+    conn = _connect()
+    try:
+        conn.set_session(readonly=True)
+        cur = conn.cursor()
+        cur.execute(f'SET LOCAL search_path TO {_schema()}, public')
+
+        # Сводка нужна, чтобы отличить массовую поломку от единичной случайности:
+        # одна и та же ошибка у восьми человек и у одного — это разные задачи.
+        if args.get('summary'):
+            cur.execute(
+                'SELECT message, count(*), count(DISTINCT user_id), max(occurred_at) '
+                "FROM app_errors WHERE occurred_at > now() - interval '7 days' "
+                f'GROUP BY message ORDER BY count(*) DESC LIMIT {limit}'
+            )
+            rows = cur.fetchall()
+            if not rows:
+                return _text_result('За последнюю неделю сбоев не зафиксировано')
+            lines = ['Повторяющиеся сбои за 7 дней (раз | сотрудников | последний раз | текст):']
+            for r in rows:
+                when = r[3].isoformat() if r[3] else '—'
+                lines.append(f'{r[1]} | {r[2] or 0} | {when} | {r[0]}')
+            return _text_result('\n'.join(lines))
+
+        where = []
+        if (args.get('source') or '').strip():
+            where.append(f'source = {_sql_str(args["source"].strip())}')
+        if (args.get('search') or '').strip():
+            where.append(f'message ILIKE {_sql_str("%" + args["search"].strip() + "%")}')
+        clause = (' WHERE ' + ' AND '.join(where)) if where else ''
+
+        cur.execute(
+            'SELECT occurred_at, source, level, message, page, user_name, user_role, '
+            '  app_version, stack '
+            f'FROM app_errors{clause} ORDER BY occurred_at DESC LIMIT {limit}'
+        )
+        rows = cur.fetchall()
+    except psycopg2.Error as e:
+        return _text_result(f'Журнал сбоев не прочитался: {str(e).strip()}', True)
+    finally:
+        conn.close()
+
+    if not rows:
+        return _text_result('Сбоев по этому условию нет')
+
+    blocks = [f'Сбоев: {len(rows)}']
+    for r in rows:
+        when = r[0].isoformat() if r[0] else '—'
+        head = f'\n--- {when} | {r[1]}/{r[2]} | стр. {r[4] or "—"} | {r[5] or "—"} ({r[6] or "—"})'
+        if r[7]:
+            head += f' | версия {r[7]}'
+        blocks.append(head + f'\n{r[3]}')
+        if r[8]:
+            # Стек обрезаем: первые строки указывают на наш код, дальше идут
+            # внутренности библиотек, в которых искать нечего.
+            blocks.append('\n'.join(str(r[8]).splitlines()[:12]))
+    return _text_result('\n'.join(blocks))
+
+
 TOOLS = [
     {
         'name': 'list_files',
@@ -456,6 +530,23 @@ TOOLS = [
         },
         'handler': tool_audit_log,
     },
+    {
+        'name': 'app_errors',
+        'description': 'Сбои приложения: что упало у сотрудников в браузере и в облачных '
+                       'функциях, с текстом ошибки, страницей и версией. С summary=true — '
+                       'сводка за неделю: какие ошибки массовые, а какие единичные. '
+                       'Начинайте разбор любой жалобы «не работает» отсюда.',
+        'inputSchema': {
+            'type': 'object',
+            'properties': {
+                'summary': {'type': 'boolean', 'description': 'Сводка повторяющихся ошибок'},
+                'source': {'type': 'string', 'description': 'frontend или backend'},
+                'search': {'type': 'string', 'description': 'Искать по тексту ошибки'},
+                'limit': {'type': 'integer', 'description': f'Сколько записей, максимум {MAX_ROWS}'},
+            },
+        },
+        'handler': tool_app_errors,
+    },
 ]
 
 TOOLS_BY_NAME = {t['name']: t for t in TOOLS}
@@ -470,7 +561,8 @@ def handler(event: dict, context) -> dict:
 
     Доступ по паролю MCP_AGENT_TOKEN в заголовке Authorization: Bearer <...>.
 
-    Инструменты: list_files, read_file, search_code, db_schema, db_query, audit_log.
+    Инструменты: list_files, read_file, search_code, db_schema, db_query,
+    audit_log, app_errors.
     """
     method = event.get('httpMethod', 'POST')
     if method == 'OPTIONS':

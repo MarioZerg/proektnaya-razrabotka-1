@@ -15,6 +15,7 @@
  */
 
 import { getAuthToken } from '@/lib/authToken';
+import { isErrorReportUrl, reportError } from '@/lib/errorReporter';
 
 /** Сколько ждём ответ, прежде чем считать запрос зависшим. */
 const TIMEOUT_MS = 20000;
@@ -84,6 +85,17 @@ export const setupResilientFetch = () => {
           ...(controller ? { signal: controller.signal } : {}),
         });
         if (timer) window.clearTimeout(timer);
+        // Сервер ответил отказом — пишем в журнал сбоев. Раньше такие ответы
+        // были видны только в консоли планшета: раздел оставался пустым, а
+        // причина исчезала вместе с закрытой вкладкой.
+        // Кроме самой отправки отчётов: иначе её сбой вызвал бы новый отчёт,
+        // тот — ещё один, и приложение ушло бы в петлю запросов.
+        if (response.status >= 500 && !isErrorReportUrl(url)) {
+          reportError({
+            source: 'backend',
+            message: `Функция ответила ошибкой ${response.status}: ${url}`,
+          });
+        }
         return response;
       } catch (error) {
         if (timer) window.clearTimeout(timer);
