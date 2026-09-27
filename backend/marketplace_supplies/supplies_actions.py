@@ -35,6 +35,7 @@ from shared import (
     release_cancelled_item,
     release_stale_supply_locks,
     resolve_ozon_barcode,
+    restore_missing_workshop_goods,
     return_wb_order_to_accumulator,
     upload_pass_sticker,
 )
@@ -550,11 +551,28 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
             # Всё ещё не нашли — возможно, отсканирован ШТРИХКОД с ярлыка OZON
             # (на ярлыке печатается он, а не номер отправления). Спрашиваем номер
             # у OZON и ищем повторно.
+            resolved_code = None
             if not gw_row:
                 resolved = resolve_ozon_barcode(cur, storage_barcode)
                 if resolved:
+                    resolved_code = resolved
                     cur.execute(find_sql.format(code=resolved.replace("'", "''")))
                     gw_row = cur.fetchone()
+
+            # ВЕЩИ НЕТ НА СКЛАДЕ, НО ЗАКАЗ ЗАКРЫТ ЦЕХОМ — ЗАВОДИМ ЗАПИСЬ САМИ.
+            #
+            # Закрытие заказа на терминале могло оборваться на полпути: статус
+            # «Готовые» проставлен, упаковка списана, ярлык наклеен — а складской
+            # записи нет. Для склада вещи не существует, и кладовщик с пакетом в
+            # руках получал «не найдено среди собранных с полок». Чиним на месте,
+            # чтобы работа не вставала и не требовалась ручная миграция.
+            if not gw_row:
+                for candidate in (storage_barcode, resolved_code):
+                    if candidate and restore_missing_workshop_goods(cur, candidate):
+                        conn.commit()
+                        cur.execute(find_sql.format(code=candidate.replace("'", "''")))
+                        gw_row = cur.fetchone()
+                        break
             if not gw_row:
                 return {
                     'statusCode': 404,
@@ -1794,11 +1812,25 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
             gw_row = cur.fetchone()
 
             # Отсканирован штрихкод с ярлыка OZON — узнаём номер отправления у OZON.
+            box_resolved_code = None
             if not gw_row:
                 resolved = resolve_ozon_barcode(cur, order_number)
                 if resolved:
+                    box_resolved_code = resolved
                     cur.execute(box_find_sql.format(code=resolved.replace("'", "''")))
                     gw_row = cur.fetchone()
+
+            # Заказ закрыт цехом, а складской записи нет — оборвавшееся закрытие.
+            # Заводим её здесь же, иначе вещь с наклеенным ярлыком невозможно
+            # положить в короб: подробности в restore_missing_workshop_goods.
+            if not gw_row:
+                for candidate in (order_number, box_resolved_code):
+                    if candidate and restore_missing_workshop_goods(cur, candidate):
+                        conn.commit()
+                        cur.execute(
+                            box_find_sql.format(code=candidate.replace("'", "''")))
+                        gw_row = cur.fetchone()
+                        break
             if not gw_row:
                 return {
                     'statusCode': 404,

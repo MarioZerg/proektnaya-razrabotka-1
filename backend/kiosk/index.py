@@ -1127,6 +1127,44 @@ def handler(event: dict, context) -> dict:
                         (int(order_id),),
                     )
                     gw_done = cur.fetchone()
+
+                    # ЗАКАЗ ЗАКРЫТ, А ВЕЩИ НА СКЛАДЕ НЕТ — ДОВОДИМ ЗАКРЫТИЕ ДО КОНЦА.
+                    #
+                    # Закрытие идёт одной транзакцией, но она может оборваться на
+                    # полпути: обрыв связи, перезапуск функции по таймауту, второе
+                    # нажатие «Закрыть заказ». Тогда статус «Готовые» и packed_at
+                    # стоят, упаковка списана, ярлык наклеен — а записи о вещи на
+                    # складе нет.
+                    #
+                    # Дальше вещь пропадает для всех: в поставку не сканируется
+                    # («не найдено среди собранных с полок»), на полке её нет, а на
+                    # площадке отправление числится готовым к отгрузке и тихо висит
+                    # до просрочки. Так зависли 55691968-0274-5 и 0130129485-0036-1 —
+                    # каждый чинили отдельной миграцией.
+                    #
+                    # Повторное нажатие — самый частый путь сюда, поэтому именно оно
+                    # и должно доделывать пропущенный шаг. Начисления не трогаем: они
+                    # защищены ON CONFLICT и могли пройти в оборвавшейся попытке.
+                    if not gw_done and not is_cancelled and not is_individual \
+                            and (order_type or '') in ('FBS', 'FBO'):
+                        fix_bundle = None
+                        if group_key and (group_size or 0) > 1:
+                            fix_bundle = f"{group_key}-{group_position or 1}"
+                        cur.execute(
+                            "INSERT INTO goods_warehouse (order_id, reserved_order_id, "
+                            "  status, storage_barcode, receive_reason, "
+                            "  shipping_labeled_at, matched_at, bundle_barcode) "
+                            "VALUES (%s, %s, 'awaiting_supply', %s, 'fbs_ready', "
+                            "        COALESCE((SELECT packed_at FROM orders "
+                            "                  WHERE id = %s), now()), now(), %s) "
+                            # Две упаковщицы могли нажать кнопку одновременно —
+                            # вторая просто ничего не делает.
+                            "ON CONFLICT (order_id) DO NOTHING "
+                            "RETURNING storage_barcode",
+                            (int(order_id), int(order_id), next_storage_barcode(cur),
+                             int(order_id), fix_bundle),
+                        )
+                        gw_done = cur.fetchone()
                     conn.commit()
                     return {
                         'statusCode': 200,
