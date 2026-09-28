@@ -24,8 +24,8 @@ interface RequestMaterialDialogProps {
   onOpenChange: (open: boolean) => void;
   onOpenCreate: () => void;
   materials: Material[];
-  reqMaterialId: string;
-  setReqMaterialId: (value: string) => void;
+  reqMaterialIds: string[];
+  setReqMaterialIds: (value: string[]) => void;
   reqComment: string;
   setReqComment: (value: string) => void;
   creating: boolean;
@@ -51,8 +51,8 @@ const RequestMaterialDialog = ({
   onOpenChange,
   onOpenCreate,
   materials,
-  reqMaterialId,
-  setReqMaterialId,
+  reqMaterialIds,
+  setReqMaterialIds,
   reqComment,
   setReqComment,
   creating,
@@ -129,22 +129,65 @@ const RequestMaterialDialog = ({
           )}
 
           <div className="space-y-1.5">
-            <Label>Материал</Label>
-            <Select value={reqMaterialId} onValueChange={setReqMaterialId}>
-              <SelectTrigger>
-                <SelectValue placeholder="Выберите материал" />
-              </SelectTrigger>
-              <SelectContent>
-                {materials.map((m) => (
-                  <SelectItem key={m.id} value={String(m.id)}>
-                    {m.name} ({m.unit})
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <Label>Материалы</Label>
+            <div className="space-y-2">
+              {reqMaterialIds.map((value, idx) => (
+                <div key={idx} className="flex gap-2">
+                  <Select
+                    value={value || undefined}
+                    onValueChange={(v) =>
+                      setReqMaterialIds(reqMaterialIds.map((id, i) => (i === idx ? v : id)))
+                    }
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Выберите материал" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {materials.map((m) => {
+                        const taken =
+                          reqMaterialIds.includes(String(m.id)) && String(m.id) !== value;
+                        return (
+                          <SelectItem key={m.id} value={String(m.id)} disabled={taken}>
+                            {m.name} ({m.unit})
+                          </SelectItem>
+                        );
+                      })}
+                    </SelectContent>
+                  </Select>
+                  {reqMaterialIds.length > 1 && (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="shrink-0"
+                      onClick={() =>
+                        setReqMaterialIds(reqMaterialIds.filter((_, i) => i !== idx))
+                      }
+                    >
+                      <Icon name="X" size={16} />
+                    </Button>
+                  )}
+                </div>
+              ))}
+            </div>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="w-full"
+              disabled={
+                !reqMaterialIds[reqMaterialIds.length - 1] ||
+                reqMaterialIds.filter(Boolean).length >= materials.length
+              }
+              onClick={() => setReqMaterialIds([...reqMaterialIds, ''])}
+            >
+              <Icon name="Plus" size={14} className="mr-1.5" />
+              Добавить материал
+            </Button>
           </div>
           <p className="text-xs text-muted-foreground">
-            Кладовщик сам определит количество и рулоны — просто выберите материал и отправьте заявку.
+            Можно несколько тканей сразу — Шифон, Лен и Бамбук уедут одной заявкой.
+            Кладовщик сам выберет рулоны.
           </p>
 
           <div className="space-y-1.5">

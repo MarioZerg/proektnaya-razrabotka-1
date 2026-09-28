@@ -40,13 +40,15 @@ const AssembleShipmentView = ({
 }: AssembleShipmentViewProps) => {
   useScannerAutoSubmit(scanCode, onScan, !scanning);
 
-  // Запрошенная позиция — исходная строка заявки (создана при request_to_workshop), у нее
-  // ещё нет rollId. requestedQuantity теперь необязателен (сотрудник может не указывать
-  // количество), поэтому находим её по отсутствию rollId, а не по наличию requestedQuantity.
-  const requestedItem = activeShipment.items.find((i) => i.rollId === null);
+  // Запрошенные позиции — исходные строки заявки (ещё без rollId). Тканей может
+  // быть несколько: Шифон, Лен и Бамбук едут одной машиной.
+  const requestedItems = activeShipment.items.filter((i) => i.rollId === null);
+  const requestedNames = [
+    ...new Set(requestedItems.map((i) => i.materialName).filter(Boolean)),
+  ];
   const collectedItems = activeShipment.items.filter((i) => i.rollId !== null);
   const collectedQty = collectedItems.reduce((sum, i) => sum + (Number(i.quantity) || 0), 0);
-  const collectedUnit = collectedItems[0]?.unit || requestedItem?.unit || '';
+  const collectedUnit = collectedItems[0]?.unit || requestedItems[0]?.unit || '';
 
   return (
     <div className="min-w-0 space-y-6 overflow-x-hidden">
@@ -58,9 +60,12 @@ const AssembleShipmentView = ({
           </Button>
           <h1 className="text-xl font-bold">Сборка заявки #{activeShipment.id}</h1>
           <p className="mt-1 break-words text-sm text-muted-foreground">
-            {requestedItem?.materialName || 'Материал не указан'}
-            {requestedItem?.requestedQuantity
-              ? ` · запрошено ${requestedItem.requestedQuantity} ${requestedItem.unit || ''}`
+            {requestedNames.length > 0 ? requestedNames.join(', ') : 'Материал не указан'}
+            {requestedItems.some((i) => i.requestedQuantity)
+              ? ` · запрошено ${requestedItems
+                  .filter((i) => i.requestedQuantity)
+                  .map((i) => `${i.requestedQuantity} ${i.unit || ''}`.trim())
+                  .join(', ')}`
               : ''}
             {activeShipment.workshopName ? ` · ${activeShipment.workshopName}` : ''}
             {` · запросил ${activeShipment.requestedByName || '—'}`}
@@ -92,7 +97,8 @@ const AssembleShipmentView = ({
             Отсканируйте штрихкод рулона
           </div>
           <p className="text-xs text-muted-foreground">
-            Сканер сам подставит код. Рулон должен быть на складе и того же материала, что в заявке.
+            Сканер сам подставит код. Рулон должен быть на складе. Разные ткани —
+            Шифон, Лен, Бамбук — можно класть в одну заявку.
           </p>
           <div className="flex flex-col gap-2 sm:flex-row">
             <Input

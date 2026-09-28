@@ -289,15 +289,14 @@ export const createShipmentDefectWriteoff = (payload: {
   items: Array<{ rollId: number; quantity: number }>;
 }) => postAction({ action: 'create', type: 'defect_writeoff', ...payload });
 
-// Отгрузка в цех — двухстадийный процесс со сканированием (как на физическом складе).
-// Заявку создаёт швея/закройщик: строго 1 материал за раз, цех и смена берутся из его профиля.
-// Сотрудник только выбирает материал — количество не указывается, кладовщик сам определит,
-// сколько и какие рулоны собрать по факту наличия на складе.
 export const requestToWorkshop = (payload: {
   workshopId: number;
   shiftNumber?: number;
   comment?: string;
-  materialId: number;
+  /** Старый одиночный параметр — если materialIds не передали. */
+  materialId?: number;
+  /** Несколько тканей в одной заявке: Шифон + Лен + Бамбук одним рейсом. */
+  materialIds?: number[];
   requestedQuantity?: number;
   requestedBy?: number;
 }) => postAction({ action: 'request_to_workshop', ...payload });

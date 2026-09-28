@@ -218,9 +218,9 @@ const ToMarketplace = () => {
   return (
     <CrmLayout>
       <div className="space-y-6">
-        <div>
+        <div className="min-w-0">
           <h1 className="text-xl font-bold">Поставка в маркет</h1>
-          <p className="mt-1 text-sm text-muted-foreground">
+          <p className="mt-1 hidden text-sm text-muted-foreground sm:block">
             {currentShop
               ? `Отгрузка готового товара магазина «${currentShop.name}» на маркетплейс`
               : 'Формирование отгрузки готового товара со склада на маркетплейс'}

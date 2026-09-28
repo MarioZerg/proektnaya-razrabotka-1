@@ -11,8 +11,8 @@ interface ToWorkshopHeaderProps {
   setCreateOpen: (open: boolean) => void;
   openCreate: () => void;
   dialogMaterials: Material[];
-  reqMaterialId: string;
-  setReqMaterialId: (value: string) => void;
+  reqMaterialIds: string[];
+  setReqMaterialIds: (value: string[]) => void;
   reqComment: string;
   setReqComment: (value: string) => void;
   creating: boolean;
@@ -39,8 +39,8 @@ const ToWorkshopHeader = ({
   setCreateOpen,
   openCreate,
   dialogMaterials,
-  reqMaterialId,
-  setReqMaterialId,
+  reqMaterialIds,
+  setReqMaterialIds,
   reqComment,
   setReqComment,
   creating,
@@ -62,7 +62,7 @@ const ToWorkshopHeader = ({
           <h1 className="text-xl font-bold">Отгрузка в цех</h1>
           <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
             {isProduction
-              ? 'Запросите нужный материал — кладовщик соберёт рулоны и отправит вам'
+              ? 'Запросите ткани — можно несколько сразу, кладовщик соберёт рулоны одним рейсом'
               : isAdmin
                 ? 'Заявку создаёт сотрудник цеха или админ за цех → сборка рулонов сканированием → отправка → приём в цехе'
                 : 'Заявку создаёт сотрудник цеха → сборка рулонов сканированием → отправка → приём в цехе'}
@@ -74,8 +74,8 @@ const ToWorkshopHeader = ({
             onOpenChange={setCreateOpen}
             onOpenCreate={openCreate}
             materials={dialogMaterials}
-            reqMaterialId={reqMaterialId}
-            setReqMaterialId={setReqMaterialId}
+            reqMaterialIds={reqMaterialIds}
+            setReqMaterialIds={setReqMaterialIds}
             reqComment={reqComment}
             setReqComment={setReqComment}
             creating={creating}

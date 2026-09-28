@@ -425,7 +425,10 @@ const buildChecklistPageHtml = (
            БИРКИ НЕ ПУТАТЬ, ВЕШАТЬ НА РАЗНЫЕ ВЕШАЛКИ</div>
          <div style="font-size:12px;margin-top:2px;">
            ${Array.from(purchaseCounts.entries())
-             .map(([key, cnt]) => `${key} — ${cnt} шт.`)
+             .map(([key, cnt]) => {
+               const size = pageOrders.find((o) => o.purchaseKey === key)?.purchaseSize;
+               return size && size > cnt ? `${key} — ${cnt} из ${size}` : `${key} — ${cnt} шт.`;
+             })
              .join(' &nbsp;·&nbsp; ')}
          </div>
        </div>`

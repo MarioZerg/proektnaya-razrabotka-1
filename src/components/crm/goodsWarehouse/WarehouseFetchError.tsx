@@ -16,15 +16,19 @@ interface WarehouseFetchErrorProps {
  * показывали 0, и кладовщик думал, что работы нет.
  */
 const WarehouseFetchError = ({ title, description, onRetry }: WarehouseFetchErrorProps) => (
-  <div className="flex flex-wrap items-center gap-3 rounded-lg border border-destructive/40 bg-destructive/5 px-4 py-3">
-    <Icon name="AlertTriangle" size={20} className="shrink-0 text-destructive" />
-    <div className="min-w-0 flex-1">
-      <p className="font-semibold text-destructive">{title}</p>
-      {description ? (
-        <p className="text-sm text-muted-foreground">{description}</p>
-      ) : null}
+  <div className="flex flex-col gap-3 rounded-lg border border-destructive/40 bg-destructive/5 px-3 py-3 sm:flex-row sm:items-center sm:px-4">
+    <div className="flex min-w-0 flex-1 items-start gap-3">
+      <Icon name="AlertTriangle" size={20} className="mt-0.5 shrink-0 text-destructive" />
+      <div className="min-w-0">
+        <p className="font-semibold leading-snug text-destructive">{title}</p>
+        {description ? (
+          <p className="mt-0.5 break-words text-sm leading-snug text-muted-foreground">
+            {description}
+          </p>
+        ) : null}
+      </div>
     </div>
-    <Button type="button" variant="outline" size="sm" onClick={onRetry}>
+    <Button type="button" variant="outline" size="sm" className="self-start sm:self-auto" onClick={onRetry}>
       <Icon name="RefreshCw" size={14} className="mr-1.5" />
       Повторить
     </Button>

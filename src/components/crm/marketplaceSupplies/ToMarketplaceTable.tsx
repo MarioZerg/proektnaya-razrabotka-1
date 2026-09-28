@@ -10,6 +10,7 @@ import { Badge } from '@/components/ui/badge';
 import Icon from '@/components/ui/icon';
 import type { Supply } from '@/lib/marketplaceSuppliesApi';
 import SupplySewingProgress from '@/components/crm/marketplaceSupplies/SupplySewingProgress';
+import ToMarketplaceCards from '@/components/crm/marketplaceSupplies/ToMarketplaceCards';
 import { formatDate, formatDateTime } from '@/lib/dateUtils';
 import { marketplaceLogo, statusVariant } from './toMarketplaceConstants';
 
@@ -37,13 +38,15 @@ const ToMarketplaceTable = ({ loading, error = null, supplies, onOpen }: ToMarke
   }
 
   return (
-    // Таблица без горизонтальной прокрутки.
-    // Раньше колонок было тринадцать, и кнопка открытия стояла последней —
-    // за краем экрана. Кладовщик на планшете сначала листал таблицу вправо
-    // и только потом мог зайти в поставку. Теперь связанные данные собраны
-    // в одну ячейку (номер с штрихкодом, четыре даты — в колонку «Сроки»),
-    // всё помещается на экран, а открывается поставка нажатием на строку.
-    <div className="overflow-hidden rounded-md border border-border">
+    <>
+      {/* На телефоне шесть колонок table-fixed сжимают заголовки в кашу
+          и накладывают статус на маркетплейс. Карточки — как у приёмки. */}
+      <div className="md:hidden">
+        <ToMarketplaceCards supplies={supplies} onOpen={onOpen} />
+      </div>
+      {/* На широком экране связанные данные собраны в одну ячейку — таблица
+          без горизонтальной прокрутки, поставка открывается нажатием на строку. */}
+      <div className="hidden overflow-hidden rounded-md border border-border md:block">
       <Table className="min-w-0 table-fixed">
         <TableHeader>
           <TableRow className="bg-primary hover:bg-primary">
@@ -166,7 +169,8 @@ const ToMarketplaceTable = ({ loading, error = null, supplies, onOpen }: ToMarke
           ))}
         </TableBody>
       </Table>
-    </div>
+      </div>
+    </>
   );
 };
 

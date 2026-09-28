@@ -93,40 +93,40 @@ const WbFboSupplyCard = ({ supply, onReload, isManager }: WbFboSupplyCardProps) 
 
   return (
     <Card className="border-border shadow-none">
-      <CardHeader className="flex flex-row items-center justify-between space-y-0">
-        <CardTitle className="text-base">Данные поставки WB FBO</CardTitle>
+      <CardHeader className="space-y-2">
+        <CardTitle className="text-base">Данные WB FBO</CardTitle>
         {isManager && !editing && (
-          <Button size="sm" variant="outline" onClick={startEdit}>
+          <Button size="sm" variant="outline" className="w-full sm:w-auto" onClick={startEdit}>
             <Icon name="Pencil" size={14} className="mr-1.5" />
-            Редактировать данные
+            Редактировать
           </Button>
         )}
       </CardHeader>
 
       {!editing ? (
         <CardContent className="space-y-2 text-sm">
-          <div className="flex items-center justify-between border-b border-border pb-2">
-            <span className="text-muted-foreground">Номер поставки</span>
-            <span className="font-medium">{supply.supplyNumber || '—'}</span>
+          <div className="flex flex-col gap-0.5 border-b border-border py-2 sm:flex-row sm:items-center sm:justify-between">
+            <span className="text-xs text-muted-foreground sm:text-sm">Номер поставки</span>
+            <span className="break-all font-medium">{supply.supplyNumber || '—'}</span>
           </div>
-          <div className="flex items-center justify-between border-b border-border pb-2">
-            <span className="text-muted-foreground">Тип грузоместа</span>
+          <div className="flex flex-col gap-0.5 border-b border-border py-2 sm:flex-row sm:items-center sm:justify-between">
+            <span className="text-xs text-muted-foreground sm:text-sm">Тип грузоместа</span>
             <span className="font-medium">{cargoLabel(supply.ozonCargoType)}</span>
           </div>
-          <div className="flex items-center justify-between border-b border-border pb-2">
-            <span className="text-muted-foreground">Дата поставки на воротах</span>
+          <div className="flex flex-col gap-0.5 border-b border-border py-2 sm:flex-row sm:items-center sm:justify-between">
+            <span className="text-xs text-muted-foreground sm:text-sm">Дата на воротах</span>
             <span className="font-medium">{supply.supplyDate ? formatDate(supply.supplyDate) : '—'}</span>
           </div>
-          <div className="flex items-center justify-between border-b border-border pb-2">
-            <span className="text-muted-foreground">Склад</span>
-            <span className="font-medium">{supply.cluster || '—'}</span>
+          <div className="flex flex-col gap-0.5 border-b border-border py-2 sm:flex-row sm:items-center sm:justify-between">
+            <span className="text-xs text-muted-foreground sm:text-sm">Склад</span>
+            <span className="break-words font-medium">{supply.cluster || '—'}</span>
           </div>
-          <div className="flex items-center justify-between border-b border-border pb-2">
-            <span className="text-muted-foreground">Количество {packagingUnit}</span>
+          <div className="flex flex-col gap-0.5 border-b border-border py-2 sm:flex-row sm:items-center sm:justify-between">
+            <span className="text-xs text-muted-foreground sm:text-sm">Количество {packagingUnit}</span>
             <span className="font-medium">{supply.packagingCount ?? '—'}</span>
           </div>
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <span className="text-muted-foreground">Статус (наша система)</span>
+          <div className="flex flex-col gap-0.5 py-2 sm:flex-row sm:items-center sm:justify-between">
+            <span className="text-xs text-muted-foreground sm:text-sm">Статус</span>
             <Badge variant={supply.status === 'Выполнена' ? 'default' : 'secondary'}>{supply.status}</Badge>
           </div>
         </CardContent>

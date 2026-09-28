@@ -258,10 +258,10 @@ const SupplyItemsSection = ({
 
     return (
       <div className="space-y-3">
-        <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
           <h2 className="font-semibold">Сборка по коробам</h2>
           {canEditItems && (
-            <Button size="sm" onClick={onNavigateAssemble}>
+            <Button size="sm" className="w-full sm:w-auto" onClick={onNavigateAssemble}>
               <Icon name="PackagePlus" size={14} className="mr-1" />
               Собрать поставку
             </Button>
@@ -313,8 +313,8 @@ const SupplyItemsSection = ({
                   </Badge>
                 )}
               </div>
-              <p className="text-xs text-muted-foreground">
-                Открыть экран сборки — там короба, сканер и печать стикеров
+              <p className="text-xs leading-snug text-muted-foreground">
+                Короба, сканер и стикеры
               </p>
             </div>
             <Icon name="ChevronRight" size={16} className="shrink-0 text-muted-foreground" />
@@ -392,9 +392,9 @@ const SupplyItemsSection = ({
               }
             }}
           >
-            <div className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
-              <Icon name="ScanLine" size={18} />
-              Сканируйте пакет с товаром — ярлык маркетплейса на нём
+            <div className="flex items-start gap-2 text-sm font-medium leading-snug text-muted-foreground">
+              <Icon name="ScanLine" size={18} className="mt-0.5 shrink-0" />
+              Сканируйте ярлык маркетплейса на пакете
             </div>
             {/* У связки Яндекса ярлык маркетплейса ОДИН на все вещи: на каждой
                 наклейке один и тот же номер и «1/1». Разложить им вещи по одной
@@ -409,19 +409,19 @@ const SupplyItemsSection = ({
                 </span>
               </div>
             )}
-            <div className="flex gap-2">
+            <div className="flex flex-col gap-2 sm:flex-row">
               <Input
                 ref={scanInputRef}
                 autoFocus
-                placeholder="Номер отправления с ярлыка маркетплейса"
+                placeholder="Номер отправления"
                 value={scanOrderNumber}
                 onChange={(e) => setScanOrderNumber(e.target.value)}
                 onKeyDown={(e) => e.key === 'Enter' && onScanOrder()}
                 disabled={scanning}
-                className="font-mono-tech"
+                className="min-w-0 font-mono-tech"
               />
-              <Button onClick={onScanOrder} disabled={scanning || !scanOrderNumber.trim()}>
-                {scanning ? <Icon name="Loader2" size={16} className="animate-spin" /> : 'Добавить товар'}
+              <Button className="w-full sm:w-auto" onClick={onScanOrder} disabled={scanning || !scanOrderNumber.trim()}>
+                {scanning ? <Icon name="Loader2" size={16} className="animate-spin" /> : 'Добавить'}
               </Button>
             </div>
           </CardContent>

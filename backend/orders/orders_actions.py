@@ -30,6 +30,8 @@ from shared import (
     get_setting_int,
     log_action,
     ozon_cutoff_passed,
+    ozon_purchase_marks,
+    ozon_split_purchase_sql,
     sewing_wait_for_order,
     write_off_materials_once,
 )
@@ -250,8 +252,15 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
             # В режиме «взять 1 заказ» связки отсекаем прямо в запросе: иначе первой
             # в очереди могла оказаться связка, и закройщик получил бы отказ вместо
             # работы. Так он всегда получает следующий одиночный заказ по очереди.
+            #
+            # Покупки OZON из нескольких отправлений тоже не отдаём по одной, пока
+            # соседи ещё в «Новый»: иначе первое отправление уедет добором, остаток
+            # стеком другому закройщику, и на листе стека номера не будет. Добор
+            # последней оставшейся вещи покупки по-прежнему можно — кроить больше
+            # нечего, рвать уже некого.
             single_sql = (
                 " AND (group_key IS NULL OR COALESCE(group_size, 1) <= 1) "
+                f" AND NOT ({ozon_split_purchase_sql('')}) "
                 if single_mode else " "
             )
             # Отсечка OZON действует и на раскрое: резать во второй половине дня то,
@@ -366,11 +375,11 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
             # Швеи и закройщицы час искали, где чей крой.
             #
             # Поэтому добираем в тот же стек остальные отправления этой покупки:
-            # закройщик получает их разом, видит на листе «ОДНА ПОКУПКА 1/2» и
+            # закройщик получает их разом, видит на листе «1 ПОКУПАТЕЛЬ 1/7» и
             # вешает на разные вешалки, зная, что вещи похожи.
-            # В режиме «Взять 1 заказ» добор не делаем: закройщица берёт ровно
-            # одну вещь под остаток ткани, и лишние ей сейчас не нужны. Бирку на
-            # такую вещь терминал печатает сразу — этого достаточно.
+            # В режиме «Взять 1 заказ» соседей не добираем — закройщица берёт
+            # ровно одну вещь под остаток ткани. Саму выдачу при этом режем
+            # выше: пока у покупки есть «Новый» сосед, добором её не отдаём.
             if order_ids and not first_group_key and not single_mode:
                 ids_for_siblings = ','.join(str(int(i)) for i in order_ids)
                 cur.execute(
@@ -511,14 +520,31 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                     }
 
             if not order_ids:
-                # В режиме одного заказа очередь может состоять только из связок —
-                # объясняем это прямо, иначе закройщик решит, что работы нет вообще.
-                msg = (
-                    'Нет одиночных заказов — в очереди только связки Яндекса. '
-                    'Возьмите стек: связка раскраивается целиком'
-                    if single_mode
-                    else 'Нет новых заказов на разрешённые вашему цеху материалы'
-                )
+                # В режиме одного заказа очередь может состоять из связок Яндекса
+                # или покупок OZON, которые нельзя рвать добором. Объясняем прямо,
+                # иначе закройщик решит, что работы нет вообще.
+                if single_mode:
+                    cur.execute(
+                        "SELECT 1 FROM orders WHERE sewing_status = 'Новый' "
+                        "AND fulfilled_from_stock_id IS NULL "
+                        f"AND NOT ({cancelled_sql('')}) "
+                        "AND material IN (" + names_csv + ") "
+                        "AND (group_key IS NULL OR COALESCE(group_size, 1) <= 1) "
+                        f"AND ({ozon_split_purchase_sql('')}) LIMIT 1"
+                    )
+                    if cur.fetchone():
+                        msg = (
+                            'Следующие заказы — покупки OZON из нескольких отправлений. '
+                            'Возьмите стек: иначе покупка разорвётся между закройщиками, '
+                            'и на листе не будет всех номеров'
+                        )
+                    else:
+                        msg = (
+                            'Нет одиночных заказов — в очереди только связки Яндекса. '
+                            'Возьмите стек: связка раскраивается целиком'
+                        )
+                else:
+                    msg = 'Нет новых заказов на разрешённые вашему цеху материалы'
                 return {
                     'statusCode': 404,
                     'headers': headers,
@@ -554,13 +580,9 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                 f"          WHERE m.name = o.material AND ms.shop_id = o.shop_id LIMIT 1), "
                 f"         (SELECT m.requires_overlock FROM materials m "
                 f"          WHERE m.name = o.material LIMIT 1), false), "
-                # НОМЕР ПОКУПКИ OZON и сколько её отправлений в этом стеке.
-                #
-                # Два отправления одной покупки — это часто две ОДИНАКОВЫЕ вещи
-                # (Лен 300×255 и Лен 300×255). На вешалке их не различить, и
-                # закройщица должна видеть это заранее, на бумаге: вещи похожи,
-                # бирки путать нельзя. Отгружаются они порознь, каждая по своему
-                # ярлыку, поэтому это НЕ связка Яндекса — вешать вместе не надо.
+                # НОМЕР ПОКУПКИ OZON. Сколько отправлений — считаем после выборки
+                # по всей покупке в базе (ozon_purchase_marks), не по этому стеку:
+                # иначе добор одной вещи из семи печатал бы пустую метку.
                 f"CASE WHEN o.marketplace = 'OZON' AND o.ozon_posting_number IS NOT NULL "
                 f"     THEN regexp_replace(o.ozon_posting_number, '-[0-9]+$', '') END "
                 f"FROM orders o WHERE o.id IN ({ids_csv}) "
@@ -568,23 +590,15 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                 f"         o.group_position NULLS LAST, o.id"
             )
             raw_taken = cur.fetchall()
-            # Считаем, сколько отправлений каждой покупки OZON попало в стек:
-            # метку печатаем только когда их два и больше — одиночному заказу
-            # предупреждать не о чем.
-            purchase_counts = {}
-            for r in raw_taken:
-                if r[11]:
-                    purchase_counts[r[11]] = purchase_counts.get(r[11], 0) + 1
-            purchase_seen = {}
+            # Размер покупки — по всем живым отправлениям в базе, не по этому клику.
+            # Иначе добор одной вещи из семи печатал бы пустую метку, а хвост стека
+            # — «1/6» вместо «2/7».
+            purchase_by_id = {r[0]: r[11] for r in raw_taken}
+            purchase_marks = ozon_purchase_marks(cur, purchase_by_id)
 
             taken_orders = []
             for r in raw_taken:
-                purchase = r[11]
-                total = purchase_counts.get(purchase, 0) if purchase else 0
-                position = None
-                if purchase and total > 1:
-                    position = purchase_seen.get(purchase, 0) + 1
-                    purchase_seen[purchase] = position
+                mark = purchase_marks.get(r[0]) or {}
                 taken_orders.append({
                     'id': r[0],
                     'orderNumber': r[1],
@@ -603,9 +617,9 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                     # Отправления одной покупки OZON: вещи часто одинаковые, на
                     # вешалке их не различить. Отгружаются порознь — вешать вместе
                     # НЕ надо, но бирки путать нельзя.
-                    'purchaseKey': purchase if total > 1 else None,
-                    'purchaseSize': total if total > 1 else None,
-                    'purchasePosition': position,
+                    'purchaseKey': mark.get('purchaseKey'),
+                    'purchaseSize': mark.get('purchaseSize'),
+                    'purchasePosition': mark.get('purchasePosition'),
                 })
 
             conn.commit()

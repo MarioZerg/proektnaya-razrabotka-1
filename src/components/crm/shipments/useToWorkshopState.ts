@@ -43,7 +43,7 @@ export const useToWorkshopState = () => {
   const [createOpen, setCreateOpen] = useState(false);
   const [creating, setCreating] = useState(false);
   const [reqComment, setReqComment] = useState('');
-  const [reqMaterialId, setReqMaterialId] = useState('');
+  const [reqMaterialIds, setReqMaterialIds] = useState<string[]>(['']);
   // Только для админского режима: цех и смена, за которые оформляется заявка.
   const [reqWorkshopId, setReqWorkshopId] = useState('');
   const [reqShiftNumber, setReqShiftNumber] = useState('');
@@ -144,7 +144,16 @@ export const useToWorkshopState = () => {
   }, [filterWorkshopId, materials.length, workshops.length]);
 
   const visibleShipments = tabFilteredShipments.filter((s) => {
-    if (materialFilter !== 'all' && String(s.materialId) !== materialFilter) return false;
+    if (materialFilter !== 'all') {
+      const name = materials.find((m) => String(m.id) === materialFilter)?.name;
+      const inNames = Boolean(
+        name &&
+          (s.materialNames || '')
+            .split(',')
+            .some((part) => part.trim() === name)
+      );
+      if (String(s.materialId) !== materialFilter && !inNames) return false;
+    }
     if (workshopFilter !== 'all' && String(s.workshopId) !== workshopFilter) return false;
     if (shiftFilter !== 'all' && String(s.shiftNumber) !== shiftFilter) return false;
     return true;
@@ -186,7 +195,7 @@ export const useToWorkshopState = () => {
 
   const openCreate = () => {
     setReqComment('');
-    setReqMaterialId('');
+    setReqMaterialIds(['']);
     setReqWorkshopId('');
     setReqShiftNumber('');
     setCreateOpen(true);
@@ -208,7 +217,7 @@ export const useToWorkshopState = () => {
   // Сменили цех — выбранные смена и материал могли остаться от прошлого цеха.
   useEffect(() => {
     setReqShiftNumber('');
-    setReqMaterialId('');
+    setReqMaterialIds(['']);
   }, [reqWorkshopId]);
 
   return {
@@ -239,8 +248,8 @@ export const useToWorkshopState = () => {
     setCreating,
     reqComment,
     setReqComment,
-    reqMaterialId,
-    setReqMaterialId,
+    reqMaterialIds,
+    setReqMaterialIds,
     reqWorkshopId,
     setReqWorkshopId,
     reqShiftNumber,

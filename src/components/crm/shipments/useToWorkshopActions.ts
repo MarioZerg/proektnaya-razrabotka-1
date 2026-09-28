@@ -23,7 +23,7 @@ export const useToWorkshopActions = (state: ToWorkshopState) => {
     isAdmin,
     requestWorkshopId,
     requestShiftNumber,
-    reqMaterialId,
+    reqMaterialIds,
     reqComment,
     setCreating,
     setCreateOpen,
@@ -66,8 +66,9 @@ export const useToWorkshopActions = (state: ToWorkshopState) => {
       });
       return;
     }
-    if (!reqMaterialId) {
-      toast({ title: 'Выберите материал', variant: 'destructive' });
+    const materialIds = reqMaterialIds.map(Number).filter((id) => id > 0);
+    if (materialIds.length === 0) {
+      toast({ title: 'Выберите хотя бы один материал', variant: 'destructive' });
       return;
     }
     setCreating(true);
@@ -76,7 +77,8 @@ export const useToWorkshopActions = (state: ToWorkshopState) => {
         workshopId: requestWorkshopId,
         shiftNumber: requestShiftNumber,
         comment: reqComment.trim() || undefined,
-        materialId: Number(reqMaterialId),
+        materialId: materialIds[0],
+        materialIds,
         requestedBy: user?.id,
       });
       toast({ title: 'Заявка отправлена кладовщику' });

@@ -18,6 +18,8 @@ type Group = {
   type: SupplyType;
   title: string;
   subtitle: string;
+  /** Короче на телефоне: длинная строка расползается рядом с картинкой. */
+  shortSubtitle: string;
   image: string;
   /** Мягкая подложка карточки — FBS голубая, FBO фиолетовая, как метки в подборе. */
   accent: string;
@@ -29,6 +31,7 @@ const GROUPS: Group[] = [
     type: 'FBS',
     title: 'FBS',
     subtitle: 'Со своего склада — вещь едет своим пакетом',
+    shortSubtitle: 'Свой склад, свой пакет',
     image: '/img/supply-fbs.webp',
     accent: 'from-sky-50 to-sky-100/40',
     ring: 'text-sky-700',
@@ -37,6 +40,7 @@ const GROUPS: Group[] = [
     type: 'FBO',
     title: 'FBO',
     subtitle: 'Коробками на склад маркетплейса',
+    shortSubtitle: 'Коробками на склад МП',
     image: '/img/supply-fbo.webp',
     accent: 'from-violet-50 to-violet-100/40',
     ring: 'text-violet-700',
@@ -71,8 +75,8 @@ const SupplyTypeWidgets = ({
               isActive ? 'ring-2 ring-primary' : ''
             }`}
           >
-            <div className="flex items-stretch gap-3">
-              <div className="flex-1 p-4">
+            <div className="flex min-w-0 items-stretch gap-2 sm:gap-3">
+              <div className="min-w-0 flex-1 p-3 sm:p-4">
                 <div className="flex items-center gap-2">
                   <h3 className="text-lg font-bold">{g.title}</h3>
                   {isActive && (
@@ -81,10 +85,11 @@ const SupplyTypeWidgets = ({
                     </span>
                   )}
                 </div>
-                <p className="mt-0.5 text-xs text-muted-foreground">{g.subtitle}</p>
+                <p className="mt-0.5 text-xs text-muted-foreground sm:hidden">{g.shortSubtitle}</p>
+                <p className="mt-0.5 hidden text-xs text-muted-foreground sm:block">{g.subtitle}</p>
 
                 <div className="mt-3 flex items-baseline gap-1.5">
-                  <span className="text-3xl font-bold leading-none">{list.length}</span>
+                  <span className="text-2xl font-bold leading-none sm:text-3xl">{list.length}</span>
                   <span className="text-sm text-muted-foreground">
                     {list.length === 1 ? 'поставка' : 'поставок'}
                   </span>
@@ -118,7 +123,7 @@ const SupplyTypeWidgets = ({
                 src={g.image}
                 alt=""
                 loading="lazy"
-                className="w-28 shrink-0 self-end object-contain object-bottom sm:w-36"
+                className="hidden w-28 shrink-0 self-end object-contain object-bottom sm:block sm:w-36"
               />
             </div>
           </Card>

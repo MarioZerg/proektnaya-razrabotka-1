@@ -54,6 +54,12 @@ export const useSupplyFlags = (supply: SupplyDetail) => {
     Отгрузка: supply.type === 'FBS' ? 'Закрыть поставку и передать в доставку' : 'Отгрузить в Газельку',
     Выполнена: 'Отметить выполненной',
   };
+  /** Короткие подписи кнопок статуса — на телефоне полные не помещаются. */
+  const nextStatusShort: Record<string, string> = {
+    'На сборке': 'На сборку',
+    Отгрузка: supply.type === 'FBS' ? 'В доставку' : 'Отгрузить',
+    Выполнена: 'Выполнена',
+  };
 
   return {
     isWbFbs,
@@ -67,6 +73,7 @@ export const useSupplyFlags = (supply: SupplyDetail) => {
     isWbFbo,
     gazelkaReady,
     nextStatusLabel,
+    nextStatusShort,
   };
 };
 

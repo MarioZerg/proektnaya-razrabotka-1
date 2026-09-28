@@ -250,8 +250,8 @@ const WbFbsSupplyCard = ({ supply, supplyId, onReload, onScanned }: WbFbsSupplyC
 
   return (
     <div className="space-y-3">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex flex-wrap gap-4 text-sm">
+      <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
+        <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm">
           {/* Сколько заказов лежит в резервной поставке на WB: туда упаковщицы
               переносят всё, что застикеровали на конвейере. Это и есть объём работы —
               столько кладовщику предстоит отсканировать в свою поставку.
@@ -269,17 +269,17 @@ const WbFbsSupplyCard = ({ supply, supplyId, onReload, onScanned }: WbFbsSupplyC
             </span>
           )}
         </div>
-        <div className="flex flex-wrap gap-2">
+        <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
           {boxStickers.length > 0 && (
-            <Button variant="outline" onClick={handlePrintStickers}>
+            <Button variant="outline" className="w-full sm:w-auto" onClick={handlePrintStickers}>
               <Icon name="Printer" size={16} className="mr-1.5" />
-              Печать всех стикеров ({boxStickers.length})
+              Стикеры ({boxStickers.length})
             </Button>
           )}
           {canDeliver && (
-            <Button onClick={handleDeliver} disabled={delivering} className="bg-emerald-600 hover:bg-emerald-700">
+            <Button onClick={handleDeliver} disabled={delivering} className="w-full bg-emerald-600 hover:bg-emerald-700 sm:w-auto">
               <Icon name={delivering ? 'Loader2' : 'Truck'} size={16} className={`mr-1.5 ${delivering ? 'animate-spin' : ''}`} />
-              Отправить в доставку
+              В доставку
             </Button>
           )}
         </div>
@@ -287,15 +287,15 @@ const WbFbsSupplyCard = ({ supply, supplyId, onReload, onScanned }: WbFbsSupplyC
 
       {!wbCreated && (
         <Card className="border-primary/30 bg-primary/5 shadow-none">
-          <CardContent className="flex flex-wrap items-center justify-between gap-3 pt-6">
-            <div className="text-sm text-muted-foreground">
+          <CardContent className="flex flex-col gap-3 pt-6 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
+            <div className="text-sm leading-snug text-muted-foreground">
               {creatingSupply
-                ? 'Создаём поставку на WildBerries — сканер откроется автоматически'
-                : 'Не удалось создать поставку на WildBerries. Нажмите, чтобы повторить.'}
+                ? 'Создаём поставку на WB — сканер откроется сам'
+                : 'Не удалось создать поставку на WB. Нажмите, чтобы повторить.'}
             </div>
-            <Button onClick={handleCreateSupply} disabled={creatingSupply}>
+            <Button className="w-full sm:w-auto" onClick={handleCreateSupply} disabled={creatingSupply}>
               <Icon name={creatingSupply ? 'Loader2' : 'PackagePlus'} size={16} className={`mr-1.5 ${creatingSupply ? 'animate-spin' : ''}`} />
-              Создать поставку на WB
+              Создать на WB
             </Button>
           </CardContent>
         </Card>
@@ -309,11 +309,11 @@ const WbFbsSupplyCard = ({ supply, supplyId, onReload, onScanned }: WbFbsSupplyC
               if (!(e.target as HTMLElement).closest('input, button, a')) scanRef.current?.focus();
             }}
           >
-            <div className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
-              <Icon name="ScanLine" size={18} />
-              Сканируйте пакет с товаром — стикер заказа WB FBS (номер заказа)
+            <div className="flex items-start gap-2 text-sm font-medium leading-snug text-muted-foreground">
+              <Icon name="ScanLine" size={18} className="mt-0.5 shrink-0" />
+              Сканируйте стикер заказа WB
             </div>
-            <div className="flex gap-2">
+            <div className="flex flex-col gap-2 sm:flex-row">
               <Input
                 ref={scanRef}
                 autoFocus
@@ -322,9 +322,9 @@ const WbFbsSupplyCard = ({ supply, supplyId, onReload, onScanned }: WbFbsSupplyC
                 onChange={(e) => setScanValue(e.target.value)}
                 onKeyDown={(e) => e.key === 'Enter' && handleScan()}
                 disabled={scanning}
-                className="font-mono-tech"
+                className="min-w-0 font-mono-tech"
               />
-              <Button onClick={handleScan} disabled={scanning || !scanValue.trim()}>
+              <Button className="w-full sm:w-auto" onClick={handleScan} disabled={scanning || !scanValue.trim()}>
                 {scanning ? <Icon name="Loader2" size={16} className="animate-spin" /> : 'Добавить'}
               </Button>
             </div>
@@ -340,7 +340,7 @@ const WbFbsSupplyCard = ({ supply, supplyId, onReload, onScanned }: WbFbsSupplyC
       {supply.wbOrders.length === 0 && wbAwaiting.length === 0 ? (
         <p className="text-sm text-muted-foreground">Заказов в поставке пока нет</p>
       ) : (
-        <div className="rounded-md border border-border">
+        <div className="overflow-x-auto rounded-md border border-border">
           <Table>
             <TableHeader>
               <TableRow className="bg-primary hover:bg-primary">

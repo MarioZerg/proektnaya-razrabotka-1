@@ -26,8 +26,8 @@ const ToWorkshopContent = ({ state, actions }: ToWorkshopContentProps) => {
           setCreateOpen={state.setCreateOpen}
           openCreate={state.openCreate}
           dialogMaterials={state.dialogMaterials}
-          reqMaterialId={state.reqMaterialId}
-          setReqMaterialId={state.setReqMaterialId}
+          reqMaterialIds={state.reqMaterialIds}
+          setReqMaterialIds={state.setReqMaterialIds}
           reqComment={state.reqComment}
           setReqComment={state.setReqComment}
           creating={state.creating}

@@ -337,6 +337,51 @@ CANCELLED_ORDER_SQL = (
 )
 
 
+def ozon_purchase_marks_kiosk(cur, keys_by_id):
+    """Размер покупки OZON по всем живым отправлениям, не только по этому стеку.
+
+    Тот же смысл, что ozon_purchase_marks в backend/orders/shared.py: бирка
+    добора должна писать 1/7, а не молчать, даже если остальные шесть уже
+    у другого закройщика.
+    """
+    keys = sorted({k for k in keys_by_id.values() if k})
+    members = {}
+    if keys:
+        keys_csv = ','.join("'" + k.replace("'", "''") + "'" for k in keys)
+        cur.execute(
+            "SELECT id, regexp_replace(ozon_posting_number, '-[0-9]+$', '') "
+            "FROM orders "
+            "WHERE marketplace = 'OZON' AND ozon_posting_number IS NOT NULL "
+            f"AND regexp_replace(ozon_posting_number, '-[0-9]+$', '') IN ({keys_csv}) "
+            "AND NOT ("
+            "status = 'Отменён' OR sewing_status = 'Отменён' "
+            "OR cancelled_at IS NOT NULL "
+            "OR strpos(lower(COALESCE(ozon_status, '')), 'cancel') = 1 "
+            "OR strpos(upper(COALESCE(ym_status, '')), 'CANCEL') > 0"
+            ") ORDER BY id"
+        )
+        for oid, key in cur.fetchall():
+            members.setdefault(key, []).append(int(oid))
+
+    marks = {}
+    for oid, key in keys_by_id.items():
+        sibs = members.get(key) if key else None
+        total = len(sibs) if sibs else 0
+        if not key or total < 2:
+            marks[int(oid)] = {
+                'purchaseKey': None,
+                'purchaseSize': None,
+                'purchasePosition': None,
+            }
+            continue
+        marks[int(oid)] = {
+            'purchaseKey': key,
+            'purchaseSize': total,
+            'purchasePosition': sibs.index(int(oid)) + 1 if int(oid) in sibs else None,
+        }
+    return marks
+
+
 def is_label_gone(marketplace, ozon_status) -> bool:
     """Ярлык отправления уже не получить: вещь идёт на склад, а не покупателю."""
     return (marketplace or '').upper() == 'OZON' and (ozon_status or '') in OZON_SHIPMENT_GONE
@@ -2412,22 +2457,13 @@ def handler(event: dict, context) -> dict:
                 )
                 raw = cur.fetchall()
 
-                # Сколько отправлений каждой покупки OZON в стеке: метку печатаем,
-                # только когда их два и больше — одиночному заказу предупреждать не о чем.
-                purchase_counts = {}
-                for r in raw:
-                    if r[11]:
-                        purchase_counts[r[11]] = purchase_counts.get(r[11], 0) + 1
-                purchase_seen = {}
+                # Размер покупки — по всем живым отправлениям, не по этому стеку.
+                purchase_by_id = {r[0]: r[11] for r in raw}
+                purchase_marks = ozon_purchase_marks_kiosk(cur, purchase_by_id)
 
                 orders_out = []
                 for r in raw:
-                    purchase = r[11]
-                    total = purchase_counts.get(purchase, 0) if purchase else 0
-                    position = None
-                    if purchase and total > 1:
-                        position = purchase_seen.get(purchase, 0) + 1
-                        purchase_seen[purchase] = position
+                    mark = purchase_marks.get(r[0]) or {}
                     orders_out.append({
                         'id': r[0],
                         'orderNumber': r[1],
@@ -2440,9 +2476,9 @@ def handler(event: dict, context) -> dict:
                         'groupSize': r[8],
                         'groupPosition': r[9],
                         'requiresOverlock': bool(r[10]),
-                        'purchaseKey': purchase if total > 1 else None,
-                        'purchaseSize': total if total > 1 else None,
-                        'purchasePosition': position,
+                        'purchaseKey': mark.get('purchaseKey'),
+                        'purchaseSize': mark.get('purchaseSize'),
+                        'purchasePosition': mark.get('purchasePosition'),
                     })
 
                 cur.execute("SELECT full_name FROM users WHERE id = %s", (int(cutter_id),))

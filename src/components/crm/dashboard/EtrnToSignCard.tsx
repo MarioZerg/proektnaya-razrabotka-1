@@ -10,8 +10,8 @@ import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchE
 
 const mpLabel: Record<string, string> = {
   OZON: 'OZON',
-  WB: 'Wildberries',
-  Yandex: 'Яндекс.Маркет',
+  WB: 'WB',
+  Yandex: 'Я.Маркет',
 };
 
 const fmtDate = (iso: string | null) => {
@@ -23,18 +23,30 @@ const fmtDate = (iso: string | null) => {
   });
 };
 
+/** Дата без года — на узком экране «24.09.2026, 16:18» не помещается в строку. */
+const fmtSignedSince = (iso: string) =>
+  new Date(iso).toLocaleString('ru-RU', {
+    day: '2-digit',
+    month: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    timeZone: 'Europe/Moscow',
+  });
+
+/** Строка метаданных без пустых кусков — иначе на телефоне остаются висячие «·». */
+const metaLine = (parts: (string | null | undefined | false)[]) =>
+  parts.filter(Boolean).join(' · ');
+
 /**
  * Транспортные накладные, ожидающие подписи руководителя.
  *
+ * Показывается ТОЛЬКО администратору. Подпись ЭТрН ставится в Диадоке через Рутокен —
+ * это не работа кладовщика и не работа менеджера: перевозчик оформляет накладную сам,
+ * а очередь на главной нужна тому, у кого ключ. Карточка в поставке тоже только у админа.
+ *
  * Пока ЭТрН не подписана, поставку нельзя перевести в отгрузку — машина будет стоять.
  * Документ при этом лежит в карточке поставки, куда руководитель обычно не заходит,
- * поэтому очередь вынесена на главную: подписание перестаёт быть тем, о чём надо
- * вспомнить, и становится тем, что видно сразу при входе.
- *
- * Сама подпись ставится в Диадоке через Рутокен — по закону ЭТрН подписывается только
- * через аккредитованного оператора ИС ЭПД. Отсюда ведут два перехода: в поставку и,
- * когда появится номер документа у оператора, сразу в Диадок. После подписания файл
- * загружают обратно в карточку поставки.
+ * поэтому очередь вынесена на главную.
  */
 const EtrnToSignCard = () => {
   const navigate = useNavigate();
@@ -64,7 +76,7 @@ const EtrnToSignCard = () => {
   if (listError && items.length === 0) {
     return (
       <WarehouseFetchError
-        title="Не удалось загрузить накладные на подпись"
+        title="ЭТрН не загрузились"
         description={listError}
         onRetry={load}
       />
@@ -75,78 +87,107 @@ const EtrnToSignCard = () => {
 
   return (
     <div className="space-y-2">
-      <h2 className="flex items-center gap-2 font-semibold">
-        <Icon name="FileSignature" size={18} className="text-amber-600" />
-        Накладные на подпись
-        <span className="rounded-full bg-amber-100 px-2 text-sm text-amber-700">
+      <h2 className="flex min-w-0 items-center gap-2 font-semibold">
+        <Icon name="FileSignature" size={18} className="shrink-0 text-amber-600" />
+        <span className="min-w-0 truncate">ЭТрН на подпись</span>
+        <span className="shrink-0 rounded-full bg-amber-100 px-2 text-sm text-amber-700">
           {items.length}
         </span>
       </h2>
 
       <Card className="border-amber-300 bg-amber-50 shadow-none">
         <CardContent className="space-y-2 pt-4">
-          <p className="text-xs text-amber-900">
+          <p className="text-xs leading-snug text-amber-900 md:hidden">
+            Без подписи в Диадоке поставку нельзя отгрузить.
+          </p>
+          <p className="hidden text-xs leading-snug text-amber-900 md:block">
             Пока накладная не подписана, поставку нельзя отгрузить. Подпись ставится
             в Диадоке через Рутокен, затем подписанный файл загружается в поставку.
           </p>
 
-          {items.map((d) => (
-            <div
-              key={d.id}
-              className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-md border border-amber-200 bg-background p-3"
-            >
-              <div className="min-w-0 flex-1">
-                {/* Именно div, а не p: внутри стоит Badge, а он рисуется через div.
-                    Блочный элемент внутри абзаца браузер выбрасывает наружу — React
-                    ругался в консоли, а вёрстка строки разъезжалась. */}
-                <div className="flex flex-wrap items-center gap-2 text-sm font-medium">
-                  {d.number ? `ЭТрН № ${d.number}` : 'ЭТрН без номера'}
-                  <Badge variant="outline">
-                    {mpLabel[d.marketplace] || d.marketplace} · {d.supplyType}
-                  </Badge>
-                  {d.cluster && (
-                    <span className="text-xs text-muted-foreground">{d.cluster}</span>
-                  )}
-                </div>
-                <p className="mt-0.5 text-xs text-muted-foreground">
-                  {/* Водителя и машину вносит перевозчик в своём титуле, поэтому
-                      их пустота — норма, а не недозаполненная карточка. Руководитель
-                      узнаёт выезд по кластеру, числу мест и дате сдачи. */}
-                  {d.driverName || 'Водителя вносит перевозчик'}
-                  {d.vehicleNumber ? ` · ${d.vehicleNumber}` : ''}
-                  {d.cargoPlaces ? ` · мест: ${d.cargoPlaces}` : ''}
-                  {d.deliveryAt ? ` · сдача ${fmtDate(d.deliveryAt)}` : ''}
-                </p>
-                <p className="text-[11px] text-muted-foreground">
-                  На подписи с {formatDateTime(d.updatedAt)}
-                </p>
-              </div>
+          {items.map((d) => {
+            const facts = metaLine([
+              d.cargoPlaces ? `мест: ${d.cargoPlaces}` : null,
+              d.deliveryAt ? `сдача ${fmtDate(d.deliveryAt)}` : null,
+            ]);
+            const who = metaLine([
+              d.driverName || null,
+              d.vehicleNumber || null,
+            ]);
 
-              <div className="flex shrink-0 flex-wrap gap-1.5">
-                {/* Прямой переход в Диадок появляется только когда известен номер
-                    документа у оператора — до интеграции его вносят вручную. */}
-                {d.operatorDocId && (
-                  <Button size="sm" asChild>
-                    <a
-                      href="https://diadoc.kontur.ru/"
-                      target="_blank"
-                      rel="noreferrer"
-                    >
-                      <Icon name="PenLine" size={14} className="mr-1.5" />
-                      Подписать в Диадоке
-                    </a>
-                  </Button>
-                )}
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => navigate(`/crm/shipments/to-marketplace/${d.supplyId}`)}
+            return (
+              <div
+                key={d.id}
+                className="flex flex-col gap-2 rounded-md border border-amber-200 bg-background p-3 md:flex-row md:items-center md:gap-3"
+              >
+                <div className="min-w-0 flex-1 space-y-1">
+                  <div className="flex min-w-0 items-center gap-2">
+                    <p className="min-w-0 truncate text-sm font-medium">
+                      {d.number
+                        ? `ЭТрН № ${d.number}`
+                        : d.supplyNumber
+                          ? `Поставка ${d.supplyNumber}`
+                          : 'ЭТрН без номера'}
+                    </p>
+                    <Badge variant="outline" className="shrink-0 text-[10px]">
+                      {mpLabel[d.marketplace] || d.marketplace}
+                      {d.supplyType ? ` · ${d.supplyType}` : ''}
+                    </Badge>
+                  </div>
+                  {d.cluster && (
+                    <p className="break-words text-xs leading-snug text-muted-foreground">
+                      {d.cluster}
+                    </p>
+                  )}
+                  {facts && (
+                    <p className="text-xs leading-snug text-muted-foreground">{facts}</p>
+                  )}
+                  {who && (
+                    <p className="hidden truncate text-xs text-muted-foreground md:block">
+                      {who}
+                    </p>
+                  )}
+                  <p className="text-[11px] text-muted-foreground">
+                    <span className="md:hidden">С {fmtSignedSince(d.updatedAt)}</span>
+                    <span className="hidden md:inline">
+                      На подписи с {formatDateTime(d.updatedAt)}
+                    </span>
+                  </p>
+                </div>
+
+                <div
+                  className={`grid gap-1.5 md:flex md:shrink-0 md:flex-col ${
+                    d.operatorDocId ? 'grid-cols-2' : 'grid-cols-1'
+                  }`}
                 >
-                  Открыть поставку
-                </Button>
+                  {d.operatorDocId && (
+                    <Button size="sm" asChild className="w-full">
+                      <a
+                        href="https://diadoc.kontur.ru/"
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        <Icon name="PenLine" size={14} className="mr-1.5 shrink-0" />
+                        <span className="md:hidden">Диадок</span>
+                        <span className="hidden md:inline">Подписать в Диадоке</span>
+                      </a>
+                    </Button>
+                  )}
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="w-full"
+                    onClick={() =>
+                      navigate(`/crm/shipments/to-marketplace/${d.supplyId}`)
+                    }
+                  >
+                    <span className="md:hidden">Поставка</span>
+                    <span className="hidden md:inline">Открыть поставку</span>
+                  </Button>
+                </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
         </CardContent>
       </Card>
     </div>

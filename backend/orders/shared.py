@@ -86,6 +86,73 @@ def cancelled_sql(alias: str = 'o') -> str:
 
 CANCELLED_SQL = cancelled_sql('o')
 
+
+def ozon_split_purchase_sql(alias: str = '') -> str:
+    """У заказа есть другие отправления той же покупки OZON ещё в «Новый».
+
+    «Взять 1 заказ» такую вещь отдавать нельзя: остаток уедет другому
+    закройщику, на листе стека номера не будет, а вещи часто одинаковые.
+    Так 28.09 потерялся 13994353-0355-1: его добрали отдельно, остальные
+    шесть вуалей 300×265 взяла другая закройщица стеком.
+    """
+    p = f'{alias}.' if alias else ''
+    return (
+        f"{p}marketplace = 'OZON' AND {p}ozon_posting_number IS NOT NULL AND EXISTS ("
+        f"  SELECT 1 FROM orders s "
+        f"  WHERE s.sewing_status = 'Новый' "
+        f"    AND s.fulfilled_from_stock_id IS NULL "
+        f"    AND NOT ({cancelled_sql('s')}) "
+        f"    AND s.marketplace = 'OZON' "
+        f"    AND s.ozon_posting_number IS NOT NULL "
+        f"    AND s.id <> {p}id "
+        f"    AND regexp_replace(s.ozon_posting_number, '-[0-9]+$', '') "
+        f"      = regexp_replace({p}ozon_posting_number, '-[0-9]+$', '')"
+        f")"
+    )
+
+
+def ozon_purchase_marks(cur, keys_by_id: dict) -> dict:
+    """Метка покупки OZON по ВСЕМ живым отправлениям, не только по этому клику.
+
+    Раньше размер считали по тому, сколько заказов попало в «взять стек» /
+    «взять 1». Добор одной вещи из семи печатал ничего (1 из 1), а стек
+    хвоста — «1/6». На бирке должно быть 1/7: близнецов столько, сколько
+    купил человек, даже если часть уже у другого закройщика.
+    """
+    keys = sorted({k for k in keys_by_id.values() if k})
+    members = {}
+    if keys:
+        keys_csv = ','.join("'" + k.replace("'", "''") + "'" for k in keys)
+        cur.execute(
+            "SELECT id, regexp_replace(ozon_posting_number, '-[0-9]+$', '') "
+            "FROM orders "
+            "WHERE marketplace = 'OZON' AND ozon_posting_number IS NOT NULL "
+            f"AND regexp_replace(ozon_posting_number, '-[0-9]+$', '') IN ({keys_csv}) "
+            f"AND NOT ({cancelled_sql('')}) "
+            "ORDER BY id"
+        )
+        for oid, key in cur.fetchall():
+            members.setdefault(key, []).append(int(oid))
+
+    marks = {}
+    for oid, key in keys_by_id.items():
+        sibs = members.get(key) if key else None
+        total = len(sibs) if sibs else 0
+        if not key or total < 2:
+            marks[int(oid)] = {
+                'purchaseKey': None,
+                'purchaseSize': None,
+                'purchasePosition': None,
+            }
+            continue
+        marks[int(oid)] = {
+            'purchaseKey': key,
+            'purchaseSize': total,
+            'purchasePosition': sibs.index(int(oid)) + 1 if int(oid) in sibs else None,
+        }
+    return marks
+
+
 # ПОТОЛОК ОТВЕТА ПЛАТФОРМЫ — 3.5 МБ. Больше него функция не отдаёт НИЧЕГО: вместо
 # данных прилетает 502 JobResponseTooLong, и страница остаётся пустой.
 #

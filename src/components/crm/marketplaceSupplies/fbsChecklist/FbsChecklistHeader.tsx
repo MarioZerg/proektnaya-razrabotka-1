@@ -35,12 +35,11 @@ const FbsChecklistHeader = ({
     {awaitingCount > 0 &&
       supply.status !== 'Открытая' &&
       supply.status !== 'На сборке' && (
-      <div className="mt-2 flex gap-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
+    <div className="mt-2 flex items-start gap-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm leading-snug text-amber-900">
         <Icon name="Info" size={18} className="mt-0.5 shrink-0" />
         <div>
-          Эти {awaitingCount} шт. не успели отсканировать до отгрузки. Вещи на месте,
-          со стикерами — они ждут в подборе и уедут следующей поставкой. Досканировать
-          их в эту поставку уже нельзя.
+          Эти {awaitingCount} шт. не успели в отгрузку. Лежат на складе со стикерами —
+          уедут следующей поставкой.
         </div>
       </div>
     )}
@@ -58,7 +57,7 @@ const FbsChecklistHeader = ({
           которые не доехали до короба. В нём заказ, размер, полка и фамилии —
           кто кроил, шил, упаковывал и когда. */}
       {awaitingCount > 0 && (
-        <Button variant="outline" size="sm" onClick={onPrintMissing} disabled={printing}>
+        <Button variant="outline" size="sm" className="w-full sm:w-auto" onClick={onPrintMissing} disabled={printing}>
           <Icon
             name={printing ? 'Loader2' : 'Printer'}
             size={14}

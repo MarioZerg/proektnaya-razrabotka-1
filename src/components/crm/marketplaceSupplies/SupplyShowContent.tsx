@@ -52,6 +52,7 @@ interface SupplyShowContentProps {
     isWbFbo: boolean;
     gazelkaReady: boolean;
     nextStatusLabel: Record<string, string>;
+    nextStatusShort: Record<string, string>;
   };
   actions: {
     saving: boolean;
@@ -113,6 +114,7 @@ const SupplyShowContent = ({
         readOnly={flags.isManagerRole && supply.type === 'FBS'}
         nextStatus={flags.nextStatus}
         nextStatusLabel={flags.nextStatusLabel}
+        nextStatusShort={flags.nextStatusShort}
         saving={actions.saving}
         ozonShipping={actions.ozonShipping}
         forceCompleting={actions.forceCompleting}

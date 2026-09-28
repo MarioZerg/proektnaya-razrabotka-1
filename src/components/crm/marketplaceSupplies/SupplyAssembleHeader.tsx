@@ -34,17 +34,16 @@ const SupplyAssembleHeader = ({
       <Icon name="ChevronLeft" size={16} className="mr-1" />
       К поставке
     </Button>
-    <div className="flex items-center gap-3">
-      <h1 className="text-xl font-bold">Сборка поставки #{supply.id}</h1>
+    <div className="flex flex-wrap items-center gap-1.5">
+      <h1 className="text-xl font-bold">Сборка #{supply.id}</h1>
       <Badge className={statusVariant[supply.status]?.className}>{supply.status}</Badge>
       <span className={marketplaceLogo[supply.marketplace]?.className}>
         {marketplaceLogo[supply.marketplace]?.label || supply.marketplace}
       </span>
       <Badge variant="outline">{supply.type}</Badge>
     </div>
-    <p className="mt-1 text-sm text-muted-foreground">
-      Номер поставки: {supply.supplyNumber || 'не указан'} · Создана{' '}
-      {formatDateTime(supply.createdAt)}
+    <p className="mt-1 text-sm leading-snug text-muted-foreground">
+      {supply.supplyNumber || 'без номера'} · {formatDateTime(supply.createdAt)}
     </p>
 
     {/* Прогресс сборки: сколько уже в коробах и сколько ещё нести. Без этого

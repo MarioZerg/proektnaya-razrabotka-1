@@ -31,60 +31,61 @@ const OzonFboApplicationCard = ({ supply, onImportComposition, importing }: Ozon
   );
 
   return (
-    <SupplySection title="Данные поставки OZON FBO" summary={summary}>
+    <SupplySection title="Данные OZON FBO" summary={summary}>
       {supply.ozonSupplyOrderId && onImportComposition && (
-        <div className="mb-3 flex justify-end">
-          <Button size="sm" onClick={onImportComposition} disabled={importing}>
+        <div className="mb-3">
+          <Button size="sm" className="w-full sm:w-auto" onClick={onImportComposition} disabled={importing}>
             <Icon
               name={importing ? 'Loader2' : 'Download'}
               size={14}
               className={`mr-1.5 ${importing ? 'animate-spin' : ''}`}
             />
-            {importing ? 'Загрузка...' : 'Загрузить товарный состав'}
+            <span className="sm:hidden">{importing ? 'Загрузка…' : 'Загрузить состав'}</span>
+            <span className="hidden sm:inline">{importing ? 'Загрузка...' : 'Загрузить товарный состав'}</span>
           </Button>
         </div>
       )}
       <div className="space-y-2 text-sm">
-        <div className="flex items-center justify-between border-b border-border pb-2">
-          <span className="text-muted-foreground">Номер поставки (ID заявки OZON)</span>
-          <span className="font-medium">{supply.supplyNumber || '—'}</span>
+        <div className="flex flex-col gap-0.5 border-b border-border py-2 sm:flex-row sm:items-center sm:justify-between">
+          <span className="text-xs text-muted-foreground sm:text-sm">Номер поставки</span>
+          <span className="break-all font-medium">{supply.supplyNumber || '—'}</span>
         </div>
-        <div className="flex items-center justify-between border-b border-border pb-2">
-          <span className="text-muted-foreground">Номер заявки OZON</span>
-          <span className="font-medium">{supply.ozonApplicationNumber || '—'}</span>
+        <div className="flex flex-col gap-0.5 border-b border-border py-2 sm:flex-row sm:items-center sm:justify-between">
+          <span className="text-xs text-muted-foreground sm:text-sm">Номер заявки OZON</span>
+          <span className="break-all font-medium">{supply.ozonApplicationNumber || '—'}</span>
         </div>
-        <div className="flex items-center justify-between border-b border-border pb-2">
-          <span className="text-muted-foreground">Кластер (склад)</span>
-          <span className="font-medium">{supply.cluster || '—'}</span>
+        <div className="flex flex-col gap-0.5 border-b border-border py-2 sm:flex-row sm:items-center sm:justify-between">
+          <span className="text-xs text-muted-foreground sm:text-sm">Кластер</span>
+          <span className="break-words font-medium">{supply.cluster || '—'}</span>
         </div>
-        <div className="flex items-center justify-between border-b border-border pb-2">
-          <span className="text-muted-foreground">Дата поставки / таймслот</span>
+        <div className="flex flex-col gap-0.5 border-b border-border py-2 sm:flex-row sm:items-center sm:justify-between">
+          <span className="text-xs text-muted-foreground sm:text-sm">Дата / таймслот</span>
           <span className="font-medium">
             {supply.supplyDate ? formatDate(supply.supplyDate) : '—'}
             {supply.timeslot ? ` · ${supply.timeslot}` : ''}
           </span>
         </div>
-        <div className="flex items-center justify-between border-b border-border pb-2">
-          <span className="text-muted-foreground">Тип отгрузки</span>
+        <div className="flex flex-col gap-0.5 border-b border-border py-2 sm:flex-row sm:items-center sm:justify-between">
+          <span className="text-xs text-muted-foreground sm:text-sm">Тип отгрузки</span>
           <span className="font-medium">
             {supply.ozonDeliveryMethod ? deliveryMethodLabels[supply.ozonDeliveryMethod] : '—'}
             {supply.shipmentType ? ` · ${supply.shipmentType}` : ''}
           </span>
         </div>
-        <div className="flex items-center justify-between border-b border-border pb-2">
-          <span className="text-muted-foreground">Статус</span>
+        <div className="flex flex-col gap-0.5 border-b border-border py-2 sm:flex-row sm:items-center sm:justify-between">
+          <span className="text-xs text-muted-foreground sm:text-sm">Статус</span>
           <Badge variant={supply.ozonStatus === 'Сформирована' ? 'default' : 'secondary'}>
             {supply.ozonStatus || 'Заполнение данных'}
           </Badge>
         </div>
-        <div className="flex items-center justify-between border-b border-border pb-2">
-          <span className="text-muted-foreground">Тип грузоместа</span>
+        <div className="flex flex-col gap-0.5 border-b border-border py-2 sm:flex-row sm:items-center sm:justify-between">
+          <span className="text-xs text-muted-foreground sm:text-sm">Тип грузоместа</span>
           <span className="font-medium">
             {supply.ozonCargoType === 'PALLET' ? 'Палета' : 'Короб'}
           </span>
         </div>
-        <div className="flex items-center justify-between border-b border-border pb-2">
-          <span className="text-muted-foreground">Короба</span>
+        <div className="flex flex-col gap-0.5 border-b border-border py-2 sm:flex-row sm:items-center sm:justify-between">
+          <span className="text-xs text-muted-foreground sm:text-sm">Короба</span>
           {supply.boxes.length === 0 ? (
             <span className="font-medium">—</span>
           ) : closedBoxes === supply.boxes.length ? (
@@ -95,20 +96,20 @@ const OzonFboApplicationCard = ({ supply, onImportComposition, importing }: Ozon
             </span>
           )}
         </div>
-        <div className="flex items-center justify-between border-b border-border pb-2">
-          <span className="text-muted-foreground">ID отгрузки в Газельку</span>
-          <span className="font-medium">{supply.gazelkaId || '—'}</span>
+        <div className="flex flex-col gap-0.5 border-b border-border py-2 sm:flex-row sm:items-center sm:justify-between">
+          <span className="text-xs text-muted-foreground sm:text-sm">ID отгрузки в Газельку</span>
+          <span className="break-all font-medium">{supply.gazelkaId || '—'}</span>
         </div>
-        <div className="flex items-center justify-between border-b border-border pb-2">
-          <span className="text-muted-foreground">Дата отгрузки в Газельку</span>
+        <div className="flex flex-col gap-0.5 border-b border-border py-2 sm:flex-row sm:items-center sm:justify-between">
+          <span className="text-xs text-muted-foreground sm:text-sm">Отгрузка в Газельку</span>
           <span className="font-medium">
             {supply.shipToGazelkaAt ? formatDateTime(supply.shipToGazelkaAt) : '—'}
           </span>
         </div>
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <span className="text-muted-foreground">Забор Газелькой</span>
+        <div className="flex flex-col gap-0.5 py-2 sm:flex-row sm:items-center sm:justify-between">
+          <span className="text-xs text-muted-foreground sm:text-sm">Забор Газелькой</span>
           {supply.gazelkaPickup ? (
-            <Badge>Забор Газелькой со склада</Badge>
+            <Badge>Со склада</Badge>
           ) : (
             <span className="font-medium">Нет</span>
           )}

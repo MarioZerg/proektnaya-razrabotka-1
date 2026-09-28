@@ -267,14 +267,12 @@ const EtrnCard = ({ supply, isManager }: EtrnCardProps) => {
   if (!doc) {
     return (
       <SupplySection
-        title="Транспортная накладная (ЭТрН)"
+        title="ЭТрН"
         summary={<Badge variant="destructive">Не заведена</Badge>}
       >
         <div className="space-y-3">
-          <p className="text-sm text-muted-foreground">
-            По этой поставке накладная не заведена. С 1 сентября сортировочные центры
-            принимают только электронные транспортные документы — бумажные версии
-            не принимаются.
+          <p className="text-sm leading-snug text-muted-foreground">
+            Накладная не заведена. С 1 сентября СЦ принимают только электронные документы.
           </p>
           {isManager ? (
             <Button onClick={handleCreate} disabled={creating}>
@@ -299,7 +297,7 @@ const EtrnCard = ({ supply, isManager }: EtrnCardProps) => {
 
   return (
     <SupplySection
-      title="Транспортная накладная (ЭТрН)"
+      title="ЭТрН"
       summary={
         <>
           <Badge variant={statusVariant(doc.status)}>{doc.status}</Badge>
@@ -308,25 +306,25 @@ const EtrnCard = ({ supply, isManager }: EtrnCardProps) => {
       }
     >
       {isManager && <div className="mb-3"><KonturStatus /></div>}
-      <div className="mb-4 flex flex-wrap justify-end gap-2">
+      <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:justify-end">
           {doc.signedFileUrl && (
-            <Button size="sm" variant="outline" asChild>
+            <Button size="sm" variant="outline" className="w-full sm:w-auto" asChild>
               <a href={doc.signedFileUrl} target="_blank" rel="noreferrer">
                 <Icon name="FileCheck2" size={14} className="mr-1.5" />
-                Подписанный документ
+                Подписанный файл
               </a>
             </Button>
           )}
           {isManager && !locked && (
-            <Button size="sm" variant="outline" onClick={handleRefreshCargo}>
+            <Button size="sm" variant="outline" className="w-full sm:w-auto" onClick={handleRefreshCargo}>
               <Icon name="RefreshCw" size={14} className="mr-1.5" />
               Обновить груз
             </Button>
           )}
           {isManager && !locked && doc.status === 'Черновик' && (
-            <Button size="sm" variant="secondary" onClick={() => handleStatus('На подписи')}>
+            <Button size="sm" variant="secondary" className="w-full sm:w-auto" onClick={() => handleStatus('На подписи')}>
               <Icon name="Send" size={14} className="mr-1.5" />
-              Отправить на подпись
+              На подпись
             </Button>
           )}
           {isManager && !locked && (

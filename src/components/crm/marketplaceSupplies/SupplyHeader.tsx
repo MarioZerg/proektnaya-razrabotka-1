@@ -32,6 +32,7 @@ interface SupplyHeaderProps {
   readOnly?: boolean;
   nextStatus: SupplyStatus | undefined;
   nextStatusLabel: Record<string, string>;
+  nextStatusShort: Record<string, string>;
   saving: boolean;
   /** Сколько отправлений OZON ещё осталось передать (0 — досылка не идёт). */
   ozonShipping?: number;
@@ -52,6 +53,7 @@ const SupplyHeader = ({
   readOnly = false,
   nextStatus,
   nextStatusLabel,
+  nextStatusShort,
   saving,
   ozonShipping = 0,
   forceCompleting,
@@ -70,16 +72,14 @@ const SupplyHeader = ({
 
   return (
     <>
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
+      <div className="flex flex-col gap-3">
+        <div className="min-w-0">
           <Button variant="ghost" size="sm" onClick={onBack} className="mb-2 -ml-2">
             <Icon name="ChevronLeft" size={16} className="mr-1" />
             К списку
           </Button>
-          <div className="flex items-center gap-3">
-            <h1 className="text-xl font-bold">Поставка #{supply.id}</h1>
-            {/* Магазин поставки — первым делом: короб МЕГАТЮЛЬ и короб ДЮНЫ
-                стоят рядом, и перепутать их нельзя. */}
+          <h1 className="text-xl font-bold">Поставка #{supply.id}</h1>
+          <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
             <ShopBadge name={supply.shopName} color={supply.shopColor} />
             {isOzonFbo ? (
               <Badge variant={supply.ozonStatus === 'Сформирована' ? 'default' : 'secondary'}>
@@ -93,7 +93,7 @@ const SupplyHeader = ({
             </span>
             <Badge variant="outline">{supply.type}</Badge>
           </div>
-          <p className="mt-1 text-sm text-muted-foreground">
+          <p className="mt-1 text-sm leading-snug text-muted-foreground">
             Создана {formatDateTime(supply.createdAt)}
             {supply.createdByName && ` — ${supply.createdByName}`}
             {supply.type === 'FBS' && supply.status !== 'Выполнена' && (
@@ -105,11 +105,12 @@ const SupplyHeader = ({
             )}
           </p>
         </div>
-        <div className="flex gap-2">
+        <div className="grid grid-cols-1 gap-2 sm:flex sm:flex-wrap sm:justify-end">
           {readOnly && (
-            <span className="flex items-center gap-1.5 rounded-md border border-border px-3 py-2 text-sm text-muted-foreground">
-              <Icon name="Eye" size={16} />
-              Наблюдение — поставку собирает кладовщик
+            <span className="flex items-center gap-1.5 rounded-md border border-border px-3 py-2 text-sm leading-snug text-muted-foreground">
+              <Icon name="Eye" size={16} className="shrink-0" />
+              <span className="sm:hidden">Наблюдение</span>
+              <span className="hidden sm:inline">Наблюдение — поставку собирает кладовщик</span>
             </span>
           )}
           {/* Удаление поставки уносит с собой весь несшитый товарный состав — заказы
@@ -118,7 +119,7 @@ const SupplyHeader = ({
           {!readOnly && supply.status === 'Открытая' && (
             <AlertDialog>
               <AlertDialogTrigger asChild>
-                <Button variant="destructive">
+                <Button variant="destructive" className="w-full sm:w-auto">
                   <Icon name="Trash2" size={16} className="mr-2" />
                   Удалить
                 </Button>
@@ -162,9 +163,10 @@ const SupplyHeader = ({
           {!readOnly && supply.type === 'FBS' && supply.status !== 'Выполнена' && (
             <AlertDialog>
               <AlertDialogTrigger asChild>
-                <Button variant="outline" disabled={forceCompleting}>
+                <Button variant="outline" disabled={forceCompleting} className="w-full sm:w-auto">
                   <Icon name="ShieldAlert" size={16} className="mr-2" />
-                  Закрыть принудительно
+                  <span className="sm:hidden">Принудительно</span>
+                  <span className="hidden sm:inline">Закрыть принудительно</span>
                 </Button>
               </AlertDialogTrigger>
               <AlertDialogContent>
@@ -184,7 +186,7 @@ const SupplyHeader = ({
             </AlertDialog>
           )}
           {!readOnly && nextStatus && (
-            <Button onClick={onMoveStatus} disabled={saving}>
+            <Button onClick={onMoveStatus} disabled={saving} className="w-full sm:w-auto">
               {/* Отправления уходят на OZON порциями и это долго. Без счётчика
                   кладовщик не понимал, работает кнопка или зависла, и жал ещё раз. */}
               <Icon
@@ -192,9 +194,14 @@ const SupplyHeader = ({
                 size={16}
                 className={ozonShipping ? 'mr-2 animate-spin' : 'mr-2'}
               />
-              {ozonShipping
-                ? `Передаём на OZON… осталось ${ozonShipping}`
-                : nextStatusLabel[nextStatus] || nextStatus}
+              {ozonShipping ? (
+                `Передаём… ${ozonShipping}`
+              ) : (
+                <>
+                  <span className="sm:hidden">{nextStatusShort[nextStatus] || nextStatus}</span>
+                  <span className="hidden sm:inline">{nextStatusLabel[nextStatus] || nextStatus}</span>
+                </>
+              )}
             </Button>
           )}
         </div>
@@ -202,9 +209,9 @@ const SupplyHeader = ({
 
       {supply.type === 'FBS' && supply.status === 'Отгрузка' && (
         <Card className="border-border shadow-none">
-          <CardContent className="flex items-center justify-between gap-3 pt-6">
-            <div className="flex items-center gap-2 text-sm">
-              <Icon name="FileText" size={18} className="text-muted-foreground" />
+          <CardContent className="flex flex-col gap-3 pt-6 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex min-w-0 items-start gap-2 text-sm leading-snug">
+              <Icon name="FileText" size={18} className="mt-0.5 shrink-0 text-muted-foreground" />
               <span>Стикер маркетплейса для отгрузки</span>
             </div>
             {supply.marketplace === 'WB' ? (
@@ -215,10 +222,11 @@ const SupplyHeader = ({
                 // Печатаем сами на наклейке 58×40. Раньше стикер открывался ссылкой,
                 // и кладовщик печатал его из просмотрщика браузера — тот брал A4 с
                 // полями, и стикер выходил пятном в углу листа.
-                <div className="flex gap-2">
+                <div className="flex flex-wrap gap-2">
                   <Button
                     variant="outline"
                     size="sm"
+                    className="w-full sm:w-auto"
                     onClick={() =>
                       printLabelFromUrl(supply.passStickerUrl!, 'Стикер поставки WB')
                     }

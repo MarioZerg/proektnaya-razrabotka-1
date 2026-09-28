@@ -389,7 +389,7 @@ const WaybillCard = ({ supply, isManager }: WaybillCardProps) => {
         )}
 
         <div className="flex flex-wrap gap-2">
-          <Button variant="outline" size="sm" onClick={handleGenerate} disabled={generating}>
+          <Button variant="outline" size="sm" className="w-full sm:w-auto" onClick={handleGenerate} disabled={generating}>
             <Icon
               name={generating ? 'Loader2' : 'FileSpreadsheet'}
               size={14}
@@ -411,9 +411,10 @@ const WaybillCard = ({ supply, isManager }: WaybillCardProps) => {
               Снять готовность
             </Button>
           ) : (
-            <Button size="sm" onClick={() => handleReady(true)}>
+            <Button size="sm" className="w-full sm:w-auto" onClick={() => handleReady(true)}>
               <Icon name="Check" size={14} className="mr-1.5" />
-              Подтвердить для отгрузки
+              <span className="sm:hidden">К отгрузке</span>
+              <span className="hidden sm:inline">Подтвердить для отгрузки</span>
             </Button>
           )}
         </div>

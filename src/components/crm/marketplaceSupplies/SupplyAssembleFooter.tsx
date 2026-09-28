@@ -72,23 +72,21 @@ const SupplyAssembleFooter = ({
           </ul>
           {/* Кнопку показываем всегда, но заблокированной: человек должен видеть,
               что шаг есть и почему он недоступен, а не искать пропавшую кнопку. */}
-          <Button disabled className="mt-1">
+          <Button disabled className="mt-1 w-full sm:w-auto">
             <Icon name="Lock" size={16} className="mr-1.5" />
             Поставка собрана
           </Button>
         </div>
       ) : (
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
+        <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
+          <div className="min-w-0">
             <p className="font-medium">Поставка собрана полностью</p>
-            <p className="text-sm text-muted-foreground">
+            <p className="text-sm leading-snug text-muted-foreground">
               В коробах {totalBoxedItems} шт.
-              {hasPlan ? ` из ${plannedItems} по заявке.` : '.'} После подтверждения
-              поставка уйдёт в отгрузку, менеджер получит уведомление, а добавить
-              вещи будет нельзя
+              {hasPlan ? ` из ${plannedItems}.` : '.'} После подтверждения уйдёт в отгрузку
             </p>
           </div>
-          <Button onClick={onSupplyAssembled} disabled={completing}>
+          <Button className="w-full sm:w-auto" onClick={onSupplyAssembled} disabled={completing}>
             <Icon
               name={completing ? 'Loader2' : 'CircleCheck'}
               size={16}

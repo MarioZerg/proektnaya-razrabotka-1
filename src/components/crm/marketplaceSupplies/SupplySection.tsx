@@ -42,19 +42,24 @@ const SupplySection = ({
       onOpenChange={setOpen}
       className="rounded-lg border border-border"
     >
-      <CollapsibleTrigger className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left hover:bg-muted/50">
-        <div className="flex min-w-0 items-center gap-2">
-          <Icon
-            name="ChevronRight"
-            size={16}
-            className={`shrink-0 text-muted-foreground transition-transform ${
-              open ? 'rotate-90' : ''
-            }`}
-          />
-          <span className="font-semibold">{title}</span>
+      <CollapsibleTrigger className="flex w-full items-start gap-2 px-3 py-3 text-left hover:bg-muted/50 sm:items-center sm:gap-3 sm:px-4">
+        <Icon
+          name="ChevronRight"
+          size={16}
+          className={`mt-0.5 shrink-0 text-muted-foreground transition-transform sm:mt-0 ${
+            open ? 'rotate-90' : ''
+          }`}
+        />
+        <div className="min-w-0 flex-1">
+          <span className="block font-semibold leading-snug">{title}</span>
+          {summary && (
+            <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-muted-foreground sm:hidden">
+              {summary}
+            </div>
+          )}
         </div>
         {summary && (
-          <div className="flex shrink-0 items-center gap-2 text-sm text-muted-foreground">
+          <div className="hidden shrink-0 items-center gap-2 text-sm text-muted-foreground sm:flex">
             {summary}
           </div>
         )}

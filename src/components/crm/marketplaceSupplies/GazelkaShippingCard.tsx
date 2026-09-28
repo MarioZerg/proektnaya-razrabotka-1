@@ -166,18 +166,19 @@ const GazelkaShippingCard = ({ supply, onReload, isManager, gazelkaReady }: Gaze
 
   return (
     <Card className="border-border shadow-none">
-      <CardHeader className="flex flex-row items-center justify-between space-y-0">
-        <CardTitle className="text-base">Грузоперевозка Газелька</CardTitle>
-        <div className="flex flex-wrap gap-2">
+      <CardHeader className="space-y-2">
+        <CardTitle className="text-base">Газелька</CardTitle>
+        <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
           {/* Синхронизация — только менеджер */}
           {isManager && supply.gazelkaPlanId && (
-            <Button size="sm" variant="secondary" onClick={handleSyncFromGazelka} disabled={syncing || !linkedPlan}>
+            <Button size="sm" variant="secondary" className="w-full" onClick={handleSyncFromGazelka} disabled={syncing || !linkedPlan}>
               <Icon
                 name={syncing ? 'Loader2' : 'RefreshCw'}
                 size={14}
                 className={`mr-1.5 ${syncing ? 'animate-spin' : ''}`}
               />
-              Синхронизировать данные
+              <span className="sm:hidden">{syncing ? 'Синхр…' : 'Синхронизация'}</span>
+              <span className="hidden sm:inline">{syncing ? 'Синхронизация…' : 'Синхронизировать данные'}</span>
             </Button>
           )}
           {/* Печать стикеров — доступна только после того, как менеджер синхронизировал данные.
@@ -187,7 +188,7 @@ const GazelkaShippingCard = ({ supply, onReload, isManager, gazelkaReady }: Gaze
           {gazelkaReady && supply.gazelkaPlanId && (
             <Button
               size="sm"
-              className="bg-[#004cdb] text-white hover:bg-[#003bb0]"
+              className="w-full bg-[#004cdb] text-white hover:bg-[#003bb0]"
               onClick={handlePrintOurLabels}
               disabled={!linkedPlan || missing.length > 0}
               title={
@@ -197,7 +198,8 @@ const GazelkaShippingCard = ({ supply, onReload, isManager, gazelkaReady }: Gaze
               }
             >
               <Icon name="Printer" size={14} className="mr-1.5" />
-              Печать стикеров
+              <span className="sm:hidden">Стикеры</span>
+              <span className="hidden sm:inline">Печать стикеров</span>
             </Button>
           )}
         </div>
@@ -207,9 +209,9 @@ const GazelkaShippingCard = ({ supply, onReload, isManager, gazelkaReady }: Gaze
         {isManager && (
           <div className="space-y-1.5">
             <Label>Заявка Газельки для этой поставки</Label>
-            <div className="flex flex-wrap gap-2">
+            <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
               <Select value={selected} onValueChange={setSelected} disabled={loading}>
-                <SelectTrigger className="w-full sm:w-[360px]">
+                <SelectTrigger className="w-full min-w-0 sm:w-[360px]">
                   <SelectValue placeholder={loading ? 'Загрузка заявок Газельки...' : '— Выберите заявку —'} />
                 </SelectTrigger>
                 <SelectContent>
@@ -228,15 +230,19 @@ const GazelkaShippingCard = ({ supply, onReload, isManager, gazelkaReady }: Gaze
                 </SelectContent>
               </Select>
               <Button
+                className="w-full sm:w-auto"
                 onClick={handleSave}
                 disabled={saving || String(supply.gazelkaPlanId ?? '') === selected}
               >
                 {saving ? <Icon name="Loader2" size={14} className="animate-spin" /> : 'Сохранить'}
               </Button>
             </div>
-            <p className="text-xs text-muted-foreground">
-              Выберите заявку и нажмите «Синхронизировать данные» — после этого кладовщику станут доступны
-              печать стикеров коробов.
+            <p className="text-xs leading-snug text-muted-foreground">
+              <span className="sm:hidden">Сохраните заявку и синхронизируйте — появятся стикеры.</span>
+              <span className="hidden sm:inline">
+                Выберите заявку и нажмите «Синхронизировать данные» — после этого кладовщику станут доступны
+                печать стикеров коробов.
+              </span>
             </p>
           </div>
         )}
@@ -251,21 +257,21 @@ const GazelkaShippingCard = ({ supply, onReload, isManager, gazelkaReady }: Gaze
         {linkedPlan && (
           <>
             <div className="space-y-1 rounded-md bg-muted/40 p-3 text-xs">
-              <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="flex flex-col gap-0.5 sm:flex-row sm:items-center sm:justify-between">
                 <span className="text-muted-foreground">Статус Газельки</span>
                 <Badge variant="secondary">{linkedPlan.statusLabel}</Badge>
               </div>
-              <div className="flex justify-between">
+              <div className="flex flex-col gap-0.5 sm:flex-row sm:justify-between">
                 <span className="text-muted-foreground">Склад / адрес</span>
-                <span className="font-medium">{linkedPlan.deliveryAddress || '—'}</span>
+                <span className="break-words font-medium">{linkedPlan.deliveryAddress || '—'}</span>
               </div>
-              <div className="flex justify-between">
+              <div className="flex justify-between gap-2">
                 <span className="text-muted-foreground">Дата доставки</span>
                 <span className="font-medium">
                   {linkedPlan.deliveryDate ? formatDate(linkedPlan.deliveryDate) : '—'}
                 </span>
               </div>
-              <div className="flex justify-between">
+              <div className="flex justify-between gap-2">
                 <span className="text-muted-foreground">Коробов / паллет</span>
                 <span className="font-medium">
                   {linkedPlan.boxes ?? 0} / {linkedPlan.pallets ?? 0}
@@ -296,19 +302,24 @@ const GazelkaShippingCard = ({ supply, onReload, isManager, gazelkaReady }: Gaze
                 и исправить это было нечем — синхронизация тянула то же пустое поле. */}
             {isManager && (
               <div className="space-y-1.5">
-                <Label className="text-xs">
-                  Дата отгрузки со склада
-                  {!linkedPlan.shipDate && ' — Газелька её не прислала, проставьте вручную'}
+                <Label className="text-xs leading-snug">
+                  Дата отгрузки
+                  {!linkedPlan.shipDate && (
+                    <span className="block font-normal text-muted-foreground">
+                      Газелька не прислала — проставьте вручную
+                    </span>
+                  )}
                 </Label>
-                <div className="flex flex-wrap items-center gap-2">
+                <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
                   <Input
                     type="date"
-                    className="w-44"
+                    className="w-full sm:w-44"
                     value={shipAt}
                     onChange={(e) => setShipAt(e.target.value)}
                   />
                   <Button
                     variant="outline"
+                    className="w-full sm:w-auto"
                     onClick={handleSaveShipAt}
                     disabled={savingShipAt || shipAt === (supply.shipToGazelkaAt ?? '').slice(0, 10)}
                   >
@@ -321,8 +332,12 @@ const GazelkaShippingCard = ({ supply, onReload, isManager, gazelkaReady }: Gaze
             {/* Коды склада для штрихкода — редактирует только менеджер */}
             {isManager && (
               <div className="space-y-1.5">
-                <Label className="text-xs">
-                  Код склада для штрихкода (IDS) — единственное, чего нет в API Газельки
+                <Label className="text-xs leading-snug">
+                  Код склада (IDS)
+                  <span className="hidden font-normal text-muted-foreground sm:inline">
+                    {' '}
+                    — единственное, чего нет в API Газельки
+                  </span>
                 </Label>
                 <div className="flex flex-wrap items-center gap-2">
                   <Input
@@ -343,6 +358,7 @@ const GazelkaShippingCard = ({ supply, onReload, isManager, gazelkaReady }: Gaze
                   />
                   <Button
                     variant="outline"
+                    className="w-full sm:w-auto"
                     onClick={handleSaveIds}
                     disabled={savingIds || (Number(ids) === supply.gazelkaIds && Number(idm) === supply.gazelkaIdm)}
                   >

@@ -290,30 +290,39 @@ export const useSewingItemsFilters = ({
   //
   // Лист можно распечатать не только сразу после взятия стека, но и позже кнопкой
   // «Распечатать задание» — тогда заказы берутся из общего списка, где готовой
-  // метки нет. Считаем её тут по номеру отправления: «87011164-0186-1» и
+  // метки нет. Считаем её по номеру отправления: «87011164-0186-1» и
   // «87011164-0186-3» — одна покупка, вещи в ней часто одинаковые.
+  //
+  // Размер — по ВСЕМ живым отправлениям в загруженном списке, не только по тем,
+  // что сейчас у этого закройщика. Иначе бирка добора писала бы «1/1», хотя в
+  // очереди ещё шесть близнецов (так потерялся 13994353-0355-1).
   const purchaseOf = (o: Order): string | null =>
     o.marketplace === 'OZON' && o.ozonPostingNumber
       ? o.ozonPostingNumber.replace(/-\d+$/, '')
       : null;
 
-  const purchaseTotals = myUnfinishedOrdersRaw.reduce<Record<string, number>>((acc, o) => {
+  const purchaseMembers = new Map<string, number[]>();
+  for (const o of activeOrders) {
+    if (isOrderCancelled(o)) continue;
     const key = purchaseOf(o);
-    if (key) acc[key] = (acc[key] || 0) + 1;
-    return acc;
-  }, {});
+    if (!key) continue;
+    const ids = purchaseMembers.get(key);
+    if (ids) ids.push(o.id);
+    else purchaseMembers.set(key, [o.id]);
+  }
+  for (const ids of purchaseMembers.values()) ids.sort((a, b) => a - b);
 
-  const purchaseSeen: Record<string, number> = {};
   const myUnfinishedOrders = myUnfinishedOrdersRaw.map((o) => {
     const key = purchaseOf(o);
-    const total = key ? purchaseTotals[key] : 0;
+    const members = key ? purchaseMembers.get(key) : undefined;
+    const total = members?.length ?? 0;
     if (!key || total < 2) return o;
-    purchaseSeen[key] = (purchaseSeen[key] || 0) + 1;
+    const position = (members?.indexOf(o.id) ?? -1) + 1;
     return {
       ...o,
       purchaseKey: key,
       purchaseSize: total,
-      purchasePosition: purchaseSeen[key],
+      purchasePosition: position > 0 ? position : undefined,
     };
   });
 

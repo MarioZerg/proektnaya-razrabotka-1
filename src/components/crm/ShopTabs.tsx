@@ -38,7 +38,7 @@ const ShopTabs = ({
     : undefined;
 
   const tabClass = (active: boolean) =>
-    `flex items-center gap-2 rounded-lg border px-3.5 py-2 text-sm font-semibold transition ${
+    `flex min-w-0 flex-1 items-center justify-center gap-2 rounded-lg border px-3 py-2 text-sm font-semibold transition sm:flex-none sm:px-3.5 ${
       active
         ? 'border-primary bg-primary text-primary-foreground'
         : 'border-border bg-background text-muted-foreground hover:bg-muted'

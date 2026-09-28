@@ -1,18 +1,20 @@
 interface SupplySewingProgressProps {
   total: number;
   done: number;
+  /** На карточке телефона не держим 110px — иначе полоска раздвигает сетку. */
+  compact?: boolean;
 }
 
 /** Прогресс пошива по поставке для списка: «сшито из всего» и полоска заполнения.
  * Зелёная — всё готово, синяя — ещё шьётся. */
-const SupplySewingProgress = ({ total, done }: SupplySewingProgressProps) => {
+const SupplySewingProgress = ({ total, done, compact }: SupplySewingProgressProps) => {
   if (!total) return <span className="text-muted-foreground">—</span>;
 
   const percent = Math.round((done / total) * 100);
   const isDone = done >= total;
 
   return (
-    <div className="min-w-[110px] space-y-1">
+    <div className={`${compact ? 'min-w-0' : 'min-w-[110px]'} space-y-1`}>
       <div className="text-sm">
         <b className={isDone ? 'text-emerald-700' : ''}>{done}</b>
         <span className="text-muted-foreground"> из {total}</span>

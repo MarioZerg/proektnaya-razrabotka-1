@@ -63,6 +63,37 @@ def reserve_barcodes(cur, type_id, count):
     return [f"{int(type_id)}-{seq:06d}" for seq in range(first_seq, last_seq + 1)]
 
 
+def parse_requested_material_ids(body_data):
+    """Материалы заявки в цех: один materialId или список materialIds.
+
+    Кладовщик везёт в одной машине Шифон, Лен и Бамбук. Раньше заявка принимала
+    строго один материал, и отсканированный рулон другой ткани ронял запрос.
+    """
+    ids = []
+    raw = body_data.get('materialIds')
+    if isinstance(raw, list):
+        for value in raw:
+            if value in (None, ''):
+                continue
+            try:
+                ids.append(int(value))
+            except (TypeError, ValueError):
+                continue
+    single = body_data.get('materialId')
+    if single not in (None, ''):
+        try:
+            ids.append(int(single))
+        except (TypeError, ValueError):
+            pass
+    seen = set()
+    unique = []
+    for material_id in ids:
+        if material_id not in seen:
+            seen.add(material_id)
+            unique.append(material_id)
+    return unique
+
+
 def recalc_shipment_costs(cur, shipment_id):
     """Пересчитывает логистику на единицу и себестоимость рулонов приёмки.
 
@@ -147,25 +178,28 @@ def handler(event: dict, context) -> dict:
 
     Отгрузка в цех (as-is с физического склада, повторяет процесс кладовщика):
     POST /  { action: 'request_to_workshop', workshopId, shiftNumber?, comment?,
-               materialId, requestedQuantity?, requestedBy? }
-        - создаёт заявку в статусе "Новый" строго на ОДИН материал (без привязки к рулонам).
-          Заявку создаёт ТОЛЬКО сам сотрудник цеха (швея/закройщик/упаковщик) или админ —
-          кладовщик заявки не создаёт, он только собирает и отправляет то, что уже
-          запросили (проверка роли по actorId, если он передан). Нет автозаказа —
-          заявки создаются только вручную сотрудником. workshopId/shiftNumber берутся
-          из профиля сотрудника (не выбираются вручную). Сотрудник только выбирает
-          материал, requestedQuantity необязателен (кладовщик сам определит, сколько и
-          какие рулоны собрать). Если по этому материалу на эту же смену/цех уже есть
-          незакрытая заявка (статус != 'Получено') — отклоняется (409). Материала
-          физически не должно быть 0 на складе (сумма остатков rolls in_storage по
-          материалу) — иначе заявку создать нельзя (409)
+               materialId?, materialIds?, requestedQuantity?, requestedBy? }
+        - создаёт заявку в статусе "Новый" на один или несколько материалов (без
+          привязки к рулонам). В одной заявке можно запросить Шифон, Лен и Бамбук —
+          кладовщик соберёт их одним рейсом. materialIds — список, materialId —
+          старый одиночный параметр, оба можно передать. Заявку создаёт ТОЛЬКО сам
+          сотрудник цеха (швея/закройщик/упаковщик) или админ — кладовщик заявки не
+          создаёт, он только собирает и отправляет то, что уже запросили (проверка
+          роли по actorId, если он передан). Нет автозаказа — заявки создаются только
+          вручную сотрудником. workshopId/shiftNumber берутся из профиля сотрудника
+          (не выбираются вручную). requestedQuantity необязателен (кладовщик сам
+          определит, сколько и какие рулоны собрать). Если по любому из материалов
+          на эту же смену/цех уже есть незакрытая заявка (статус != 'Получено') —
+          отклоняется (409). Материала физически не должно быть 0 на складе (сумма
+          остатков rolls in_storage по материалу) — иначе заявку создать нельзя (409)
     POST /  { action: 'collect_scan', shipmentId, barcode }
         - сканирование штрихкода рулона на складе, добавляет его целиком в заявку.
           Рулон должен быть в статусе in_storage и НЕ закреплён за другим цехом/сменой
-          (рулон должен быть материала из заявки и находиться в статусе in_storage —
-          то есть уже подтверждённый админом при приёмке). Разрешено в статусе "Новый",
-          а также в режиме коррекции — статус "Отправлено" с непустым reject_reason
-          (цех отказал в приёме, кладовщик правит состав перед повторной отправкой)
+          (то есть уже подтверждённый админом при приёмке). Если ткань ещё не была
+          в заявке — она дописывается: в одном рейсе можно везти Шифон, Лен и Бамбук.
+          Разрешено в статусе "Новый", а также в режиме коррекции — статус "Отправлено"
+          с непустым reject_reason (цех отказал в приёме, кладовщик правит состав
+          перед повторной отправкой)
     POST /  { action: 'remove_scanned_roll', itemId }
         - кладовщик убирает обратно ошибочно отсканированный рулон из заявки (без жёстких
           условий) — либо пока заявка в статусе "Новый" (не отправлена; рулон остаётся
@@ -1605,7 +1639,7 @@ def handler(event: dict, context) -> dict:
                 workshop_id = body_data.get('workshopId')
                 shift_number = body_data.get('shiftNumber')
                 comment = (body_data.get('comment') or '').strip()
-                material_id = body_data.get('materialId')
+                material_ids = parse_requested_material_ids(body_data)
                 requested_qty = body_data.get('requestedQuantity')
                 requested_by = body_data.get('requestedBy')
 
@@ -1613,7 +1647,7 @@ def handler(event: dict, context) -> dict:
                     return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Не определён цех — обратитесь к администратору'})}
                 if not shift_number:
                     return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Не определена смена — откройте смену на главной странице'})}
-                if not material_id:
+                if not material_ids:
                     return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите материал'})}
 
                 # Заявку на материал в цех создаёт только сам сотрудник цеха (швея/закройщик/
@@ -1642,41 +1676,56 @@ def handler(event: dict, context) -> dict:
                                 'body': json.dumps({'error': 'Смена не открыта — откройте смену на терминале в цехе'}),
                             }
 
-                # 1 материал = 1 незакрытая заявка на смену: пока предыдущая заявка на этот же
-                # материал/цех/смену не дошла до статуса "Получено" (отгружена кладовщиком И
-                # подтверждена сотрудником цеха) — новую создать нельзя. shift_number здесь
-                # уже гарантированно указан (проверено выше).
-                cur.execute(
-                    "SELECT s.id FROM shipments s "
-                    "JOIN shipment_items si ON si.shipment_id = s.id "
-                    "WHERE s.type = 'to_workshop' AND s.workshop_id = %s AND s.shift_number = %s "
-                    "AND si.material_id = %s AND s.status != 'Получено' "
-                    "LIMIT 1",
-                    (int(workshop_id), int(shift_number), int(material_id)),
-                )
-                if cur.fetchone():
+                # По каждому материалу — не больше одной незакрытой заявки на смену.
+                # Пока предыдущая на этот же материал/цех/смену не дошла до "Получено",
+                # новую с ним создать нельзя — иначе кладовщик получит две пачки
+                # одной ткани без понимания, какую собирать.
+                busy_names = []
+                missing_stock = []
+                for material_id in material_ids:
+                    cur.execute(
+                        "SELECT s.id FROM shipments s "
+                        "JOIN shipment_items si ON si.shipment_id = s.id "
+                        "WHERE s.type = 'to_workshop' AND s.workshop_id = %s AND s.shift_number = %s "
+                        "AND si.material_id = %s AND s.status != 'Получено' "
+                        "LIMIT 1",
+                        (int(workshop_id), int(shift_number), int(material_id)),
+                    )
+                    if cur.fetchone():
+                        cur.execute("SELECT name FROM materials WHERE id = %s", (int(material_id),))
+                        name_row = cur.fetchone()
+                        busy_names.append(name_row[0] if name_row else f'#{material_id}')
+                    # Нельзя запросить материал, которого физически нет на складе — иначе
+                    # кладовщик получит заявку, которую невозможно собрать.
+                    cur.execute(
+                        "SELECT COALESCE(SUM(remaining_quantity), 0), m.name FROM materials m "
+                        "LEFT JOIN rolls r ON r.material_id = m.id AND r.status = 'in_storage' "
+                        "WHERE m.id = %s GROUP BY m.name",
+                        (int(material_id),),
+                    )
+                    stock_row = cur.fetchone()
+                    warehouse_qty = float(stock_row[0]) if stock_row else 0
+                    material_name = stock_row[1] if stock_row else None
+                    if warehouse_qty <= 0:
+                        missing_stock.append(material_name or f'#{material_id}')
+                if busy_names:
                     return {
                         'statusCode': 409,
                         'headers': headers,
-                        'body': json.dumps({'error': 'По этому материалу уже есть незакрытая заявка на вашу смену — дождитесь отгрузки и подтверждения'}),
+                        'body': json.dumps({
+                            'error': 'Уже есть незакрытая заявка на вашу смену по материалам: '
+                                     + ', '.join(busy_names)
+                                     + ' — дождитесь отгрузки и подтверждения',
+                        }, ensure_ascii=False),
                     }
-
-                # Нельзя запросить материал, которого физически нет на складе — иначе
-                # кладовщик получит заявку, которую невозможно собрать.
-                cur.execute(
-                    "SELECT COALESCE(SUM(remaining_quantity), 0), m.name FROM materials m "
-                    "LEFT JOIN rolls r ON r.material_id = m.id AND r.status = 'in_storage' "
-                    "WHERE m.id = %s GROUP BY m.name",
-                    (int(material_id),),
-                )
-                stock_row = cur.fetchone()
-                warehouse_qty = float(stock_row[0]) if stock_row else 0
-                material_name = stock_row[1] if stock_row else None
-                if warehouse_qty <= 0:
+                if missing_stock:
                     return {
                         'statusCode': 409,
                         'headers': headers,
-                        'body': json.dumps({'error': f'Материала "{material_name or "—"}" нет на складе — заявку создать нельзя'}),
+                        'body': json.dumps({
+                            'error': 'На складе нет материала, заявку создать нельзя: '
+                                     + ', '.join(missing_stock),
+                        }, ensure_ascii=False),
                     }
 
                 # Если автора явно не передали — ставим того, кто дёрнул ручку (админ
@@ -1694,10 +1743,11 @@ def handler(event: dict, context) -> dict:
                 shipment_id = cur.fetchone()[0]
 
                 requested_qty_sql = float(requested_qty) if requested_qty not in (None, '') else 'NULL'
-                cur.execute(
-                    f"INSERT INTO shipment_items (shipment_id, material_id, requested_quantity) "
-                    f"VALUES ({shipment_id}, {int(material_id)}, {requested_qty_sql})"
-                )
+                for material_id in material_ids:
+                    cur.execute(
+                        f"INSERT INTO shipment_items (shipment_id, material_id, requested_quantity) "
+                        f"VALUES ({shipment_id}, {int(material_id)}, {requested_qty_sql})"
+                    )
 
                 is_admin_request = bool(actor_row and actor_row[0] == 'admin')
                 log_action(
@@ -1755,9 +1805,19 @@ def handler(event: dict, context) -> dict:
                         'body': json.dumps({'error': f'Рулон {barcode} уже закреплён за другим цехом/сменой'}),
                     }
                 if material_id not in requested_material_ids:
-                    cur.execute("SELECT name FROM materials WHERE id = %s", (material_id,))
-                    mat_name = cur.fetchone()[0]
-                    return {'statusCode': 409, 'headers': headers, 'body': json.dumps({'error': f'Рулон {barcode} — материал "{mat_name}", он не запрошен в этой заявке'})}
+                    # В одной заявке едут разные ткани: Шифон, Лен, Бамбук. Раньше
+                    # рулон «чужого» материала ронял запрос, и кладовщик не мог
+                    # отгрузить машину целиком. Дописываем ткань в состав заявки
+                    # и принимаем рулон — как если бы цех запросил её сразу.
+                    cur.execute(
+                        "INSERT INTO shipment_items (shipment_id, material_id, requested_quantity) "
+                        "SELECT %s, %s, NULL "
+                        "WHERE NOT EXISTS ("
+                        "  SELECT 1 FROM shipment_items "
+                        "  WHERE shipment_id = %s AND material_id = %s AND roll_id IS NULL"
+                        ")",
+                        (int(shipment_id), material_id, int(shipment_id), material_id),
+                    )
 
                 cur.execute(
                     "SELECT id FROM shipment_items WHERE shipment_id = %s AND roll_id = %s",
@@ -1885,7 +1945,7 @@ def handler(event: dict, context) -> dict:
                         "JOIN material_types mt ON mt.id = m.type_id "
                         "WHERE mt.name = 'Аксессуары' AND r.status = 'in_workshop' "
                         "AND r.workshop_id = %s AND r.shift_number = %s "
-                        "AND r.id <> ALL(%s) "
+                        "AND NOT (r.id = ANY(%s)) "
                         "GROUP BY m.id, m.name",
                         (int(workshop_id), int(shift_number), roll_ids),
                     )

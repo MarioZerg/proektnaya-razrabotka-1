@@ -67,8 +67,8 @@ const SupplySewingSection = ({
     >
       <div className="space-y-2">
       {canAdd && (
-        <div className="flex justify-end">
-          <Button size="sm" onClick={onAdd}>
+        <div>
+          <Button size="sm" className="w-full sm:w-auto" onClick={onAdd}>
             <Icon name="Plus" size={14} className="mr-1" />
             Догрузить товары
           </Button>
