@@ -44,8 +44,6 @@ interface FromSupplierContentProps {
     dialogOpen: boolean;
     setDialogOpen: Dispatch<SetStateAction<boolean>>;
     saving: boolean;
-    supplierId: string;
-    setSupplierId: Dispatch<SetStateAction<string>>;
     comment: string;
     setComment: Dispatch<SetStateAction<string>>;
     rows: ItemRow[];
@@ -61,7 +59,6 @@ interface FromSupplierContentProps {
     reviewRows: ItemRow[];
     setReviewRows: Dispatch<SetStateAction<ItemRow[]>>;
     reviewSupplierId: string;
-    setReviewSupplierId: Dispatch<SetStateAction<string>>;
     reviewSaving: boolean;
     rejectId: number | null;
     setRejectId: Dispatch<SetStateAction<number | null>>;
@@ -97,8 +94,6 @@ const FromSupplierContent = ({
         onOpenCreate={forms.openCreate}
         suppliers={list.suppliers}
         materials={list.materials}
-        supplierId={forms.supplierId}
-        setSupplierId={forms.setSupplierId}
         comment={forms.comment}
         setComment={forms.setComment}
         rows={forms.rows}
@@ -172,7 +167,6 @@ const FromSupplierContent = ({
       suppliers={list.suppliers}
       materials={list.materials}
       reviewSupplierId={forms.reviewSupplierId}
-      setReviewSupplierId={forms.setReviewSupplierId}
       reviewRows={forms.reviewRows}
       setReviewRows={forms.setReviewRows}
       reviewSaving={forms.reviewSaving}

@@ -24,11 +24,11 @@ import Icon from '@/components/ui/icon';
 import { CURRENCIES, currencySymbols, type Supplier } from '@/lib/suppliersApi';
 import type { Material } from '@/lib/materialsApi';
 import type { ShipmentDetail } from '@/lib/shipmentsApi';
-import {
-  emptyRow,
-  calcCostPerUnit,
-  type ItemRow,
-} from '@/components/crm/shipments/fromSupplierShared';
+import { calcCostPerUnit, type ItemRow } from '@/components/crm/shipments/fromSupplierShared';
+import SupplyReceiveRows, {
+  receiveFieldClass,
+  receiveSelectClass,
+} from '@/components/crm/shipments/SupplyReceiveRows';
 
 interface ReviewSupplyDialogProps {
   reviewShipment: ShipmentDetail | null;
@@ -36,7 +36,6 @@ interface ReviewSupplyDialogProps {
   suppliers: Supplier[];
   materials: Material[];
   reviewSupplierId: string;
-  setReviewSupplierId: (value: string) => void;
   reviewRows: ItemRow[];
   setReviewRows: Dispatch<SetStateAction<ItemRow[]>>;
   reviewSaving: boolean;
@@ -72,7 +71,6 @@ const ReviewSupplyDialog = ({
   suppliers,
   materials,
   reviewSupplierId,
-  setReviewSupplierId,
   reviewRows,
   setReviewRows,
   reviewSaving,
@@ -92,7 +90,8 @@ const ReviewSupplyDialog = ({
   const updateReviewRow = (idx: number, field: keyof ItemRow, value: string) =>
     setReviewRows((r) => r.map((row, i) => (i === idx ? { ...row, [field]: value } : row)));
 
-  const supplier = suppliers.find((s) => String(s.id) === reviewSupplierId);
+  const rowSupplierId = reviewRows.find((r) => r.supplierId)?.supplierId || reviewSupplierId;
+  const supplier = suppliers.find((s) => String(s.id) === rowSupplierId);
   const supplierCurrency = supplier?.currency || 'RUB';
 
   // Логистика делится поровну на все метры и штуки поставки. В строке указан метраж ОДНОГО
@@ -123,12 +122,14 @@ const ReviewSupplyDialog = ({
     .map((r) => {
       const material = materials.find((m) => String(m.id) === r.materialId);
       // Цена: что ввёл администратор, иначе прайс поставщика.
-      const fromPrice = supplier?.prices?.find((p) => p.materialId === Number(r.materialId));
+      const rowSup =
+        suppliers.find((s) => String(s.id) === r.supplierId) || supplier;
+      const fromPrice = rowSup?.prices?.find((p) => p.materialId === Number(r.materialId));
       const price =
         r.price && r.price.trim() !== ''
           ? Number(r.price.replace(',', '.'))
           : (fromPrice?.price ?? 0);
-      const currency = r.currency || fromPrice?.currency || supplierCurrency;
+      const currency = r.currency || fromPrice?.currency || rowSup?.currency || supplierCurrency;
       return {
         name: material?.name || 'Материал',
         unit: material?.unit || '',
@@ -136,16 +137,11 @@ const ReviewSupplyDialog = ({
       };
     })
     .filter((p) => p.cost > 0);
-  const addReviewRow = () => setReviewRows((r) => [...r, { ...emptyRow }]);
-  const removeReviewRow = (idx: number) => setReviewRows((r) => r.filter((_, i) => i !== idx));
-
-  const materialUnit = (materialId: string) => materials.find((m) => String(m.id) === materialId)?.unit || '';
-
   return (
     <>
       {/* Карточка подтверждения поставки администратором */}
       <Dialog open={!!reviewShipment} onOpenChange={(open) => !open && onOpenChange(false)}>
-        <DialogContent className="max-h-[90vh] max-w-2xl overflow-y-auto overflow-x-hidden">
+        <DialogContent className="max-w-2xl">
           <DialogHeader>
             <DialogTitle>
               {canApprove ? 'Проверка' : 'Редактирование'} поставки #{reviewShipment?.id}
@@ -179,175 +175,61 @@ const ReviewSupplyDialog = ({
                 </div>
               )}
 
-              <div className="space-y-1.5">
-                <Label>Основной поставщик</Label>
-                <Select value={reviewSupplierId} onValueChange={setReviewSupplierId}>
-                  <SelectTrigger>
-                    <SelectValue placeholder="Выберите поставщика" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {suppliers.map((s) => (
-                      <SelectItem key={s.id} value={String(s.id)}>
-                        {s.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-
               <div className="space-y-2">
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <Label>Материалы</Label>
-                  <Button type="button" size="sm" variant="outline" onClick={addReviewRow}>
-                    <Icon name="Plus" size={14} className="mr-1" />
-                    Добавить материал
-                  </Button>
-                </div>
-                {reviewRows.map((row, idx) => (
-                  <div key={idx} className="min-w-0 space-y-2 rounded-lg border border-border bg-muted/20 p-3">
-                    <Select value={row.materialId} onValueChange={(v) => updateReviewRow(idx, 'materialId', v)}>
-                      <SelectTrigger className="w-full min-w-0">
-                        <SelectValue placeholder="Материал" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {materials.map((m) => (
-                          <SelectItem key={m.id} value={String(m.id)}>
-                            {m.name} ({m.unit})
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    {/* Поставщик строки: одна машина может привезти материал от разных
-                        поставщиков, и логистика делится между ними пропорционально. */}
-                    <Select
-                      value={row.supplierId || '__main'}
-                      onValueChange={(v) =>
-                        updateReviewRow(idx, 'supplierId', v === '__main' ? '' : v)
-                      }
-                    >
-                      <SelectTrigger
-                        title="От кого приехал этот материал"
-                        className="w-full min-w-0"
-                      >
-                        <SelectValue placeholder="Поставщик" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="__main">Основной</SelectItem>
-                        {suppliers.map((sup) => (
-                          <SelectItem key={sup.id} value={String(sup.id)}>
-                            {sup.name}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    <div className={`grid gap-2 ${canApprove ? 'grid-cols-2 sm:grid-cols-4' : 'grid-cols-2'}`}>
-                      <div className="min-w-0 space-y-1">
-                        <Label className="text-xs text-muted-foreground">В одном рулоне</Label>
-                        {/* Метраж ОДНОГО рулона — как написано на самом рулоне. */}
-                        <Input
-                          type="number"
-                          step="0.01"
-                          min="0.01"
-                          title="Сколько в одном рулоне"
-                          placeholder={materialUnit(row.materialId) || 'метр/шт'}
-                          value={row.quantity}
-                          onChange={(e) => updateReviewRow(idx, 'quantity', e.target.value)}
-                        />
-                      </div>
-                      <div className="min-w-0 space-y-1">
-                        <Label className="text-xs text-muted-foreground">Рулонов</Label>
-                        <Input
-                          type="number"
-                          step="1"
-                          min="1"
-                          placeholder="Рулонов"
-                          value={row.numberRolls}
-                          onChange={(e) => updateReviewRow(idx, 'numberRolls', e.target.value)}
-                        />
-                      </div>
-                      {/* Цена за единицу у этого поставщика. Пусто — подставится прайс.
-                          Значок валюты в поле: иначе «1.4» читается как рубли.
-                          Кладовщик денег не видит — это зона администратора. */}
-                      {canApprove && (
-                      <div className="min-w-0 space-y-1">
-                        <Label className="text-xs text-muted-foreground">Цена</Label>
-                        <div className="relative">
-                          <Input
-                            inputMode="decimal"
-                            placeholder="Цена"
-                            className="pr-7"
-                            value={row.price ?? ''}
-                            onChange={(e) => updateReviewRow(idx, 'price', e.target.value)}
-                          />
-                          <span className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">
-                            {currencySymbols[row.currency || supplierCurrency] || ''}
-                          </span>
-                        </div>
-                      </div>
-                      )}
-                      {canApprove && (
-                      <div className="min-w-0 space-y-1">
-                        <Label className="text-xs text-muted-foreground">Валюта</Label>
-                        <Select
-                          value={row.currency || supplierCurrency}
-                          onValueChange={(v) => updateReviewRow(idx, 'currency', v)}
-                        >
-                          <SelectTrigger className="w-full min-w-0">
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {CURRENCIES.map((c) => (
-                              <SelectItem key={c} value={c}>
-                                {c}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      </div>
-                      )}
-                    </div>
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="ghost"
-                      className="w-full"
-                      onClick={() => removeReviewRow(idx)}
-                      disabled={reviewRows.length === 1}
-                    >
-                      <Icon name="Trash2" size={16} className="mr-1" />
-                      Убрать строку
-                    </Button>
-                    {/* Уже выданные штрихкоды: если стикеры наклеены, менять число рулонов
-                        нужно осознанно — лишние коды отвалятся, новым потребуются наклейки. */}
-                    {(row.reservedBarcodes?.length ?? 0) > 0 && (
-                      <p className="break-all text-xs text-muted-foreground">
-                        Штрихкоды:{' '}
-                        <span className="font-mono-tech">
-                          {(row.reservedBarcodes || []).join(', ')}
-                        </span>
-                      </p>
-                    )}
-                    {/* Показываем общий метраж позиции: по нему считается склад и логистика. */}
-                    {Number(row.quantity) > 0 && Number(row.numberRolls) >= 1 && (
-                      <p className="text-xs text-muted-foreground">
-                        {Number(row.quantity)} {materialUnit(row.materialId) || 'ед.'} ×{' '}
-                        {Number(row.numberRolls)} рул. ={' '}
-                        <b>
-                          {(Number(row.quantity) * Number(row.numberRolls)).toLocaleString('ru-RU')}{' '}
-                          {materialUnit(row.materialId) || 'ед.'}
-                        </b>{' '}
-                        всего
-                      </p>
-                    )}
-                  </div>
-                ))}
-                <p className="text-xs text-muted-foreground">
-                  Метраж указывается <b>на один рулон</b> — как написано на самом рулоне:
-                  100 пог.м. и 10 рулонов = 1000 пог.м. на складе.
-                  {canApprove && ' Пустая цена подставится из прайса поставщика.'} Уже
-                  выданные штрихкоды за позицией сохраняются — наклеенные стикеры
-                  остаются действительными.
-                </p>
+                <Label>Материалы</Label>
+                <SupplyReceiveRows
+                  rows={reviewRows}
+                  setRows={setReviewRows}
+                  materials={materials}
+                  suppliers={suppliers}
+                  extraLine={
+                    canApprove
+                      ? (idx, row) => {
+                          const rowSup = suppliers.find((s) => String(s.id) === row.supplierId);
+                          const rowCurrency = row.currency || rowSup?.currency || supplierCurrency;
+                          return (
+                          <>
+                            {/* Цена за единицу. Пусто — прайс поставщика. Значок валюты
+                                в поле: иначе «1.4» читается как рубли. */}
+                            <div className="relative min-w-0">
+                              <Input
+                                inputMode="decimal"
+                                placeholder="Цена"
+                                className={`${receiveFieldClass} pr-6`}
+                                value={row.price ?? ''}
+                                onChange={(e) => updateReviewRow(idx, 'price', e.target.value)}
+                              />
+                              <span className="pointer-events-none absolute right-1.5 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">
+                                {currencySymbols[rowCurrency] || ''}
+                              </span>
+                            </div>
+                            <Select
+                              value={rowCurrency}
+                              onValueChange={(v) => updateReviewRow(idx, 'currency', v)}
+                            >
+                              <SelectTrigger className={`${receiveSelectClass} min-w-0`}>
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {CURRENCIES.map((c) => (
+                                  <SelectItem key={c} value={c}>
+                                    {c}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </>
+                          );
+                        }
+                      : undefined
+                  }
+                />
+                {canApprove && (
+                  <p className="text-xs text-muted-foreground">
+                    Пустая цена подставится из прайса поставщика. Уже выданные штрихкоды
+                    за позицией сохраняются — наклеенные стикеры остаются действительными.
+                  </p>
+                )}
               </div>
 
               {/* Курс и логистика — из них складывается итоговая себестоимость метра.

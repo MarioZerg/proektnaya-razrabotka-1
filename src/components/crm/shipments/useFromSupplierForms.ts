@@ -11,7 +11,7 @@ import {
 } from '@/lib/shipmentsApi';
 import type { Supplier } from '@/lib/suppliersApi';
 import { emptyRow, type ItemRow } from '@/components/crm/shipments/fromSupplierShared';
-import { rowsToItems, droppedRows } from '@/components/crm/shipments/fromSupplierRows';
+import { rowsToItems, droppedRows, documentSupplierId } from '@/components/crm/shipments/fromSupplierRows';
 
 interface UseFromSupplierFormsArgs {
   /** Админу подставляем прайс поставщика в карточку подтверждения, кладовщику — нет. */
@@ -38,7 +38,6 @@ export const useFromSupplierForms = ({
 
   const [dialogOpen, setDialogOpen] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [supplierId, setSupplierId] = useState('');
   const [comment, setComment] = useState('');
   const [rows, setRows] = useState<ItemRow[]>([{ ...emptyRow }]);
 
@@ -54,7 +53,6 @@ export const useFromSupplierForms = ({
   const [lastCreatedRolls, setLastCreatedRolls] = useState<{ shipmentId: number; rolls: string[] } | null>(null);
 
   const openCreate = () => {
-    setSupplierId('');
     setComment('');
     setRows([{ ...emptyRow }]);
     setDialogOpen(true);
@@ -71,14 +69,15 @@ export const useFromSupplierForms = ({
       });
       return;
     }
-    if (!supplierId) {
-      toast({ title: 'Выберите поставщика', variant: 'destructive' });
+    const docSupplier = documentSupplierId(items);
+    if (!docSupplier) {
+      toast({ title: 'Укажите поставщика у каждого материала', variant: 'destructive' });
       return;
     }
     setSaving(true);
     try {
       const res = await createShipmentFromSupplier({
-        supplierId: Number(supplierId),
+        supplierId: docSupplier,
         comment: comment.trim() || undefined,
         createdBy: userId,
         items,
@@ -142,7 +141,7 @@ export const useFromSupplierForms = ({
             ? String(i.price)
             : '',
         currency: i.currency || i.supplierCurrency || '',
-        supplierId: i.supplierId ? String(i.supplierId) : '',
+        supplierId: i.supplierId ? String(i.supplierId) : detail.supplierId ? String(detail.supplierId) : '',
         reservedBarcodes: i.reservedBarcodes,
       }))
     );
@@ -168,7 +167,7 @@ export const useFromSupplierForms = ({
     setReviewSaving(true);
     try {
       const res = await updatePendingSupply(reviewShipment.id, {
-        supplierId: reviewSupplierId ? Number(reviewSupplierId) : undefined,
+        supplierId: documentSupplierId(items) ?? undefined,
         items,
       });
       const allSkipped = [...dropped, ...(res.skipped || [])];
@@ -259,8 +258,6 @@ export const useFromSupplierForms = ({
     dialogOpen,
     setDialogOpen,
     saving,
-    supplierId,
-    setSupplierId,
     comment,
     setComment,
     rows,

@@ -1,4 +1,4 @@
-import type { ItemRow } from '@/components/crm/shipments/fromSupplierShared';
+import { emptyRow, type ItemRow } from '@/components/crm/shipments/fromSupplierShared';
 
 // Число, записанное как угодно: «40,8» и «40.8» — одно и то же. Кладовщик
 // вводит метраж с бирки поставщика, а там запятая, и раньше такая строка
@@ -18,7 +18,7 @@ export const num = (v: string | number | null | undefined) => {
 // материалу на складе.
 export const rowsToItems = (list: ItemRow[]) =>
   list
-    .filter((r) => r.materialId && num(r.quantity) > 0)
+    .filter((r) => r.materialId && r.supplierId && num(r.quantity) > 0)
     .map((r) => {
       const rolls = num(r.numberRolls) >= 1 ? Math.floor(num(r.numberRolls)) : 1;
       return {
@@ -29,7 +29,8 @@ export const rowsToItems = (list: ItemRow[]) =>
         // Цена за единицу в валюте поставщика. Пусто — подставится прайс поставщика.
         price: r.price && r.price.trim() !== '' ? num(r.price) : null,
         currency: r.currency || null,
-        // Поставщик строки. Пусто — берётся основной поставщик приёмки.
+        // Поставщик этой позиции. Кладовщик указывает его у каждого материала:
+        // в одной машине бывают разные поставщики или один на все ткани.
         supplierId: r.supplierId ? Number(r.supplierId) : null,
       };
     });
@@ -41,10 +42,71 @@ export const droppedRows = (list: ItemRow[]) =>
     .filter(({ r }) => {
       const touched = r.materialId || (r.quantity && r.quantity.trim() !== '');
       if (!touched) return false; // пустая строка-заготовка — молчим
-      return !(r.materialId && num(r.quantity) > 0);
+      return !(r.materialId && r.supplierId && num(r.quantity) > 0);
     })
     .map(({ r, i }) =>
       !r.materialId
         ? `строка ${i}: не выбран материал`
-        : `строка ${i}: метраж не указан или не больше нуля`,
+        : !r.supplierId
+          ? `строка ${i}: не выбран поставщик`
+          : `строка ${i}: метраж не указан или не больше нуля`,
     );
+
+/** Поставщик документа для API: сервер всё ещё ждёт один supplierId на приёмку. */
+export const documentSupplierId = (items: { supplierId?: number | null }[]) =>
+  items.find((i) => i.supplierId)?.supplierId ?? null;
+
+/**
+ * Соседние строки одного материала и поставщика — один блок в форме.
+ *
+ * FRONTEND-ONLY: на сервер по-прежнему уходит плоский список позиций.
+ * Группировка только чтобы не выбирать ткань и поставщика на каждый рулон.
+ */
+export const groupRowIndices = (rows: ItemRow[]): number[][] => {
+  const groups: number[][] = [];
+  rows.forEach((row, idx) => {
+    if (!row.materialId) {
+      groups.push([idx]);
+      return;
+    }
+    const last = groups[groups.length - 1];
+    const head = last ? rows[last[0]] : null;
+    if (
+      last &&
+      head?.materialId === row.materialId &&
+      (head.supplierId || '') === (row.supplierId || '')
+    ) {
+      last.push(idx);
+    } else {
+      groups.push([idx]);
+    }
+  });
+  return groups;
+};
+
+/** Плюс в блоке: ещё одна строка метража того же материала. */
+export const addLineToGroup = (rows: ItemRow[], group: number[]): ItemRow[] => {
+  const lastIdx = group[group.length - 1];
+  const src = rows[lastIdx];
+  const next: ItemRow = {
+    ...emptyRow,
+    materialId: src.materialId,
+    supplierId: src.supplierId || '',
+    currency: src.currency || '',
+  };
+  return [...rows.slice(0, lastIdx + 1), next, ...rows.slice(lastIdx + 1)];
+};
+
+/** Материал или поставщик блока — сразу на все его строки. */
+export const setGroupField = (
+  rows: ItemRow[],
+  group: number[],
+  field: 'materialId' | 'supplierId',
+  value: string,
+): ItemRow[] => rows.map((row, i) => (group.includes(i) ? { ...row, [field]: value } : row));
+
+/** Новый материал: того же поставщика, что у предыдущего блока — часто так и есть. */
+export const addMaterialGroup = (rows: ItemRow[]): ItemRow[] => {
+  const last = rows[rows.length - 1];
+  return [...rows, { ...emptyRow, supplierId: last?.supplierId || '' }];
+};
