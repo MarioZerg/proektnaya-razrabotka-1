@@ -111,6 +111,12 @@ def handle_get(event: dict, headers: dict, dsn: str) -> dict:
             #
             # Показываем только вещи, которые НЕ уехали (shipped_at пуст): у
             # реально отгруженных такая строка — законная история отгрузки.
+            #
+            # Строки ЗАКРЫТЫХ коробов сюда тоже не берём: закрытый короб — это
+            # заведённое грузоместо на площадке, его состав уехал физически.
+            # Пока такие строки попадали в список, чистка хвостов вымывала
+            # состав отгруженных FBO-коробов (заявка 1307: из 216 строк осталась
+            # одна, короба показали 0 шт.).
             cur.execute(
                 "SELECT gw.id, gw.storage_barcode, gw.status, sh.name, "
                 "       o.order_number, o.product, o.material, o.width, o.height, "
@@ -129,6 +135,9 @@ def handle_get(event: dict, headers: dict, dsn: str) -> dict:
                 "WHERE COALESCE(s.status, '') IN ('Выполнена', 'Отменена') "
                 "  AND gw.shipped_at IS NULL "
                 "  AND gw.status NOT IN ('lost', 'shipped') "
+                "  AND NOT EXISTS (SELECT 1 FROM marketplace_supply_boxes b "
+                "                  WHERE b.id = si.box_id "
+                "                    AND b.closed_at IS NOT NULL) "
                 "ORDER BY gw.storage_barcode"
             )
             rows = cur.fetchall()

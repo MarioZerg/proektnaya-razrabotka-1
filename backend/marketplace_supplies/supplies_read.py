@@ -33,7 +33,18 @@ def handle_get(event: dict, headers: dict, dsn: str) -> dict:
                 "SELECT s.id, s.supply_number, s.marketplace, s.cluster, s.status, "
                 "s.ship_to_gazelka_at, s.ship_to_marketplace_at, s.gazelka_pickup, "
                 "s.supply_date, s.timeslot, s.completed_at, "
-                "(SELECT COUNT(*) FROM marketplace_supply_items msi WHERE msi.supply_id = s.id), "
+                # Как и в списке поставок: закрытый короб считаем по снимку
+                # packed_qty, иначе сводка занижает уехавшее.
+                "(SELECT COALESCE((SELECT SUM(b.packed_qty) "
+                "                  FROM marketplace_supply_boxes b "
+                "                  WHERE b.supply_id = s.id AND b.closed_at IS NOT NULL "
+                "                    AND b.packed_qty IS NOT NULL), 0) "
+                " + (SELECT COUNT(*) FROM marketplace_supply_items msi "
+                "     WHERE msi.supply_id = s.id "
+                "       AND NOT EXISTS (SELECT 1 FROM marketplace_supply_boxes b2 "
+                "                       WHERE b2.id = msi.box_id "
+                "                         AND b2.closed_at IS NOT NULL "
+                "                         AND b2.packed_qty IS NOT NULL))), "
                 "s.gazelka_shipped_at "
                 "FROM marketplace_supplies s "
                 "WHERE s.type = 'FBO' AND s.status <> 'Выполнена' "
@@ -734,7 +745,20 @@ def handle_get(event: dict, headers: dict, dsn: str) -> dict:
             f"SELECT s.id, s.marketplace, s.type, s.status, s.comment, s.created_at, "
             f"s.supply_number, s.supply_barcode, s.cluster, s.gazelka_id, "
             f"s.ship_to_gazelka_at, s.ship_to_marketplace_at, s.completed_at, "
-            f"(SELECT COUNT(*) FROM marketplace_supply_items msi WHERE msi.supply_id = s.id), "
+            # Сколько штук в поставке. У ЗАКРЫТЫХ коробов берём снимок packed_qty,
+            # а не живые строки: состав уехавшей заявки со временем чистится как
+            # «хвосты», и голый COUNT(*) показывал «1 шт.» по поставке, которая
+            # уехала девятью полными грузоместами.
+            f"(SELECT COALESCE((SELECT SUM(b.packed_qty) "
+            f"                  FROM marketplace_supply_boxes b "
+            f"                  WHERE b.supply_id = s.id AND b.closed_at IS NOT NULL "
+            f"                    AND b.packed_qty IS NOT NULL), 0) "
+            f" + (SELECT COUNT(*) FROM marketplace_supply_items msi "
+            f"     WHERE msi.supply_id = s.id "
+            f"       AND NOT EXISTS (SELECT 1 FROM marketplace_supply_boxes b2 "
+            f"                       WHERE b2.id = msi.box_id "
+            f"                         AND b2.closed_at IS NOT NULL "
+            f"                         AND b2.packed_qty IS NOT NULL))), "
             f"u.full_name, s.ozon_delivery_method, s.ozon_application_number, s.ozon_status, "
             f"(SELECT COUNT(*) FROM wb_supply_orders wso WHERE wso.supply_id = s.id), "
             # Прогресс пошива по поставке: всего изделий в производстве и сколько уже

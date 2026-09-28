@@ -3181,6 +3181,15 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
             # Удаляем ТОЛЬКО строки выполненных и отменённых поставок: состав живой
             # поставки так тронуть нельзя. Вещи с отметкой об отгрузке тоже не
             # трогаем — у них эта строка законная история, а не расхождение.
+            #
+            # И НИКОГДА не трогаем строки ЗАКРЫТОГО короба.
+            #
+            # Закрытый короб FBO — это уже заведённое грузоместо на OZON: его
+            # состав не «занятость вещи», а история того, что физически уехало.
+            # Раньше этой защиты тут не было, и чистка хвостов вымывала состав
+            # уехавших коробов: у заявки 1307 от 216 строк осталась одна, короба
+            # показывали 0 шт., а сама отгрузка (она идёт ОТ строк состава) не
+            # находила, что отгружать, — заказы остались «Новыми».
             if not is_admin_or_senior(cur, actor_id):
                 return {'statusCode': 403, 'headers': headers, 'body': json.dumps(
                     {'error': 'Освобождать вещи может администратор '
@@ -3216,6 +3225,9 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                 "              WHERE gw.id = si.goods_warehouse_id "
                 "                AND gw.shipped_at IS NULL "
                 "                AND gw.status NOT IN ('lost', 'shipped')) "
+                "  AND NOT EXISTS (SELECT 1 FROM marketplace_supply_boxes b "
+                "                  WHERE b.id = si.box_id "
+                "                    AND b.closed_at IS NOT NULL) "
                 "RETURNING si.goods_warehouse_id"
             )
             freed = cur.fetchall()
@@ -3231,6 +3243,11 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
             # Ярлык снимаем вместе с бронью: грузоместа той поставки сданы,
             # добавить в них нечего, а перед новой отгрузкой ярлык всё равно
             # печатают заново.
+            #
+            # Вещь, лежащую в ЗАКРЫТОМ коробе, не освобождаем: она уехала
+            # грузоместом на OZON. Снять с неё бронь значит вернуть в свободный
+            # остаток товар, которого на складе нет, — и он тут же попадёт под
+            # новый заказ, который кладовщику будет нечем собрать.
             cur.execute(
                 "UPDATE goods_warehouse gw SET status = 'in_stock', "
                 "  reserved_order_id = NULL, matched_at = NULL, "
@@ -3242,6 +3259,11 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                 "  AND COALESCE(s.status, '') IN ('Выполнена', 'Отменена') "
                 "  AND gw.shipped_at IS NULL "
                 "  AND gw.status NOT IN ('lost', 'shipped') "
+                "  AND NOT EXISTS (SELECT 1 FROM marketplace_supply_items si2 "
+                "                  JOIN marketplace_supply_boxes b "
+                "                    ON b.id = si2.box_id "
+                "                  WHERE si2.goods_warehouse_id = gw.id "
+                "                    AND b.closed_at IS NOT NULL) "
                 "RETURNING gw.id"
             )
             released = cur.fetchall()

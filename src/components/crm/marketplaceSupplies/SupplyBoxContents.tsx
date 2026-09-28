@@ -91,6 +91,15 @@ const SupplyBoxContents = ({
             }
           />
         ))}
+        {/* Снимок при закрытии больше, чем осталось строк: часть состава
+            уехавшей заявки уже вычищена. Говорим прямо, сколько уехало, —
+            иначе кладовщик считает по строкам и недосчитывается. */}
+        {box.closedAt && box.packedQty && box.packedQty > box.items.length && (
+          <p className="text-xs text-muted-foreground">
+            Короб закрыт с {box.packedQty} шт. — построчный состав сохранился
+            частично ({box.items.length} из {box.packedQty})
+          </p>
+        )}
       </div>
     )}
   </>

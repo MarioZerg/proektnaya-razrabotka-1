@@ -1141,9 +1141,24 @@ def check_fbo_underfilled(cur, supply_id):
     if supply_type != 'FBO' or not planned:
         return None
 
+    # Считаем ЗАКРЫТЫЕ короба по снимку packed_qty, а живые — по строкам состава.
+    #
+    # Раньше брали просто COUNT(*) по составу. У уехавшей заявки строки со
+    # временем снимались как «хвосты», счётчик падал, и защита от недовоза
+    # начинала врать: «собрано 1 из 246» по поставке, которая физически уехала
+    # девятью грузоместами, — отгрузить её было нельзя.
     cur.execute(
-        "SELECT COUNT(*) FROM marketplace_supply_items WHERE supply_id = %s",
-        (int(supply_id),),
+        "SELECT "
+        "  COALESCE((SELECT SUM(b.packed_qty) FROM marketplace_supply_boxes b "
+        "            WHERE b.supply_id = %s AND b.closed_at IS NOT NULL "
+        "              AND b.packed_qty IS NOT NULL), 0) "
+        "+ (SELECT COUNT(*) FROM marketplace_supply_items si "
+        "   WHERE si.supply_id = %s "
+        "     AND NOT EXISTS (SELECT 1 FROM marketplace_supply_boxes b2 "
+        "                     WHERE b2.id = si.box_id "
+        "                       AND b2.closed_at IS NOT NULL "
+        "                       AND b2.packed_qty IS NOT NULL))",
+        (int(supply_id), int(supply_id)),
     )
     collected = int(cur.fetchone()[0])
     if collected >= int(planned):

@@ -95,9 +95,15 @@ export const boxPackedCount = (box: {
   closedAt?: string | null;
   packedQty?: number | null;
 }): number => {
-  if (box.items.length > 0) return box.items.length;
-  if (box.closedAt && box.packedQty) return box.packedQty;
-  return 0;
+  // У закрытого короба снимок главнее живых строк, когда он больше.
+  //
+  // Состав уехавшей заявки со временем чистится, и строк остаётся меньше, чем
+  // реально уехало: у заявки 1307 в коробе №2 выжила одна строка из двадцати
+  // четырёх, и плашка писала «1 шт.» по полному грузоместу, принятому OZON.
+  if (box.closedAt && box.packedQty && box.packedQty > box.items.length) {
+    return box.packedQty;
+  }
+  return box.items.length;
 };
 
 /** Человеческое название статуса площадки. Незнакомый код показываем как есть. */
