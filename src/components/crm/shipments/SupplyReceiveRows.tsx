@@ -4,6 +4,7 @@ import {
   type SetStateAction,
   useLayoutEffect,
   useRef,
+  useState,
 } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -25,6 +26,7 @@ import {
   num,
   setGroupField,
 } from '@/components/crm/shipments/fromSupplierRows';
+import MeterageScanDialog from '@/components/crm/shipments/MeterageScanDialog';
 
 interface SupplyReceiveRowsProps {
   rows: ItemRow[];
@@ -58,6 +60,12 @@ const SupplyReceiveRows = ({
   const qtyRefs = useRef<Record<number, HTMLInputElement | null>>({});
   const materialRefs = useRef<Record<number, HTMLButtonElement | null>>({});
   const pendingFocus = useRef<PendingFocus | null>(null);
+  const [scanOpen, setScanOpen] = useState(false);
+  const [scanTarget, setScanTarget] = useState<{ materialId: string; supplierId: string } | null>(
+    null,
+  );
+  const scanTargetRef = useRef(scanTarget);
+  scanTargetRef.current = scanTarget;
 
   useLayoutEffect(() => {
     const pending = pendingFocus.current;
@@ -90,6 +98,30 @@ const SupplyReceiveRows = ({
   const addMaterial = () => {
     pendingFocus.current = { kind: 'material', idx: rows.length };
     setRows((r) => addMaterialGroup(r));
+  };
+
+  const applyScannedMeterage = (qty: string) => {
+    const target = scanTargetRef.current;
+    if (!target) return;
+    setRows((r) => {
+      const groups = groupRowIndices(r);
+      const group =
+        groups.find(
+          (g) =>
+            r[g[0]].materialId === target.materialId &&
+            (r[g[0]].supplierId || '') === target.supplierId,
+        ) ?? groups[groups.length - 1];
+      if (!group) return r;
+      const emptyIdx = [...group].reverse().find((i) => !r[i].quantity.trim());
+      if (emptyIdx !== undefined) {
+        pendingFocus.current = { kind: 'qty', idx: emptyIdx };
+        return r.map((row, i) => (i === emptyIdx ? { ...row, quantity: qty } : row));
+      }
+      const lastIdx = group[group.length - 1];
+      pendingFocus.current = { kind: 'qty', idx: lastIdx + 1 };
+      const next = addLineToGroup(r, group);
+      return next.map((row, i) => (i === lastIdx + 1 ? { ...row, quantity: qty } : row));
+    });
   };
 
   const last = rows[rows.length - 1];
@@ -227,17 +259,41 @@ const SupplyReceiveRows = ({
               })}
             </div>
 
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              className="h-10 w-full focus-visible:ring-1 focus-visible:ring-offset-0 sm:h-9"
-              disabled={!head.materialId}
-              onClick={() => addLine(group)}
-            >
-              <Icon name="Plus" size={14} className="mr-1" />
-              Строка
-            </Button>
+            <div className="grid grid-cols-2 gap-1.5">
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                className="h-10 w-full focus-visible:ring-1 focus-visible:ring-offset-0 sm:h-9"
+                disabled={!head.materialId}
+                onClick={() => addLine(group)}
+              >
+                <Icon name="Plus" size={14} className="mr-1" />
+                Строка
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant="secondary"
+                className="h-10 w-full focus-visible:ring-1 focus-visible:ring-offset-0 sm:h-9"
+                disabled={!head.materialId}
+                title={
+                  head.materialId
+                    ? 'Камера: считать метраж с бирки рулона'
+                    : 'Сначала выберите материал'
+                }
+                onClick={() => {
+                  setScanTarget({
+                    materialId: head.materialId,
+                    supplierId: head.supplierId || '',
+                  });
+                  setScanOpen(true);
+                }}
+              >
+                <Icon name="Camera" size={14} className="mr-1" />
+                Камера
+              </Button>
+            </div>
 
             {filled.length > 0 && (
               <div className="rounded-md bg-muted/50 px-2 py-1.5 text-xs tabular-nums">
@@ -273,8 +329,15 @@ const SupplyReceiveRows = ({
 
       <p className="text-xs text-muted-foreground">
         Поставщик указывается у каждой ткани. Другая ткань того же поставщика — «Добавить
-        материал». Метраж — <b>на один рулон</b>, как на бирке.
+        материал». Метраж — <b>на один рулон</b>, как на бирке. «Камера» читает цифры с бирки
+        и сразу ставит их в строку.
       </p>
+
+      <MeterageScanDialog
+        open={scanOpen}
+        onOpenChange={setScanOpen}
+        onMeterage={applyScannedMeterage}
+      />
     </div>
   );
 };

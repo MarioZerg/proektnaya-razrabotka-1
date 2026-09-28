@@ -31,6 +31,13 @@ tmp/
 *.sw?
 builds
 
+# Распакованный язык Tesseract (~23 МБ) — собирается из .gz при dev/build
+public/ocr/eng.traineddata
+public/ocr/*.wasm
+public/ocr/tesseract.esm.min.js
+public/ocr/tesseract-core-lstm.*
+public/ocr/tesseract-core-simd*
+
 # Python (страховка: разовые Bash-скрипты должны класть venv в /tmp, но если
 # venv/кэш всё же оказался в проекте — не коммитить его через end-of-turn git add -A)
 .venv/

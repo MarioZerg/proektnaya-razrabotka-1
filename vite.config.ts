@@ -1,12 +1,92 @@
 import {defineConfig} from "vite";
 import react from "@vitejs/plugin-react-swc";
+import fs from "fs";
 import path from "path";
+import zlib from "zlib";
+import {pipeline} from "stream/promises";
 import {componentTagger} from "pp-tagger";
 
 // DDoS Guard требует двусторонний app-level keepalive чаще 30s.
 // Сервер: text-frame {type:'ping'} каждые 5-9s (рандом — чтобы DDoS Guard
 // не триггерился на одинаковые интервалы; Vite-клиент игнорирует, case "ping": break;).
 // Клиент: server.hmr.timeout = 7000 ниже понижает pingInterval @vite/client до 7s.
+/**
+ * Vite/sirv считает *.gz заранее сжатым файлом и ставит Content-Encoding: gzip.
+ * Tesseract качает eng.traineddata.gz как есть — браузер распаковывает дважды,
+ * движок OCR падает. Отдаём gzip-байты без Content-Encoding и отдельно
+ * распакованный eng.traineddata (gzip: false в createWorker).
+ */
+function unpackTraineddata() {
+    const gzPath = path.resolve(__dirname, 'public/ocr/eng.traineddata.gz');
+    const rawPath = path.resolve(__dirname, 'public/ocr/eng.traineddata');
+    if (!fs.existsSync(gzPath)) return;
+    if (fs.existsSync(rawPath) && fs.statSync(rawPath).size > 1000) return;
+    fs.writeFileSync(rawPath, zlib.gunzipSync(fs.readFileSync(gzPath)));
+}
+
+function copyOcrBrowserBundle() {
+    const out = path.resolve(__dirname, 'public/ocr');
+    fs.mkdirSync(out, {recursive: true});
+    const copies: [string, string][] = [
+        ['node_modules/tesseract.js/dist/worker.min.js', 'public/ocr/worker.min.js'],
+        ['node_modules/tesseract.js/dist/tesseract.esm.min.js', 'public/ocr/tesseract.esm.min.js'],
+        ['node_modules/tesseract.js-core/tesseract-core-lstm.wasm.js', 'public/ocr/tesseract-core-lstm.wasm.js'],
+        ['node_modules/tesseract.js-core/tesseract-core-lstm.wasm', 'public/ocr/tesseract-core-lstm.wasm'],
+        ['node_modules/tesseract.js-core/tesseract-core-simd-lstm.wasm.js', 'public/ocr/tesseract-core-simd-lstm.wasm.js'],
+        ['node_modules/tesseract.js-core/tesseract-core-simd-lstm.wasm', 'public/ocr/tesseract-core-simd-lstm.wasm'],
+        ['node_modules/tesseract.js-core/tesseract-core.wasm.js', 'public/ocr/tesseract-core.wasm.js'],
+        ['node_modules/tesseract.js-core/tesseract-core.wasm', 'public/ocr/tesseract-core.wasm'],
+    ];
+    for (const [from, to] of copies) {
+        const src = path.resolve(__dirname, from);
+        if (fs.existsSync(src)) fs.copyFileSync(src, path.resolve(__dirname, to));
+    }
+}
+
+const ocrAssets = {
+    name: 'ocr-assets',
+    buildStart() {
+        unpackTraineddata();
+        copyOcrBrowserBundle();
+    },
+    configureServer(server: any) {
+        unpackTraineddata();
+        copyOcrBrowserBundle();
+        server.middlewares.use(serveOcrAsset);
+    },
+    configurePreviewServer(server: any) {
+        server.middlewares.use(serveOcrAsset);
+    },
+    async closeBundle() {
+        const gzPath = path.resolve(__dirname, 'public/ocr/eng.traineddata.gz');
+        if (!fs.existsSync(gzPath)) return;
+        const outDir = path.resolve(__dirname, 'dist/ocr');
+        fs.mkdirSync(outDir, {recursive: true});
+        await pipeline(
+            fs.createReadStream(gzPath),
+            zlib.createGunzip(),
+            fs.createWriteStream(path.join(outDir, 'eng.traineddata')),
+        );
+    },
+};
+
+function serveOcrAsset(
+    req: { url?: string },
+    res: { setHeader: (k: string, v: string) => void; statusCode: number; end: () => void; on: (e: string, fn: () => void) => void },
+    next: () => void,
+) {
+    const url = (req.url ?? '').split('?')[0];
+    if (url.startsWith('/ocr/') && url.endsWith('.gz')) {
+        const file = path.resolve(__dirname, 'public', url.slice(1));
+        if (!fs.existsSync(file)) return next();
+        res.setHeader('Content-Type', 'application/gzip');
+        res.setHeader('Content-Length', String(fs.statSync(file).size));
+        fs.createReadStream(file).pipe(res as unknown as NodeJS.WritableStream);
+        return;
+    }
+    next();
+}
+
 const hmrKeepalive = {
     name: 'hmr-ws-keepalive',
     configureServer(server: any) {
@@ -25,6 +105,7 @@ const hmrKeepalive = {
 // https://vitejs.dev/config/
 export default defineConfig(({mode}) => ({
     plugins: [
+        ocrAssets,
         react(),
         hmrKeepalive,
         mode === 'development' &&
@@ -53,6 +134,10 @@ export default defineConfig(({mode}) => ({
                 },
             },
         },
+    },
+    optimizeDeps: {
+        // Иначе esbuild тянет src/ с worker_threads вместо dist/tesseract.esm.min.js.
+        exclude: ['tesseract.js'],
     },
     server: {
         host: '0.0.0.0',
