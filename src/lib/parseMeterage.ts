@@ -1,8 +1,8 @@
 /**
  * Метраж с бирки поставщика в зоне сканера.
  *
- * У нас рулоны 20–200 м (почти всегда до 170): «40», «50», «86,3»,
- * «113.5», «120.8», «20.03», «20.10». Сотые — как на стикере.
+ * У нас рулоны от 20 до 200 м, в том числе ровные целые: «40», «50», «120», «200».
+ * С десятичными: «86,3», «113.5», «120.8», «20.03», «20.10» — как на стикере.
  * Дату, год, штрихкод и куски артикула не подставляем.
  */
 
@@ -58,11 +58,20 @@ const cleanOcr = (text: string) =>
     .replace(/\d{1,2}[.,/\-]\d{1,2}[.,/\-]\d{2,4}/g, ' ')
     .replace(/\d{5,}/g, ' ');
 
-/** OCR съел точку: «2010» → 20.10, «1135» → 113.5. Годы 2020–2039 не трогаем. */
+/**
+ * Если OCR потерял запятую: «863» это 86.3, а не 863 м (таких рулонов нет).
+ * «120» и «200» уже нормальная длина — оставляем как есть, не делаем из них 12.0.
+ * Годы 2020–2039 не считаем метражом.
+ */
 const restoreLostDot = (digits: string): number | null => {
-  if (!/^\d{4}$/.test(digits)) return null;
+  if (!/^\d{3,4}$/.test(digits)) return null;
   const raw = Number(digits);
   if (raw >= 2020 && raw <= 2039) return null;
+  if (digits.length === 3) {
+    if (isMeterage(raw)) return null;
+    const tenths = roundM(raw / 10);
+    return isMeterage(tenths) ? tenths : null;
+  }
   const hundredths = roundM(raw / 100);
   const tenths = roundM(raw / 10);
   const a = isMeterage(hundredths) ? hundredths : null;
@@ -95,7 +104,7 @@ export const parseMeterageFromOcr = (text: string): number | null => {
   if (fromDecimal != null) return fromDecimal;
 
   const digitRuns = cleaned.match(/\d+/g) || [];
-  if (digitRuns.length === 1 && digitRuns[0].length === 4) {
+  if (digitRuns.length === 1 && (digitRuns[0].length === 3 || digitRuns[0].length === 4)) {
     const restored = restoreLostDot(digitRuns[0]);
     if (restored != null) return restored;
   }

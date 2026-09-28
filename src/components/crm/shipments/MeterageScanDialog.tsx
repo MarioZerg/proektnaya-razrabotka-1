@@ -141,6 +141,7 @@ const MeterageScanDialog = ({ open, onOpenChange, onMeterage }: MeterageScanDial
   const workerRef = useRef<TesseractWorker | null>(null);
   const busyRef = useRef(false);
   const scanGenRef = useRef(0);
+  const lockGenRef = useRef(0);
   const onMeterageRef = useRef(onMeterage);
   onMeterageRef.current = onMeterage;
 
@@ -219,6 +220,7 @@ const MeterageScanDialog = ({ open, onOpenChange, onMeterage }: MeterageScanDial
   const recognizeZone = async (source: HTMLCanvasElement, gen: number) => {
     if (busyRef.current) return;
     busyRef.current = true;
+    lockGenRef.current = gen;
     setReading(true);
     setHint('Читаю метраж в рамке…');
     try {
@@ -240,7 +242,7 @@ const MeterageScanDialog = ({ open, onOpenChange, onMeterage }: MeterageScanDial
       playScanErrorSound();
       setHint(`Не удалось прочитать (${errText(e)}). Нажмите ещё раз`);
     } finally {
-      if (gen === scanGenRef.current) {
+      if (lockGenRef.current === gen) {
         busyRef.current = false;
         setReading(false);
       }
@@ -248,6 +250,7 @@ const MeterageScanDialog = ({ open, onOpenChange, onMeterage }: MeterageScanDial
   };
 
   const handleScanClick = () => {
+    if (busyRef.current) return;
     const video = videoRef.current;
     const frame = video ? cropOverlayFromVideo(video) : null;
     if (!frame) {
