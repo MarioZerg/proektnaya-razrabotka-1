@@ -360,7 +360,7 @@ def handle_get(event: dict, headers: dict, dsn: str) -> dict:
 
             cur.execute(
                 "SELECT id, box_number, barcode, created_at, ozon_cargo_id, closed_at, "
-                "sticker_url, sticker_name FROM marketplace_supply_boxes "
+                "sticker_url, sticker_name, packed_qty FROM marketplace_supply_boxes "
                 "WHERE supply_id = %s ORDER BY box_number",
                 (int(supply_id),),
             )
@@ -374,6 +374,9 @@ def handle_get(event: dict, headers: dict, dsn: str) -> dict:
                     'closedAt': (r[5].isoformat() + 'Z') if r[5] else None,
                     'stickerUrl': r[6],
                     'stickerName': r[7],
+                    # Снимок состава на момент закрытия: после отгрузки строки
+                    # вещей могли снять, а количество в коробе должно остаться.
+                    'packedQty': int(r[8]) if r[8] is not None else None,
                     'items': [it for it in items if it['boxId'] == r[0]],
                 }
                 for r in cur.fetchall()

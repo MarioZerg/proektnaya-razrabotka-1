@@ -445,3 +445,60 @@ svg.animate-logo-spin,
     transform: scale(1.06);
   }
 }
+
+/* Голограмма на личном QR: блик бежит поверх кода, как на защитной плёнке бейджа.
+   mix-blend-mode + низкая плотность, чтобы сканер терминала по-прежнему читал модули. */
+.qr-hologram {
+  background: linear-gradient(
+    115deg,
+    transparent 6%,
+    rgb(34 211 238 / 0.35) 20%,
+    rgb(167 139 250 / 0.4) 36%,
+    rgb(244 114 182 / 0.38) 50%,
+    rgb(250 204 21 / 0.32) 64%,
+    transparent 80%
+  );
+  background-size: 240% 240%;
+  animation: qr-holo 3.4s ease-in-out infinite;
+  mix-blend-mode: overlay;
+  opacity: 0.9;
+}
+
+.qr-hologram-shine {
+  background: linear-gradient(
+    105deg,
+    transparent 38%,
+    rgb(255 255 255 / 0.5) 50%,
+    transparent 62%
+  );
+  background-size: 220% 100%;
+  animation: qr-holo-shine 2.6s ease-in-out infinite;
+}
+
+@keyframes qr-holo {
+  0% {
+    background-position: 0% 40%;
+  }
+  50% {
+    background-position: 80% 60%;
+  }
+  100% {
+    background-position: 0% 40%;
+  }
+}
+
+@keyframes qr-holo-shine {
+  0% {
+    background-position: -40% 0;
+  }
+  100% {
+    background-position: 140% 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .qr-hologram,
+  .qr-hologram-shine {
+    animation: none;
+  }
+}

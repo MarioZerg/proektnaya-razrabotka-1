@@ -3,6 +3,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import Icon from '@/components/ui/icon';
 import type { SupplyBox } from '@/lib/marketplaceSuppliesApi';
+import { boxPackedCount } from '@/components/crm/marketplaceSupplies/marketplaceSuppliesShared';
 
 interface SupplyBoxCardHeaderProps {
   box: SupplyBox;
@@ -84,8 +85,8 @@ const SupplyBoxCardHeader = ({
             <span className="font-semibold">Короб №{box.boxNumber}</span>
             {/* Количество вещей — главное число плашки: по нему кладовщик
                 понимает, куда класть следующую, не раскрывая короб. */}
-            <Badge variant={box.items.length ? 'default' : 'outline'}>
-              {box.items.length} шт.
+            <Badge variant={boxPackedCount(box) ? 'default' : 'outline'}>
+              {boxPackedCount(box)} шт.
             </Badge>
             {box.closedAt && (
               <Badge variant="secondary" className="text-[10px]">Закрыт</Badge>

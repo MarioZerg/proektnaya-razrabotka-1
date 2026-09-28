@@ -89,6 +89,17 @@ export const goodsStatusLabel = (raw?: string | null): string => {
   return goodsStatusLabels[raw] || raw;
 };
 
+/** Сколько штук показывать на плашке короба: живые строки или снимок при закрытии. */
+export const boxPackedCount = (box: {
+  items: { length: number };
+  closedAt?: string | null;
+  packedQty?: number | null;
+}): number => {
+  if (box.items.length > 0) return box.items.length;
+  if (box.closedAt && box.packedQty) return box.packedQty;
+  return 0;
+};
+
 /** Человеческое название статуса площадки. Незнакомый код показываем как есть. */
 export const mpStatusInfo = (raw?: string | null) => {
   if (!raw) return null;

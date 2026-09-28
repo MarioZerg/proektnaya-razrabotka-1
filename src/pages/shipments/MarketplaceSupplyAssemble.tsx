@@ -13,6 +13,7 @@ import SupplyAssembleFooter from '@/components/crm/marketplaceSupplies/SupplyAss
 import SupplyLockedScreen from '@/components/crm/marketplaceSupplies/SupplyLockedScreen';
 import { useSupplyAssemble } from '@/components/crm/marketplaceSupplies/useSupplyAssemble';
 import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
+import { boxPackedCount } from '@/components/crm/marketplaceSupplies/marketplaceSuppliesShared';
 
 /**
  * Экран сборки поставки: кладовщик раскладывает вещи по коробам.
@@ -96,7 +97,7 @@ const MarketplaceSupplyAssemble = () => {
   }
 
   const canEdit = supply.status === 'Открытая' || supply.status === 'На сборке';
-  const totalBoxedItems = supply.boxes.reduce((sum, b) => sum + b.items.length, 0);
+  const totalBoxedItems = supply.boxes.reduce((sum, b) => sum + boxPackedCount(b), 0);
   // Сколько ещё вещей нужно уложить в короба по заявке маркетплейса.
   const remainingToScan =
     supply.totalQuantityMarketplace != null

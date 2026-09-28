@@ -39,6 +39,46 @@ def _resp(status, body):
     }
 
 
+def seal_closed_box(cur, box_id):
+    """Фиксирует состав закрытого короба и помечает вещи отгруженными.
+
+    После закрытия грузоместо уже на OZON. Если вещи оставить awaiting_supply,
+    следующий скан в другую поставку сотрёт строки состава уехавшей заявки —
+    короба покажут 0 шт., хотя на площадке штуки на месте.
+    """
+    cur.execute(
+        "SELECT COUNT(*) FROM marketplace_supply_items WHERE box_id = %s",
+        (int(box_id),),
+    )
+    qty = int((cur.fetchone() or [0])[0] or 0)
+    cur.execute(
+        "UPDATE marketplace_supply_boxes SET packed_qty = %s WHERE id = %s",
+        (qty, int(box_id)),
+    )
+    cur.execute(
+        "UPDATE goods_warehouse gw SET status = 'shipped', "
+        "  shipped_at = COALESCE(gw.shipped_at, now()) "
+        "FROM marketplace_supply_items msi "
+        "WHERE msi.goods_warehouse_id = gw.id AND msi.box_id = %s",
+        (int(box_id),),
+    )
+
+
+def unseal_box(cur, box_id):
+    """Снимает отгрузку с вещей короба: его открыли, чтобы поправить состав."""
+    cur.execute(
+        "UPDATE goods_warehouse gw SET status = 'awaiting_supply', shipped_at = NULL "
+        "FROM marketplace_supply_items msi "
+        "WHERE msi.goods_warehouse_id = gw.id AND msi.box_id = %s "
+        "  AND gw.status = 'shipped'",
+        (int(box_id),),
+    )
+    cur.execute(
+        "UPDATE marketplace_supply_boxes SET packed_qty = NULL WHERE id = %s",
+        (int(box_id),),
+    )
+
+
 def get_ozon_credentials(cur):
     cur.execute(
         "SELECT is_enabled, credentials FROM marketplace_integrations WHERE marketplace_code = 'ozon' ORDER BY is_enabled DESC, (credentials::text <> '{}') DESC, shop_id LIMIT 1"
@@ -704,6 +744,7 @@ def handle_close_boxes(cur, conn, client_id, api_key, body_data):
                     "  ozon_create_operation_id = NULL WHERE id = %s",
                     (int(cid_p), int(box_id)),
                 )
+                seal_closed_box(cur, box_id)
                 recovered += 1
     if recovered:
         conn.commit()
@@ -930,6 +971,7 @@ def handle_close_boxes(cur, conn, client_id, api_key, body_data):
                 "WHERE id = %s",
                 (int(_box_id),),
             )
+            seal_closed_box(cur, _box_id)
         conn.commit()
         return _resp(200, {
             'closedBoxes': len(box_keys),
@@ -952,6 +994,7 @@ def handle_close_boxes(cur, conn, client_id, api_key, body_data):
                 "  ozon_create_operation_id = NULL WHERE id = %s",
                 (int(cargo_id), box_keys[key]),
             )
+            seal_closed_box(cur, box_keys[key])
     conn.commit()
     if not cargo_ids:
         return _resp(502, {'error': f'OZON не вернул номера грузомест: {ozon_error_text(st, info)}'})
@@ -1278,10 +1321,14 @@ def handle_sync_cargoes(cur, conn, client_id, api_key, body_data):
             "WHERE supply_id = %s AND ozon_cargo_id = ANY(%s) ORDER BY box_number",
             (int(supply_id), [int(c) for c in lost]),
         )
+        lost_ids = []
         for _bid, _bnum in cur.fetchall():
             lost_nums.append(_bnum)
+            lost_ids.append(_bid)
         for c in lost:
             remember_removal(cur, supply_id, c)
+        for _bid in lost_ids:
+            unseal_box(cur, _bid)
         cur.execute(
             "UPDATE marketplace_supply_boxes SET ozon_cargo_id = NULL, closed_at = NULL, "
             "  sticker_url = NULL, sticker_name = NULL, ozon_label_operation_id = NULL, "
@@ -1630,6 +1677,7 @@ def handle_reopen_box(cur, conn, client_id, api_key, body_data):
             remember_removal(cur, supply_id, cargo_id)
             ozon_note = f'Грузоместо {cargo_id} снято на OZON'
 
+    unseal_box(cur, box_id)
     cur.execute(
         "UPDATE marketplace_supply_boxes SET closed_at = NULL, ozon_cargo_id = NULL, "
         "  sticker_url = NULL, sticker_name = NULL, ozon_label_operation_id = NULL, "

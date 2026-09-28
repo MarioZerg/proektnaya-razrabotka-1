@@ -7,6 +7,7 @@ import { useAuth } from '@/context/AuthContext';
 import { fetchOzonAllBoxLabels } from '@/lib/ozonFboApi';
 import { printBoxLabelFromUrl } from '@/lib/printMarketplaceLabel';
 import type { SupplyDetail } from '@/lib/marketplaceSuppliesApi';
+import { boxPackedCount } from '@/components/crm/marketplaceSupplies/marketplaceSuppliesShared';
 
 interface SupplyAllLabelsCardProps {
   supply: SupplyDetail;
@@ -35,7 +36,7 @@ const SupplyAllLabelsCard = ({ supply, fullyAssembled }: SupplyAllLabelsCardProp
   const [busy, setBusy] = useState(false);
 
   // Короба с товаром: пустые в комплект не идут, грузоместа у них нет.
-  const filledBoxes = supply.boxes.filter((b) => b.items.length > 0);
+  const filledBoxes = supply.boxes.filter((b) => boxPackedCount(b) > 0);
   const closedBoxes = filledBoxes.filter((b) => b.closedAt);
   const allClosed = filledBoxes.length > 0 && closedBoxes.length === filledBoxes.length;
 

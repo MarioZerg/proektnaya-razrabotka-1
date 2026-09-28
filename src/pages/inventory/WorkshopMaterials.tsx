@@ -25,6 +25,7 @@ import {
 } from '@/lib/stockLevels';
 import { useAuth } from '@/context/AuthContext';
 import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
+import WorkshopMaterialsCards from '@/components/crm/workshopMaterials/WorkshopMaterialsCards';
 
 const WorkshopMaterials = () => {
   const { user } = useAuth();
@@ -99,20 +100,28 @@ const WorkshopMaterials = () => {
     return [...seen].map(([id, name]) => ({ id, name }));
   }, [roleColumns]);
 
-  const [tab, setTab] = useState('all');
+  const [tab, setTab] = useState('');
 
   // Цех мог исчезнуть из данных (например, после перезагрузки под другой ролью) —
-  // тогда возвращаемся на «Все цеха», иначе таблица оказалась бы пустой без причины.
+  // тогда берём первый доступный, иначе таблица оказалась бы пустой без причины.
   useEffect(() => {
-    if (tab !== 'all' && !workshops.some((w) => String(w.id) === tab)) setTab('all');
+    if (workshops.length === 0) return;
+    if (!workshops.some((w) => String(w.id) === tab)) setTab(String(workshops[0].id));
   }, [workshops, tab]);
 
   // Одному цеху вкладки не нужны — работник и так видит только свой.
   const showTabs = workshops.length > 1;
 
+  const activeTab =
+    tab && (tab === 'all' || workshops.some((w) => String(w.id) === tab))
+      ? tab
+      : workshops[0]
+        ? String(workshops[0].id)
+        : 'all';
+
   const visibleColumns =
-    showTabs && tab !== 'all'
-      ? roleColumns.filter((c) => String(c.workshopId) === tab)
+    showTabs && activeTab !== 'all'
+      ? roleColumns.filter((c) => String(c.workshopId) === activeTab)
       : roleColumns;
 
   // «Итого» на телефоне прячем, когда колонка всего одна: у швеи это её смена, и
@@ -136,8 +145,8 @@ const WorkshopMaterials = () => {
         pending: own?.pendingQuantity ?? 0,
       };
     }
-    if (showTabs && tab !== 'all') {
-      const cells = m.cells.filter((c) => String(c.workshopId) === tab);
+    if (showTabs && activeTab !== 'all') {
+      const cells = m.cells.filter((c) => String(c.workshopId) === activeTab);
       return {
         quantity: cells.reduce((s, c) => s + c.quantity, 0),
         rolls: cells.reduce((s, c) => s + c.rollCount, 0),
@@ -201,11 +210,13 @@ const WorkshopMaterials = () => {
         ) : (
           <div className="space-y-4">
             {showTabs && (
-              <Tabs value={tab} onValueChange={setTab}>
-                <TabsList className="flex h-auto w-full flex-wrap justify-start">
-                  <TabsTrigger value="all">Все цеха</TabsTrigger>
+              <Tabs value={activeTab} onValueChange={setTab}>
+                <TabsList className="flex h-auto w-full min-w-0 flex-wrap justify-start gap-1">
+                  <TabsTrigger value="all" className="hidden sm:inline-flex">
+                    Все цеха
+                  </TabsTrigger>
                   {workshops.map((w) => (
-                    <TabsTrigger key={w.id} value={String(w.id)}>
+                    <TabsTrigger key={w.id} value={String(w.id)} className="max-w-full truncate">
                       {w.name}
                     </TabsTrigger>
                   ))}
@@ -213,25 +224,25 @@ const WorkshopMaterials = () => {
               </Tabs>
             )}
 
+            <div className="md:hidden">
+              <WorkshopMaterialsCards
+                types={types}
+                visibleColumns={visibleColumns}
+                showWorkshopName={!isProduction && activeTab === 'all'}
+                showTotal={!hideTotalOnMobile}
+                isActiveColumn={isActiveColumn}
+                totalFor={totalFor}
+              />
+            </div>
+
+            <div className="hidden space-y-4 md:block">
             {types.map((type) => (
               <div key={type.id} className="rounded-md border border-border">
                 <div className="flex items-center justify-between gap-2 border-b border-border bg-muted/50 px-4 py-2">
                   <span className="text-sm font-semibold">{type.name}</span>
-                  <div className="flex items-center gap-2">
-                    {/* Колонок несколько — на телефоне они не помещаются, и таблица
-                        прокручивается вбок. Без подсказки это незаметно: край колонки
-                        выглядит как край таблицы, и остальные смены считают пропавшими.
-                        При одной колонке всё влезает, подсказка не нужна. */}
-                    {!hideTotalOnMobile && (
-                      <span className="flex items-center gap-1 text-xs text-muted-foreground sm:hidden">
-                        <Icon name="MoveHorizontal" size={12} />
-                        листайте вбок
-                      </span>
-                    )}
-                    <Badge variant="secondary">{type.materials.length} поз.</Badge>
-                  </div>
+                  <Badge variant="secondary">{type.materials.length} поз.</Badge>
                 </div>
-                <Table>
+                <Table className="min-w-0">
                   <TableHeader>
                     <TableRow>
                       {/* БЕЗ w-full — ИНАЧЕ НА ТЕЛЕФОНЕ ПРОПАДАЮТ ОСТАТКИ.
@@ -250,7 +261,7 @@ const WorkshopMaterials = () => {
                               «Смена №1» есть и в первом цехе, и во втором — без названия
                               две одинаковые колонки не различить. Когда цех выбран
                               вкладкой, его имя в каждой колонке — лишний повтор. */}
-                          {!isProduction && tab === 'all' && (
+                          {!isProduction && activeTab === 'all' && (
                             <div className="text-xs font-normal text-muted-foreground">
                               {col.workshopName}
                             </div>
@@ -283,7 +294,18 @@ const WorkshopMaterials = () => {
                                 level ? stockCellClass[level] : cell ? 'bg-emerald-50' : ''
                               }`}
                             >
-                              {cell ? `${formatQuantity(cell.quantity)} ${m.unit}, ${cell.rollCount} рул.` : '—'}
+                              {cell ? (
+                                <>
+                                  <div className="whitespace-normal">
+                                    {formatQuantity(cell.quantity)} {m.unit}
+                                  </div>
+                                  <div className="text-xs font-normal text-muted-foreground">
+                                    {cell.rollCount} рул.
+                                  </div>
+                                </>
+                              ) : (
+                                '—'
+                              )}
                               {/* «В пути» живёт в колонке «Итого», но на телефоне её
                                   скрываем — и предупреждение пропадало вместе с ней.
                                   Материал, который смена ещё не приняла, в раскрой не
@@ -328,6 +350,7 @@ const WorkshopMaterials = () => {
                 </Table>
               </div>
             ))}
+            </div>
           </div>
         )}
       </div>

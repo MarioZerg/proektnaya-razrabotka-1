@@ -1200,3 +1200,69 @@ def check_unlabeled_bundles(cur, supply_id):
         {'groupKey': r[0], 'inSupply': int(r[1]), 'total': int(r[2] or 0)}
         for r in cur.fetchall()
     ]
+
+
+def seal_closed_box(cur, box_id):
+    """Фиксирует состав закрытого короба и помечает вещи отгруженными.
+
+    ЗАЧЕМ. Закрытие короба FBO уже создаёт грузоместо на OZON. Если вещи
+    оставить awaiting_supply без shipped_at, следующий скан в другую поставку
+    сочтёт их свободными: завершённая поставка «не держит» строку состава, и
+    она стирается. Короба у нас обнуляются, хотя на площадке штуки на месте.
+
+    packed_qty — снимок количества на момент заклейки: даже если строки вещей
+    позже снимут (возврат на полку), плашка короба не покажет «0 шт.».
+    """
+    cur.execute(
+        "SELECT COUNT(*) FROM marketplace_supply_items WHERE box_id = %s",
+        (int(box_id),),
+    )
+    qty = int((cur.fetchone() or [0])[0] or 0)
+    cur.execute(
+        "UPDATE marketplace_supply_boxes SET packed_qty = %s WHERE id = %s",
+        (qty, int(box_id)),
+    )
+    cur.execute(
+        "UPDATE goods_warehouse gw SET status = 'shipped', "
+        "  shipped_at = COALESCE(gw.shipped_at, now()) "
+        "FROM marketplace_supply_items msi "
+        "WHERE msi.goods_warehouse_id = gw.id AND msi.box_id = %s",
+        (int(box_id),),
+    )
+
+
+def unseal_box(cur, box_id):
+    """Снимает отгрузку с вещей короба: его открыли, чтобы поправить состав."""
+    cur.execute(
+        "UPDATE goods_warehouse gw SET status = 'awaiting_supply', shipped_at = NULL "
+        "FROM marketplace_supply_items msi "
+        "WHERE msi.goods_warehouse_id = gw.id AND msi.box_id = %s "
+        "  AND gw.status = 'shipped'",
+        (int(box_id),),
+    )
+    cur.execute(
+        "UPDATE marketplace_supply_boxes SET packed_qty = NULL WHERE id = %s",
+        (int(box_id),),
+    )
+
+
+def drop_stale_completed_supply_row(cur, goods_id):
+    """Убирает хвост вещи из СТАРОЙ выполненной поставки, не трогая закрытый короб.
+
+    Вещь могли вернуть на полку, а строка в открытом составе уехавшей поставки
+    осталась. Её снимаем, чтобы свободную вещь можно было положить в новый короб.
+
+    Закрытый короб FBO не трогаем: грузоместо уже на OZON, состав — история
+    отгрузки. Иначе каждый скан того же артикула обнулял бы короба уехавшей
+    заявки, хотя на площадке штуки на месте.
+    """
+    cur.execute(
+        "DELETE FROM marketplace_supply_items si "
+        "USING marketplace_supplies s "
+        "WHERE si.supply_id = s.id "
+        "  AND si.goods_warehouse_id = %s "
+        "  AND COALESCE(s.status, '') IN ('Выполнена', 'Отменена') "
+        "  AND NOT EXISTS (SELECT 1 FROM marketplace_supply_boxes b "
+        "                  WHERE b.id = si.box_id AND b.closed_at IS NOT NULL)",
+        (int(goods_id),),
+    )

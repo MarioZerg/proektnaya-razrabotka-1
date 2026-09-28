@@ -68,7 +68,11 @@ const SupplyBoxContents = ({
     )}
 
     {box.items.length === 0 ? (
-      <p className="text-sm text-muted-foreground">В коробе пока нет товаров</p>
+      <p className="text-sm text-muted-foreground">
+        {box.closedAt && box.packedQty
+          ? `Короб закрыт с ${box.packedQty} шт. — построчный состав не сохранился`
+          : 'В коробе пока нет товаров'}
+      </p>
     ) : (
       <div className="space-y-1.5">
         {groupedItems.map((row) => (

@@ -1,6 +1,7 @@
 import { Button } from '@/components/ui/button';
 import Icon from '@/components/ui/icon';
 import type { SupplyBox } from '@/lib/marketplaceSuppliesApi';
+import { boxPackedCount } from '@/components/crm/marketplaceSupplies/marketplaceSuppliesShared';
 
 interface SupplyBoxActionsProps {
   box: SupplyBox;
@@ -53,7 +54,7 @@ const SupplyBoxActions = ({
     {/* КОРОБ ЗАКРЫТ — ОБЪЯСНЯЕМ, ПОЧЕМУ СОСТАВ НЕ ПРАВИТСЯ, И ДАЁМ ВЫХОД.
         Раньше кладовщик видел просто заблокированные кнопки и решал, что
         количество вообще нельзя редактировать. */}
-    {isOzonFbo && box.closedAt && canEdit && box.items.length > 0 && (
+    {isOzonFbo && box.closedAt && canEdit && boxPackedCount(box) > 0 && (
       <div className="space-y-2 rounded-md border border-amber-300 bg-amber-50 p-3">
         <p className="flex items-start gap-2 text-sm text-amber-900">
           <Icon name="Lock" size={14} className="mt-0.5 shrink-0" />
@@ -76,7 +77,7 @@ const SupplyBoxActions = ({
 
     {/* OZON FBO: короб набит — закрываем. Сервер заводит грузоместо на OZON
         и возвращает этикетку на ЭТОТ короб, её сразу можно печатать. */}
-    {isOzonFbo && box.items.length > 0 && !box.closedAt && (
+    {isOzonFbo && boxPackedCount(box) > 0 && !box.closedAt && (
       <Button
         size="sm"
         className="w-full"
@@ -103,7 +104,7 @@ const SupplyBoxActions = ({
         площадке уже создавалось — номер приходил секундой позже. Та же
         кнопка «Получить этикетку» теперь сама доводит дело до конца:
         забирает номер по уже запущенной операции и тянет наклейку. */}
-    {isOzonFbo && box.closedAt && !box.stickerUrl && box.items.length > 0 && (
+    {isOzonFbo && box.closedAt && !box.stickerUrl && boxPackedCount(box) > 0 && (
       <div className="space-y-2 rounded-md border border-sky-300 bg-sky-50 p-3">
         <p className="flex items-start gap-2 text-sm text-sky-900">
           <Icon name="Info" size={14} className="mt-0.5 shrink-0" />

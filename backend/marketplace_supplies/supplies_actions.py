@@ -24,6 +24,7 @@ from shared import (
     check_unlabeled_bundles,
     deny_if_locked_by_other,
     deny_manager_fbs,
+    drop_stale_completed_supply_row,
     ensure_ozon_assembled,
     find_cancelled_items,
     get_supply_lock,
@@ -37,6 +38,7 @@ from shared import (
     resolve_ozon_barcode,
     restore_missing_workshop_goods,
     return_wb_order_to_accumulator,
+    seal_closed_box,
     upload_pass_sticker,
 )
 
@@ -1390,6 +1392,8 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                 (int(box_id),),
             )
             row = cur.fetchone()
+            if row:
+                seal_closed_box(cur, box_id)
             conn.commit()
             closed_at = (row[0].isoformat() + 'Z') if row and row[0] else None
             return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True, 'closedAt': closed_at})}
@@ -1521,6 +1525,15 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                     "                  WHERE si.goods_warehouse_id = gw.id "
                     "                    AND COALESCE(s2.status, '') "
                     "                        NOT IN ('Выполнена', 'Отменена')) "
+                    # Закрытый короб FBO — вещь уже в грузоместе на OZON.
+                    # Без этой проверки скан того же артикула в новую поставку
+                    # забирал вещи из уехавшей заявки: завершённая поставка
+                    # «не держит» состав, и короба обнулялись.
+                    "  AND NOT EXISTS (SELECT 1 FROM marketplace_supply_items si "
+                    "                  JOIN marketplace_supply_boxes bx ON bx.id = si.box_id "
+                    "                  WHERE si.goods_warehouse_id = gw.id "
+                    "                    AND bx.closed_at IS NOT NULL "
+                    "                    AND gw.status <> 'in_stock') "
                     # Чужое живое отправление не трогаем — см. пояснение выше.
                     "  AND (COALESCE(own.order_type, '') = 'FBO' "
                     f"       OR NOT {owner_alive}) "
@@ -1640,24 +1653,10 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
 
                 # ХВОСТ ОТ СТАРОЙ ВЫПОЛНЕННОЙ ПОСТАВКИ СНИМАЕМ МОЛЧА.
                 #
-                # Вещь могли снять с отгрузки и вернуть на полку, а строка в коробе
-                # уехавшей поставки осталась. Физически вещь свободна и лежит на
-                # полке, но числится уложенной — и всплывает у кладовщика при подборе
-                # FBS (так было с GW-729379, GW-723571, GW-729384).
-                #
-                # Блокировать по такой записи нельзя: поиск выше считает вещь
-                # свободной и сам её предлагает, а отказ здесь загонял бы кладовщика
-                # в тупик — вещь в руках, а положить её некуда. Поэтому устаревшую
-                # строку просто убираем: та поставка давно уехала, её состав ни на
-                # что не влияет, а расхождение уходит само.
-                cur.execute(
-                    "DELETE FROM marketplace_supply_items si "
-                    "USING marketplace_supplies s "
-                    "WHERE si.supply_id = s.id "
-                    "  AND si.goods_warehouse_id = %s "
-                    "  AND COALESCE(s.status, '') IN ('Выполнена', 'Отменена')",
-                    (int(fbo_gid),),
-                )
+                # Вещь могли снять с отгрузки и вернуть на полку, а строка в
+                # ОТКРЫТОМ составе уехавшей поставки осталась. Закрытый короб
+                # FBO не трогаем: его состав уже на OZON, это история отгрузки.
+                drop_stale_completed_supply_row(cur, fbo_gid)
 
                 # Товар должен физически лежать на складе. Уехавшую или списанную
                 # вещь в короб класть нечем — её нет.
@@ -1920,17 +1919,8 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                 }
 
             # Хвост от старой уехавшей поставки снимаем: вещь вернули на полку, а
-            # строка в коробе осталась. Она мешает положить свободную вещь в новый
-            # короб, хотя физически вещь лежит на складе. Подробнее — в сканировании
-            # ярлыка OZON выше.
-            cur.execute(
-                "DELETE FROM marketplace_supply_items si "
-                "USING marketplace_supplies s "
-                "WHERE si.supply_id = s.id "
-                "  AND si.goods_warehouse_id = %s "
-                "  AND COALESCE(s.status, '') IN ('Выполнена', 'Отменена')",
-                (goods_id,),
-            )
+            # строка в открытом составе осталась. Закрытый короб FBO не трогаем.
+            drop_stale_completed_supply_row(cur, goods_id)
 
             # «Уже в поставке» проверяем ПЕРЕД статусом: добавленный товар становится
             # 'reserved', и иначе кладовщик получал невнятное «уже зарезервирован»
@@ -2067,13 +2057,14 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
 
             cur.execute(
                 "SELECT msi.goods_warehouse_id, s.status, s.type, gw.storage_barcode, "
-                "o.order_number, sh.name, src.product, gw.receive_reason "
+                "o.order_number, sh.name, src.product, gw.receive_reason, mb.closed_at "
                 "FROM marketplace_supply_items msi "
                 "JOIN marketplace_supplies s ON s.id = msi.supply_id "
                 "JOIN goods_warehouse gw ON gw.id = msi.goods_warehouse_id "
                 "LEFT JOIN orders o ON o.id = gw.reserved_order_id "
                 "LEFT JOIN orders src ON src.id = gw.order_id "
                 "LEFT JOIN shelves sh ON sh.id = gw.shelf_id "
+                "LEFT JOIN marketplace_supply_boxes mb ON mb.id = msi.box_id "
                 "WHERE msi.id = %s",
                 (int(item_id),),
             )
@@ -2081,9 +2072,17 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
             if not row:
                 return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': 'Позиция не найдена'})}
             (goods_id, supply_status, supply_type, storage_barcode, reserved_order_number,
-             shelf_name, product, receive_reason) = row
+             shelf_name, product, receive_reason) = row[:8]
             if supply_status not in ('Открытая', 'На сборке'):
                 return {'statusCode': 409, 'headers': headers, 'body': json.dumps({'error': 'Из этой поставки уже нельзя убрать товар'})}
+            if row[8]:
+                return {
+                    'statusCode': 409, 'headers': headers,
+                    'body': json.dumps({
+                        'error': 'Короб закрыт — состав больше не меняется. '
+                                 'Откройте короб кнопкой «Открыть короб и поправить состав»',
+                    }, ensure_ascii=False),
+                }
 
             cur.execute(f"DELETE FROM marketplace_supply_items WHERE id = {int(item_id)}")
 
@@ -2605,6 +2604,22 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                 )
             elif new_status == 'Выполнена':
                 extra_sql = ", completed_at = now(), ship_to_marketplace_at = COALESCE(ship_to_marketplace_at, now())"
+                # Если «Отгрузка» пропустили или вещи короба не пометили, они
+                # остаются свободными — и следующий FBO-скан стирает состав
+                # уже закрытых коробов. Дожимаем отгрузку здесь.
+                cur.execute(
+                    "SELECT goods_warehouse_id FROM marketplace_supply_items "
+                    "WHERE supply_id = %s",
+                    (int(supply_id),),
+                )
+                leftover_ids = [r[0] for r in cur.fetchall()]
+                if leftover_ids:
+                    leftover_csv = ','.join(str(int(g)) for g in leftover_ids)
+                    cur.execute(
+                        f"UPDATE goods_warehouse SET status = 'shipped', "
+                        f"shipped_at = COALESCE(shipped_at, now()) "
+                        f"WHERE id IN ({leftover_csv})"
+                    )
 
             # Поставка ушла со сборки — снимаем блокировку, иначе она осталась бы
             # висеть на кладовщике и мешала бы вернуться к поставке при исправлении.

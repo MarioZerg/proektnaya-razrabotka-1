@@ -1949,7 +1949,14 @@ def handler(event: dict, context) -> dict:
                 "SELECT id FROM orders WHERE wb_order_id = %s OR order_number = %s",
                 (int(wb_order_id), str(wb_order_id)),
             )
-            if cur.fetchone():
+            existing_order = cur.fetchone()
+            if existing_order:
+                if wb.get('rid'):
+                    cur.execute(
+                        "UPDATE orders SET wb_rid = COALESCE(wb_rid, %s) "
+                        "WHERE id = %s AND wb_rid IS NULL",
+                        ((wb.get('rid') or '').strip() or None, existing_order[0]),
+                    )
                 skipped_existing += 1
                 continue
 
@@ -1968,10 +1975,10 @@ def handler(event: dict, context) -> dict:
             )
             # Номер заказа для сотрудников — id сборочного задания WB (например 5425685523).
             # Именно он показан продавцу в личном кабинете WB и на стикере, по нему заказ
-            # ищут в цеху. Поле rid не берём: это длинный технический код вида
-            # "eAD.iba337cd...1.0", который в кабинете нигде не виден и людям ни о чём
-            # не говорит.
+            # ищут в цеху. rid («eAD.iba337cd...1.0») людям не показываем, но сохраняем:
+            # отзывы WB приходят со srid = rid, без него нельзя понять, кто шил заказ.
             order_number = str(wb_order_id)
+            wb_rid = (wb.get('rid') or '').strip() or None
 
             # Время оформления заказа покупателем на WB (createdAt) — по нему считаем,
             # сколько заказ уже ждёт, а не с момента импорта в нашу систему.
@@ -1983,8 +1990,8 @@ def handler(event: dict, context) -> dict:
             cur.execute(
                 "INSERT INTO orders (order_number, marketplace, order_type, status, product, "
                 "quantity, source, material, width, height, wb_order_id, marketplace_created_at, "
-                "marketplace_item_id, shop_id) "
-                "VALUES (%s, 'WB', 'FBS', 'Новый', %s, 1, 'api', %s, %s, %s, %s, %s, %s, %s) "
+                "marketplace_item_id, shop_id, wb_rid) "
+                "VALUES (%s, 'WB', 'FBS', 'Новый', %s, 1, 'api', %s, %s, %s, %s, %s, %s, %s, %s) "
                 "ON CONFLICT (order_number) DO NOTHING RETURNING id",
                 (
                     order_number,
@@ -1996,6 +2003,7 @@ def handler(event: dict, context) -> dict:
                     mp_created_at,
                     int(item_id) if item_id else None,
                     shop_id,
+                    wb_rid,
                 ),
             )
             row_new = cur.fetchone()

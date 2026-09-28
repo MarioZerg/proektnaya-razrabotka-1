@@ -21,6 +21,7 @@ import type { SupplyDetail } from '@/lib/marketplaceSuppliesApi';
 import {
   goodsStatusLabel,
   mpStatusInfo,
+  boxPackedCount,
 } from '@/components/crm/marketplaceSupplies/marketplaceSuppliesShared';
 import type { GoodsWarehouseItem } from '@/lib/goodsWarehouseApi';
 import { useScannerAutoSubmit } from '@/hooks/useScannerAutoSubmit';
@@ -251,7 +252,7 @@ const SupplyItemsSection = ({
   // Полный список позиций — под раскрытием: он нужен для разбора конкретной
   // вещи, но занимать экран по умолчанию не должен.
   if (supply.type === 'FBO') {
-    const boxedItems = supply.boxes.reduce((sum, b) => sum + b.items.length, 0);
+    const boxedItems = supply.boxes.reduce((sum, b) => sum + boxPackedCount(b), 0);
     const closedBoxes = supply.boxes.filter((b) => b.closedAt).length;
     // Вещи, попавшие в поставку мимо коробов (сканирование в общий состав).
     const looseItems = supply.items.length - boxedItems;

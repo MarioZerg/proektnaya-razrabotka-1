@@ -16,6 +16,7 @@ import psycopg2
 
 OZON_API_BASE = 'https://api-seller.ozon.ru'
 WB_FEEDBACKS_BASE = 'https://feedbacks-api.wildberries.ru'
+WB_MARKET_BASE = 'https://marketplace-api.wildberries.ru'
 
 CORS_HEADERS = {
     'Access-Control-Allow-Origin': '*',
@@ -169,13 +170,87 @@ def fetch_wb_reviews(api_key, is_answered='false', skip=0, take=1000):
             'external_id': str(f.get('id') or ''),
             'srid': (f.get('srid') or '').strip(),
             'order_id': prod.get('orderId') or f.get('orderId'),
-            'nm_id': str(prod.get('nmId') or ''),
+            'nm_id': str(prod.get('nmId') or f.get('nmId') or ''),
             'product_name': (prod.get('productName') or '').strip(),
             'rating': f.get('productValuation'),
             'text': (f.get('text') or '').strip(),
             'review_date': _parse_dt(f.get('createdDate')),
         })
     return reviews, len(feedbacks)
+
+
+def wb_market_get(path, api_key):
+    """GET к marketplace-api WB — сборочные задания с rid, чтобы связать отзыв с заказом."""
+    req = urllib.request.Request(WB_MARKET_BASE + path, method='GET')
+    req.add_header('Authorization', api_key)
+    try:
+        with urllib.request.urlopen(req, timeout=25) as r:
+            return r.status, json.loads(r.read().decode('utf-8'))
+    except urllib.error.HTTPError as e:
+        raw = e.read().decode('utf-8', 'replace')
+        try:
+            return e.code, json.loads(raw)
+        except Exception:
+            return e.code, {'raw': raw[:300]}
+    except Exception as e:
+        return 0, {'raw': str(e)[:300]}
+
+
+def backfill_wb_rids(cur, api_key):
+    """Подставляет rid в старые заказы WB: без него отзыв не находит швею.
+
+    Отзыв WB приходит со srid = rid задания. Номер заказа у нас — id задания,
+    rid раньше выкидывали. Берём задания за последние полгода и дописываем rid.
+    """
+    date_from = int(datetime.now(timezone.utc).timestamp()) - 180 * 24 * 3600
+    next_val = 0
+    filled = 0
+    for _ in range(3):
+        st, data = wb_market_get(
+            f'/api/v3/orders?limit=1000&next={next_val}&dateFrom={date_from}',
+            api_key,
+        )
+        if st != 200 or not isinstance(data, dict):
+            break
+        orders = data.get('orders') or []
+        for o in orders:
+            oid = o.get('id')
+            rid = (o.get('rid') or '').strip()
+            if not oid or not rid:
+                continue
+            cur.execute(
+                "UPDATE orders SET wb_rid = %s "
+                "WHERE wb_order_id = %s AND wb_rid IS NULL "
+                "AND NOT EXISTS (SELECT 1 FROM orders x WHERE x.wb_rid = %s)",
+                (rid, int(oid), rid),
+            )
+            filled += cur.rowcount or 0
+        next_val = data.get('next') or 0
+        if not orders or not next_val:
+            break
+    return filled
+
+
+def resolve_wb_order(by_wb_order, by_rid, by_number, rv):
+    """Ищем наш FBS-заказ по полям отзыва WB: id задания, rid/srid, номер."""
+    if rv.get('order_id'):
+        try:
+            found = by_wb_order.get(int(rv['order_id']))
+        except (TypeError, ValueError):
+            found = None
+        if found:
+            return found
+    srid = rv.get('srid') or ''
+    if not srid:
+        return None
+    found = by_rid.get(srid) or by_number.get(srid)
+    if found:
+        return found
+    if srid.isdigit():
+        found = by_wb_order.get(int(srid)) or by_number.get(srid)
+        if found:
+            return found
+    return None
 
 
 # ---------- Сопоставление и сохранение ----------
@@ -266,23 +341,46 @@ def handle_sync(cur, body_data=None):
 
     if wb_on and wb_key:
         try:
+            if wb_skip == 0 and wb_stage == 'false':
+                try:
+                    backfill_wb_rids(cur, wb_key)
+                except Exception as e:
+                    warnings.append(f'WB rid: {e}')
+
             reviews, got = fetch_wb_reviews(wb_key, wb_stage, wb_skip, page_size)
 
-            # Заказы и уже сохранённые отзывы поднимаем разом, а не по одному на отзыв:
-            # иначе на порцию уходят сотни запросов и функция не укладывается по времени.
             ext_ids = [r['external_id'] for r in reviews if r.get('external_id')]
-            existing = set()
+            existing = {}
             if ext_ids:
                 cur.execute(
-                    "SELECT external_id FROM reviews WHERE marketplace = 'WB' "
+                    "SELECT external_id, order_id FROM reviews WHERE marketplace = 'WB' "
                     "AND external_id = ANY(%s)",
                     (ext_ids,),
                 )
-                existing = {r[0] for r in cur.fetchall()}
+                existing = {r[0]: r[1] for r in cur.fetchall()}
 
-            order_ids = [int(r['order_id']) for r in reviews if r.get('order_id')]
+            # Если WB отдал и id задания, и srid — дописываем rid заказу сразу.
+            for rv in reviews:
+                if not rv.get('order_id') or not rv.get('srid'):
+                    continue
+                try:
+                    cur.execute(
+                        "UPDATE orders SET wb_rid = COALESCE(wb_rid, %s) "
+                        "WHERE wb_order_id = %s AND wb_rid IS NULL",
+                        (rv['srid'], int(rv['order_id'])),
+                    )
+                except (TypeError, ValueError):
+                    pass
+
+            order_ids = []
+            for r in reviews:
+                if r.get('order_id'):
+                    try:
+                        order_ids.append(int(r['order_id']))
+                    except (TypeError, ValueError):
+                        pass
             srids = [r['srid'] for r in reviews if r.get('srid')]
-            by_wb_order, by_number = {}, {}
+            by_wb_order, by_number, by_rid = {}, {}, {}
             if order_ids:
                 cur.execute(
                     "SELECT wb_order_id, id FROM orders WHERE wb_order_id = ANY(%s)",
@@ -295,15 +393,25 @@ def handle_sync(cur, body_data=None):
                     (srids,),
                 )
                 by_number = {r[0]: r[1] for r in cur.fetchall()}
+                cur.execute(
+                    "SELECT wb_rid, id FROM orders WHERE wb_rid = ANY(%s)",
+                    (srids,),
+                )
+                by_rid = {r[0]: r[1] for r in cur.fetchall()}
 
             for rv in reviews:
-                if not rv['external_id'] or rv['external_id'] in existing:
+                if not rv['external_id']:
                     continue
-                order_id = None
-                if rv.get('order_id'):
-                    order_id = by_wb_order.get(int(rv['order_id']))
-                if not order_id and rv.get('srid'):
-                    order_id = by_number.get(rv['srid'])
+                order_id = resolve_wb_order(by_wb_order, by_rid, by_number, rv)
+                prev_order = existing.get(rv['external_id'], 'missing')
+                if prev_order != 'missing':
+                    if order_id and prev_order is None:
+                        cur.execute(
+                            "UPDATE reviews SET order_id = %s "
+                            "WHERE marketplace = 'WB' AND external_id = %s AND order_id IS NULL",
+                            (order_id, rv['external_id']),
+                        )
+                    continue
                 created += upsert_review(
                     cur, 'WB', rv['external_id'], order_id, rv['nm_id'],
                     rv['product_name'], rv['rating'], rv['text'], rv['review_date'],

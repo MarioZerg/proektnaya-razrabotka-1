@@ -62,12 +62,14 @@ const ShiftQrDialog = ({ open, onOpenChange }: ShiftQrDialogProps) => {
           {qrDataUrl ? (
             // Белая рамка вокруг кода: сканер плохо ловит код, вплотную прижатый
             // к краю экрана, — ему нужно светлое поле по периметру.
-            <div className="rounded-2xl border border-border bg-white p-4 shadow-sm sm:p-6">
+            <div className="relative isolate overflow-hidden rounded-2xl border border-border bg-white p-4 shadow-sm sm:p-6">
               <img
                 src={qrDataUrl}
                 alt="Персональный QR-код сотрудника"
-                className="h-auto w-full max-w-[18rem] sm:max-w-md"
+                className="relative z-0 h-auto w-full max-w-[18rem] sm:max-w-md"
               />
+              <span aria-hidden className="qr-hologram pointer-events-none absolute inset-0 z-[1]" />
+              <span aria-hidden className="qr-hologram-shine pointer-events-none absolute inset-0 z-[1]" />
             </div>
           ) : (
             <div className="flex h-64 w-64 items-center justify-center">

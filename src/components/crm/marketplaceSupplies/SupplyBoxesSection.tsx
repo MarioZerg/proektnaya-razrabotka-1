@@ -10,6 +10,7 @@ import {
 import Icon from '@/components/ui/icon';
 import type { SupplyDetail } from '@/lib/marketplaceSuppliesApi';
 import SupplyBoxCard from '@/components/crm/marketplaceSupplies/SupplyBoxCard';
+import { boxPackedCount } from '@/components/crm/marketplaceSupplies/marketplaceSuppliesShared';
 
 interface SupplyBoxesSectionProps {
   supply: SupplyDetail;
@@ -82,7 +83,7 @@ const SupplyBoxesSection = ({
   const [openBoxId, setOpenBoxId] = useState<number | null>(null);
 
   const closedCount = supply.boxes.filter((b) => b.closedAt).length;
-  const totalItems = supply.boxes.reduce((sum, b) => sum + b.items.length, 0);
+  const totalItems = supply.boxes.reduce((sum, b) => sum + boxPackedCount(b), 0);
 
   // Заявленное число мест — согласованная с маркетплейсом цифра: под неё забронирован
   // слот и заполнена накладная. Лишний короб на приёмке не ждут, поэтому кнопка гаснет

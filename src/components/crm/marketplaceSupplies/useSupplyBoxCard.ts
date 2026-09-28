@@ -5,6 +5,7 @@ import { useToast } from '@/hooks/use-toast';
 import { useScannerAutoSubmit } from '@/hooks/useScannerAutoSubmit';
 import { printWbBoxLabel } from '@/lib/wbBoxLabel';
 import { printBoxLabelFromUrl } from '@/lib/printMarketplaceLabel';
+import { boxPackedCount } from '@/components/crm/marketplaceSupplies/marketplaceSuppliesShared';
 
 /** Строка списка: одинаковые вещи короба, схлопнутые в одну позицию. */
 export interface GroupedBoxItem {
@@ -199,7 +200,7 @@ export const useSupplyBoxCard = ({
         box.stickerUrl,
         `Стикер короба №${box.boxNumber}`,
         box.ozonCargoId,
-        supply.boxes.filter((b) => b.items.length > 0),
+        supply.boxes.filter((b) => boxPackedCount(b) > 0),
       );
     } catch (e) {
       toast({

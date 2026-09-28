@@ -156,6 +156,11 @@ export interface SupplyBox {
   closedAt?: string | null;
   stickerUrl?: string | null;
   stickerName?: string | null;
+  /**
+   * Сколько штук было в коробе, когда его закрыли. После отгрузки строки вещей
+   * могут снять, а количество на плашке должно остаться.
+   */
+  packedQty?: number | null;
 }
 
 export interface WbSupplyOrder {
