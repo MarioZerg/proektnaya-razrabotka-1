@@ -402,7 +402,6 @@ const SupplyReceiveRows = ({
             onMeterage={applyScannedMeterage}
             lastQty={lastScan && lastScan.idx >= 0 ? lastScan.qty : null}
             onUndoLast={undoLastScan}
-            materialName={scanTarget?.materialName || ''}
             unit={scanTarget?.unit || 'м'}
           />
         </Suspense>

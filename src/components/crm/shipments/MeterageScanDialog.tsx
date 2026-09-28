@@ -3,7 +3,6 @@ import { Button } from '@/components/ui/button';
 import {
   Dialog,
   DialogContent,
-  DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
 import Icon from '@/components/ui/icon';
@@ -23,8 +22,6 @@ interface MeterageScanDialogProps {
   lastQty: string | null;
   /** Убрать последний рулон из приёмки, если скан ошибочный. */
   onUndoLast: () => void;
-  /** Какой материал сейчас сканируют — крупно в шапке, чтобы не перепутать ткань. */
-  materialName: string;
   unit: string;
 }
 
@@ -76,7 +73,7 @@ const getMeterageWorker = async (): Promise<TesseractWorker> => {
         }),
       ]);
       await worker.setParameters({
-        tessedit_char_whitelist: '0123456789.,м ',
+        tessedit_char_whitelist: '0123456789.,м øØ∅⌀',
         tessedit_pageseg_mode: '7',
       });
       return worker;
@@ -237,7 +234,6 @@ const MeterageScanDialog = ({
   onMeterage,
   lastQty,
   onUndoLast,
-  materialName,
   unit,
 }: MeterageScanDialogProps) => {
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -446,13 +442,9 @@ const MeterageScanDialog = ({
         overlayClassName="z-[60]"
         className="!fixed !left-0 !top-0 !z-[70] flex !h-[100dvh] !max-h-[100dvh] !w-full !max-w-full !translate-x-0 !translate-y-0 flex-col gap-2 overflow-y-auto overflow-x-hidden rounded-none p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:!left-[50%] sm:!top-[50%] sm:!h-auto sm:!max-h-[90dvh] sm:!w-full sm:!max-w-lg sm:!translate-x-[-50%] sm:!translate-y-[-50%] sm:rounded-lg sm:p-6 sm:pb-6"
       >
-        <DialogHeader className="shrink-0 space-y-1 pr-8 text-left">
-          <DialogTitle className="truncate text-xl font-bold leading-tight sm:text-2xl">
-            {materialName || 'Сканер метража'}
-          </DialogTitle>
-        </DialogHeader>
+        <DialogTitle className="sr-only">Метраж</DialogTitle>
 
-        <div className="shrink-0 rounded-md border border-border bg-muted/70 px-3 py-2.5">
+        <div className="shrink-0 rounded-md border border-border bg-muted/70 px-3 py-2.5 pr-10">
           {lastShown ? (
             <div className="flex items-center gap-2">
               <div className="min-w-0 flex-1">
@@ -478,13 +470,9 @@ const MeterageScanDialog = ({
                 <Icon name="X" size={22} />
               </Button>
             </div>
-          ) : (
-            <p className="text-base font-semibold leading-snug">
-              Наведите на метраж{materialName ? ` «${materialName}»` : ''}: число от 20, например 20,8
-            </p>
-          )}
+          ) : null}
           <p
-            className={`mt-1.5 text-base font-medium leading-snug ${
+            className={`text-base font-medium leading-snug ${lastShown ? 'mt-1.5' : ''} ${
               hint.includes('в строке') ? 'text-emerald-700' : 'text-foreground'
             }`}
           >

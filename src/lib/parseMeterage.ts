@@ -1,24 +1,35 @@
 /**
- * Метраж с бирки поставщика в зоне сканера.
- *
- * У нас рулоны от 20 до 200 м, в том числе ровные целые: «40», «50», «120», «200».
- * С десятичными: «86,3», «113.5», «120.8», «20.03», «20.10» — как на стикере.
- * Дату, год, штрихкод и куски артикула не подставляем.
+ * Метраж с бирки: только сетка от 20 до 200 м с шагом 0,1 —
+ * 20, 20.1, 20.2, … 199.9, 200. Любое другое число OCR отбрасываем.
  */
 
-const MIN_M = 20;
-const MAX_M = 200;
+const MIN_TENTHS = 200;
+const MAX_TENTHS = 2000;
 const TYPICAL_MAX = 170;
+
+/** Все допустимые длины в десятых долях метра: 200 → 20.0, 201 → 20.1, … 2000 → 200.0 */
+const ALLOWED_TENTHS = new Set<number>();
+for (let t = MIN_TENTHS; t <= MAX_TENTHS; t += 1) {
+  ALLOWED_TENTHS.add(t);
+}
 
 type Cand = { n: number; score: number };
 
 const roundM = (n: number) => Math.round(n * 100) / 100;
 
-const isMeterage = (n: number) => Number.isFinite(n) && n >= MIN_M && n <= MAX_M;
-
 const toNum = (raw: string) => {
   const n = Number(String(raw).replace(',', '.').trim());
   return Number.isFinite(n) ? n : NaN;
+};
+
+/** Только значение из сетки 20 / 20.1 / 20.2 / … / 200, иначе null. */
+const toAllowed = (n: number): number | null => {
+  if (!Number.isFinite(n)) return null;
+  const cents = Math.round(n * 100);
+  if (cents % 10 !== 0) return null;
+  const tenths = cents / 10;
+  if (!ALLOWED_TENTHS.has(tenths)) return null;
+  return tenths / 10;
 };
 
 const score = (n: number, fromLabel: boolean) => {
@@ -44,60 +55,58 @@ const bestUnique = (candidates: Cand[]): number | null => {
   return top.n;
 };
 
-const push = (list: Cand[], n: number, fromLabel: boolean) => {
+/**
+ * Ноль с косой OCR даёт 9. Подставляем 0, только если результат есть в сетке.
+ * 90 и 96.3 остаются: «00» / «06.3» в сетке нет.
+ */
+const slashedZeroFromNine = (n: number): number => {
   const rounded = roundM(n);
-  if (!isMeterage(rounded)) return;
-  // Палочка слева часто читается как «1»: «|50.8» → 150.8. Рулоны >170 м с десятыми
-  // почти не бывают — снимаем эту единицу. Целые 120 и 200 не трогаем.
-  if (!Number.isInteger(rounded) && rounded > TYPICAL_MAX && rounded < 200) {
-    const stripped = roundM(rounded - 100);
-    if (isMeterage(stripped) && stripped < 100) {
-      list.push({ n: stripped, score: score(stripped, fromLabel) + 1 });
-      return;
-    }
+  const asText = String(rounded);
+  if (!asText.includes('9')) return rounded;
+  const alt = toAllowed(Number(asText.replace(/9/g, '0')));
+  return alt ?? rounded;
+};
+
+const push = (list: Cand[], n: number, fromLabel: boolean) => {
+  const rounded = slashedZeroFromNine(n);
+  let allowed = toAllowed(rounded);
+  if (allowed == null && !Number.isInteger(rounded) && rounded > TYPICAL_MAX && rounded < 200) {
+    allowed = toAllowed(rounded - 100);
   }
-  list.push({ n: rounded, score: score(rounded, fromLabel) });
+  if (allowed == null) return;
+  list.push({ n: allowed, score: score(allowed, fromLabel) });
 };
 
 const cleanOcr = (text: string) =>
   text
-    .replace(/[oOоО]/g, '0')
+    .replace(/[oOоОøØ∅⌀]/g, '0')
     .replace(/[зЗ]/g, '3')
     .replace(/[，‚،]/g, ',')
     .replace(/[·∙•‧''′`´]/g, '.')
-    // Палочка или «l» МЕЖДУ цифрами — это запятая, а не единица в начале: «50|8» → 50.8
     .replace(/(\d{2,3})[lI|\/\\](\d{1,2})(?!\d)/g, '$1.$2')
-    // Единица только в начале трёхзначного с десятыми: «150.8» → «50.8». «120» не трогаем.
     .replace(/(^|[^\d])1([3-9]\d[.,]\d{1,2})(?!\d)/g, '$1$2')
     .replace(/\d{1,2}[.,/\-]\d{1,2}[.,/\-]\d{2,4}/g, ' ')
     .replace(/\d{5,}/g, ' ')
     .replace(/(\d{2,3})[^\d]{1,3}(\d{1,2})(?!\d)/g, '$1.$2');
 
 /**
- * Если OCR потерял запятую: «863» это 86.3, а не 863 м (таких рулонов нет).
- * «120» и «200» уже нормальная длина — оставляем как есть, не делаем из них 12.0.
- * Годы 2020–2039 не считаем метражом.
+ * Потерянная запятая: «863» → 86.3, если 86.3 в сетке.
+ * «120» и «200» уже в сетке — не превращаем в 12.0.
  */
 const restoreLostDot = (digits: string): number | null => {
   if (!/^\d{3,4}$/.test(digits)) return null;
   const raw = Number(digits);
   if (raw >= 2020 && raw <= 2039) return null;
   if (digits.length === 3) {
-    if (isMeterage(raw)) return null;
-    const tenths = roundM(raw / 10);
-    return isMeterage(tenths) ? tenths : null;
+    if (toAllowed(raw) != null) return null;
+    return toAllowed(raw / 10);
   }
-  const hundredths = roundM(raw / 100);
-  const tenths = roundM(raw / 10);
-  const a = isMeterage(hundredths) ? hundredths : null;
-  const b = isMeterage(tenths) ? tenths : null;
-  if (a != null && b != null && a !== b) return null;
-  return a ?? b;
+  const hundredths = toAllowed(raw / 100);
+  const tenths = toAllowed(raw / 10);
+  if (hundredths != null && tenths != null && hundredths !== tenths) return null;
+  return hundredths ?? tenths;
 };
 
-/**
- * Возвращает метраж одного рулона или null, если в зоне нет одной явной длины.
- */
 export const parseMeterageFromOcr = (text: string): number | null => {
   if (!text.trim()) return null;
   const cleaned = cleanOcr(text);
@@ -121,23 +130,26 @@ export const parseMeterageFromOcr = (text: string): number | null => {
   const digitRuns = cleaned.match(/\d+/g) || [];
   if (digitRuns.length === 1 && (digitRuns[0].length === 3 || digitRuns[0].length === 4)) {
     const restored = restoreLostDot(digitRuns[0]);
-    if (restored != null) return restored;
+    if (restored != null) return toAllowed(slashedZeroFromNine(restored));
   }
 
   const withoutDecimals = cleaned.replace(/\d{2,3}[.,]\d{1,2}/g, ' ');
   const intTokens = [...withoutDecimals.matchAll(/\d{2,3}/g)].map((m) => m[0]);
   const ints = intTokens.map(toNum).filter((n) => Number.isFinite(n));
-  const uniqInts = [...new Set(ints.filter(isMeterage).map(roundM))];
+  const uniqAllowed = [...new Set(ints.map(toAllowed).filter((n): n is number => n != null))];
 
-  if (uniqInts.length === 1) {
-    const otherTokens = intTokens.filter((t) => toNum(t) !== uniqInts[0]);
-    if (otherTokens.length === 0) return uniqInts[0];
+  if (uniqAllowed.length === 1) {
+    const otherTokens = intTokens.filter((t) => toAllowed(toNum(t)) !== uniqAllowed[0]);
+    if (otherTokens.length === 0) {
+      const v = toAllowed(slashedZeroFromNine(uniqAllowed[0]));
+      return v;
+    }
     if (otherTokens.length === 1) {
       const fracToken = otherTokens[0];
       const frac = toNum(fracToken);
       if (frac > 0 && frac <= 99) {
-        const combined = roundM(uniqInts[0] + frac / (fracToken.length >= 2 ? 100 : 10));
-        if (isMeterage(combined)) return combined;
+        const combined = uniqAllowed[0] + frac / (fracToken.length >= 2 ? 100 : 10);
+        return toAllowed(slashedZeroFromNine(combined));
       }
     }
   }
@@ -146,13 +158,17 @@ export const parseMeterageFromOcr = (text: string): number | null => {
     const whole = toNum(intTokens[0]);
     const fracToken = intTokens[1];
     const frac = toNum(fracToken);
-    if (isMeterage(whole) && frac >= 0 && frac <= 99) {
-      const combined = roundM(whole + frac / (fracToken.length >= 2 ? 100 : 10));
-      if (isMeterage(combined) && combined !== whole) return combined;
+    if (toAllowed(whole) != null && frac >= 0 && frac <= 99) {
+      const combined = whole + frac / (fracToken.length >= 2 ? 100 : 10);
+      const v = toAllowed(slashedZeroFromNine(combined));
+      if (v != null && v !== toAllowed(whole)) return v;
     }
   }
 
   return null;
 };
 
-export const formatMeterage = (n: number) => String(roundM(n));
+export const formatMeterage = (n: number) => {
+  const allowed = toAllowed(n);
+  return String(allowed ?? roundM(n));
+};
