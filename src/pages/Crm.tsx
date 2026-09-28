@@ -33,7 +33,7 @@ const CrmDashboard = () => {
   } = useCrmDashboardData();
 
   const content = (
-    <div className="space-y-8">
+    <div className="space-y-5 md:space-y-8">
       <CrmDashboardHeader
         userName={user?.name}
         userId={user?.id}

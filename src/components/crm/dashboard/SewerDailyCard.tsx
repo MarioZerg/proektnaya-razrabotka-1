@@ -71,11 +71,11 @@ const SewerDailyCard = ({ onlyUserId }: SewerDailyCardProps) => {
     <Card className="border-amber-300 bg-amber-50 shadow-none">
       <CardContent className="space-y-3 pt-5">
         <div>
-          <p className="flex items-center gap-1.5 font-bold text-amber-900">
-            <Icon name="Zap" size={16} className="text-amber-600" />
-            {info.title} — только сегодня
+          <p className="flex items-start gap-1.5 font-bold leading-snug text-amber-900">
+            <Icon name="Zap" size={16} className="mt-0.5 shrink-0 text-amber-600" />
+            <span className="min-w-0">{info.title} — только сегодня</span>
           </p>
-          <p className="mt-0.5 text-sm text-amber-900">
+          <p className="mt-0.5 text-sm leading-snug text-amber-900">
             Упакуйте <span className="font-bold">{info.target} пог.м.</span> за сегодня и
             получите <span className="font-bold">{formatMoney(info.amount)}</span> на баланс
           </p>

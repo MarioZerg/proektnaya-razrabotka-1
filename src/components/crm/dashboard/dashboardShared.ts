@@ -47,6 +47,11 @@ export const productionOrder = (label: string) => {
 
 export interface DashboardWidgetData {
   label: string;
+  /**
+   * Короткая подпись для мини-плитки на телефоне. Длинные названия в две колонки
+   * растягиваются на всю ширину карточки и читаются хуже, чем укороченный вариант.
+   */
+  shortLabel?: string;
   value: number;
   icon: string;
   tone: 'default' | 'warning' | 'urgent';

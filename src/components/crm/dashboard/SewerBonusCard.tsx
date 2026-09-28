@@ -74,7 +74,7 @@ const SewerBonusCard = ({ onlyUserId }: SewerBonusCardProps) => {
               <Icon name="Trophy" size={16} className="text-violet-600" />
               Премия за выработку
             </p>
-            <p className="mt-0.5 text-sm text-violet-900">
+            <p className="mt-0.5 text-sm leading-snug text-violet-900">
               {formatDay(info.periodFrom)} — {formatDay(info.periodTo)}: сдайте{' '}
               <span className="font-bold">{info.target} пог.м.</span> на стикеровку и
               получите <span className="font-bold">{formatMoney(info.amount)}</span> на баланс

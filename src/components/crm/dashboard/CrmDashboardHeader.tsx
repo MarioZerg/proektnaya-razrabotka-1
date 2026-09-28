@@ -43,13 +43,13 @@ const CrmDashboardHeader = ({
           открывает смену и весь день работает на складе. Обращение по имени
           и своя смена сразу под заголовком превращают общий дашборд в
           личное пространство. */}
-      <h1 className="text-xl font-bold">
+      <h1 className="truncate text-xl font-bold">
         {isStorekeeper ? `Склад · ${userName || ''}`.trim() : 'Главная'}
       </h1>
-      <p className="mt-1 text-sm text-muted-foreground">
+      <p className="mt-1 max-w-[40ch] text-sm leading-snug text-muted-foreground">
         {isStorekeeper
-          ? 'Ваша смена, приёмка и отгрузки на сегодня'
-          : 'Обзор производства и складских процессов на сегодня'}
+          ? 'Смена, приёмка и отгрузки на сегодня'
+          : 'Производство и склад на сегодня'}
       </p>
     </div>
 

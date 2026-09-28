@@ -83,7 +83,7 @@ const MyShiftCard = ({ me, loading, error, onRetry }: MyShiftCardProps) => {
       }`}
     >
       <CardContent className="p-4">
-        <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div className="min-w-0">
             <div className="flex items-center gap-2">
               <span
@@ -97,23 +97,30 @@ const MyShiftCard = ({ me, loading, error, onRetry }: MyShiftCardProps) => {
             </div>
 
             {open && me.openedAt ? (
-              <p className="mt-1 text-sm text-muted-foreground">
+              <p className="mt-1 text-sm leading-snug text-muted-foreground">
                 С {atTime(me.openedAt)} · отработано{' '}
                 <span className="font-semibold text-foreground">
                   {workedFor(me.openedAt, now)}
                 </span>
               </p>
             ) : (
-              <p className="mt-1 text-sm text-muted-foreground">
-                {shortTime(me.shiftFrom) && shortTime(me.shiftTo)
-                  ? `Ваш график: ${shortTime(me.shiftFrom)}—${shortTime(me.shiftTo)}. Смена открывается на терминале в цехе`
-                  : 'Смена открывается на терминале в цехе'}
+              <p className="mt-1 text-sm leading-snug text-muted-foreground">
+                {shortTime(me.shiftFrom) && shortTime(me.shiftTo) ? (
+                  <>
+                    График {shortTime(me.shiftFrom)}—{shortTime(me.shiftTo)}
+                    <span className="mt-0.5 block text-xs">
+                      Открыть смену — на терминале в цехе
+                    </span>
+                  </>
+                ) : (
+                  'Смена открывается на терминале в цехе'
+                )}
               </p>
             )}
           </div>
 
           {rate > 0 && (
-            <div className="text-right">
+            <div className="shrink-0 sm:text-right">
               <p className="text-xs text-muted-foreground">Оклад за смену</p>
               <p className="text-xl font-bold">{formatMoney(rate)} ₽</p>
             </div>
@@ -131,7 +138,7 @@ const MyShiftCard = ({ me, loading, error, onRetry }: MyShiftCardProps) => {
                 closeReady ? 'text-emerald-600' : 'text-muted-foreground'
               }`}
             />
-            <p className="text-muted-foreground">
+            <p className="text-muted-foreground leading-snug">
               {closeReady ? (
                 <>
                   Смену можно закрывать — после закрытия на терминале вам

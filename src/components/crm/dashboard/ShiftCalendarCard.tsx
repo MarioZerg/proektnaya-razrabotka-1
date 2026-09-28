@@ -103,8 +103,8 @@ const ShiftCalendarCard = ({ selectedDate, onSelectDate, days }: ShiftCalendarCa
   return (
     <Card className="border-border shadow-none lg:col-span-2">
       <CardHeader className="space-y-3 pb-3">
-        <div className="flex items-center justify-between gap-2">
-          <CardTitle className="text-base">Календарь смен</CardTitle>
+        <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1">
+          <CardTitle className="text-base leading-tight">Календарь смен</CardTitle>
           <div className="flex items-center gap-1">
             <Button
               size="sm"
@@ -233,14 +233,20 @@ const ShiftCalendarCard = ({ selectedDate, onSelectDate, days }: ShiftCalendarCa
               <span className="block text-sm font-medium">
                 {selectedDate ? format(selectedDate, 'd MMMM, EEEE', { locale: ru }) : 'Выберите день'}
               </span>
-              <span className="block text-xs text-muted-foreground">
-                {people.length
-                  ? `вышло ${people.length}` +
-                    (selectedRecord?.shifts?.length
-                      ? ` · смены ${selectedRecord.shifts.join(', ')}`
-                      : '') +
-                    (selectedRecord?.totalHours ? ` · ${selectedRecord.totalHours} ч` : '')
-                  : 'смен не было'}
+              <span className="mt-0.5 flex flex-wrap gap-x-2 gap-y-0.5 text-xs text-muted-foreground">
+                {people.length ? (
+                  <>
+                    <span>вышло {people.length}</span>
+                    {!!selectedRecord?.shifts?.length && (
+                      <span>смены {selectedRecord.shifts.join(', ')}</span>
+                    )}
+                    {selectedRecord?.totalHours != null && (
+                      <span>{selectedRecord.totalHours} ч</span>
+                    )}
+                  </>
+                ) : (
+                  'смен не было'
+                )}
               </span>
             </span>
             {!!selectedRecord?.lateCount && (
@@ -260,9 +266,9 @@ const ShiftCalendarCard = ({ selectedDate, onSelectDate, days }: ShiftCalendarCa
           {detailsOpen && people.length > 0 && (
             <div className="max-h-56 divide-y overflow-y-auto border-t">
               {people.map((p) => (
-                <div key={p.userId} className="flex items-center gap-2 px-3 py-1.5">
+                <div key={p.userId} className="flex items-start gap-2 px-3 py-1.5">
                   <span
-                    className={`h-1.5 w-1.5 shrink-0 rounded-full ${
+                    className={`mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full ${
                       p.open ? 'bg-emerald-500' : 'bg-muted-foreground/30'
                     }`}
                   />
@@ -279,16 +285,18 @@ const ShiftCalendarCard = ({ selectedDate, onSelectDate, days }: ShiftCalendarCa
                     <Icon
                       name="AlarmClock"
                       size={13}
-                      className="shrink-0 text-destructive"
+                      className="mt-0.5 shrink-0 text-destructive"
                       aria-label="Опоздание"
                     />
                   )}
                   {p.openedAt && (
-                    <span className="shrink-0 text-right text-[11px] tabular-nums text-muted-foreground">
-                      {p.openedAt}
-                      {p.closedAt ? `–${p.closedAt}` : ' →'}
+                    <span className="shrink-0 text-right text-[11px] leading-tight tabular-nums text-muted-foreground">
+                      <span className="block">
+                        {p.openedAt}
+                        {p.closedAt ? `–${p.closedAt}` : ' →'}
+                      </span>
                       {p.hours != null && (
-                        <span className="ml-1 font-medium text-foreground">{p.hours} ч</span>
+                        <span className="font-medium text-foreground">{p.hours} ч</span>
                       )}
                     </span>
                   )}

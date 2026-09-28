@@ -99,7 +99,7 @@ const AwardCard = ({ userId }: AwardCardProps) => {
 
   return (
     <Card className="overflow-hidden border-0 bg-gradient-to-br from-amber-500 via-orange-500 to-rose-500 text-white shadow-lg">
-      <CardContent className="space-y-4 p-5 sm:p-6">
+      <CardContent className="space-y-4 p-4 sm:p-6">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
             <p className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-white/80">
@@ -130,7 +130,7 @@ const AwardCard = ({ userId }: AwardCardProps) => {
             {cells.map((c) => (
               <div
                 key={c.label}
-                className="min-w-[58px] flex-1 rounded-xl bg-white/15 px-2 py-2 text-center backdrop-blur-sm"
+                className="min-w-0 flex-1 rounded-xl bg-white/15 px-1.5 py-2 text-center backdrop-blur-sm sm:min-w-[58px] sm:px-2"
               >
                 <p className="text-xl font-bold tabular-nums leading-none sm:text-2xl">
                   {String(c.value).padStart(2, '0')}

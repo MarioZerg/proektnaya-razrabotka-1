@@ -30,7 +30,7 @@ export const buildDashboardWidgets = ({
   // здесь: швея и закройщик видят ТОЛЬКО свою работу (сервер получил роль и id
   // и отфильтровал), «Новые задания» и «Раскроено» — общая очередь на всех.
   const list: DashboardWidgetData[] = [
-    { label: 'Новые задания на пошив', value: summary.newOrders, icon: 'ListPlus', tone: 'default', path: '/crm/marketplace/sewing-items', stage: 'production', hint: 'Заказы приняты и ждут, когда их возьмут в работу' },
+    { label: 'Новые задания на пошив', shortLabel: 'Новые задания', value: summary.newOrders, icon: 'ListPlus', tone: 'default', path: '/crm/marketplace/sewing-items', stage: 'production', hint: 'Заказы приняты и ждут, когда их возьмут в работу' },
     // Швее и закройщику подписываем «У меня», чтобы цифра не читалась как объём
     // всего цеха: у них в этих виджетах теперь только собственные заказы.
     { label: isSewer ? 'У меня в пошиве' : 'Товары в пошиве', value: summary.inSewing, icon: 'Shirt', tone: 'default', path: '/crm/marketplace/sewing-items', stage: 'production', hint: isSewer ? 'Вещи, которые вы шьёте прямо сейчас' : 'Вещи в работе у швей' },
@@ -43,10 +43,10 @@ export const buildDashboardWidgets = ({
     // Срочные FBS — это работа цеха, а не отдельная тревога: их шьют в общем
     // потоке, просто в первую очередь. Поэтому плитка стоит в производстве,
     // первой в цепочке, и остаётся красной — приоритет никуда не делся.
-    { label: 'Срочные заказы (FBS)', value: summary.urgentFbs, icon: 'Zap', tone: 'urgent', path: '/crm/marketplace/sewing-items?type=FBS', stage: 'production', hint: 'Отгрузка сегодня — делать в первую очередь' },
-    { label: 'Не отгруженные поставки в цех', value: summary.notShippedToWorkshop, icon: 'TruckElectric', tone: 'warning', path: '/crm/shipments/to-workshop', stage: 'warehouse', hint: 'Материал собран, но со склада ещё не уехал' },
-    { label: 'Не принятые поставки в цехе', value: summary.notReceivedInWorkshop, icon: 'PackageX', tone: 'warning', path: '/crm/shipments/to-workshop', stage: 'warehouse', hint: 'Привезли в цех, но приёмку никто не подтвердил' },
-    { label: isSewer || isCutter ? 'Мои на стикеровке' : 'Товары на стикеровке', value: summary.inStickering, icon: 'Tag', tone: 'default', path: '/crm/marketplace/sewing-items', stage: 'production', hint: 'Сшито и ждёт наклейки стикера маркетплейса' },
+    { label: 'Срочные заказы (FBS)', shortLabel: 'Срочные FBS', value: summary.urgentFbs, icon: 'Zap', tone: 'urgent', path: '/crm/marketplace/sewing-items?type=FBS', stage: 'production', hint: 'Отгрузка сегодня — делать в первую очередь' },
+    { label: 'Не отгруженные поставки в цех', shortLabel: 'Не отгружено в цех', value: summary.notShippedToWorkshop, icon: 'TruckElectric', tone: 'warning', path: '/crm/shipments/to-workshop', stage: 'warehouse', hint: 'Материал собран, но со склада ещё не уехал' },
+    { label: 'Не принятые поставки в цехе', shortLabel: 'Не принято в цехе', value: summary.notReceivedInWorkshop, icon: 'PackageX', tone: 'warning', path: '/crm/shipments/to-workshop', stage: 'warehouse', hint: 'Привезли в цех, но приёмку никто не подтвердил' },
+    { label: isSewer || isCutter ? 'Мои на стикеровке' : 'Товары на стикеровке', shortLabel: isSewer || isCutter ? undefined : 'На стикеровке', value: summary.inStickering, icon: 'Tag', tone: 'default', path: '/crm/marketplace/sewing-items', stage: 'production', hint: 'Сшито и ждёт наклейки стикера маркетплейса' },
     // «Раскроено» — тоже не для швеи: это итог работы закройщиков, а очередь,
     // из которой швея берёт вещи, у неё в «Новых заданиях».
     ...(isSewer
@@ -64,6 +64,7 @@ export const buildDashboardWidgets = ({
     // строкой «Заказы с полок».
     list.splice(4, 0, {
       label: 'Отменено — забрать из цеха на полку',
+      shortLabel: 'Забрать из цеха',
       value: awaitingShelf,
       icon: 'PackageCheck',
       tone: awaitingShelf > 0 ? 'urgent' : 'default',
@@ -77,6 +78,7 @@ export const buildDashboardWidgets = ({
     });
     list.splice(5, 0, {
       label: 'Собрать с полок под заказы',
+      shortLabel: 'Собрать с полок',
       value: awaitingShipLabel,
       icon: 'PackageSearch',
       tone: awaitingShipLabel > 0 ? 'urgent' : 'default',
@@ -97,6 +99,7 @@ export const buildDashboardWidgets = ({
     // руководителя.
     list.push({
       label: 'Возвраты с ПВЗ — разобрать',
+      shortLabel: 'Возвраты с ПВЗ',
       value: returnsPickedUp,
       icon: 'PackageOpen',
       tone: returnsPickedUp > 0 ? 'urgent' : 'default',
@@ -115,6 +118,7 @@ export const buildDashboardWidgets = ({
     // виджете ниже.
     list.push({
       label: 'Рулоны с малым остатком',
+      shortLabel: 'Малый остаток',
       value: summary.lowStockRolls || 0,
       icon: 'AlertTriangle',
       tone: 'urgent',
@@ -137,6 +141,7 @@ export const buildDashboardWidgets = ({
   if (duplicates > 0) {
     list.unshift({
       label: 'Задвоенные заказы — проверить',
+      shortLabel: 'Задвоенные заказы',
       value: duplicates,
       icon: 'CopyX',
       tone: 'urgent',

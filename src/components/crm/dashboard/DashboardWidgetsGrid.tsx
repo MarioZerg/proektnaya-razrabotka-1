@@ -88,14 +88,14 @@ const DashboardWidgetsGrid = ({ widgets, loading }: DashboardWidgetsGridProps) =
             <span className="h-px flex-1 bg-border" />
           </div>
 
-          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 sm:gap-3 lg:grid-cols-3 xl:grid-cols-4">
+          <div className="grid grid-cols-2 gap-2 md:grid-cols-2 md:gap-3 lg:grid-cols-3 xl:grid-cols-4">
             {group.items.map((w) => {
             const motion = tileMotion(w, loading);
             return (
               <Card
                 key={w.label}
                 onClick={() => navigate(w.path)}
-                className={`group relative cursor-pointer overflow-hidden border p-3 transition-all hover:shadow-md sm:flex sm:flex-col sm:gap-3 sm:p-4 ${
+                className={`group relative min-w-0 cursor-pointer overflow-hidden border p-2.5 transition-all hover:shadow-md md:flex md:flex-col md:gap-3 md:p-4 ${
                   motion === 'alert' ? 'animate-tile-alert' : toneCard[w.tone]
                 }`}
               >
@@ -112,35 +112,30 @@ const DashboardWidgetsGrid = ({ widgets, loading }: DashboardWidgetsGridProps) =
                     className="pointer-events-none absolute inset-y-0 left-0 w-1/3 animate-tile-sheen bg-gradient-to-r from-transparent via-white/70 to-transparent"
                   />
                 )}
-                {/* ТЕЛЕФОН — одна строка: значок, подпись, цифра.
-                    Полная карточка на телефоне занимала почти четверть экрана, и
-                    десяток показателей превращался в долгую прокрутку. В строке те
-                    же данные читаются сразу, а список целиком помещается на
-                    один-два экрана. Подсказку и кнопку «Открыть» здесь прячем:
-                    подпись и так говорит, о чём показатель, а нажимается вся строка. */}
-                <div className="relative flex items-center gap-3 sm:hidden">
-                  <span
-                    className={`grid h-9 w-9 shrink-0 place-items-center rounded-lg ${toneIcon[w.tone]}`}
-                  >
-                    <Icon name={w.icon} size={18} />
-                  </span>
-                  <p className="min-w-0 flex-1 text-sm font-semibold leading-snug">
-                    {w.label}
+                {/* ТЕЛЕФОН — мини-плитка в две колонки. Полная ширина с длинной
+                    подсказкой растягивала текст на весь экран и превращала
+                    десяток показателей в простыню. Здесь значок и цифра сверху,
+                    название в две строки — карточки читаются сеткой. */}
+                <div className="relative md:hidden">
+                  <div className="flex items-start justify-between gap-2">
+                    <span
+                      className={`grid h-8 w-8 shrink-0 place-items-center rounded-lg ${toneIcon[w.tone]}`}
+                    >
+                      <Icon name={w.icon} size={16} />
+                    </span>
+                    <span
+                      className={`min-w-0 text-right text-xl font-bold leading-none tabular-nums tracking-tight ${toneValue[w.tone]}`}
+                    >
+                      {loading ? '—' : w.value}
+                    </span>
+                  </div>
+                  <p className="mt-1.5 line-clamp-2 break-words text-xs font-semibold leading-tight">
+                    {w.shortLabel || w.label}
                   </p>
-                  <span
-                    className={`shrink-0 text-2xl font-bold leading-none tracking-tight ${toneValue[w.tone]}`}
-                  >
-                    {loading ? '—' : w.value}
-                  </span>
-                  <Icon
-                    name="ChevronRight"
-                    size={16}
-                    className="shrink-0 text-muted-foreground"
-                  />
                 </div>
 
-                {/* ПЛАНШЕТ И КОМПЬЮТЕР — прежняя крупная карточка, без изменений. */}
-                <div className="hidden sm:contents">
+                {/* ПЛАНШЕТ И КОМПЬЮТЕР — прежняя крупная карточка. */}
+                <div className="hidden md:contents">
                   {/* Верхняя строка: крупный значок слева, цифра справа — самое
                       важное читается одним взглядом, не вчитываясь в подписи. */}
                   <div className="relative flex items-start justify-between gap-3">
@@ -157,7 +152,7 @@ const DashboardWidgetsGrid = ({ widgets, loading }: DashboardWidgetsGridProps) =
                   </div>
 
                   <div className="relative min-w-0 space-y-1">
-                    <p className="text-sm font-semibold leading-snug">{w.label}</p>
+                    <p className="line-clamp-2 text-sm font-semibold leading-snug">{w.label}</p>
                     {w.hint && (
                       <p className="line-clamp-2 text-xs leading-snug text-muted-foreground">
                         {w.hint}

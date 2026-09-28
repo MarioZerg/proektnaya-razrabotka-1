@@ -130,11 +130,11 @@ const FboShipmentsCard = () => {
               >
                 <div className="flex items-start gap-2">
                   <Icon name="TriangleAlert" size={20} className="mt-0.5 shrink-0" />
-                  <div>
-                    <p className="font-bold">
+                  <div className="min-w-0">
+                    <p className="font-bold leading-snug">
                       Поставка {item.supplyNumber || `#${item.id}`} уехала в газельку?
                     </p>
-                    <p className="text-sm">
+                    <p className="text-sm leading-snug">
                       Отгрузка была назначена на {fmtDateTime(item.shipToGazelkaAt)}, но
                       отметки нет — поставка числится в статусе «{item.status}»
                     </p>

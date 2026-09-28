@@ -41,10 +41,12 @@ const WorkingTodayCard = () => {
   return (
     <Card className="border-border shadow-none">
       <CardContent className="space-y-3 pt-6">
-        <div className="flex items-center gap-2">
-          <Icon name="Users" size={18} className="text-muted-foreground" />
+        <div className="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-0.5">
+          <Icon name="Users" size={18} className="shrink-0 text-muted-foreground" />
           <p className="font-medium">Сегодня работают</p>
-          <span className="text-sm text-muted-foreground">· {today}</span>
+          <span className="basis-full text-sm capitalize text-muted-foreground sm:basis-auto">
+            {today}
+          </span>
         </div>
 
         {listError ? (
@@ -63,11 +65,11 @@ const WorkingTodayCard = () => {
             Сегодня выходной — по графику ни одна смена не работает.
           </p>
         ) : (
-          <div className="flex flex-wrap gap-2">
+          <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
             {shifts.map((s) => (
               <div
                 key={`${s.workshopId}-${s.shiftNumber}`}
-                className="flex items-center gap-2 rounded-md border border-border px-3 py-2"
+                className="flex min-w-0 items-center justify-between gap-2 rounded-md border border-border px-3 py-2 sm:justify-start"
               >
                 <div>
                   <p className="text-sm font-medium">{s.shiftName}</p>

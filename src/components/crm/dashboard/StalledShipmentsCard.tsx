@@ -53,9 +53,12 @@ const StalledShipmentsCard = () => {
           <p className="font-semibold text-red-900">
             Зависшие отправления: {total || items.length} шт
           </p>
-          <p className="mt-0.5 text-sm text-red-900">
-            Маркетплейс ждёт эти заказы, но по ним никто не работает: в цех они не
-            попали, у кладовщика в подборе их тоже нет. Проверьте на складе.
+          <p className="mt-0.5 text-sm leading-snug text-red-900">
+            <span className="md:hidden">В цех не попали, в подборе их нет.</span>
+            <span className="hidden md:inline">
+              Маркетплейс ждёт эти заказы, но по ним никто не работает: в цех они не
+              попали, у кладовщика в подборе их тоже нет. Проверьте на складе.
+            </span>
           </p>
 
           <div className="mt-3 space-y-1.5">
