@@ -47,19 +47,30 @@ const bestUnique = (candidates: Cand[]): number | null => {
 const push = (list: Cand[], n: number, fromLabel: boolean) => {
   const rounded = roundM(n);
   if (!isMeterage(rounded)) return;
+  // Палочка слева часто читается как «1»: «|50.8» → 150.8. Рулоны >170 м с десятыми
+  // почти не бывают — снимаем эту единицу. Целые 120 и 200 не трогаем.
+  if (!Number.isInteger(rounded) && rounded > TYPICAL_MAX && rounded < 200) {
+    const stripped = roundM(rounded - 100);
+    if (isMeterage(stripped) && stripped < 100) {
+      list.push({ n: stripped, score: score(stripped, fromLabel) + 1 });
+      return;
+    }
+  }
   list.push({ n: rounded, score: score(rounded, fromLabel) });
 };
 
 const cleanOcr = (text: string) =>
   text
     .replace(/[oOоО]/g, '0')
-    .replace(/[lI|]/g, '1')
     .replace(/[зЗ]/g, '3')
     .replace(/[，‚،]/g, ',')
     .replace(/[·∙•‧''′`´]/g, '.')
+    // Палочка или «l» МЕЖДУ цифрами — это запятая, а не единица в начале: «50|8» → 50.8
+    .replace(/(\d{2,3})[lI|\/\\](\d{1,2})(?!\d)/g, '$1.$2')
+    // Единица только в начале трёхзначного с десятыми: «150.8» → «50.8». «120» не трогаем.
+    .replace(/(^|[^\d])1([3-9]\d[.,]\d{1,2})(?!\d)/g, '$1$2')
     .replace(/\d{1,2}[.,/\-]\d{1,2}[.,/\-]\d{2,4}/g, ' ')
     .replace(/\d{5,}/g, ' ')
-    // «50m8» / «50 80»: OCR подменил запятую буквой или пробелом
     .replace(/(\d{2,3})[^\d]{1,3}(\d{1,2})(?!\d)/g, '$1.$2');
 
 /**
@@ -114,7 +125,7 @@ export const parseMeterageFromOcr = (text: string): number | null => {
   }
 
   const withoutDecimals = cleaned.replace(/\d{2,3}[.,]\d{1,2}/g, ' ');
-  const intTokens = [...withoutDecimals.matchAll(/\d{1,3}/g)].map((m) => m[0]);
+  const intTokens = [...withoutDecimals.matchAll(/\d{2,3}/g)].map((m) => m[0]);
   const ints = intTokens.map(toNum).filter((n) => Number.isFinite(n));
   const uniqInts = [...new Set(ints.filter(isMeterage).map(roundM))];
 

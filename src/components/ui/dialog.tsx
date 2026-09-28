@@ -51,18 +51,20 @@ interface DialogContentProps
    * прижимается к самому краю и наезжает на заголовок.
    */
   hideClose?: boolean
+  /** Затемнение под окном. Для вложенного сканера — выше родителя. */
+  overlayClassName?: string
 }
 
 const DialogContent = React.forwardRef<
   React.ElementRef<typeof DialogPrimitive.Content>,
   DialogContentProps
->(({ className, children, confirmClose = true, hideClose = false, onPointerDownOutside, onEscapeKeyDown, onInteractOutside, ...props }, ref) => {
+>(({ className, children, confirmClose = true, hideClose = false, overlayClassName, onPointerDownOutside, onEscapeKeyDown, onInteractOutside, ...props }, ref) => {
   const [confirmOpen, setConfirmOpen] = React.useState(false)
   const closeRef = React.useRef<HTMLButtonElement>(null)
 
   return (
     <DialogPortal>
-      <DialogOverlay />
+      <DialogOverlay className={overlayClassName} />
       <DialogPrimitive.Content
         ref={ref}
         onPointerDownOutside={(event) => {

@@ -10,9 +10,9 @@ import Icon from '@/components/ui/icon';
 import { formatMeterage, parseMeterageFromOcr } from '@/lib/parseMeterage';
 import { playScanSound, playScanErrorSound } from '@/lib/scanSound';
 
-/** Доля экрана камеры, совпадает с белой рамкой. Шире, чтобы влезло «50,80». */
-const ZONE_W = 0.64;
-const ZONE_H = 0.22;
+/** Доля экрана камеры, совпадает с белой рамкой. */
+const ZONE_W = 0.7;
+const ZONE_H = 0.28;
 
 interface MeterageScanDialogProps {
   open: boolean;
@@ -63,7 +63,7 @@ const getMeterageWorker = async (): Promise<TesseractWorker> => {
         createWorker('eng', 1, {
           gzip: false,
           workerBlobURL: false,
-          cachePath: 'meterage-ocr-v4',
+          cachePath: 'meterage-ocr-v5',
           cacheMethod: 'write',
           logger: () => undefined,
           errorHandler: () => undefined,
@@ -88,6 +88,80 @@ const getMeterageWorker = async (): Promise<TesseractWorker> => {
   return sharedBoot;
 };
 
+const applyCloseFocus = async (stream: MediaStream) => {
+  const track = stream.getVideoTracks()[0];
+  if (!track || typeof track.getCapabilities !== 'function') return;
+  const caps = track.getCapabilities() as MediaTrackCapabilities & {
+    focusMode?: string[];
+    zoom?: { min: number; max: number };
+  };
+  const advanced: Record<string, unknown> = {};
+  if (caps.focusMode?.includes('continuous')) advanced.focusMode = 'continuous';
+  else if (caps.focusMode?.includes('single-shot')) advanced.focusMode = 'single-shot';
+  if (caps.zoom && caps.zoom.max > 1.15) {
+    advanced.zoom = Math.min(2, Math.max(caps.zoom.min ?? 1, 1.3));
+  }
+  if (Object.keys(advanced).length === 0) return;
+  try {
+    await track.applyConstraints({
+      advanced: [advanced as unknown as MediaTrackConstraintSet],
+    });
+  } catch {
+    /* iOS часто не даёт сменить фокус из браузера */
+  }
+};
+
+const binarizeCanvas = (canvas: HTMLCanvasElement) => {
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return canvas;
+  const img = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  const d = img.data;
+  let sum = 0;
+  const n = d.length / 4;
+  for (let i = 0; i < d.length; i += 4) {
+    const g = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
+    d[i] = d[i + 1] = d[i + 2] = g;
+    sum += g;
+  }
+  const thresh = sum / n * 0.92;
+  for (let i = 0; i < d.length; i += 4) {
+    const v = d[i] < thresh ? 0 : 255;
+    d[i] = d[i + 1] = d[i + 2] = v;
+  }
+  ctx.putImageData(img, 0, 0);
+  return canvas;
+};
+
+const contrastCanvas = (canvas: HTMLCanvasElement) => {
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return canvas;
+  const img = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  const d = img.data;
+  let min = 255;
+  let max = 0;
+  for (let i = 0; i < d.length; i += 4) {
+    const g = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
+    d[i] = d[i + 1] = d[i + 2] = g;
+    if (g < min) min = g;
+    if (g > max) max = g;
+  }
+  const span = Math.max(1, max - min);
+  for (let i = 0; i < d.length; i += 4) {
+    const v = ((d[i] - min) / span) * 255;
+    d[i] = d[i + 1] = d[i + 2] = v;
+  }
+  ctx.putImageData(img, 0, 0);
+  return canvas;
+};
+
+const cloneCanvas = (canvas: HTMLCanvasElement) => {
+  const copy = document.createElement('canvas');
+  copy.width = canvas.width;
+  copy.height = canvas.height;
+  copy.getContext('2d')?.drawImage(canvas, 0, 0);
+  return copy;
+};
+
 const cropCanvas = (
   source: CanvasImageSource,
   srcX: number,
@@ -108,12 +182,12 @@ const cropCanvas = (
   canvas.width = src.width * scale;
   canvas.height = src.height * scale;
   const ctx = canvas.getContext('2d');
-  if (!ctx) return src;
+  if (!ctx) return contrastCanvas(src);
   ctx.imageSmoothingEnabled = false;
   ctx.fillStyle = '#fff';
   ctx.fillRect(0, 0, canvas.width, canvas.height);
   ctx.drawImage(src, 0, 0, canvas.width, canvas.height);
-  return canvas;
+  return contrastCanvas(canvas);
 };
 
 /**
@@ -133,12 +207,15 @@ const visibleCoverRect = (elW: number, elH: number, vidW: number, vidH: number) 
   };
 };
 
-const cropOverlayFromVideo = (video: HTMLVideoElement) => {
+const cropFromVideo = (video: HTMLVideoElement, zoneOnly: boolean) => {
   if (video.readyState < 2 || video.videoWidth < 16) return null;
   const elW = video.clientWidth;
   const elH = video.clientHeight;
   if (elW < 16 || elH < 16) return null;
   const cover = visibleCoverRect(elW, elH, video.videoWidth, video.videoHeight);
+  if (!zoneOnly) {
+    return cropCanvas(video, cover.x, cover.y, cover.w, cover.h);
+  }
   const zoneW = cover.w * ZONE_W;
   const zoneH = cover.h * ZONE_H;
   return cropCanvas(
@@ -205,9 +282,15 @@ const MeterageScanDialog = ({
       try {
         let stream: MediaStream;
         try {
+          const videoConstraints: MediaTrackConstraints & { focusMode?: { ideal: string } } = {
+            facingMode: { ideal: 'environment' },
+            width: { ideal: 1920 },
+            height: { ideal: 1080 },
+            focusMode: { ideal: 'continuous' },
+          };
           stream = await navigator.mediaDevices.getUserMedia({
             audio: false,
-            video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 } },
+            video: videoConstraints,
           });
         } catch {
           stream = await navigator.mediaDevices.getUserMedia({ audio: false, video: true });
@@ -217,9 +300,12 @@ const MeterageScanDialog = ({
           return;
         }
         streamRef.current = stream;
+        await applyCloseFocus(stream);
         const video = videoRef.current;
         if (!video) return;
         video.srcObject = stream;
+        video.setAttribute('playsinline', 'true');
+        video.setAttribute('webkit-playsinline', 'true');
         await video.play();
       } catch {
         if (!cancelled) {
@@ -267,27 +353,40 @@ const MeterageScanDialog = ({
         setHint('Скан сброшен. Нажмите ещё раз');
         return;
       }
-      let raw = await readOnce(workerRef.current, source, '7');
-      if (gen !== scanGenRef.current) {
-        setHint('Скан сброшен. Нажмите ещё раз');
-        return;
-      }
-      let meters = parseMeterageFromOcr(raw);
-      if (meters == null) {
-        raw = await readOnce(workerRef.current, source, '6');
-        if (gen !== scanGenRef.current) {
+
+      const tryRead = async (img: HTMLCanvasElement, psm: string) => {
+        const raw = await readOnce(workerRef.current as TesseractWorker, img, psm);
+        if (gen !== scanGenRef.current) return { stale: true as const, raw, meters: null };
+        return { stale: false as const, raw, meters: parseMeterageFromOcr(raw) };
+      };
+
+      let lastRaw = '';
+      const passes: Array<{ img: HTMLCanvasElement; psm: string }> = [
+        { img: source, psm: '7' },
+        { img: source, psm: '8' },
+        { img: source, psm: '6' },
+        { img: binarizeCanvas(cloneCanvas(source)), psm: '7' },
+      ];
+      const video = videoRef.current;
+      const wide = video ? cropFromVideo(video, false) : null;
+      if (wide) passes.push({ img: wide, psm: '7' });
+
+      for (const pass of passes) {
+        const result = await tryRead(pass.img, pass.psm);
+        lastRaw = result.raw;
+        if (result.stale) {
           setHint('Скан сброшен. Нажмите ещё раз');
           return;
         }
-        meters = parseMeterageFromOcr(raw);
+        if (result.meters != null) {
+          accept(result.meters, gen);
+          return;
+        }
       }
-      if (meters == null) {
-        const seen = raw ? `Прочитал: «${raw.slice(0, 48)}»` : 'В рамке пусто — цифры не распознались';
-        setHint(`${seen}. Наведите так, чтобы в рамке было всё число, например 50,8`);
-        playScanErrorSound();
-        return;
-      }
-      accept(meters, gen);
+
+      const seen = lastRaw ? `Прочитал: «${lastRaw.slice(0, 48)}»` : 'В рамке пусто — цифры не распознались';
+      setHint(`${seen}. В рамку всё число от 20, например 20,8 или 50,8. Коснитесь экрана, чтобы сфокусировать`);
+      playScanErrorSound();
     } catch (e) {
       if (gen !== scanGenRef.current) return;
       playScanErrorSound();
@@ -303,13 +402,39 @@ const MeterageScanDialog = ({
   const handleScanClick = () => {
     if (busyRef.current) return;
     const video = videoRef.current;
-    const frame = video ? cropOverlayFromVideo(video) : null;
-    if (!frame) {
+    if (!video) {
       setHint('Камера ещё не готова — подождите секунду');
       return;
     }
-    const gen = ++scanGenRef.current;
-    void recognizeZone(frame, gen);
+    window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(() => {
+        if (busyRef.current) return;
+        const frame = cropFromVideo(video, true);
+        if (!frame) {
+          setHint('Камера ещё не готова — подождите секунду и наведите ближе');
+          return;
+        }
+        const gen = ++scanGenRef.current;
+        void recognizeZone(frame, gen);
+      });
+    });
+  };
+
+  const focusAtTap = (clientX: number, clientY: number) => {
+    const video = videoRef.current;
+    const stream = streamRef.current;
+    if (!video || !stream) return;
+    const track = stream.getVideoTracks()[0];
+    if (!track || typeof track.getCapabilities !== 'function') return;
+    const rect = video.getBoundingClientRect();
+    const x = Math.min(1, Math.max(0, (clientX - rect.left) / Math.max(1, rect.width)));
+    const y = Math.min(1, Math.max(0, (clientY - rect.top) / Math.max(1, rect.height)));
+    void track
+      .applyConstraints({
+        advanced: [{ pointsOfInterest: [{ x, y }] } as unknown as MediaTrackConstraintSet],
+      })
+      .catch(() => undefined);
+    void applyCloseFocus(stream);
   };
 
   const lastShown = (lastQty || ownQty)?.replace('.', ',') ?? null;
@@ -318,55 +443,61 @@ const MeterageScanDialog = ({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
         confirmClose={false}
-        className="z-[60] flex h-[100dvh] max-h-[100dvh] w-full max-w-full left-0 top-0 translate-x-0 translate-y-0 flex-col gap-2 overflow-hidden rounded-none p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:left-[50%] sm:top-[50%] sm:h-auto sm:max-h-[90dvh] sm:w-full sm:max-w-lg sm:translate-x-[-50%] sm:translate-y-[-50%] sm:rounded-lg sm:p-6 sm:pb-6"
+        overlayClassName="z-[60]"
+        className="!fixed !left-0 !top-0 !z-[70] flex !h-[100dvh] !max-h-[100dvh] !w-full !max-w-full !translate-x-0 !translate-y-0 flex-col gap-2 overflow-y-auto overflow-x-hidden rounded-none p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:!left-[50%] sm:!top-[50%] sm:!h-auto sm:!max-h-[90dvh] sm:!w-full sm:!max-w-lg sm:!translate-x-[-50%] sm:!translate-y-[-50%] sm:rounded-lg sm:p-6 sm:pb-6"
       >
         <DialogHeader className="shrink-0 space-y-1 pr-8 text-left">
           <DialogTitle className="truncate text-xl font-bold leading-tight sm:text-2xl">
             {materialName || 'Сканер метража'}
           </DialogTitle>
-          <p className="text-xs text-muted-foreground sm:text-sm">
-            Сканер метража · в рамку всё число, и запятая
-          </p>
         </DialogHeader>
 
-        {lastShown ? (
-          <div className="flex shrink-0 items-center gap-2 rounded-md border border-border bg-muted/60 px-3 py-2.5">
-            <div className="min-w-0 flex-1">
-              <p className="text-[11px] text-muted-foreground">Последний рулон</p>
-              <p className="truncate font-bold tabular-nums leading-none tracking-tight">
-                <span className="text-4xl sm:text-5xl">{lastShown}</span>
-                <span className="ml-1.5 text-xl text-muted-foreground sm:text-2xl">
-                  {unit} × 1
-                </span>
-              </p>
+        <div className="shrink-0 rounded-md border border-border bg-muted/70 px-3 py-2.5">
+          {lastShown ? (
+            <div className="flex items-center gap-2">
+              <div className="min-w-0 flex-1">
+                <p className="text-[11px] text-muted-foreground">Последний рулон</p>
+                <p className="truncate font-bold tabular-nums leading-none tracking-tight">
+                  <span className="text-4xl sm:text-5xl">{lastShown}</span>
+                  <span className="ml-1.5 text-xl text-muted-foreground sm:text-2xl">
+                    {unit} × 1
+                  </span>
+                </p>
+              </div>
+              <Button
+                type="button"
+                variant="ghost"
+                className="h-12 w-12 shrink-0 p-0 text-muted-foreground hover:text-destructive"
+                title="Убрать этот рулон"
+                onClick={() => {
+                  setOwnQty(null);
+                  onUndoLast();
+                  setHint('Рулон убран. Наведите и считайте снова');
+                }}
+              >
+                <Icon name="X" size={22} />
+              </Button>
             </div>
-            <Button
-              type="button"
-              variant="ghost"
-              className="h-12 w-12 shrink-0 p-0 text-muted-foreground hover:text-destructive"
-              title="Убрать этот рулон"
-              onClick={() => {
-                setOwnQty(null);
-                onUndoLast();
-                setHint('Рулон убран. Наведите и считайте снова');
-              }}
-            >
-              <Icon name="X" size={22} />
-            </Button>
-          </div>
-        ) : (
-          <p className="shrink-0 text-sm text-muted-foreground">
-            Ещё нет скана. Наведите на метраж {materialName ? `«${materialName}»` : ''}
+          ) : (
+            <p className="text-base font-semibold leading-snug">
+              Наведите на метраж{materialName ? ` «${materialName}»` : ''}: число от 20, например 20,8
+            </p>
+          )}
+          <p
+            className={`mt-1.5 text-base font-medium leading-snug ${
+              hint.includes('в строке') ? 'text-emerald-700' : 'text-foreground'
+            }`}
+          >
+            {hint}
           </p>
-        )}
-
-        <p className="shrink-0 text-base font-medium leading-snug">
-          <span className={hint.includes('в строке') ? 'text-emerald-700' : undefined}>{hint}</span>
-        </p>
+        </div>
 
         {camError && <p className="shrink-0 text-sm text-destructive">{camError}</p>}
 
-        <div className="relative min-h-0 flex-1 overflow-hidden rounded-md bg-black sm:min-h-[260px]">
+        <div
+          className="relative h-[42dvh] shrink-0 overflow-hidden rounded-md bg-black sm:h-[280px]"
+          onClick={(e) => focusAtTap(e.clientX, e.clientY)}
+        >
           <video
             ref={videoRef}
             autoPlay
