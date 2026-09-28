@@ -2,6 +2,8 @@ import {
   type Dispatch,
   type ReactNode,
   type SetStateAction,
+  lazy,
+  Suspense,
   useLayoutEffect,
   useRef,
   useState,
@@ -26,7 +28,10 @@ import {
   num,
   setGroupField,
 } from '@/components/crm/shipments/fromSupplierRows';
-import MeterageScanDialog from '@/components/crm/shipments/MeterageScanDialog';
+
+const MeterageScanDialog = lazy(
+  () => import('@/components/crm/shipments/MeterageScanDialog'),
+);
 
 interface SupplyReceiveRowsProps {
   rows: ItemRow[];
@@ -112,15 +117,16 @@ const SupplyReceiveRows = ({
             (r[g[0]].supplierId || '') === target.supplierId,
         ) ?? groups[groups.length - 1];
       if (!group) return r;
+      const scanned = { quantity: qty, numberRolls: '1' };
       const emptyIdx = [...group].reverse().find((i) => !r[i].quantity.trim());
       if (emptyIdx !== undefined) {
         pendingFocus.current = { kind: 'qty', idx: emptyIdx };
-        return r.map((row, i) => (i === emptyIdx ? { ...row, quantity: qty } : row));
+        return r.map((row, i) => (i === emptyIdx ? { ...row, ...scanned } : row));
       }
       const lastIdx = group[group.length - 1];
       pendingFocus.current = { kind: 'qty', idx: lastIdx + 1 };
       const next = addLineToGroup(r, group);
-      return next.map((row, i) => (i === lastIdx + 1 ? { ...row, quantity: qty } : row));
+      return next.map((row, i) => (i === lastIdx + 1 ? { ...row, ...scanned } : row));
     });
   };
 
@@ -329,15 +335,19 @@ const SupplyReceiveRows = ({
 
       <p className="text-xs text-muted-foreground">
         Поставщик указывается у каждой ткани. Другая ткань того же поставщика — «Добавить
-        материал». Метраж — <b>на один рулон</b>, как на бирке. «Камера» читает цифры с бирки
-        и сразу ставит их в строку.
+        материал». Скан с камеры — одна строка: метраж с бирки и 1 рулон. Следующий
+        рулон — снова навести и считать.
       </p>
 
-      <MeterageScanDialog
-        open={scanOpen}
-        onOpenChange={setScanOpen}
-        onMeterage={applyScannedMeterage}
-      />
+      {scanOpen && (
+        <Suspense fallback={null}>
+          <MeterageScanDialog
+            open={scanOpen}
+            onOpenChange={setScanOpen}
+            onMeterage={applyScannedMeterage}
+          />
+        </Suspense>
+      )}
     </div>
   );
 };

@@ -10,6 +10,10 @@ import Icon from '@/components/ui/icon';
 import { formatMeterage, parseMeterageFromOcr } from '@/lib/parseMeterage';
 import { playScanSound, playScanErrorSound } from '@/lib/scanSound';
 
+/** Доля экрана камеры, совпадает с белой рамкой. OCR режет только её. */
+const ZONE_W = 0.52;
+const ZONE_H = 0.16;
+
 interface MeterageScanDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -23,6 +27,12 @@ type TesseractWorker = {
   terminate: () => Promise<unknown>;
 };
 
+type CreateWorker = (
+  langs: string,
+  oem: number,
+  options: Record<string, unknown>,
+) => Promise<TesseractWorker>;
+
 let sharedBoot: Promise<TesseractWorker> | null = null;
 
 const errText = (e: unknown) => {
@@ -31,25 +41,18 @@ const errText = (e: unknown) => {
   return 'неизвестная ошибка';
 };
 
-/**
- * Один воркер на вкладку: ядро ~15 МБ, повторно качать при каждом открытии камеры
- * нельзя. Если загрузка сорвалась — следующий заход пробует снова.
- */
 const getMeterageWorker = async (): Promise<TesseractWorker> => {
   if (!sharedBoot) {
     sharedBoot = (async () => {
       const tessMod = (await import(
         /* @vite-ignore */ `${window.location.origin}/ocr/tesseract.esm.min.js`
-      )) as {
-        createWorker?: typeof import('tesseract.js').createWorker;
-        default?: { createWorker?: typeof import('tesseract.js').createWorker };
-      };
+      )) as { createWorker?: CreateWorker; default?: { createWorker?: CreateWorker } };
       const createWorker = tessMod.createWorker ?? tessMod.default?.createWorker;
       if (typeof createWorker !== 'function') {
         throw new Error('createWorker is not a function');
       }
       const origin = window.location.origin;
-      const worker = (await Promise.race([
+      const worker = await Promise.race([
         createWorker('eng', 1, {
           gzip: false,
           workerBlobURL: false,
@@ -64,9 +67,10 @@ const getMeterageWorker = async (): Promise<TesseractWorker> => {
         new Promise<never>((_, reject) => {
           window.setTimeout(() => reject(new Error('timeout')), 60000);
         }),
-      ])) as unknown as TesseractWorker;
+      ]);
       await worker.setParameters({
         tessedit_char_whitelist: '0123456789.,мmМ ',
+        tessedit_pageseg_mode: '7',
       });
       return worker;
     })().catch((e) => {
@@ -77,27 +81,71 @@ const getMeterageWorker = async (): Promise<TesseractWorker> => {
   return sharedBoot;
 };
 
+const cropCanvas = (
+  source: CanvasImageSource,
+  srcX: number,
+  srcY: number,
+  srcW: number,
+  srcH: number,
+) => {
+  if (srcW < 8 || srcH < 8) return null;
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.max(8, Math.round(srcW));
+  canvas.height = Math.max(8, Math.round(srcH));
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return null;
+  ctx.drawImage(source, srcX, srcY, srcW, srcH, 0, 0, canvas.width, canvas.height);
+  return canvas;
+};
+
 /**
- * Камера метража на приёмке.
- *
- * Кладовщик наводит телефон на цифры на бирке рулона. Распознавание идёт на
- * устройстве, без сервера: в строку приёмки сразу падает длина одного рулона,
- * камера остаётся открытой на следующий.
+ * Зона рамки в пикселях исходного кадра. Учитывает object-cover: то, что
+ * видно в белой рамке, и то, что уходит в OCR, — одно и то же.
+ */
+const visibleCoverRect = (elW: number, elH: number, vidW: number, vidH: number) => {
+  const scale = Math.max(elW / vidW, elH / vidH);
+  const visW = elW / scale;
+  const visH = elH / scale;
+  return {
+    x: (vidW - visW) / 2,
+    y: (vidH - visH) / 2,
+    w: visW,
+    h: visH,
+    scale,
+  };
+};
+
+const cropOverlayFromVideo = (video: HTMLVideoElement) => {
+  if (video.readyState < 2 || video.videoWidth < 16) return null;
+  const elW = video.clientWidth || video.videoWidth;
+  const elH = video.clientHeight || video.videoHeight;
+  const cover = visibleCoverRect(elW, elH, video.videoWidth, video.videoHeight);
+  const zoneW = cover.w * ZONE_W;
+  const zoneH = cover.h * ZONE_H;
+  return cropCanvas(
+    video,
+    cover.x + (cover.w - zoneW) / 2,
+    cover.y + (cover.h - zoneH) / 2,
+    zoneW,
+    zoneH,
+  );
+};
+
+/**
+ * Камера метража на приёмке. Картинка с камеры только для прицела —
+ * цифры читаются по кнопке и только из белой рамки.
  */
 const MeterageScanDialog = ({ open, onOpenChange, onMeterage }: MeterageScanDialogProps) => {
   const videoRef = useRef<HTMLVideoElement>(null);
-  const fileRef = useRef<HTMLInputElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const workerRef = useRef<TesseractWorker | null>(null);
   const busyRef = useRef(false);
-  const cooldownUntilRef = useRef(0);
+  const scanGenRef = useRef(0);
   const onMeterageRef = useRef(onMeterage);
   onMeterageRef.current = onMeterage;
 
   const [camError, setCamError] = useState<string | null>(null);
-  const [engineReady, setEngineReady] = useState(false);
-  const [engineError, setEngineError] = useState<string | null>(null);
-  const [hint, setHint] = useState('Наведите рамку на цифры метража');
+  const [hint, setHint] = useState('Цифры метража — в рамку, затем кнопка');
   const [reading, setReading] = useState(false);
 
   const stopCamera = () => {
@@ -107,10 +155,11 @@ const MeterageScanDialog = ({ open, onOpenChange, onMeterage }: MeterageScanDial
   };
 
   useEffect(() => {
+    scanGenRef.current += 1;
     if (!open) {
       stopCamera();
       setCamError(null);
-      setHint('Наведите рамку на цифры метража');
+      setHint('Цифры метража — в рамку, затем кнопка');
       setReading(false);
       busyRef.current = false;
       return;
@@ -121,7 +170,7 @@ const MeterageScanDialog = ({ open, onOpenChange, onMeterage }: MeterageScanDial
 
     const start = async () => {
       if (!navigator.mediaDevices?.getUserMedia) {
-        setCamError('Камера в этом браузере недоступна — снимите фото кнопкой ниже');
+        setCamError('Камера в этом браузере недоступна');
         return;
       }
       try {
@@ -145,7 +194,7 @@ const MeterageScanDialog = ({ open, onOpenChange, onMeterage }: MeterageScanDial
         await video.play();
       } catch {
         if (!cancelled) {
-          setCamError('Нет доступа к камере. Разрешите её в браузере или снимите фото');
+          setCamError('Нет доступа к камере. Разрешите её в браузере');
         }
       }
     };
@@ -153,119 +202,60 @@ const MeterageScanDialog = ({ open, onOpenChange, onMeterage }: MeterageScanDial
     void start();
     return () => {
       cancelled = true;
+      scanGenRef.current += 1;
       stopCamera();
     };
   }, [open]);
 
-  useEffect(() => {
-    if (!open) return;
-    let cancelled = false;
-    setEngineReady(false);
-    setEngineError(null);
-    setHint('Загрузка распознавания…');
-
-    void getMeterageWorker()
-      .then((worker) => {
-        if (cancelled) return;
-        workerRef.current = worker;
-        setEngineReady(true);
-        setHint('Наведите рамку на цифры метража');
-      })
-      .catch((e) => {
-        if (!cancelled) {
-          setEngineError(
-            `Не удалось загрузить распознавание (${errText(e)}). Откройте камеру ещё раз`,
-          );
-        }
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [open]);
-
-  const grabVideoFrame = () => {
-    const video = videoRef.current;
-    if (!video || video.readyState < 2 || video.videoWidth < 16) return null;
-    const w = video.videoWidth;
-    const h = video.videoHeight;
-    const cw = Math.max(160, Math.floor(w * 0.78));
-    const ch = Math.max(80, Math.floor(h * 0.28));
-    const canvas = document.createElement('canvas');
-    canvas.width = cw;
-    canvas.height = ch;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return null;
-    ctx.drawImage(
-      video,
-      Math.floor((w - cw) / 2),
-      Math.floor((h - ch) / 2),
-      cw,
-      ch,
-      0,
-      0,
-      cw,
-      ch,
-    );
-    return canvas;
-  };
-
-  const accept = (meters: number) => {
+  const accept = (meters: number, gen: number) => {
+    if (gen !== scanGenRef.current) return;
     const qty = formatMeterage(meters);
-    cooldownUntilRef.current = Date.now() + 1600;
     const shown = qty.replace('.', ',');
-    setHint(`${shown} м — в строке. Наведите на следующий рулон`);
+    setHint(`${shown} м × 1 рулон — в строке. Следующий — снова кнопка`);
     playScanSound();
     onMeterageRef.current(qty);
   };
 
-  const recognizeSource = async (source: HTMLCanvasElement | File) => {
-    const worker = workerRef.current;
-    if (!worker || busyRef.current) return;
-    if (Date.now() < cooldownUntilRef.current) return;
+  const recognizeZone = async (source: HTMLCanvasElement, gen: number) => {
+    if (busyRef.current) return;
     busyRef.current = true;
     setReading(true);
+    setHint('Читаю метраж в рамке…');
     try {
-      const { data } = await worker.recognize(source);
+      if (!workerRef.current) {
+        setHint('Загрузка распознавания…');
+        workerRef.current = await getMeterageWorker();
+      }
+      if (gen !== scanGenRef.current) return;
+      const { data } = await workerRef.current.recognize(source);
+      if (gen !== scanGenRef.current) return;
       const meters = parseMeterageFromOcr(data.text || '');
       if (meters == null) {
-        setHint('Цифры не разобрались — ближе к бирке, без блика');
+        setHint('В рамке нет длины 20–200 м. Наведите только на метраж со стикера');
         return;
       }
-      accept(meters);
-    } catch {
+      accept(meters, gen);
+    } catch (e) {
+      if (gen !== scanGenRef.current) return;
       playScanErrorSound();
-      setHint('Не удалось прочитать кадр — снимите ещё раз');
+      setHint(`Не удалось прочитать (${errText(e)}). Нажмите ещё раз`);
     } finally {
-      busyRef.current = false;
-      setReading(false);
+      if (gen === scanGenRef.current) {
+        busyRef.current = false;
+        setReading(false);
+      }
     }
   };
 
-  useEffect(() => {
-    if (!open || !engineReady || camError) return;
-    let cancelled = false;
-    const tick = () => {
-      if (cancelled) return;
-      const frame = grabVideoFrame();
-      if (frame) void recognizeSource(frame);
-      timer = window.setTimeout(tick, 1100);
-    };
-    let timer = window.setTimeout(tick, 700);
-    return () => {
-      cancelled = true;
-      window.clearTimeout(timer);
-    };
-  }, [open, engineReady, camError]);
-
-  const handleFile = async (file: File | undefined) => {
-    if (!file) return;
-    if (!engineReady) {
-      setHint('Подождите, распознавание ещё загружается');
+  const handleScanClick = () => {
+    const video = videoRef.current;
+    const frame = video ? cropOverlayFromVideo(video) : null;
+    if (!frame) {
+      setHint('Камера ещё не готова — подождите секунду');
       return;
     }
-    cooldownUntilRef.current = 0;
-    await recognizeSource(file);
+    const gen = ++scanGenRef.current;
+    void recognizeZone(frame, gen);
   };
 
   return (
@@ -278,8 +268,8 @@ const MeterageScanDialog = ({ open, onOpenChange, onMeterage }: MeterageScanDial
           <DialogTitle>Сканер метража</DialogTitle>
         </DialogHeader>
         <p className="text-sm text-muted-foreground">
-          Наведите камеру на цифры длины на бирке рулона. Кадр читается сам — после
-          удачного считывания можно сразу следующий рулон.
+          В белую рамку — только метраж на стикере: от 20 до 200 м, как «86,3»
+          или «20.10». Штрихкод, дату и артикул в рамку не заводить.
         </p>
 
         <div className="relative overflow-hidden rounded-md bg-black">
@@ -291,11 +281,14 @@ const MeterageScanDialog = ({ open, onOpenChange, onMeterage }: MeterageScanDial
             className="aspect-[3/4] w-full object-cover sm:aspect-video"
           />
           <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
-            <div className="h-[28%] w-[78%] rounded-sm border-2 border-white/80 shadow-[0_0_0_9999px_rgba(0,0,0,0.35)]" />
+            <div
+              className="rounded-sm border-2 border-white/80 shadow-[0_0_0_9999px_rgba(0,0,0,0.45)]"
+              style={{ width: `${ZONE_W * 100}%`, height: `${ZONE_H * 100}%` }}
+            />
           </div>
-          {(reading || !engineReady) && (
+          {reading && (
             <div className="absolute right-2 top-2 rounded bg-black/60 px-2 py-1 text-xs text-white">
-              {engineReady ? 'Читаю…' : 'Загрузка…'}
+              Читаю…
             </div>
           )}
         </div>
@@ -305,50 +298,16 @@ const MeterageScanDialog = ({ open, onOpenChange, onMeterage }: MeterageScanDial
         </p>
 
         {camError && <p className="text-sm text-destructive">{camError}</p>}
-        {engineError && <p className="text-sm text-destructive">{engineError}</p>}
 
-        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-          <Button
-            type="button"
-            variant="secondary"
-            className="h-11"
-            disabled={!engineReady || reading}
-            onClick={() => {
-              const frame = grabVideoFrame();
-              if (frame) {
-                cooldownUntilRef.current = 0;
-                void recognizeSource(frame);
-              } else {
-                setHint('Камера ещё не готова — подождите секунду');
-              }
-            }}
-          >
-            <Icon name="ScanLine" size={16} className="mr-2" />
-            Считать кадр
-          </Button>
-          <Button
-            type="button"
-            variant="outline"
-            className="h-11"
-            disabled={!engineReady || reading}
-            onClick={() => fileRef.current?.click()}
-          >
-            <Icon name="Camera" size={16} className="mr-2" />
-            Снять фото
-          </Button>
-        </div>
-        <input
-          ref={fileRef}
-          type="file"
-          accept="image/*"
-          capture="environment"
-          className="sr-only"
-          onChange={(e) => {
-            const file = e.target.files?.[0];
-            e.target.value = '';
-            void handleFile(file);
-          }}
-        />
+        <Button
+          type="button"
+          className="h-12 w-full"
+          disabled={reading}
+          onClick={handleScanClick}
+        >
+          <Icon name="ScanLine" size={16} className="mr-2" />
+          Считать штрих-код с метражом
+        </Button>
       </DialogContent>
     </Dialog>
   );

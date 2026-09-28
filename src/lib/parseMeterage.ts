@@ -1,86 +1,124 @@
 /**
- * Разбор метража с бирки рулона по тексту OCR.
+ * Метраж с бирки поставщика в зоне сканера.
  *
- * На бирке поставщика обычно «63,3» или «61.15 м». Камера читает криво:
- * теряет точку, путает запятую, видит «633» вместо «63,3». Здесь из каши
- * цифр достаём длину одного рулона — ту, что кладовщик вбивает в приёмку.
+ * У нас рулоны 20–200 м (почти всегда до 170): «40», «50», «86,3»,
+ * «113.5», «120.8», «20.03», «20.10». Сотые — как на стикере.
+ * Дату, год, штрихкод и куски артикула не подставляем.
  */
 
-const MIN_M = 5;
-const MAX_M = 250;
-/** Самый частый диапазон тюлевого рулона — его предпочитаем при нескольких цифрах. */
-const TYPICAL_MIN = 20;
-const TYPICAL_MAX = 120;
+const MIN_M = 20;
+const MAX_M = 200;
+const TYPICAL_MAX = 170;
+
+type Cand = { n: number; score: number };
+
+const roundM = (n: number) => Math.round(n * 100) / 100;
+
+const isMeterage = (n: number) => Number.isFinite(n) && n >= MIN_M && n <= MAX_M;
 
 const toNum = (raw: string) => {
   const n = Number(String(raw).replace(',', '.').trim());
   return Number.isFinite(n) ? n : NaN;
 };
 
-const inRange = (n: number) => n >= MIN_M && n <= MAX_M;
-
-/** Потерянная точка: 633 → 63.3, 6113 → 61.13. */
-const restoreDot = (digits: string): number | null => {
-  if (!/^\d{3,5}$/.test(digits)) return null;
-  for (const cut of [1, 2]) {
-    if (digits.length - cut < 1 || digits.length - cut > 2) continue;
-    const n = toNum(`${digits.slice(0, digits.length - cut)}.${digits.slice(-cut)}`);
-    if (inRange(n)) return n;
-  }
-  return null;
-};
-
 const score = (n: number, fromLabel: boolean) => {
   let s = 0;
-  if (fromLabel) s += 4;
-  if (n >= TYPICAL_MIN && n <= TYPICAL_MAX) s += 3;
+  if (fromLabel) s += 8;
+  if (n <= TYPICAL_MAX) s += 3;
   if (!Number.isInteger(n)) s += 2;
   return s;
 };
 
+const bestUnique = (candidates: Cand[]): number | null => {
+  if (candidates.length === 0) return null;
+  const best = new Map<number, number>();
+  for (const c of candidates) {
+    const prev = best.get(c.n) ?? -Infinity;
+    if (c.score > prev) best.set(c.n, c.score);
+  }
+  const list = [...best.entries()].map(([n, s]) => ({ n, score: s }));
+  list.sort((a, b) => b.score - a.score || Math.abs(a.n - 80) - Math.abs(b.n - 80));
+  const top = list[0];
+  const rival = list.find((c) => c.n !== top.n && c.score >= top.score - 1);
+  if (rival) return null;
+  return top.n;
+};
+
+const push = (list: Cand[], n: number, fromLabel: boolean) => {
+  const rounded = roundM(n);
+  if (!isMeterage(rounded)) return;
+  list.push({ n: rounded, score: score(rounded, fromLabel) });
+};
+
+const cleanOcr = (text: string) =>
+  text
+    .replace(/[oOоО]/g, '0')
+    .replace(/[lI|]/g, '1')
+    .replace(/[зЗ]/g, '3')
+    .replace(/\d{1,2}[.,/\-]\d{1,2}[.,/\-]\d{2,4}/g, ' ')
+    .replace(/\d{5,}/g, ' ');
+
+/** OCR съел точку: «2010» → 20.10, «1135» → 113.5. Годы 2020–2039 не трогаем. */
+const restoreLostDot = (digits: string): number | null => {
+  if (!/^\d{4}$/.test(digits)) return null;
+  const raw = Number(digits);
+  if (raw >= 2020 && raw <= 2039) return null;
+  const hundredths = roundM(raw / 100);
+  const tenths = roundM(raw / 10);
+  const a = isMeterage(hundredths) ? hundredths : null;
+  const b = isMeterage(tenths) ? tenths : null;
+  if (a != null && b != null && a !== b) return null;
+  return a ?? b;
+};
+
 /**
- * Возвращает метраж одного рулона или null, если на кадре цифр нет.
+ * Возвращает метраж одного рулона или null, если в зоне нет одной явной длины.
  */
 export const parseMeterageFromOcr = (text: string): number | null => {
   if (!text.trim()) return null;
-  const cleaned = text
-    .replace(/[oOоО]/g, '0')
-    .replace(/[lI|]/g, '1')
-    .replace(/[зЗ]/g, '3');
+  const cleaned = cleanOcr(text);
 
-  const candidates: { n: number; score: number }[] = [];
-  const push = (n: number, fromLabel: boolean) => {
-    const rounded = Math.round(n * 1000) / 1000;
-    if (!inRange(rounded)) return;
-    candidates.push({ n: rounded, score: score(rounded, fromLabel) });
-  };
-
-  const labeled = cleaned.matchAll(
-    /(\d{1,3}(?:[.,]\d{1,3})?)\s*(?:м|m|п\.?\s*м|пог)/gi,
-  );
-  for (const m of labeled) {
+  const labeled: Cand[] = [];
+  for (const m of cleaned.matchAll(/(\d{2,3}(?:[.,]\d{1,2})?)\s*(?:м|m|п\.?\s*м|пог)/gi)) {
     const n = toNum(m[1]);
-    if (Number.isFinite(n)) push(n, true);
+    if (Number.isFinite(n)) push(labeled, n, true);
   }
+  const fromLabel = bestUnique(labeled);
+  if (fromLabel != null) return fromLabel;
 
-  const decimals = cleaned.matchAll(/\d{1,3}[.,]\d{1,3}/g);
-  for (const m of decimals) {
+  const decimals: Cand[] = [];
+  for (const m of cleaned.matchAll(/\d{2,3}[.,]\d{1,2}/g)) {
     const n = toNum(m[0]);
-    if (Number.isFinite(n)) push(n, false);
+    if (Number.isFinite(n)) push(decimals, n, false);
+  }
+  const fromDecimal = bestUnique(decimals);
+  if (fromDecimal != null) return fromDecimal;
+
+  const digitRuns = cleaned.match(/\d+/g) || [];
+  if (digitRuns.length === 1 && digitRuns[0].length === 4) {
+    const restored = restoreLostDot(digitRuns[0]);
+    if (restored != null) return restored;
   }
 
-  const ints = cleaned.matchAll(/\b\d{2,5}\b/g);
-  for (const m of ints) {
-    const raw = m[0];
-    const asInt = toNum(raw);
-    if (inRange(asInt)) push(asInt, false);
-    const restored = restoreDot(raw);
-    if (restored != null) push(restored, false);
+  const withoutDecimals = cleaned.replace(/\d{2,3}[.,]\d{1,2}/g, ' ');
+  const intTokens = [...withoutDecimals.matchAll(/\d{1,3}/g)].map((m) => m[0]);
+  const ints = intTokens.map(toNum).filter((n) => Number.isFinite(n));
+  const uniqInts = [...new Set(ints.filter(isMeterage).map(roundM))];
+
+  if (uniqInts.length === 1) {
+    const otherTokens = intTokens.filter((t) => toNum(t) !== uniqInts[0]);
+    if (otherTokens.length === 0) return uniqInts[0];
+    if (otherTokens.length === 1) {
+      const fracToken = otherTokens[0];
+      const frac = toNum(fracToken);
+      if (frac > 0 && frac <= 99) {
+        const combined = roundM(uniqInts[0] + frac / (fracToken.length >= 2 ? 100 : 10));
+        if (isMeterage(combined)) return combined;
+      }
+    }
   }
 
-  if (candidates.length === 0) return null;
-  candidates.sort((a, b) => b.score - a.score || Math.abs(a.n - 60) - Math.abs(b.n - 60));
-  return candidates[0].n;
+  return null;
 };
 
-export const formatMeterage = (n: number) => String(n);
+export const formatMeterage = (n: number) => String(roundM(n));

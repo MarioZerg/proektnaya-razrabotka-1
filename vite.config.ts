@@ -24,9 +24,16 @@ function unpackTraineddata() {
     fs.writeFileSync(rawPath, zlib.gunzipSync(fs.readFileSync(gzPath)));
 }
 
+function copyIfNeeded(fromRel: string, toRel: string) {
+    const src = path.resolve(__dirname, fromRel);
+    const dst = path.resolve(__dirname, toRel);
+    if (!fs.existsSync(src)) return;
+    if (fs.existsSync(dst) && fs.statSync(dst).size === fs.statSync(src).size) return;
+    fs.mkdirSync(path.dirname(dst), {recursive: true});
+    fs.copyFileSync(src, dst);
+}
+
 function copyOcrBrowserBundle() {
-    const out = path.resolve(__dirname, 'public/ocr');
-    fs.mkdirSync(out, {recursive: true});
     const copies: [string, string][] = [
         ['node_modules/tesseract.js/dist/worker.min.js', 'public/ocr/worker.min.js'],
         ['node_modules/tesseract.js/dist/tesseract.esm.min.js', 'public/ocr/tesseract.esm.min.js'],
@@ -37,10 +44,7 @@ function copyOcrBrowserBundle() {
         ['node_modules/tesseract.js-core/tesseract-core.wasm.js', 'public/ocr/tesseract-core.wasm.js'],
         ['node_modules/tesseract.js-core/tesseract-core.wasm', 'public/ocr/tesseract-core.wasm'],
     ];
-    for (const [from, to] of copies) {
-        const src = path.resolve(__dirname, from);
-        if (fs.existsSync(src)) fs.copyFileSync(src, path.resolve(__dirname, to));
-    }
+    for (const [from, to] of copies) copyIfNeeded(from, to);
 }
 
 const ocrAssets = {
@@ -136,13 +140,17 @@ export default defineConfig(({mode}) => ({
         },
     },
     optimizeDeps: {
-        // Иначе esbuild тянет src/ с worker_threads вместо dist/tesseract.esm.min.js.
         exclude: ['tesseract.js'],
     },
     server: {
         host: '0.0.0.0',
         port: 5173,
         allowedHosts: true,
+        // Ядра OCR — десятки МБ. Следить за ними не нужно: иначе Vite долго
+        // поднимается и тормозит HMR.
+        watch: {
+            ignored: ['**/public/ocr/**'],
+        },
         hmr: {
             overlay: false, // Disables the error overlay if you only want console errors
             timeout: 7000, // pingInterval @vite/client — нужен <30s для DDoS Guard
