@@ -23,6 +23,9 @@ interface MeterageScanDialogProps {
   lastQty: string | null;
   /** Убрать последний рулон из приёмки, если скан ошибочный. */
   onUndoLast: () => void;
+  /** Какой материал сейчас сканируют — крупно в шапке, чтобы не перепутать ткань. */
+  materialName: string;
+  unit: string;
 }
 
 type TesseractWorker = {
@@ -158,6 +161,8 @@ const MeterageScanDialog = ({
   onMeterage,
   lastQty,
   onUndoLast,
+  materialName,
+  unit,
 }: MeterageScanDialogProps) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -295,11 +300,43 @@ const MeterageScanDialog = ({
         className="z-[60] flex h-[100dvh] max-h-[100dvh] w-full max-w-full left-0 top-0 translate-x-0 translate-y-0 flex-col gap-2 overflow-hidden rounded-none p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:left-[50%] sm:top-[50%] sm:h-auto sm:max-h-[90dvh] sm:w-full sm:max-w-lg sm:translate-x-[-50%] sm:translate-y-[-50%] sm:rounded-lg sm:p-6 sm:pb-6"
       >
         <DialogHeader className="shrink-0 space-y-1 pr-8 text-left">
-          <DialogTitle>Сканер метража</DialogTitle>
+          <DialogTitle className="truncate text-xl font-bold leading-tight sm:text-2xl">
+            {materialName || 'Сканер метража'}
+          </DialogTitle>
+          <p className="text-xs text-muted-foreground sm:text-sm">
+            Сканер метража · в рамку всё число, и запятая
+          </p>
         </DialogHeader>
-        <p className="shrink-0 text-xs text-muted-foreground sm:text-sm">
-          В рамку — всё число, и запятая: «50,8». Не только «50».
-        </p>
+
+        {lastShown ? (
+          <div className="flex shrink-0 items-center gap-2 rounded-md border border-border bg-muted/60 px-3 py-2.5">
+            <div className="min-w-0 flex-1">
+              <p className="text-[11px] text-muted-foreground">Последний рулон</p>
+              <p className="truncate font-bold tabular-nums leading-none tracking-tight">
+                <span className="text-4xl sm:text-5xl">{lastShown}</span>
+                <span className="ml-1.5 text-xl text-muted-foreground sm:text-2xl">
+                  {unit} × 1
+                </span>
+              </p>
+            </div>
+            <Button
+              type="button"
+              variant="ghost"
+              className="h-12 w-12 shrink-0 p-0 text-muted-foreground hover:text-destructive"
+              title="Убрать этот рулон"
+              onClick={() => {
+                onUndoLast();
+                setHint('Рулон убран. Наведите и считайте снова');
+              }}
+            >
+              <Icon name="X" size={22} />
+            </Button>
+          </div>
+        ) : (
+          <p className="shrink-0 text-sm text-muted-foreground">
+            Ещё нет скана. Наведите на метраж {materialName ? `«${materialName}»` : ''}
+          </p>
+        )}
 
         <div className="relative min-h-0 flex-1 overflow-hidden rounded-md bg-black sm:min-h-[260px]">
           <video
@@ -321,29 +358,6 @@ const MeterageScanDialog = ({
             </div>
           )}
         </div>
-
-        {lastShown && (
-          <div className="flex shrink-0 items-center gap-2 rounded-md border border-border bg-muted/60 px-3 py-2">
-            <div className="min-w-0 flex-1">
-              <p className="text-[11px] text-muted-foreground">Последний рулон</p>
-              <p className="truncate text-base font-semibold tabular-nums">
-                {lastShown} м × 1
-              </p>
-            </div>
-            <Button
-              type="button"
-              variant="ghost"
-              className="h-10 w-10 shrink-0 p-0 text-muted-foreground hover:text-destructive"
-              title="Убрать этот рулон"
-              onClick={() => {
-                onUndoLast();
-                setHint('Рулон убран. Наведите и считайте снова');
-              }}
-            >
-              <Icon name="X" size={18} />
-            </Button>
-          </div>
-        )}
 
         <p className="shrink-0 text-sm font-medium leading-snug">
           <span className={hint.includes('в строке') ? 'text-emerald-700' : undefined}>{hint}</span>

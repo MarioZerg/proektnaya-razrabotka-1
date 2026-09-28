@@ -112,6 +112,9 @@ const SupplyReceiveRows = ({
     }
     const pending = pendingFocus.current;
     if (!pending) return;
+    // Пока открыт сканер, не уводим фокус на поле за ним — иначе на телефоне
+    // всплывает клавиатура. После закрытия сканера фокус встанет на метраж.
+    if (scanOpen) return;
     pendingFocus.current = null;
     const el =
       pending.kind === 'qty'
@@ -121,7 +124,7 @@ const SupplyReceiveRows = ({
     el.focus();
     el.scrollIntoView({ block: 'center', behavior: 'smooth' });
     if (pending.kind === 'qty' && 'select' in el) el.select();
-  }, [rows]);
+  }, [rows, scanOpen]);
 
   const materialUnit = (materialId: string) =>
     materials.find((m) => String(m.id) === materialId)?.unit || '';
@@ -148,6 +151,9 @@ const SupplyReceiveRows = ({
     setRows((r) => {
       const result = applyMeterageScan(r, target, qty);
       pendingLastScan.current = result.last;
+      if (result.last.idx >= 0) {
+        pendingFocus.current = { kind: 'qty', idx: result.last.idx };
+      }
       return result.next;
     });
   };
@@ -390,6 +396,10 @@ const SupplyReceiveRows = ({
             onMeterage={applyScannedMeterage}
             lastQty={lastScan && lastScan.idx >= 0 ? lastScan.qty : null}
             onUndoLast={undoLastScan}
+            materialName={
+              materials.find((m) => String(m.id) === scanTarget?.materialId)?.name || ''
+            }
+            unit={materialUnit(scanTarget?.materialId || '') || 'м'}
           />
         </Suspense>
       )}
