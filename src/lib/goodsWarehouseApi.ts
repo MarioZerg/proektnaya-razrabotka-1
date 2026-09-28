@@ -125,6 +125,8 @@ export interface GoodsWarehouseFilters {
   width?: number;
   height?: number;
   shelfId?: number;
+  /** Только вещи без полки: список «не разложены». */
+  noShelf?: boolean;
   /** Поиск по стикеру, номеру заказа, названию и материалу — идёт в базу. */
   search?: string;
 }
@@ -139,6 +141,7 @@ export const fetchGoodsWarehouse = async (
   if (f.width) params.set('width', String(f.width));
   if (f.height) params.set('height', String(f.height));
   if (f.shelfId) params.set('shelf_id', String(f.shelfId));
+  if (f.noShelf) params.set('no_shelf', '1');
   if (f.search) params.set('search', f.search);
   const qs = params.toString();
   const res = await fetch(qs ? `${GOODS_WAREHOUSE_URL}?${qs}` : GOODS_WAREHOUSE_URL);
@@ -892,60 +895,6 @@ export const sendGoodsToSewing = (
     success: true;
     returnedOrder: string | null;
   }>;
-/**
- * Вещь, зависшая после отмены заказа на маркетплейсе.
- *
- * Заказ отменили уже после того, как вещь сшили и застикеровали. Сам заказ с конвейера
- * не снимается — он доводится до конца. А вещь повисает: в поставку не уедет (ярлык
- * отменённого заказа на приёмке не примут), но и свободным остатком не считается.
- */
-export interface StuckCancelledItem {
-  id: number;
-  storageBarcode: string;
-  status: string;
-  shelfName: string | null;
-  orderNumber: string | null;
-  product: string | null;
-  material: string | null;
-  width: number | null;
-  height: number | null;
-  cancelledAt: string | null;
-  marketplace: string | null;
-}
-
-/** Список вещей, зависших после отмены заказа. */
-export const fetchStuckCancelled = async (): Promise<{
-  items: StuckCancelledItem[];
-  count: number;
-}> => {
-  const res = await fetch(`${GOODS_WAREHOUSE_URL}?stuck_cancelled=1`);
-  if (!res.ok) return { items: [], count: 0 };
-  const data = await res.json();
-  return { items: data.items || [], count: data.count || 0 };
-};
-
-/**
- * Вернуть зависшие вещи в оборот: снять ярлык отменённого отправления и отдать
- * в свободный остаток. Заказы при этом НЕ трогаются — они остаются на конвейере.
- */
-export const releaseStuckCancelled = (
-  ids: number[],
-  actorId?: number,
-  actorName?: string,
-): Promise<{
-  released: number;
-  toShelf: number;
-  toSorting: number;
-  /** Данные для ленты стикеров хранения: на вещах ярлык отправления уже недействителен. */
-  stickers: { storageBarcode: string; title: string | null; orderNumber: string | null }[];
-}> =>
-  postAction({ action: 'release_stuck_cancelled', ids, actorId, actorName }) as Promise<{
-    released: number;
-    toShelf: number;
-    toSorting: number;
-    stickers: { storageBarcode: string; title: string | null; orderNumber: string | null }[];
-  }>;
-
 /** Вещь, которая уже уехала к клиенту, но осталась висеть в подборе. */
 export interface ShippedStuckItem {
   id: number;

@@ -11,6 +11,7 @@ import Icon from '@/components/ui/icon';
 import { useToast } from '@/hooks/use-toast';
 import { useScannerAutoSubmit } from '@/hooks/useScannerAutoSubmit';
 import { placeOnShelf, type GoodsWarehouseItem } from '@/lib/goodsWarehouseApi';
+import { unplacedReasonLabel } from '@/components/crm/goodsWarehouse/goodsWarehouseShared';
 
 interface PlaceOnShelfDialogProps {
   open: boolean;
@@ -21,6 +22,8 @@ interface PlaceOnShelfDialogProps {
    * и шёл в цех вслепую — какая ткань, какой размер, от какого заказа, непонятно.
    * Найти нужное среди похожих вещей по одному числу невозможно. */
   pendingItems: GoodsWarehouseItem[];
+  /** «На складе» без полки. Кладутся тем же сканом, списком идут отдельно. */
+  unplacedItems?: GoodsWarehouseItem[];
   onDone: () => void;
 }
 
@@ -38,9 +41,11 @@ const PlaceOnShelfDialog = ({
   open,
   onOpenChange,
   pendingItems,
+  unplacedItems = [],
   onDone,
 }: PlaceOnShelfDialogProps) => {
   const pendingCount = pendingItems.length;
+  const unplacedCount = unplacedItems.length;
   const { toast } = useToast();
   const [barcode, setBarcode] = useState('');
   const [saving, setSaving] = useState(false);
@@ -54,7 +59,9 @@ const PlaceOnShelfDialog = ({
       const res = await placeOnShelf(scanned);
       // Подписываем положенную вещь тканью и размером — по названию товара их не
       // различить, а кладовщику важно видеть, что именно он сейчас убрал на полку.
-      const item = pendingItems.find((i) => i.storageBarcode === scanned);
+      const item = [...pendingItems, ...unplacedItems].find(
+        (i) => i.storageBarcode === scanned,
+      );
       const title =
         item && item.material && item.width && item.height
           ? `${item.material} ${item.width}×${item.height}`
@@ -104,7 +111,8 @@ const PlaceOnShelfDialog = ({
 
         <div className="space-y-4">
           <p className="text-sm text-muted-foreground">
-            Ждут укладки: <span className="font-semibold text-foreground">{pendingCount}</span>.
+            Ждут укладки:{' '}
+            <span className="font-semibold text-foreground">{pendingCount + unplacedCount}</span>.
             Сканируйте стикеры хранения — полку система назовёт сама.
           </p>
 
@@ -124,6 +132,30 @@ const PlaceOnShelfDialog = ({
                     </p>
                     <p className="text-xs text-muted-foreground">
                       Отменён клиентом
+                      {i.orderNumber ? ` · заказ ${i.orderNumber}` : ''}
+                    </p>
+                  </div>
+                  <span className="shrink-0 font-mono-tech text-xs text-muted-foreground">
+                    {i.storageBarcode}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {unplacedCount > 0 && (
+            <div className="max-h-52 space-y-1.5 overflow-y-auto rounded-md border border-border p-3">
+              <p className="text-sm font-medium">Не разложены</p>
+              {unplacedItems.map((i) => (
+                <div key={i.id} className="flex items-start justify-between gap-3 text-sm">
+                  <div className="min-w-0">
+                    <p className="font-medium leading-tight">
+                      {[i.material, i.width && i.height ? `${i.width}×${i.height}` : null]
+                        .filter(Boolean)
+                        .join(' ') || i.product || '—'}
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      {unplacedReasonLabel(i.receiveReason)}
                       {i.orderNumber ? ` · заказ ${i.orderNumber}` : ''}
                     </p>
                   </div>

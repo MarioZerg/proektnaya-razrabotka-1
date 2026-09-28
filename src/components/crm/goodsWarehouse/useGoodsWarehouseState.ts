@@ -8,10 +8,8 @@ import {
   markGoodsLost,
   deleteGoods,
   downloadStockExcel,
-  fetchStuckCancelled,
   type GoodsWarehouseItem,
   type GoodsStatusFilter,
-  type StuckCancelledItem,
 } from '@/lib/goodsWarehouseApi';
 import { fetchShelves, type Shelf } from '@/lib/shelvesApi';
 import { fetchInspection } from '@/lib/goodsWarehouseApi';
@@ -130,6 +128,8 @@ export const useGoodsWarehouseState = () => {
   // фильтр кладовщик открыл в таблице ниже.
   const [pendingShelf, setPendingShelf] = useState<GoodsWarehouseItem[]>([]);
   const [pendingReturns, setPendingReturns] = useState<GoodsWarehouseItem[]>([]);
+  /** «На складе» без полки: вынули из короба, возврат или отмена. */
+  const [unplaced, setUnplaced] = useState<GoodsWarehouseItem[]>([]);
   /** Первая успешная загрузка очередей — до неё плитки крутятся, а не показывают 0. */
   const [queuesReady, setQueuesReady] = useState(false);
   const [queuesError, setQueuesError] = useState<string | null>(null);
@@ -139,13 +139,17 @@ export const useGoodsWarehouseState = () => {
     Promise.all([
       fetchGoodsWarehouse({ status: 'awaiting_shelf' }),
       fetchGoodsWarehouse({ status: 'mp_return' }),
+      fetchGoodsWarehouse({ status: 'in_stock', noShelf: true }),
     ])
-      .then(([shelf, returns]) => {
+      .then(([shelf, returns, stock]) => {
         // FRONTEND-ONLY: в очередь «разложить» берём только вещи со стикером хранения.
         // POEHALI уже отдаёт storageLabeledAt, отдельного фильтра в функции нет —
         // не заводить action «pending_labeled», это отбор на клиенте.
         setPendingShelf(shelf.filter((i) => !!i.storageLabeledAt));
         setPendingReturns(returns);
+        // Пока облачная функция не знает no_shelf, она отдаёт весь остаток.
+        // Без полки оставляем здесь: в общем списке «на хранении» их нет.
+        setUnplaced(stock.filter((i) => i.shelfId == null));
         setQueuesReady(true);
       })
       .catch((e) => {
@@ -250,23 +254,6 @@ export const useGoodsWarehouseState = () => {
   // счётчика нет, используем уже загруженный список status=mp_return.
   const uncheckedReturns = pendingReturns.length;
 
-  // Вещи, зависшие после отмены заказа на маркетплейсе: заказ отменили уже после
-  // стикеровки, вещь в поставку не уедет, но и свободным остатком не считается.
-  // Раньше такое находили только выборочной проверкой — теперь видно на складе сразу.
-  const [stuckCancelled, setStuckCancelled] = useState<StuckCancelledItem[]>([]);
-
-  const loadStuckCancelled = () => {
-    fetchStuckCancelled()
-      .then((d) => setStuckCancelled(d.items))
-      .catch(() => {
-        // FRONTEND-ONLY: не прячем уже показанных «зависших» при сбое обновления.
-      });
-  };
-
-  useEffect(() => {
-    loadStuckCancelled();
-  }, []);
-
   const materialsList = useMemo(
     () => Array.from(new Set(items.map((i) => i.material).filter((m): m is string => !!m))).sort(),
     [items]
@@ -290,6 +277,9 @@ export const useGoodsWarehouseState = () => {
   // между сменой фильтра и приходом ответа на экране секунду живут прежние
   // данные, и без этой проверки кладовщик успевал увидеть чужие строки.
   const filtered = items.filter((i) => {
+    // «На складе» без полки живут в списке «не разложены», а не среди лежащих
+    // на стеллаже. Поиск по стикеру их по-прежнему находит.
+    if (!q && i.status === 'in_stock' && i.shelfId == null) return false;
     // Поиск идёт по всему, чем вещь можно назвать: стикер хранения (его пикают сканером),
     // номер заказа — свой и тот, под который вещь подобрана, название и материал.
     // Пока в строке что-то есть, статус не ограничиваем: кладовщик ищет конкретную вещь
@@ -352,7 +342,8 @@ export const useGoodsWarehouseState = () => {
       items.filter(
         (i) =>
           i.shelfId == null &&
-          (i.status === 'in_stock' || i.status === 'awaiting_shelf' || i.status === 'mp_return'),
+          i.status !== 'in_stock' &&
+          (i.status === 'awaiting_shelf' || i.status === 'mp_return'),
       ).length,
     [items],
   );
@@ -539,13 +530,12 @@ export const useGoodsWarehouseState = () => {
     loadQueues,
     loadInspectedReady,
     uncheckedReturns,
-    stuckCancelled,
-    loadStuckCancelled,
     pickingPending,
     pickingFbo,
     pickingFbs,
     pendingShelf,
     pendingReturns,
+    unplaced,
     materialsList,
     widthsList,
     heightsList,

@@ -13,6 +13,8 @@ interface GoodsWarehouseDialogsProps {
   shelves: Shelf[];
   /** Отказы из цеха, которые кладовщик раскладывает по полкам сканером. */
   pendingShelf: GoodsWarehouseItem[];
+  /** «На складе» без полки — кладутся тем же сканом. */
+  unplaced?: GoodsWarehouseItem[];
   placeOpen: boolean;
   setPlaceOpen: (open: boolean) => void;
   pickupOpen: boolean;
@@ -38,6 +40,7 @@ const GoodsWarehouseDialogs = ({
   canReceiveManually,
   shelves,
   pendingShelf,
+  unplaced = [],
   placeOpen,
   setPlaceOpen,
   pickupOpen,
@@ -60,6 +63,7 @@ const GoodsWarehouseDialogs = ({
       open={placeOpen}
       onOpenChange={setPlaceOpen}
       pendingItems={pendingShelf}
+      unplacedItems={unplaced}
       onDone={load}
     />
     <PlaceInspectedDialog

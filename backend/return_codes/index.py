@@ -418,17 +418,34 @@ def stock_picked_up_returns(cur, ids=None):
         # Если такой возврат реально придёт, кладовщик отсканирует наклейку
         # руками — тогда под вещь заведётся отдельная карточка, и история
         # поставки не пострадает.
+        # Вещь, которой закрыли заказ покупателя, возвращаем как есть —
+        # даже если она числится в уехавшей поставке. Это и есть пакет,
+        # который приехал назад. Новую карточку рядом не заводим.
+        # Запрет ниже остаётся для чужой карточки того же заказа: её из
+        # живой поставки вытаскивать нельзя.
         cur.execute(
-            "SELECT id, storage_barcode FROM goods_warehouse "
-            "WHERE order_id = %s "
-            "  AND NOT EXISTS ("
-            "    SELECT 1 FROM marketplace_supply_items msi "
-            "    JOIN marketplace_supplies ms ON ms.id = msi.supply_id "
-            "    WHERE msi.goods_warehouse_id = goods_warehouse.id"
-            "  )",
+            "SELECT gw.id, gw.storage_barcode FROM orders o "
+            "JOIN goods_warehouse gw "
+            "  ON gw.id = o.fulfilled_from_stock_id "
+            "  OR gw.reserved_order_id = o.id "
+            "WHERE o.id = %s "
+            "ORDER BY (gw.id = o.fulfilled_from_stock_id) DESC, gw.id "
+            "LIMIT 1",
             (order_id,),
         )
         gw_row = cur.fetchone()
+        if not gw_row:
+            cur.execute(
+                "SELECT id, storage_barcode FROM goods_warehouse "
+                "WHERE order_id = %s "
+                "  AND NOT EXISTS ("
+                "    SELECT 1 FROM marketplace_supply_items msi "
+                "    JOIN marketplace_supplies ms ON ms.id = msi.supply_id "
+                "    WHERE msi.goods_warehouse_id = goods_warehouse.id"
+                "  )",
+                (order_id,),
+            )
+            gw_row = cur.fetchone()
         if gw_row:
             gw_id = gw_row[0]
             cur.execute(

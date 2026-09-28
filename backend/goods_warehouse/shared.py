@@ -643,3 +643,78 @@ def next_storage_barcode(cur) -> str:
     """
     cur.execute("SELECT nextval('goods_warehouse_storage_seq')")
     return f"GW-{int(cur.fetchone()[0]):06d}"
+
+
+def release_fbo_from_shelf(cur, goods_id, order_id):
+    """Снимает вещь FBO с полки после наклейки стикера OZN.
+
+    Кладовщик сканирует GW, который держит в руках, и получает стикер OZN
+    этого размера. Дальше вещь едет в короб, а не лежит на стеллаже.
+
+    Полку стираем и статус ставим «ждёт поставку»: в остатке хранения её больше
+    нет, и повторный подбор её не возьмёт. Заказу без кода OZN прописываем
+    товар справочника того же материала и размера — стикер и скан в короб
+    смотрят на один артикул.
+    """
+    cur.execute(
+        "UPDATE goods_warehouse SET status = 'awaiting_supply', shelf_id = NULL "
+        "WHERE id = %s",
+        (int(goods_id),),
+    )
+    if not order_id:
+        return
+    cur.execute(
+        "SELECT product_ozon_sku, marketplace_item_id, material, width, height, "
+        "       shop_id, product "
+        "FROM orders WHERE id = %s",
+        (int(order_id),),
+    )
+    row = cur.fetchone()
+    if not row:
+        return
+    ozon_sku, item_id, material, width, height, shop_id, product = row
+    if ozon_sku and item_id:
+        return
+    cur.execute(
+        "SELECT id, ozon_sku FROM marketplace_items "
+        "WHERE ozon_sku IS NOT NULL AND ozon_sku <> '' "
+        "  AND material IS NOT DISTINCT FROM %s "
+        "  AND width IS NOT DISTINCT FROM %s "
+        "  AND height IS NOT DISTINCT FROM %s "
+        "  AND shop_id IS NOT DISTINCT FROM %s "
+        "ORDER BY (name = %s) DESC, id LIMIT 1",
+        (material, width, height, shop_id, product),
+    )
+    found = cur.fetchone()
+    if not found:
+        return
+    cur.execute(
+        "UPDATE orders SET marketplace_item_id = COALESCE(marketplace_item_id, %s), "
+        "  product_ozon_sku = COALESCE(NULLIF(product_ozon_sku, ''), %s) "
+        "WHERE id = %s",
+        (int(found[0]), found[1], int(order_id)),
+    )
+
+
+def find_goods_closing_order(cur, order_id):
+    """Вещь, которой закрыли заказ покупателя.
+
+    Подбор с полки оставляет карточке заказ, под который вещь сшили. На заказ
+    покупателя она ссылается отдельно: fulfilled_from_stock_id у заказа и
+    reserved_order_id у вещи. Возврат по номеру покупателя эту карточку не
+    видит и заводит вторую, если искать только order_id.
+    """
+    if not order_id:
+        return None
+    cur.execute(
+        "SELECT gw.id, gw.storage_barcode "
+        "FROM orders o "
+        "JOIN goods_warehouse gw "
+        "  ON gw.id = o.fulfilled_from_stock_id "
+        "  OR gw.reserved_order_id = o.id "
+        "WHERE o.id = %s "
+        "ORDER BY (gw.id = o.fulfilled_from_stock_id) DESC, gw.id "
+        "LIMIT 1",
+        (int(order_id),),
+    )
+    return cur.fetchone()

@@ -490,6 +490,32 @@ def sync_yandex(cur, days, shop_id=None):
     return {'created': created, 'updated': updated, 'error': None}
 
 
+def find_goods_closing_order(cur, order_id):
+    """Вещь, которой закрыли заказ покупателя.
+
+    Подбор с полки не переписывает карточку на заказ покупателя: у вещи остаётся
+    заказ, под который её сшили, а на покупательский она только ссылается
+    (fulfilled_from_stock_id у заказа и reserved_order_id у вещи).
+
+    Возврат, который ищет карточку только по заказу покупателя, эту вещь не
+    видит и заводит вторую. Здесь ищем именно ту, что уехала покупателю.
+    """
+    if not order_id:
+        return None
+    cur.execute(
+        "SELECT gw.id, gw.storage_barcode "
+        "FROM orders o "
+        "JOIN goods_warehouse gw "
+        "  ON gw.id = o.fulfilled_from_stock_id "
+        "  OR gw.reserved_order_id = o.id "
+        "WHERE o.id = %s "
+        "ORDER BY (gw.id = o.fulfilled_from_stock_id) DESC, gw.id "
+        "LIMIT 1",
+        (int(order_id),),
+    )
+    return cur.fetchone()
+
+
 def next_storage_barcode(cur):
     """Следующий стикер хранения GW-XXXXXX — номер выдаёт САМА БАЗА.
 
@@ -564,7 +590,12 @@ def _accept_return_by_order(cur, conn, code, actor_id, actor_name):
         "SELECT o.id, o.order_number, o.marketplace, o.material, o.width, o.height, "
         "       gw.id, gw.status, gw.storage_barcode "
         "FROM orders o "
-        "LEFT JOIN goods_warehouse gw ON gw.order_id = o.id "
+        # Карточка, сшитая под этот заказ, и карточка с полки, которой заказ
+        # закрыли. Иначе возврат вещи со склада заводит вторую запись.
+        "LEFT JOIN goods_warehouse gw "
+        "  ON gw.order_id = o.id "
+        "  OR gw.id = o.fulfilled_from_stock_id "
+        "  OR gw.reserved_order_id = o.id "
         "WHERE o.marketplace IN ('WB', 'Yandex') "
         f"  AND (o.order_number = '{code_esc}' "
         f"       OR o.wb_sticker_barcode = '{code_esc}' "
@@ -572,7 +603,11 @@ def _accept_return_by_order(cur, conn, code, actor_id, actor_name):
         f"       OR o.wb_sticker_barcode = '*{bare_esc}' "
         f"       OR CAST(o.wb_order_id AS TEXT) = '{bare_esc}' "
         f"       OR CAST(o.ym_order_id AS TEXT) = '{bare_esc}') "
-        "ORDER BY (gw.id IS NULL OR gw.status <> 'mp_return') DESC, o.id "
+        # Сначала живая вещь, которой заказ уже закрыли: её и возвращаем,
+        # а не заводим рядом новую. Уже принятую оставляем на повторный скан.
+        "ORDER BY (gw.id IS NOT NULL AND COALESCE(gw.status, '') <> 'mp_return') DESC, "
+        "         (gw.id = o.fulfilled_from_stock_id) DESC, "
+        "         (gw.reserved_order_id = o.id) DESC, o.id "
         "LIMIT 1"
     )
     row = cur.fetchone()
@@ -737,15 +772,19 @@ def stock_picked_up_returns(cur, ids=None, limit=None):
         #
         # Поэтому карточку, за которой уже закреплён ДРУГОЙ возврат, не трогаем —
         # заводим новую со своим стикером.
-        cur.execute(
-            "SELECT gw.id, gw.storage_barcode FROM goods_warehouse gw "
-            "WHERE gw.order_id = %s AND NOT EXISTS ("
-            "  SELECT 1 FROM marketplace_returns mr "
-            "  WHERE mr.goods_warehouse_id = gw.id AND mr.id <> %s"
-            ") LIMIT 1",
-            (order_id, r_id),
-        )
-        gw_row = cur.fetchone()
+        # Сначала вещь, которой закрыли заказ покупателя. Её карточка висит
+        # на другом заказе, и поиск только по order_id её не находит.
+        gw_row = find_goods_closing_order(cur, order_id)
+        if not gw_row:
+            cur.execute(
+                "SELECT gw.id, gw.storage_barcode FROM goods_warehouse gw "
+                "WHERE gw.order_id = %s AND NOT EXISTS ("
+                "  SELECT 1 FROM marketplace_returns mr "
+                "  WHERE mr.goods_warehouse_id = gw.id AND mr.id <> %s"
+                ") LIMIT 1",
+                (order_id, r_id),
+            )
+            gw_row = cur.fetchone()
 
         # СВОБОДНОЙ КАРТОЧКИ НЕТ — ЗАВОДИМ ВЕЩИ ОТДЕЛЬНУЮ.
         #
@@ -1842,15 +1881,17 @@ def handler(event: dict, context) -> dict:
                         # Берём карточку этого заказа, но только если она не занята
                         # ДРУГИМ возвратом: две одинаковые вещи одного отправления
                         # должны лежать на складе двумя строками со своими стикерами.
-                        cur.execute(
-                            "SELECT gw.id, gw.storage_barcode FROM goods_warehouse gw "
-                            "WHERE gw.order_id = %s AND NOT EXISTS ("
-                            "  SELECT 1 FROM marketplace_returns mr "
-                            "  WHERE mr.goods_warehouse_id = gw.id AND mr.id <> %s"
-                            ") LIMIT 1",
-                            (int(order_id), int(return_id)),
-                        )
-                        gw_row = cur.fetchone()
+                        gw_row = find_goods_closing_order(cur, order_id)
+                        if not gw_row:
+                            cur.execute(
+                                "SELECT gw.id, gw.storage_barcode FROM goods_warehouse gw "
+                                "WHERE gw.order_id = %s AND NOT EXISTS ("
+                                "  SELECT 1 FROM marketplace_returns mr "
+                                "  WHERE mr.goods_warehouse_id = gw.id AND mr.id <> %s"
+                                ") LIMIT 1",
+                                (int(order_id), int(return_id)),
+                            )
+                            gw_row = cur.fetchone()
                         if gw_row:
                             gw_id, storage_barcode = gw_row
                             cur.execute(

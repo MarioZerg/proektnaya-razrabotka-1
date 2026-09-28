@@ -15,6 +15,7 @@ from shared import (
     OZON_NOT_RETURNABLE,
     RESERVE_ALIVE_SQL,
     ozon_status_live,
+    find_goods_closing_order,
     is_admin,
     is_admin_or_senior,
     log_action,
@@ -23,6 +24,7 @@ from shared import (
     next_storage_barcode,
     notify_admin,
     pick_shelf_for_item,
+    release_fbo_from_shelf,
     resolve_ozon_barcode,
     try_match_orders_from_stock,
 )
@@ -521,11 +523,23 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
             # picking = отстикерована и готова к сканированию в поставку FBS.
             # Запоминаем и КТО наклеил ярлык: в поставке кладовщик видит имя рядом с
             # вещью, и при разборе «откуда взялась эта штука» есть кого спросить.
-            cur.execute(
-                "UPDATE goods_warehouse SET status = 'picking', shipping_labeled_at = now(), "
-                "shipping_labeled_by = %s, shipping_labeled_by_name = %s WHERE id = %s",
-                (actor_id, actor_name, int(gw_id)),
-            )
+            #
+            # FBO с полки уходит сразу: стикер OZN наклеен на вещь в руках, полку
+            # снимаем, в остатке хранения этот GW больше не числится. В короб
+            # кладут уже его, а не соседнюю штуку того же размера.
+            if (order_type or '').upper() == 'FBO':
+                cur.execute(
+                    "UPDATE goods_warehouse SET shipping_labeled_at = now(), "
+                    "shipping_labeled_by = %s, shipping_labeled_by_name = %s WHERE id = %s",
+                    (actor_id, actor_name, int(gw_id)),
+                )
+                release_fbo_from_shelf(cur, gw_id, reserved_order_id)
+            else:
+                cur.execute(
+                    "UPDATE goods_warehouse SET status = 'picking', shipping_labeled_at = now(), "
+                    "shipping_labeled_by = %s, shipping_labeled_by_name = %s WHERE id = %s",
+                    (actor_id, actor_name, int(gw_id)),
+                )
 
             # Вещь из СВЯЗКИ Яндекса получает свой стикер YM-… .
             #
@@ -605,7 +619,8 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
             if not gw_id:
                 return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите id'})}
             cur.execute(
-                "SELECT gw.status, gw.shipping_labeled_at, o.order_number "
+                "SELECT gw.status, gw.shipping_labeled_at, gw.shelf_id, "
+                "       o.order_number, o.id, o.order_type "
                 "FROM goods_warehouse gw "
                 "LEFT JOIN orders o ON o.id = gw.reserved_order_id "
                 "WHERE gw.id = %s",
@@ -614,7 +629,8 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
             row = cur.fetchone()
             if not row:
                 return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': 'Товар не найден'})}
-            gw_status, labeled_at, target_number = row
+            gw_status, labeled_at, shelf_id, target_number, order_id, order_type = row
+            is_fbo = (order_type or '').upper() == 'FBO'
             # Без ярлыка маркетплейса вещь на приёмке не опознают — не пускаем.
             if not labeled_at:
                 return {
@@ -623,6 +639,13 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                     'body': json.dumps({'error': 'Сначала напечатайте стикер FBS и наклейте его на вещь'}, ensure_ascii=False),
                 }
             if gw_status == 'awaiting_supply':
+                # Стикер FBO уже снял вещь с полки. Кнопка «на поставку» в этом
+                # случае ничего не ломает — просто подтверждает, что вещь готова в короб.
+                if is_fbo:
+                    if shelf_id:
+                        release_fbo_from_shelf(cur, gw_id, order_id)
+                        conn.commit()
+                    return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True})}
                 return {
                     'statusCode': 409,
                     'headers': headers,
@@ -634,9 +657,12 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                     'headers': headers,
                     'body': json.dumps({'error': f'Вещь недоступна (статус: {gw_status})'}, ensure_ascii=False),
                 }
-            cur.execute(
-                f"UPDATE goods_warehouse SET status = 'awaiting_supply' WHERE id = {int(gw_id)}"
-            )
+            if is_fbo:
+                release_fbo_from_shelf(cur, gw_id, order_id)
+            else:
+                cur.execute(
+                    f"UPDATE goods_warehouse SET status = 'awaiting_supply' WHERE id = {int(gw_id)}"
+                )
             log_action(
                 cur, actor_id, actor_name, 'send_to_supply', 'goods_warehouse', gw_id,
                 f'Отправил вещь на поставку по заказу #{target_number or "—"}',
@@ -654,7 +680,8 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
 
             bc_esc = scan_barcode.replace("'", "''")
             cur.execute(
-                "SELECT gw.id, gw.status, o.order_number, o.product FROM goods_warehouse gw "
+                "SELECT gw.id, gw.status, gw.shelf_id, o.order_number, o.product "
+                "FROM goods_warehouse gw "
                 "LEFT JOIN orders o ON o.id = gw.order_id "
                 f"WHERE gw.storage_barcode = '{bc_esc}'"
             )
@@ -665,8 +692,12 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                     'headers': headers,
                     'body': json.dumps({'error': f'Стикер {scan_barcode} не найден — это не стикер хранения'}),
                 }
-            gw_id, gw_status, gw_order_number, gw_product = gw_row
-            if gw_status == 'in_stock':
+            gw_id, gw_status, gw_shelf, gw_order_number, gw_product = gw_row
+            # «На складе» без полки — та же укладка. Вещь уже числится свободным
+            # остатком (её вынули из короба, вернули или сняли с отмены), но
+            # стеллажа у неё нет: сканер называет полку и кладёт туда.
+            # Если полка уже записана — повторно раскладывать нечего.
+            if gw_status == 'in_stock' and gw_shelf:
                 return {
                     'statusCode': 409,
                     'headers': headers,
@@ -680,7 +711,7 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
             # или с дефектом — в цех на осмотр. Если разрешить укладку напрямую, это
             # решение подменяется сканированием, и бракованная вещь встаёт на полку
             # как годная — а потом уезжает покупателю.
-            if gw_status not in ('awaiting_shelf', 'taken'):
+            if gw_status not in ('awaiting_shelf', 'taken', 'in_stock'):
                 return {
                     'statusCode': 409,
                     'headers': headers,
@@ -978,8 +1009,15 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                 return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': 'Заказ не найден'})}
             num = o[0]
 
-            cur.execute("SELECT id FROM goods_warehouse WHERE order_id = %s", (int(order_id),))
-            exists = cur.fetchone()
+            # Вещь с полки, которой закрыли этот заказ, важнее карточки,
+            # сшитой под него: иначе возврат заведёт вторую запись.
+            exists = find_goods_closing_order(cur, order_id)
+            if not exists:
+                cur.execute(
+                    "SELECT id, storage_barcode FROM goods_warehouse WHERE order_id = %s",
+                    (int(order_id),),
+                )
+                exists = cur.fetchone()
             if exists:
                 gw_id = exists[0]
                 cur.execute(
@@ -1397,7 +1435,10 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
             # раз, сколько вещей у него в руках, и каждый скан принимает следующую.
             cur.execute(
                 f"SELECT o.id FROM orders o "
-                f"LEFT JOIN goods_warehouse gw ON gw.order_id = o.id "
+                f"LEFT JOIN goods_warehouse gw "
+                f"  ON gw.order_id = o.id "
+                f"  OR gw.id = o.fulfilled_from_stock_id "
+                f"  OR gw.reserved_order_id = o.id "
                 f"WHERE o.order_number = '{order_number_esc}' "
                 f"   OR o.ozon_posting_number = '{order_number_esc}' "
                 f"   OR o.wb_sticker_barcode = '{order_number_esc}' "
@@ -1407,7 +1448,9 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                 f"   OR CAST(o.ym_order_id AS TEXT) = '{bare_esc}' "
                 # Сначала точное попадание в наш номер, затем ещё не принятые вещи.
                 f"ORDER BY (o.order_number = '{order_number_esc}') DESC, "
-                f"         (gw.id IS NULL OR gw.status <> 'mp_return') DESC, o.id "
+                f"         (gw.id IS NOT NULL AND COALESCE(gw.status, '') <> 'mp_return') DESC, "
+                f"         (gw.id = o.fulfilled_from_stock_id) DESC, "
+                f"         (gw.reserved_order_id = o.id) DESC, o.id "
                 f"LIMIT 1"
             )
             order_row = cur.fetchone()
@@ -1430,8 +1473,16 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
             # Заказ уже был на складе (в т.ч. отгружен раньше) — просто возвращаем
             # существующую запись обратно в "На хранении" с новой полкой, без дублирования
             # (order_id в таблице UNIQUE).
-            cur.execute("SELECT id, storage_barcode FROM goods_warehouse WHERE order_id = %s", (order_id,))
-            existing = cur.fetchone()
+            # Сначала вещь, которой закрыли заказ покупателя. Поиск только по
+            # order_id её не видит: карточка осталась на заказе, под который
+            # вещь сшили, и возврат заводил вторую.
+            existing = find_goods_closing_order(cur, order_id)
+            if not existing:
+                cur.execute(
+                    "SELECT id, storage_barcode FROM goods_warehouse WHERE order_id = %s",
+                    (order_id,),
+                )
+                existing = cur.fetchone()
             if existing:
                 gw_id, storage_barcode = existing
                 cur.execute(

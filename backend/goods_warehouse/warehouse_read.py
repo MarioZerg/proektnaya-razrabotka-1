@@ -21,6 +21,7 @@ def handle_get(event: dict, headers: dict, dsn: str) -> dict:
     width = params.get('width')
     height = params.get('height')
     shelf_id_filter = params.get('shelf_id')
+    no_shelf = (params.get('no_shelf') or '').strip().lower() in ('1', 'true', 'yes')
     search = (params.get('search') or '').strip()
 
 
@@ -1275,6 +1276,9 @@ def handle_get(event: dict, headers: dict, dsn: str) -> dict:
             conditions.append(f"o.height = {int(height)}")
         if shelf_id_filter:
             conditions.append(f"gw.shelf_id = {int(shelf_id_filter)}")
+        elif no_shelf:
+            # Список «не разложены»: свободный остаток, у которого нет стеллажа.
+            conditions.append("gw.shelf_id IS NULL")
 
         # ПОИСК ИЩЕТ В БАЗЕ, А НЕ В БРАУЗЕРЕ.
         #

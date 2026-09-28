@@ -119,6 +119,18 @@ export const reasonIcons: Record<ReceiveReason, string> = {
   individual: 'UserCheck',
 };
 
+/**
+ * Почему вещь числится «на складе», а полки у неё нет.
+ *
+ * Отмена и возврат уже записаны в причине приёмки. Всё остальное без полки —
+ * вещь вынули из короба и на стеллаж ещё не отнесли.
+ */
+export const unplacedReasonLabel = (reason: string | null | undefined): string => {
+  if (reason === 'cancelled' || reason === 'cancelled_labeled') return 'Отмена';
+  if (reason === 'return') return 'Возврат';
+  return 'Убрали из короба';
+};
+
 export const reasonClass: Record<ReceiveReason, string> = {
   cancelled: 'bg-orange-100 text-orange-700 hover:bg-orange-100',
   return: 'bg-sky-100 text-sky-700 hover:bg-sky-100',
