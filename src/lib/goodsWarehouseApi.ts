@@ -263,6 +263,8 @@ export const shipLabelGoods = (barcode: string, actorId?: number, actorName?: st
     /** Маркетплейс и тип заказа — по ним печатается нужный стикер. */
     marketplace: string | null;
     orderType: string | null;
+    /** Ярлык на эту вещь уже печатали: вторую копию нельзя клеить на другую вещь. */
+    alreadyLabeled?: boolean;
   }>;
 
 /** Перенести пачку отсканированных вещей на выбранную полку одним действием. */

@@ -308,7 +308,7 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
             # у WB он приходит картинкой, у OZON и Яндекса — файлом PDF.
             cur.execute(
                 "SELECT gw.id, gw.status, gw.reserved_order_id, ro.order_number, o.product, "
-                "s.name, ro.marketplace, ro.order_type, "
+                "s.name, ro.marketplace, ro.order_type, gw.shipping_labeled_at, "
                 # Вещь уже уложена в короб живой поставки — см. проверку ниже.
                 "(SELECT COALESCE(_s.supply_number, _s.wb_supply_id, "
                 "                 _s.ozon_application_number, '№' || _s.id) "
@@ -327,7 +327,7 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
             if not gw_row:
                 return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': f'Стикер {scan_barcode} не найден'})}
             (gw_id, gw_status, reserved_order_id, target_number, gw_product,
-             shelf_name, mp, order_type, gw_in_supply) = gw_row
+             shelf_name, mp, order_type, gw_labeled_at, gw_in_supply) = gw_row
 
             # ВЕЩЬ ЛЕЖИТ В КОРОБЕ ПОСТАВКИ — ЯРЛЫК ОТПРАВЛЕНИЯ НА НЕЁ НЕ КЛЕИМ.
             #
@@ -578,6 +578,20 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                     # Стикер связки: если он есть, терминал печатает его вторым —
                     # именно им кладовщик соберёт связку в поставку.
                     'bundleBarcode': bundle_barcode,
+                    # ЯРЛЫК НА ЭТУ ВЕЩЬ УЖЕ ПЕЧАТАЛИ РАНЬШЕ.
+                    #
+                    # Повтор сам по себе законный: порвался пакет — нужен тот же
+                    # ярлык. Но именно здесь рождается неотличимый двойник. Ярлык
+                    # маркетплейса у отправления ОДИН, и если вторую копию наклеить
+                    # не на тот же пакет, а на соседнюю такую же вещь, на складе
+                    # окажутся две вещи с одним номером. Первая уедет в поставке,
+                    # а вторая не отсканируется никогда: номер уже занят. Так и
+                    # случилось с 67335382-0038-1 — ярлык печатали дважды, и
+                    # копия ушла на «Молнию 300×265» вместо заказанной 200×260.
+                    #
+                    # Показываем это кладовщику в момент печати, пока обе вещи у
+                    # него в руках и ещё можно не перепутать.
+                    'alreadyLabeled': bool(gw_labeled_at),
                     'marketplace': mp,
                     'orderType': order_type,
                 }, ensure_ascii=False),

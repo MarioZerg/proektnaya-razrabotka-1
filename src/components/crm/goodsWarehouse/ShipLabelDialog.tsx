@@ -37,6 +37,8 @@ interface FoundItem {
   storageBarcode: string;
   marketplace: string | null;
   orderType: string | null;
+  /** Ярлык на эту вещь уже печатали — предупреждаем о двойнике. */
+  alreadyLabeled?: boolean;
 }
 
 /**
@@ -190,6 +192,28 @@ const ShipLabelDialog = ({ open, onOpenChange, matched, onDone }: ShipLabelDialo
                 </div>
               </div>
             </div>
+
+            {/* ПОВТОРНАЯ ПЕЧАТЬ — ГЛАВНЫЙ ИСТОЧНИК ВЕЩЕЙ-ДВОЙНИКОВ.
+                Ярлык у отправления один, и вторая копия, наклеенная на соседнюю
+                такую же вещь, делает её несканируемой навсегда: номер уже занят
+                поставкой. Предупреждаем, пока вещь в руках и ярлык ещё не наклеен. */}
+            {found.alreadyLabeled && (
+              <div className="rounded-md border border-amber-300 bg-amber-50 p-3">
+                <div className="flex items-start gap-2.5">
+                  <Icon
+                    name="TriangleAlert"
+                    size={18}
+                    className="mt-0.5 shrink-0 text-amber-600"
+                  />
+                  <p className="text-sm text-amber-900">
+                    Ярлык на эту вещь уже печатали. Это вторая копия —
+                    наклейте её <b>только на тот же самый пакет</b> вместо
+                    испорченного. На другую вещь клеить нельзя: в поставку она
+                    не отсканируется, номер {found.orderNumber} занят.
+                  </p>
+                </div>
+              </div>
+            )}
 
             <div className="rounded-md border border-border p-3">
               <p className="text-sm font-medium">Что дальше</p>
