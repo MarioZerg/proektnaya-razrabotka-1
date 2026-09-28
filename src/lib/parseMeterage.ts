@@ -36,7 +36,8 @@ const score = (n: number, fromLabel: boolean) => {
   let s = 0;
   if (fromLabel) s += 8;
   if (n <= TYPICAL_MAX) s += 3;
-  if (!Number.isInteger(n)) s += 2;
+  if (!Number.isInteger(n)) s += 4;
+  s += String(n).replace('.', '').length;
   return s;
 };
 
@@ -48,7 +49,7 @@ const bestUnique = (candidates: Cand[]): number | null => {
     if (c.score > prev) best.set(c.n, c.score);
   }
   const list = [...best.entries()].map(([n, s]) => ({ n, score: s }));
-  list.sort((a, b) => b.score - a.score || Math.abs(a.n - 80) - Math.abs(b.n - 80));
+  list.sort((a, b) => b.score - a.score);
   const top = list[0];
   const rival = list.find((c) => c.n !== top.n && c.score >= top.score - 1);
   if (rival) return null;
@@ -77,17 +78,43 @@ const push = (list: Cand[], n: number, fromLabel: boolean) => {
   list.push({ n: allowed, score: score(allowed, fromLabel) });
 };
 
-const cleanOcr = (text: string) =>
+/**
+ * «30.80» OCR часто отдаёт как «3.80» или «3 80» — пропал ноль в десятках.
+ * Если сырое не в сетке, а «30.80» есть — чиним.
+ */
+const repairLostTensZero = (text: string) =>
   text
-    .replace(/[oOоОøØ∅⌀]/g, '0')
-    .replace(/[зЗ]/g, '3')
-    .replace(/[，‚،]/g, ',')
-    .replace(/[·∙•‧''′`´]/g, '.')
-    .replace(/(\d{2,3})[lI|\/\\](\d{1,2})(?!\d)/g, '$1.$2')
-    .replace(/(^|[^\d])1([3-9]\d[.,]\d{1,2})(?!\d)/g, '$1$2')
-    .replace(/\d{1,2}[.,/\-]\d{1,2}[.,/\-]\d{2,4}/g, ' ')
-    .replace(/\d{5,}/g, ' ')
-    .replace(/(\d{2,3})[^\d]{1,3}(\d{1,2})(?!\d)/g, '$1.$2');
+    .replace(/(^|[^\d])(\d)[.,](\d{2})(?!\d)/g, (full, prefix: string, d: string, frac: string) => {
+      const raw = toNum(`${d}.${frac}`);
+      const repaired = toNum(`${d}0.${frac}`);
+      if (toAllowed(raw) == null && toAllowed(repaired) != null) {
+        return `${prefix}${d}0.${frac}`;
+      }
+      return full;
+    })
+    .replace(/(^|[^\d])(\d)[^\d.,]{1,3}(\d{2})(?!\d)/g, (full, prefix: string, d: string, frac: string) => {
+      const raw = toNum(`${d}.${frac}`);
+      const repaired = toNum(`${d}0.${frac}`);
+      if (toAllowed(raw) == null && toAllowed(repaired) != null) {
+        return `${prefix}${d}0.${frac}`;
+      }
+      return full;
+    });
+
+const cleanOcr = (text: string) =>
+  repairLostTensZero(
+    text
+      .replace(/[oOоОøØ∅⌀]/g, '0')
+      .replace(/[зЗ]/g, '3')
+      .replace(/[，‚،]/g, ',')
+      .replace(/[·∙•‧''′`´]/g, '.')
+      .replace(/(\d{2,3})[lI|\/\\](\d{1,2})(?!\d)/g, '$1.$2')
+      .replace(/(^|[^\d])1([3-9]\d[.,]\d{1,2})(?!\d)/g, '$1$2')
+      .replace(/\d{1,2}[.,/\-]\d{1,2}[.,/\-]\d{2,4}/g, ' ')
+      .replace(/\d{5,}/g, ' ')
+      // Не склеивать «80 30.80» в «80.30» — второе уже дробное.
+      .replace(/(\d{2,3})[^\d.,]{1,3}(\d{1,2})(?![.\d]|[.,])/g, '$1.$2'),
+  );
 
 /**
  * Потерянная запятая: «863» → 86.3, если 86.3 в сетке.
@@ -110,30 +137,28 @@ const restoreLostDot = (digits: string): number | null => {
 export const parseMeterageFromOcr = (text: string): number | null => {
   if (!text.trim()) return null;
   const cleaned = cleanOcr(text);
+  const all: Cand[] = [];
 
-  const labeled: Cand[] = [];
   for (const m of cleaned.matchAll(/(\d{2,3}(?:[.,]\d{1,2})?)\s*(?:пог\.?|п\.?\s*м|[мm])(?!\d)/gi)) {
     const n = toNum(m[1]);
-    if (Number.isFinite(n)) push(labeled, n, true);
+    if (Number.isFinite(n)) push(all, n, true);
   }
-  const fromLabel = bestUnique(labeled);
-  if (fromLabel != null) return fromLabel;
 
-  const decimals: Cand[] = [];
-  for (const m of cleaned.matchAll(/\d{2,3}[.,]\d{1,2}/g)) {
+  for (const m of cleaned.matchAll(/\d{1,3}[.,]\d{1,2}/g)) {
     const n = toNum(m[0]);
-    if (Number.isFinite(n)) push(decimals, n, false);
+    if (Number.isFinite(n)) push(all, n, false);
   }
-  const fromDecimal = bestUnique(decimals);
-  if (fromDecimal != null) return fromDecimal;
 
   const digitRuns = cleaned.match(/\d+/g) || [];
   if (digitRuns.length === 1 && (digitRuns[0].length === 3 || digitRuns[0].length === 4)) {
     const restored = restoreLostDot(digitRuns[0]);
-    if (restored != null) return toAllowed(slashedZeroFromNine(restored));
+    if (restored != null) push(all, restored, false);
   }
 
-  const withoutDecimals = cleaned.replace(/\d{2,3}[.,]\d{1,2}/g, ' ');
+  // Дробь уже разобрали — её хвост («80» из «30.80» / «.80») не берём как целые метры.
+  const withoutDecimals = cleaned
+    .replace(/\d{1,3}[.,]\d{1,2}/g, ' ')
+    .replace(/[.,]\d{1,2}/g, ' ');
   const intTokens = [...withoutDecimals.matchAll(/\d{2,3}/g)].map((m) => m[0]);
   const ints = intTokens.map(toNum).filter((n) => Number.isFinite(n));
   const uniqAllowed = [...new Set(ints.map(toAllowed).filter((n): n is number => n != null))];
@@ -141,15 +166,13 @@ export const parseMeterageFromOcr = (text: string): number | null => {
   if (uniqAllowed.length === 1) {
     const otherTokens = intTokens.filter((t) => toAllowed(toNum(t)) !== uniqAllowed[0]);
     if (otherTokens.length === 0) {
-      const v = toAllowed(slashedZeroFromNine(uniqAllowed[0]));
-      return v;
-    }
-    if (otherTokens.length === 1) {
+      push(all, slashedZeroFromNine(uniqAllowed[0]), false);
+    } else if (otherTokens.length === 1) {
       const fracToken = otherTokens[0];
       const frac = toNum(fracToken);
       if (frac > 0 && frac <= 99) {
         const combined = uniqAllowed[0] + frac / (fracToken.length >= 2 ? 100 : 10);
-        return toAllowed(slashedZeroFromNine(combined));
+        push(all, slashedZeroFromNine(combined), false);
       }
     }
   }
@@ -161,11 +184,11 @@ export const parseMeterageFromOcr = (text: string): number | null => {
     if (toAllowed(whole) != null && frac >= 0 && frac <= 99) {
       const combined = whole + frac / (fracToken.length >= 2 ? 100 : 10);
       const v = toAllowed(slashedZeroFromNine(combined));
-      if (v != null && v !== toAllowed(whole)) return v;
+      if (v != null && v !== toAllowed(whole)) push(all, v, false);
     }
   }
 
-  return null;
+  return bestUnique(all);
 };
 
 export const formatMeterage = (n: number) => {
