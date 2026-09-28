@@ -10,15 +10,19 @@ import Icon from '@/components/ui/icon';
 import { formatMeterage, parseMeterageFromOcr } from '@/lib/parseMeterage';
 import { playScanSound, playScanErrorSound } from '@/lib/scanSound';
 
-/** Доля экрана камеры, совпадает с белой рамкой. OCR режет только её. */
-const ZONE_W = 0.52;
-const ZONE_H = 0.16;
+/** Доля экрана камеры, совпадает с белой рамкой. Шире, чтобы влезло «50,80». */
+const ZONE_W = 0.64;
+const ZONE_H = 0.22;
 
 interface MeterageScanDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   /** Метраж одного рулона, как на бирке: «63,3». */
   onMeterage: (quantity: string) => void;
+  /** Последний принятый метраж — кладовщик видит его, пока сканирует дальше. */
+  lastQty: string | null;
+  /** Убрать последний рулон из приёмки, если скан ошибочный. */
+  onUndoLast: () => void;
 }
 
 type TesseractWorker = {
@@ -56,7 +60,7 @@ const getMeterageWorker = async (): Promise<TesseractWorker> => {
         createWorker('eng', 1, {
           gzip: false,
           workerBlobURL: false,
-          cachePath: 'meterage-ocr-v3',
+          cachePath: 'meterage-ocr-v4',
           cacheMethod: 'write',
           logger: () => undefined,
           errorHandler: () => undefined,
@@ -69,7 +73,7 @@ const getMeterageWorker = async (): Promise<TesseractWorker> => {
         }),
       ]);
       await worker.setParameters({
-        tessedit_char_whitelist: '0123456789.,мmМ ',
+        tessedit_char_whitelist: '0123456789.,м ',
         tessedit_pageseg_mode: '7',
       });
       return worker;
@@ -89,12 +93,25 @@ const cropCanvas = (
   srcH: number,
 ) => {
   if (srcW < 8 || srcH < 8) return null;
+  const src = document.createElement('canvas');
+  src.width = Math.max(8, Math.round(srcW));
+  src.height = Math.max(8, Math.round(srcH));
+  const srcCtx = src.getContext('2d');
+  if (!srcCtx) return null;
+  srcCtx.drawImage(source, srcX, srcY, srcW, srcH, 0, 0, src.width, src.height);
+
+  // Tesseract плохо видит запятую на мелком кадре — увеличиваем зону.
+  const scale = 3;
   const canvas = document.createElement('canvas');
-  canvas.width = Math.max(8, Math.round(srcW));
-  canvas.height = Math.max(8, Math.round(srcH));
+  canvas.width = src.width * scale;
+  canvas.height = src.height * scale;
   const ctx = canvas.getContext('2d');
-  if (!ctx) return null;
-  ctx.drawImage(source, srcX, srcY, srcW, srcH, 0, 0, canvas.width, canvas.height);
+  if (!ctx) return src;
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = 'high';
+  ctx.fillStyle = '#fff';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.drawImage(src, 0, 0, canvas.width, canvas.height);
   return canvas;
 };
 
@@ -135,7 +152,13 @@ const cropOverlayFromVideo = (video: HTMLVideoElement) => {
  * Камера метража на приёмке. Картинка с камеры только для прицела —
  * цифры читаются по кнопке и только из белой рамки.
  */
-const MeterageScanDialog = ({ open, onOpenChange, onMeterage }: MeterageScanDialogProps) => {
+const MeterageScanDialog = ({
+  open,
+  onOpenChange,
+  onMeterage,
+  lastQty,
+  onUndoLast,
+}: MeterageScanDialogProps) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const workerRef = useRef<TesseractWorker | null>(null);
@@ -231,9 +254,11 @@ const MeterageScanDialog = ({ open, onOpenChange, onMeterage }: MeterageScanDial
       if (gen !== scanGenRef.current) return;
       const { data } = await workerRef.current.recognize(source);
       if (gen !== scanGenRef.current) return;
-      const meters = parseMeterageFromOcr(data.text || '');
+      const raw = (data.text || '').replace(/\s+/g, ' ').trim();
+      const meters = parseMeterageFromOcr(raw);
       if (meters == null) {
-        setHint('В рамке нет длины 20–200 м. Наведите только на метраж со стикера');
+        const seen = raw ? ` Прочитал: «${raw.slice(0, 40)}»` : '';
+        setHint(`В рамке нет длины 20–200 м.${seen} Нужно всё число, и запятая тоже`);
         return;
       }
       accept(meters, gen);
@@ -261,27 +286,28 @@ const MeterageScanDialog = ({ open, onOpenChange, onMeterage }: MeterageScanDial
     void recognizeZone(frame, gen);
   };
 
+  const lastShown = lastQty ? lastQty.replace('.', ',') : null;
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
         confirmClose={false}
-        className="z-[60] max-h-[100dvh] max-w-lg gap-3 sm:max-h-[90dvh]"
+        className="z-[60] flex h-[100dvh] max-h-[100dvh] w-full max-w-full left-0 top-0 translate-x-0 translate-y-0 flex-col gap-2 overflow-hidden rounded-none p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:left-[50%] sm:top-[50%] sm:h-auto sm:max-h-[90dvh] sm:w-full sm:max-w-lg sm:translate-x-[-50%] sm:translate-y-[-50%] sm:rounded-lg sm:p-6 sm:pb-6"
       >
-        <DialogHeader>
+        <DialogHeader className="shrink-0 space-y-1 pr-8 text-left">
           <DialogTitle>Сканер метража</DialogTitle>
         </DialogHeader>
-        <p className="text-sm text-muted-foreground">
-          В белую рамку — только метраж на стикере: от 20 до 200 м, как «86,3»
-          или «20.10». Штрихкод, дату и артикул в рамку не заводить.
+        <p className="shrink-0 text-xs text-muted-foreground sm:text-sm">
+          В рамку — всё число, и запятая: «50,8». Не только «50».
         </p>
 
-        <div className="relative overflow-hidden rounded-md bg-black">
+        <div className="relative min-h-0 flex-1 overflow-hidden rounded-md bg-black sm:min-h-[260px]">
           <video
             ref={videoRef}
             autoPlay
             muted
             playsInline
-            className="aspect-[3/4] w-full object-cover sm:aspect-video"
+            className="h-full w-full object-cover"
           />
           <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
             <div
@@ -296,15 +322,38 @@ const MeterageScanDialog = ({ open, onOpenChange, onMeterage }: MeterageScanDial
           )}
         </div>
 
-        <p className="min-h-10 text-sm font-medium">
+        {lastShown && (
+          <div className="flex shrink-0 items-center gap-2 rounded-md border border-border bg-muted/60 px-3 py-2">
+            <div className="min-w-0 flex-1">
+              <p className="text-[11px] text-muted-foreground">Последний рулон</p>
+              <p className="truncate text-base font-semibold tabular-nums">
+                {lastShown} м × 1
+              </p>
+            </div>
+            <Button
+              type="button"
+              variant="ghost"
+              className="h-10 w-10 shrink-0 p-0 text-muted-foreground hover:text-destructive"
+              title="Убрать этот рулон"
+              onClick={() => {
+                onUndoLast();
+                setHint('Рулон убран. Наведите и считайте снова');
+              }}
+            >
+              <Icon name="X" size={18} />
+            </Button>
+          </div>
+        )}
+
+        <p className="shrink-0 text-sm font-medium leading-snug">
           <span className={hint.includes('в строке') ? 'text-emerald-700' : undefined}>{hint}</span>
         </p>
 
-        {camError && <p className="text-sm text-destructive">{camError}</p>}
+        {camError && <p className="shrink-0 text-sm text-destructive">{camError}</p>}
 
         <Button
           type="button"
-          className="h-12 w-full"
+          className="h-12 w-full shrink-0"
           disabled={reading}
           onClick={handleScanClick}
         >

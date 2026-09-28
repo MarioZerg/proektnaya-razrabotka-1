@@ -49,6 +49,37 @@ export const receiveSelectClass =
   'h-10 px-2.5 text-base focus:ring-1 focus:ring-offset-0 sm:h-9 sm:text-sm';
 
 type PendingFocus = { kind: 'qty' | 'material'; idx: number };
+type LastScan = { idx: number; qty: string; created: boolean };
+
+const applyMeterageScan = (
+  rows: ItemRow[],
+  target: { materialId: string; supplierId: string },
+  qty: string,
+): { next: ItemRow[]; last: LastScan } => {
+  const groups = groupRowIndices(rows);
+  const group =
+    groups.find(
+      (g) =>
+        rows[g[0]].materialId === target.materialId &&
+        (rows[g[0]].supplierId || '') === target.supplierId,
+    ) ?? groups[groups.length - 1];
+  const scanned = { quantity: qty, numberRolls: '1' };
+  if (!group) return { next: rows, last: { idx: -1, qty, created: false } };
+  const emptyIdx = [...group].reverse().find((i) => !rows[i].quantity.trim());
+  if (emptyIdx !== undefined) {
+    return {
+      next: rows.map((row, i) => (i === emptyIdx ? { ...row, ...scanned } : row)),
+      last: { idx: emptyIdx, qty, created: false },
+    };
+  }
+  const lastIdx = group[group.length - 1];
+  return {
+    next: addLineToGroup(rows, group).map((row, i) =>
+      i === lastIdx + 1 ? { ...row, ...scanned } : row,
+    ),
+    last: { idx: lastIdx + 1, qty, created: true },
+  };
+};
 
 /**
  * Состав приёмки: материал и поставщик один раз на блок, дальше строки метража.
@@ -69,10 +100,16 @@ const SupplyReceiveRows = ({
   const [scanTarget, setScanTarget] = useState<{ materialId: string; supplierId: string } | null>(
     null,
   );
+  const [lastScan, setLastScan] = useState<LastScan | null>(null);
+  const pendingLastScan = useRef<LastScan | null>(null);
   const scanTargetRef = useRef(scanTarget);
   scanTargetRef.current = scanTarget;
 
   useLayoutEffect(() => {
+    if (pendingLastScan.current) {
+      setLastScan(pendingLastScan.current);
+      pendingLastScan.current = null;
+    }
     const pending = pendingFocus.current;
     if (!pending) return;
     pendingFocus.current = null;
@@ -109,25 +146,31 @@ const SupplyReceiveRows = ({
     const target = scanTargetRef.current;
     if (!target) return;
     setRows((r) => {
-      const groups = groupRowIndices(r);
-      const group =
-        groups.find(
-          (g) =>
-            r[g[0]].materialId === target.materialId &&
-            (r[g[0]].supplierId || '') === target.supplierId,
-        ) ?? groups[groups.length - 1];
-      if (!group) return r;
-      const scanned = { quantity: qty, numberRolls: '1' };
-      const emptyIdx = [...group].reverse().find((i) => !r[i].quantity.trim());
-      if (emptyIdx !== undefined) {
-        pendingFocus.current = { kind: 'qty', idx: emptyIdx };
-        return r.map((row, i) => (i === emptyIdx ? { ...row, ...scanned } : row));
-      }
-      const lastIdx = group[group.length - 1];
-      pendingFocus.current = { kind: 'qty', idx: lastIdx + 1 };
-      const next = addLineToGroup(r, group);
-      return next.map((row, i) => (i === lastIdx + 1 ? { ...row, ...scanned } : row));
+      const result = applyMeterageScan(r, target, qty);
+      pendingLastScan.current = result.last;
+      return result.next;
     });
+  };
+
+  const undoLastScan = () => {
+    const last = lastScan;
+    if (!last || last.idx < 0) return;
+    setRows((r) => {
+      if (last.idx >= r.length) return r;
+      if (r[last.idx].quantity !== last.qty) return r;
+      if (last.created) {
+        if (r.length <= 1) {
+          return r.map((row, i) =>
+            i === last.idx ? { ...row, quantity: '', numberRolls: '' } : row,
+          );
+        }
+        return r.filter((_, i) => i !== last.idx);
+      }
+      return r.map((row, i) =>
+        i === last.idx ? { ...row, quantity: '', numberRolls: '' } : row,
+      );
+    });
+    setLastScan(null);
   };
 
   const last = rows[rows.length - 1];
@@ -345,6 +388,8 @@ const SupplyReceiveRows = ({
             open={scanOpen}
             onOpenChange={setScanOpen}
             onMeterage={applyScannedMeterage}
+            lastQty={lastScan && lastScan.idx >= 0 ? lastScan.qty : null}
+            onUndoLast={undoLastScan}
           />
         </Suspense>
       )}

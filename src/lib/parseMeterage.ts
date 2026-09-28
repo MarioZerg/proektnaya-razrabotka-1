@@ -55,8 +55,12 @@ const cleanOcr = (text: string) =>
     .replace(/[oOоО]/g, '0')
     .replace(/[lI|]/g, '1')
     .replace(/[зЗ]/g, '3')
+    .replace(/[，‚،]/g, ',')
+    .replace(/[·∙•‧''′`´]/g, '.')
     .replace(/\d{1,2}[.,/\-]\d{1,2}[.,/\-]\d{2,4}/g, ' ')
-    .replace(/\d{5,}/g, ' ');
+    .replace(/\d{5,}/g, ' ')
+    // «50m8» / «50 80»: OCR подменил запятую буквой или пробелом
+    .replace(/(\d{2,3})[^\d]{1,3}(\d{1,2})(?!\d)/g, '$1.$2');
 
 /**
  * Если OCR потерял запятую: «863» это 86.3, а не 863 м (таких рулонов нет).
@@ -88,7 +92,7 @@ export const parseMeterageFromOcr = (text: string): number | null => {
   const cleaned = cleanOcr(text);
 
   const labeled: Cand[] = [];
-  for (const m of cleaned.matchAll(/(\d{2,3}(?:[.,]\d{1,2})?)\s*(?:м|m|п\.?\s*м|пог)/gi)) {
+  for (const m of cleaned.matchAll(/(\d{2,3}(?:[.,]\d{1,2})?)\s*(?:пог\.?|п\.?\s*м|[мm])(?!\d)/gi)) {
     const n = toNum(m[1]);
     if (Number.isFinite(n)) push(labeled, n, true);
   }
@@ -124,6 +128,16 @@ export const parseMeterageFromOcr = (text: string): number | null => {
         const combined = roundM(uniqInts[0] + frac / (fracToken.length >= 2 ? 100 : 10));
         if (isMeterage(combined)) return combined;
       }
+    }
+  }
+
+  if (intTokens.length === 2) {
+    const whole = toNum(intTokens[0]);
+    const fracToken = intTokens[1];
+    const frac = toNum(fracToken);
+    if (isMeterage(whole) && frac >= 0 && frac <= 99) {
+      const combined = roundM(whole + frac / (fracToken.length >= 2 ? 100 : 10));
+      if (isMeterage(combined) && combined !== whole) return combined;
     }
   }
 
