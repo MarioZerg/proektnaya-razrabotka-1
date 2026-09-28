@@ -97,9 +97,12 @@ const SupplyReceiveRows = ({
   const materialRefs = useRef<Record<number, HTMLButtonElement | null>>({});
   const pendingFocus = useRef<PendingFocus | null>(null);
   const [scanOpen, setScanOpen] = useState(false);
-  const [scanTarget, setScanTarget] = useState<{ materialId: string; supplierId: string } | null>(
-    null,
-  );
+  const [scanTarget, setScanTarget] = useState<{
+    materialId: string;
+    supplierId: string;
+    materialName: string;
+    unit: string;
+  } | null>(null);
   const [lastScan, setLastScan] = useState<LastScan | null>(null);
   const pendingLastScan = useRef<LastScan | null>(null);
   const scanTargetRef = useRef(scanTarget);
@@ -338,9 +341,12 @@ const SupplyReceiveRows = ({
                     : 'Сначала выберите материал'
                 }
                 onClick={() => {
+                  const mat = materials.find((m) => String(m.id) === head.materialId);
                   setScanTarget({
                     materialId: head.materialId,
                     supplierId: head.supplierId || '',
+                    materialName: mat?.name || '',
+                    unit: mat?.unit || 'м',
                   });
                   setScanOpen(true);
                 }}
@@ -396,10 +402,8 @@ const SupplyReceiveRows = ({
             onMeterage={applyScannedMeterage}
             lastQty={lastScan && lastScan.idx >= 0 ? lastScan.qty : null}
             onUndoLast={undoLastScan}
-            materialName={
-              materials.find((m) => String(m.id) === scanTarget?.materialId)?.name || ''
-            }
-            unit={materialUnit(scanTarget?.materialId || '') || 'м'}
+            materialName={scanTarget?.materialName || ''}
+            unit={scanTarget?.unit || 'м'}
           />
         </Suspense>
       )}

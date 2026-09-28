@@ -103,15 +103,13 @@ const cropCanvas = (
   if (!srcCtx) return null;
   srcCtx.drawImage(source, srcX, srcY, srcW, srcH, 0, 0, src.width, src.height);
 
-  // Tesseract плохо видит запятую на мелком кадре — увеличиваем зону.
   const scale = 3;
   const canvas = document.createElement('canvas');
   canvas.width = src.width * scale;
   canvas.height = src.height * scale;
   const ctx = canvas.getContext('2d');
   if (!ctx) return src;
-  ctx.imageSmoothingEnabled = true;
-  ctx.imageSmoothingQuality = 'high';
+  ctx.imageSmoothingEnabled = false;
   ctx.fillStyle = '#fff';
   ctx.fillRect(0, 0, canvas.width, canvas.height);
   ctx.drawImage(src, 0, 0, canvas.width, canvas.height);
@@ -137,8 +135,9 @@ const visibleCoverRect = (elW: number, elH: number, vidW: number, vidH: number) 
 
 const cropOverlayFromVideo = (video: HTMLVideoElement) => {
   if (video.readyState < 2 || video.videoWidth < 16) return null;
-  const elW = video.clientWidth || video.videoWidth;
-  const elH = video.clientHeight || video.videoHeight;
+  const elW = video.clientWidth;
+  const elH = video.clientHeight;
+  if (elW < 16 || elH < 16) return null;
   const cover = visibleCoverRect(elW, elH, video.videoWidth, video.videoHeight);
   const zoneW = cover.w * ZONE_W;
   const zoneH = cover.h * ZONE_H;
@@ -176,6 +175,7 @@ const MeterageScanDialog = ({
   const [camError, setCamError] = useState<string | null>(null);
   const [hint, setHint] = useState('Цифры метража — в рамку, затем кнопка');
   const [reading, setReading] = useState(false);
+  const [ownQty, setOwnQty] = useState<string | null>(null);
 
   const stopCamera = () => {
     streamRef.current?.getTracks().forEach((t) => t.stop());
@@ -184,8 +184,8 @@ const MeterageScanDialog = ({
   };
 
   useEffect(() => {
-    scanGenRef.current += 1;
     if (!open) {
+      scanGenRef.current += 1;
       stopCamera();
       setCamError(null);
       setHint('Цифры метража — в рамку, затем кнопка');
@@ -240,9 +240,16 @@ const MeterageScanDialog = ({
     if (gen !== scanGenRef.current) return;
     const qty = formatMeterage(meters);
     const shown = qty.replace('.', ',');
-    setHint(`${shown} м × 1 рулон — в строке. Следующий — снова кнопка`);
+    setOwnQty(qty);
+    setHint(`${shown} ${unit} × 1 — в строке. Следующий — снова кнопка`);
     playScanSound();
     onMeterageRef.current(qty);
+  };
+
+  const readOnce = async (worker: TesseractWorker, source: HTMLCanvasElement, psm: string) => {
+    await worker.setParameters({ tessedit_pageseg_mode: psm });
+    const { data } = await worker.recognize(source);
+    return (data.text || '').replace(/\s+/g, ' ').trim();
   };
 
   const recognizeZone = async (source: HTMLCanvasElement, gen: number) => {
@@ -256,14 +263,28 @@ const MeterageScanDialog = ({
         setHint('Загрузка распознавания…');
         workerRef.current = await getMeterageWorker();
       }
-      if (gen !== scanGenRef.current) return;
-      const { data } = await workerRef.current.recognize(source);
-      if (gen !== scanGenRef.current) return;
-      const raw = (data.text || '').replace(/\s+/g, ' ').trim();
-      const meters = parseMeterageFromOcr(raw);
+      if (gen !== scanGenRef.current) {
+        setHint('Скан сброшен. Нажмите ещё раз');
+        return;
+      }
+      let raw = await readOnce(workerRef.current, source, '7');
+      if (gen !== scanGenRef.current) {
+        setHint('Скан сброшен. Нажмите ещё раз');
+        return;
+      }
+      let meters = parseMeterageFromOcr(raw);
       if (meters == null) {
-        const seen = raw ? ` Прочитал: «${raw.slice(0, 40)}»` : '';
-        setHint(`В рамке нет длины 20–200 м.${seen} Нужно всё число, и запятая тоже`);
+        raw = await readOnce(workerRef.current, source, '6');
+        if (gen !== scanGenRef.current) {
+          setHint('Скан сброшен. Нажмите ещё раз');
+          return;
+        }
+        meters = parseMeterageFromOcr(raw);
+      }
+      if (meters == null) {
+        const seen = raw ? `Прочитал: «${raw.slice(0, 48)}»` : 'В рамке пусто — цифры не распознались';
+        setHint(`${seen}. Наведите так, чтобы в рамке было всё число, например 50,8`);
+        playScanErrorSound();
         return;
       }
       accept(meters, gen);
@@ -291,7 +312,7 @@ const MeterageScanDialog = ({
     void recognizeZone(frame, gen);
   };
 
-  const lastShown = lastQty ? lastQty.replace('.', ',') : null;
+  const lastShown = (lastQty || ownQty)?.replace('.', ',') ?? null;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -325,6 +346,7 @@ const MeterageScanDialog = ({
               className="h-12 w-12 shrink-0 p-0 text-muted-foreground hover:text-destructive"
               title="Убрать этот рулон"
               onClick={() => {
+                setOwnQty(null);
                 onUndoLast();
                 setHint('Рулон убран. Наведите и считайте снова');
               }}
@@ -337,6 +359,12 @@ const MeterageScanDialog = ({
             Ещё нет скана. Наведите на метраж {materialName ? `«${materialName}»` : ''}
           </p>
         )}
+
+        <p className="shrink-0 text-base font-medium leading-snug">
+          <span className={hint.includes('в строке') ? 'text-emerald-700' : undefined}>{hint}</span>
+        </p>
+
+        {camError && <p className="shrink-0 text-sm text-destructive">{camError}</p>}
 
         <div className="relative min-h-0 flex-1 overflow-hidden rounded-md bg-black sm:min-h-[260px]">
           <video
@@ -358,12 +386,6 @@ const MeterageScanDialog = ({
             </div>
           )}
         </div>
-
-        <p className="shrink-0 text-sm font-medium leading-snug">
-          <span className={hint.includes('в строке') ? 'text-emerald-700' : undefined}>{hint}</span>
-        </p>
-
-        {camError && <p className="shrink-0 text-sm text-destructive">{camError}</p>}
 
         <Button
           type="button"
