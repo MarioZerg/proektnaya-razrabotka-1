@@ -107,6 +107,88 @@ def keep_fbs_label(cur, goods_id):
     return True
 
 
+def restore_missing_workshop_goods(cur, code) -> bool:
+    """Заводит складскую запись вещи, сшитой в цехе, если её потеряли при закрытии.
+
+    ЧТО ЗА ДЫРА. Терминал упаковщицы закрывает заказ одной транзакцией: списывает
+    упаковку, ставит «Готовые» и packed_at, заводит запись на складе, начисляет
+    зарплату. Если эта операция обрывается на середине (обрыв связи, повторное
+    нажатие «Закрыть заказ», перезапуск функции по таймауту), заказ остаётся
+    закрытым, а записи о вещи на складе нет.
+
+    Для склада такая вещь не существует вовсе. Кладовщик сканирует ярлык в короб
+    и получает «Отправление не найдено среди собранных с полок» — хотя пакет с
+    наклеенным ярлыком у него в руках, а на площадке отправление числится
+    «готово к отгрузке». Заказ молча висит, пока не просрочится.
+
+    Сканирование чинит себя само: не нашли вещь — проверяем, не тот ли это
+    случай, и заводим запись ровно так, как её завёл бы терминал в момент
+    стикеровки.
+
+    Условия намеренно узкие — только вещь, которая РЕАЛЬНО лежит в цехе и поедет:
+    заказ упакован, не отменён, не отгружен и не уехал к покупателю. Отменённым и
+    доставленным складская запись задним числом не нужна и вредна: она создаст
+    товар, которого нет.
+
+    Возвращает True, если запись создана — тогда поиск стоит повторить.
+    """
+    if not code:
+        return False
+    cur.execute(
+        "SELECT id, group_key, group_size, group_position, packed_at "
+        "FROM orders o "
+        "WHERE (o.order_number = %s OR o.ozon_posting_number = %s) "
+        "  AND o.sewing_status = 'Готовые' "
+        "  AND o.packed_at IS NOT NULL "
+        "  AND COALESCE(o.order_type, '') IN ('FBS', 'FBO') "
+        "  AND COALESCE(o.status, '') NOT IN ('Отменён', 'Отгружен', 'Доставлен') "
+        "  AND COALESCE(o.ozon_status, '') NOT IN "
+        "      ('delivering', 'delivered', 'cancelled', 'not_accepted', 'driver_pickup') "
+        "  AND COALESCE(o.ym_status, '') NOT ILIKE 'cancel%%' "
+        # Заказ-штука УЖЕ УЕХАВШЕЙ заявки FBO складской записи не получает.
+        #
+        # У выполненных заявок сотни таких заказов: товар давно на складе
+        # площадки, а строки состава подчищены при сборке следующих поставок.
+        # Завести им вещь задним числом — значит создать на складе товар,
+        # которого физически нет, и он попадётся кладовщику в подборе.
+        "  AND (COALESCE(o.order_type, '') <> 'FBO' "
+        "       OR o.supply_id IS NULL "
+        "       OR EXISTS (SELECT 1 FROM marketplace_supplies ms "
+        "                  WHERE ms.id = o.supply_id "
+        "                    AND COALESCE(ms.status, '') "
+        "                        NOT IN ('Выполнена', 'Отменена'))) "
+        "  AND NOT EXISTS (SELECT 1 FROM goods_warehouse g WHERE g.order_id = o.id) "
+        "ORDER BY o.id LIMIT 1",
+        (code, code),
+    )
+    row = cur.fetchone()
+    if not row:
+        return False
+    order_id, group_key, group_size, group_position, packed_at = row
+
+    # Вещь из связки Яндекса собирают своим стикером YM-… : ярлык площадки у
+    # связки один на все вещи, отсканировать им каждую невозможно.
+    bundle_barcode = None
+    if group_key and (group_size or 0) > 1:
+        bundle_barcode = f"{group_key}-{group_position or 1}"
+
+    # Время берём МОМЕНТ УПАКОВКИ, а не сейчас: вещь застикеровали тогда, и по
+    # этим датам считается, сколько она пролежала до отгрузки.
+    cur.execute(
+        "INSERT INTO goods_warehouse (order_id, reserved_order_id, status, "
+        "  storage_barcode, receive_reason, shipping_labeled_at, matched_at, "
+        "  received_at, bundle_barcode) "
+        "VALUES (%s, %s, 'awaiting_supply', "
+        "        'GW-' || lpad(nextval('goods_warehouse_storage_seq')::text, 6, '0'), "
+        "        'fbs_ready', %s, %s, %s, %s) "
+        # Гонку двух сканов гасим молча: запись уже завёл соседний терминал.
+        "ON CONFLICT (order_id) DO NOTHING",
+        (int(order_id), int(order_id), packed_at, packed_at, packed_at,
+         bundle_barcode),
+    )
+    return True
+
+
 MAX_API_URL = 'https://platform-api2.max.ru'
 
 RUSSIAN_TRUSTED_CA = """-----BEGIN CERTIFICATE-----
