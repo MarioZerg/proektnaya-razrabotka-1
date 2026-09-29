@@ -135,9 +135,9 @@ def find_item(cur, sku, offer_id):
 def find_order(cur, marketplace, posting_number):
     """Заказ, по которому оформлен возврат.
 
-    У OZON это номер отправления (ozon_posting_number), у WB — srid заявки, который
-    совпадает с order_number заказа (там он берётся из поля rid сборочного задания).
-    У Яндекса — номер заказа кампании, он же order_number.
+    У OZON это номер отправления. У WB в заявке лежит srid, а номер заказа у нас —
+    id сборочного задания, srid хранится отдельно в wb_rid. У Яндекса на пакете
+    голый номер заказа, у нас он внутри YM-12345-1.
     """
     if not posting_number:
         return None
@@ -145,6 +145,28 @@ def find_order(cur, marketplace, posting_number):
         cur.execute(
             "SELECT id FROM orders WHERE ozon_posting_number = %s ORDER BY id LIMIT 1",
             (str(posting_number),),
+        )
+    elif marketplace == 'WB':
+        # У заявки WB в номере лежит srid (rid задания), а номер заказа у нас —
+        # id сборочного задания. Ищем по всем трём, иначе возврат остаётся без заказа
+        # и сканер с ПВЗ его не подцепляет.
+        cur.execute(
+            "SELECT id FROM orders WHERE marketplace = 'WB' AND ("
+            "order_number = %s OR wb_rid = %s OR CAST(wb_order_id AS TEXT) = %s) "
+            "ORDER BY id LIMIT 1",
+            (str(posting_number), str(posting_number), str(posting_number)),
+        )
+    elif marketplace == 'Yandex':
+        # Яндекс отдаёт голый номер заказа, у нас он внутри YM-12345-1.
+        digits = str(posting_number)
+        if digits.upper().startswith('YM-'):
+            digits = digits[3:]
+        digits = digits.split('-')[0]
+        cur.execute(
+            "SELECT id FROM orders WHERE marketplace = 'Yandex' AND ("
+            "order_number = %s OR CAST(ym_order_id AS TEXT) = %s OR group_key = %s) "
+            "ORDER BY (order_number = %s) DESC, id LIMIT 1",
+            (str(posting_number), digits, f'YM-{digits}', str(posting_number)),
         )
     else:
         # Ищем строго среди заказов своей площадки: номера у разных маркетплейсов
@@ -376,6 +398,8 @@ def sync_wb(cur, days, shop_id=None):
             'mpStatus': status_text or None,
             'reason': it.get('user_comment') or it.get('claim_type'),
             'createdAt': it.get('dt'),
+            # На пакете с ПВЗ живёт srid заявки — его и пикает кладовщик.
+            'returnBarcode': str(it.get('srid') or '') or None,
         }
         if not rec['externalId']:
             continue
@@ -477,6 +501,8 @@ def sync_yandex(cur, days, shop_id=None):
                     or item.get('reasonType')
                     or it.get('returnType'),
                     'createdAt': it.get('creationDate') or it.get('createdAt'),
+                    # На клиентском стикере Яндекса — номер заказа, не наш YM-… .
+                    'returnBarcode': str(it.get('orderId') or '') or None,
                 }
                 if save_return(cur, 'Yandex', rec, shop_id) == 'created':
                     created += 1
@@ -566,26 +592,87 @@ def log_return_history(cur, gw_id, r_id, order_id, actor_id=None, actor_name=Non
     return next_number
 
 
-def _accept_return_by_order(cur, conn, code, actor_id, actor_name):
-    """Приём возврата WB / Яндекса по коду с пакета — через НАШУ базу заказов.
+def _scan_aliases(code):
+    """Все написания одного кода с пакета WB или Яндекса.
 
-    У OZON возврат ищется в их API по штрихкоду наклейки. У WB и Яндекса такого
-    поиска нет: на пакете печатают код стикера отправления (WB, вида *DWto4dQG) или
-    номер заказа покупателя (Яндекс). Оба кода есть у нас в заказах, поэтому вещь
-    опознаём сами и сразу заводим её на склад как возврат.
-
-    Возвращает готовый ответ для кладовщика или None, если заказ по коду не нашёлся
-    (тогда выше отработает обычный путь через API OZON).
+    Сканер приносит стикер как есть: со звёздочкой и без, голые цифры заказа
+    Яндекса, те же цифры с позицией грузоместа и наш внутренний вид YM-….
+    Заявка в базе хранит только одно из этих написаний.
     """
-    bare = code.lstrip('*')
-    code_esc = code.replace("'", "''")
-    bare_esc = bare.replace("'", "''")
+    raw = (code or '').strip()
+    bare = raw.lstrip('*')
+    aliases = {raw, bare}
+    body = bare[3:] if bare.upper().startswith('YM-') else bare
+    if re.fullmatch(r'\d{6,}(-\d{1,3})?', body):
+        head = body.split('-')[0]
+        aliases.update({body, head, f'YM-{body}', f'YM-{head}'})
+    return [a for a in aliases if a]
 
-    # Ищем ТОЛЬКО среди WB и Яндекса: возвраты OZON проходят своим путём, через их
-    # API — там у заявки есть внешний id, история и причина возврата.
-    #
-    # Связка Яндекса — несколько вещей под одним номером заказа. Поэтому берём ту,
-    # которая ещё не принята как возврат: каждый скан принимает следующую вещь.
+
+def _pick_wb_yandex_order(cur, code, marketplace=None):
+    """Заказ WB или Яндекса по коду с пакета.
+
+    Берём вещь, которая ещё не принята как возврат. У связки Яндекса на всех
+    пакетах один номер заказа: первый скан забирает первую вещь, второй —
+    следующую. Если на стикере есть позиция (61866041025-1), берём именно её.
+    """
+    raw = (code or '').strip()
+    bare = raw.lstrip('*')
+    aliases = _scan_aliases(raw)
+    body = bare[3:] if bare.upper().startswith('YM-') else bare
+
+    conds = [
+        "o.order_number = ANY(%s)",
+        "o.wb_sticker_barcode = ANY(%s)",
+        "o.wb_rid = ANY(%s)",
+        "CAST(o.wb_order_id AS TEXT) = ANY(%s)",
+        "CAST(o.ym_order_id AS TEXT) = ANY(%s)",
+        "o.group_key = ANY(%s)",
+        # Заявка уже привязана к заказу, а пикнули её srid, номер возврата
+        # или штрихкод — заказ всё равно находим.
+        "EXISTS (SELECT 1 FROM marketplace_returns mr "
+        "WHERE mr.order_id = o.id AND mr.marketplace = o.marketplace AND ("
+        "mr.return_barcode = ANY(%s) OR mr.posting_number = ANY(%s) "
+        "OR mr.external_id = ANY(%s)))",
+    ]
+    params = [aliases, aliases, aliases, aliases, aliases, aliases, aliases, aliases, aliases]
+
+    # «12345-1» у Яндекса в базе лежит как external_id «12345-1», а голый id
+    # возврата — как «12345» при нескольких вещах. Короткий код не разворачиваем:
+    # LIKE '1-%' прицепил бы чужие заявки.
+    head = body.split('-')[0]
+    if re.fullmatch(r'\d{6,}', head):
+        conds.append(
+            "EXISTS (SELECT 1 FROM marketplace_returns mr "
+            "WHERE mr.order_id = o.id AND mr.marketplace = o.marketplace "
+            "AND mr.external_id LIKE %s)"
+        )
+        params.append(head + '-%')
+
+    prefer = None
+    if re.fullmatch(r'(?i)YM-\d{6,}-\d{1,3}', raw):
+        prefer = raw
+    elif re.fullmatch(r'\d{6,}-\d{1,3}', body):
+        prefer = f'YM-{body}'
+
+    order_by = (
+        "(o.order_number = %s) DESC, " if prefer else ""
+    ) + (
+        "(gw.id IS NOT NULL AND COALESCE(gw.status, '') <> 'mp_return') DESC, "
+        "(gw.id = o.fulfilled_from_stock_id) DESC, "
+        "(gw.reserved_order_id = o.id) DESC, o.id"
+    )
+    if prefer:
+        params.append(prefer)
+
+    # Из заявки площадка уже известна: номер WB не должен цепляться к заказу
+    # Яндекса с теми же цифрами. С голого скана площадку ещё не знаем.
+    if marketplace in ('WB', 'Yandex'):
+        mp_sql = "o.marketplace = %s"
+        params.insert(0, marketplace)
+    else:
+        mp_sql = "o.marketplace IN ('WB', 'Yandex')"
+
     cur.execute(
         "SELECT o.id, o.order_number, o.marketplace, o.material, o.width, o.height, "
         "       gw.id, gw.status, gw.storage_barcode "
@@ -596,29 +683,97 @@ def _accept_return_by_order(cur, conn, code, actor_id, actor_name):
         "  ON gw.order_id = o.id "
         "  OR gw.id = o.fulfilled_from_stock_id "
         "  OR gw.reserved_order_id = o.id "
-        "WHERE o.marketplace IN ('WB', 'Yandex') "
-        f"  AND (o.order_number = '{code_esc}' "
-        f"       OR o.wb_sticker_barcode = '{code_esc}' "
-        f"       OR o.wb_sticker_barcode = '{bare_esc}' "
-        f"       OR o.wb_sticker_barcode = '*{bare_esc}' "
-        f"       OR CAST(o.wb_order_id AS TEXT) = '{bare_esc}' "
-        f"       OR CAST(o.ym_order_id AS TEXT) = '{bare_esc}') "
-        # Сначала живая вещь, которой заказ уже закрыли: её и возвращаем,
-        # а не заводим рядом новую. Уже принятую оставляем на повторный скан.
-        "ORDER BY (gw.id IS NOT NULL AND COALESCE(gw.status, '') <> 'mp_return') DESC, "
-        "         (gw.id = o.fulfilled_from_stock_id) DESC, "
-        "         (gw.reserved_order_id = o.id) DESC, o.id "
-        "LIMIT 1"
+        "WHERE " + mp_sql + " AND ("
+        + " OR ".join(conds)
+        + ") ORDER BY "
+        + order_by
+        + " LIMIT 1",
+        tuple(params),
     )
-    row = cur.fetchone()
-    if not row:
-        return None
+    return cur.fetchone()
 
+
+def _attach_return_to_goods(cur, order_id, gw_id, marketplace, code, actor_id, actor_name):
+    """Цепляет одну заявку WB/Яндекса к уже заведённой вещи.
+
+    Один скан — одна заявка. У связки Яндекса у всех вещей один номер заказа,
+    и помечать забранной сразу всю связку нельзя: кладовщик пикнул один пакет.
+    Заявку, которая уже висит на другой вещи, не трогаем.
+    """
+    if not order_id or not gw_id:
+        return None
+    aliases = _scan_aliases(code)
+    cur.execute(
+        "UPDATE marketplace_returns SET "
+        "order_id = COALESCE(order_id, %s), "
+        "status = CASE WHEN status IN ('new', 'approved') THEN 'picked_up' ELSE status END, "
+        "picked_up_at = COALESCE(picked_up_at, now()), "
+        "picked_up_by = COALESCE(picked_up_by, %s), "
+        "goods_warehouse_id = %s, "
+        "return_barcode = COALESCE(return_barcode, NULLIF(%s, '')), "
+        "received_at = COALESCE(received_at, now()) "
+        "WHERE id = ("
+        "  SELECT id FROM marketplace_returns "
+        "  WHERE marketplace = %s AND goods_warehouse_id IS NULL "
+        "    AND (order_id IS NULL OR order_id = %s) "
+        "    AND (order_id = %s OR return_barcode = ANY(%s) "
+        "         OR posting_number = ANY(%s) OR external_id = ANY(%s) "
+        # Стикер WB и номер Яндекса на пакете не равны номеру заявки.
+        # Заявка лежит по srid или голому номеру заказа — сверяем их с заказом.
+        "         OR posting_number IN ("
+        "           SELECT v FROM ("
+        "             SELECT wb_rid AS v FROM orders WHERE id = %s "
+        "             UNION ALL SELECT CAST(ym_order_id AS TEXT) FROM orders WHERE id = %s "
+        "             UNION ALL SELECT CAST(wb_order_id AS TEXT) FROM orders WHERE id = %s "
+        "             UNION ALL SELECT order_number FROM orders WHERE id = %s"
+        "           ) keys WHERE v IS NOT NULL AND v <> ''"
+        "         )) "
+        "    AND NOT EXISTS ("
+        "      SELECT 1 FROM marketplace_returns taken "
+        "      WHERE taken.goods_warehouse_id = %s"
+        "    ) "
+        "  ORDER BY (order_id = %s) DESC, id LIMIT 1"
+        ") RETURNING id",
+        (
+            int(order_id),
+            int(actor_id) if actor_id else None,
+            int(gw_id),
+            (code or '').strip(),
+            marketplace,
+            int(order_id),
+            int(order_id),
+            aliases,
+            aliases,
+            aliases,
+            int(order_id),
+            int(order_id),
+            int(order_id),
+            int(order_id),
+            int(gw_id),
+            int(order_id),
+        ),
+    )
+    linked = cur.fetchone()
+    if not linked:
+        return None
+    log_return_history(
+        cur, gw_id, linked[0], order_id,
+        int(actor_id) if actor_id else None, actor_name,
+    )
+    return linked[0]
+
+
+def _stock_wb_yandex_order(cur, conn, row, code, actor_id, actor_name):
+    """Ставит найденный заказ WB/Яндекса на склад как возврат и цепляет заявку."""
     order_id, order_number, marketplace, material, width, height, gw_id, gw_status, storage_barcode = row
 
     # Повторный скан той же вещи ничего не меняет: кладовщик просто пикнул пакет
-    # дважды. Говорим об этом отдельно, чтобы счётчик принятого не врал.
+    # дважды. Заявку всё равно цепляем — раньше скан заводил вещь и забывал про неё.
     if gw_id and gw_status == 'mp_return':
+        _attach_return_to_goods(
+            cur, order_id, gw_id, marketplace, code, actor_id, actor_name,
+        )
+        conn.commit()
         return {
             'found': 0,
             'barcode': code,
@@ -634,13 +789,13 @@ def _accept_return_by_order(cur, conn, code, actor_id, actor_name):
 
     if gw_id:
         # Вещь уже заводили на склад раньше (уезжала к покупателю и вернулась) —
-        # возвращаем ту же запись в возвраты, не плодя вторую: order_id уникален.
+        # возвращаем ту же запись в возвраты, не плодя вторую.
         cur.execute(
             "UPDATE goods_warehouse SET status = 'mp_return', shelf_id = NULL, "
             "shipped_at = NULL, lost_reason = NULL, lost_at = NULL, "
             "reserved_order_id = NULL, shipping_labeled_at = NULL, "
             "shipping_labeled_by = NULL, shipping_labeled_by_name = NULL, "
-            "receive_reason = 'return' WHERE id = %s",
+            "receive_reason = 'return', received_at = now() WHERE id = %s",
             (gw_id,),
         )
     else:
@@ -652,6 +807,9 @@ def _accept_return_by_order(cur, conn, code, actor_id, actor_name):
         )
         gw_id = cur.fetchone()[0]
 
+    _attach_return_to_goods(
+        cur, order_id, gw_id, marketplace, code, actor_id, actor_name,
+    )
     log_action(
         cur, actor_id, actor_name, 'receive_return',
         f'Принял возврат {marketplace} по коду {code} — заказ {order_number} ({storage_barcode})',
@@ -670,6 +828,247 @@ def _accept_return_by_order(cur, conn, code, actor_id, actor_name):
             'productName': None,
         },
     }
+
+
+def _find_return_by_scan(cur, code):
+    """Заявка WB/Яндекса, которую кладовщик пикнул, даже если заказ ещё не сопоставился.
+
+    Синхронизация кладёт srid WB и номер заказа Яндекса в заявку. Раньше заказ
+    по этим полям не находился, order_id оставался пустым, и сканер заявку не видел.
+    """
+    aliases = _scan_aliases(code)
+    bare = (code or '').strip().lstrip('*')
+    body = bare[3:] if bare.upper().startswith('YM-') else bare
+    head = body.split('-')[0]
+    like_ext = head + '-%' if re.fullmatch(r'\d{6,}', head) else None
+    cur.execute(
+        "SELECT id, order_id, marketplace, posting_number, external_id, status, "
+        "       goods_warehouse_id, product_name "
+        "FROM marketplace_returns "
+        "WHERE marketplace IN ('WB', 'Yandex') AND ("
+        "  return_barcode = ANY(%s) OR posting_number = ANY(%s) OR external_id = ANY(%s) "
+        "  OR (%s IS NOT NULL AND external_id LIKE %s)"
+        ") "
+        # Сначала ещё не принятая вещь: повторный пик того же номера заказа
+        # Яндекса забирает следующую позицию связки, а не первую заново.
+        "ORDER BY (status IN ('new', 'approved')) DESC, "
+        "(goods_warehouse_id IS NULL) DESC, id "
+        "LIMIT 1",
+        (aliases, aliases, aliases, like_ext, like_ext or ''),
+    )
+    return cur.fetchone()
+
+
+def _accept_return_by_order(cur, conn, code, actor_id, actor_name):
+    """Приём возврата WB / Яндекса по коду с пакета.
+
+    У OZON возврат ищется в их API по штрихкоду наклейки. У WB и Яндекса такого
+    поиска нет. На пакете печатают одно из:
+
+      WB     — стикер отправления (*DWto4dQG или без звёздочки), номер
+               сборочного задания, srid заявки;
+      Яндекс — голый номер заказа (61866041025), он же с позицией
+               (61866041025-1) или наш YM-61866041025-1.
+
+    Нашли заказ — заводим вещь на склад. Нашли только заявку (её ещё не
+    привязали к заказу) — привязываем и заводим. Ничего не нашли — None,
+    и выше отработает путь OZON или точечный запрос к Яндексу.
+    """
+    row = _pick_wb_yandex_order(cur, code)
+    if row:
+        return _stock_wb_yandex_order(cur, conn, row, code, actor_id, actor_name)
+
+    found = _find_return_by_scan(cur, code)
+    if not found:
+        return None
+
+    r_id, order_id, marketplace, posting, external_id, status, gw_id, product_name = found
+    if not order_id and posting:
+        order_id = find_order(cur, marketplace, posting)
+
+    if posting or external_id:
+        # Ту же вещь, что и при прямом скане заказа: не заводим вторую карточку.
+        # Для связки Яндекса берём следующую ещё не принятую позицию, а не ту,
+        # которую find_order вернул первой.
+        row = _pick_wb_yandex_order(cur, posting or external_id, marketplace)
+        if row:
+            return _stock_wb_yandex_order(cur, conn, row, code, actor_id, actor_name)
+    if order_id:
+        cur.execute(
+            "SELECT o.id, o.order_number, o.marketplace, o.material, o.width, o.height, "
+            "       gw.id, gw.status, gw.storage_barcode "
+            "FROM orders o "
+            "LEFT JOIN goods_warehouse gw "
+            "  ON gw.order_id = o.id "
+            "  OR gw.id = o.fulfilled_from_stock_id "
+            "  OR gw.reserved_order_id = o.id "
+            "WHERE o.id = %s "
+            "ORDER BY (gw.id IS NOT NULL AND COALESCE(gw.status, '') <> 'mp_return') DESC, "
+            "         (gw.id = o.fulfilled_from_stock_id) DESC, o.id "
+            "LIMIT 1",
+            (int(order_id),),
+        )
+        row = cur.fetchone()
+        if row:
+            return _stock_wb_yandex_order(cur, conn, row, code, actor_id, actor_name)
+
+    # Заказа в системе нет — заявка всё равно наша. Помечаем её привезённой
+    # и заводим карточку возврата, как при разборе списка.
+    if status not in ('new', 'approved') and gw_id:
+        cur.execute(
+            "SELECT storage_barcode FROM goods_warehouse WHERE id = %s",
+            (gw_id,),
+        )
+        barcode_row = cur.fetchone()
+        return {
+            'found': 0,
+            'barcode': code,
+            'alreadyPicked': True,
+            'accepted': {
+                'material': None,
+                'width': None,
+                'height': None,
+                'storageBarcode': barcode_row[0] if barcode_row else None,
+                'productName': product_name,
+            },
+        }
+
+    cur.execute(
+        "UPDATE marketplace_returns SET status = 'picked_up', "
+        "picked_up_at = COALESCE(picked_up_at, now()), picked_up_by = %s, "
+        "return_barcode = COALESCE(return_barcode, NULLIF(%s, '')) "
+        "WHERE id = %s AND status IN ('new', 'approved')",
+        (int(actor_id) if actor_id else None, (code or '').strip(), r_id),
+    )
+    stock_picked_up_returns(cur, [r_id])
+    cur.execute(
+        "SELECT gw.storage_barcode, o.material, o.width, o.height, r.product_name "
+        "FROM marketplace_returns r "
+        "LEFT JOIN goods_warehouse gw ON gw.id = r.goods_warehouse_id "
+        "LEFT JOIN orders o ON o.id = COALESCE(gw.order_id, r.order_id) "
+        "WHERE r.id = %s",
+        (r_id,),
+    )
+    stocked = cur.fetchone()
+    storage_barcode, material, width, height, product_name = stocked if stocked else (None, None, None, None, product_name)
+    if not storage_barcode:
+        conn.rollback()
+        return None
+    log_action(
+        cur, actor_id, actor_name, 'receive_return',
+        f'Принял возврат {marketplace} по коду {code} ({storage_barcode})',
+    )
+    conn.commit()
+    return {
+        'found': 1,
+        'barcode': code,
+        'alreadyPicked': False,
+        'accepted': {
+            'material': material,
+            'width': width,
+            'height': height,
+            'storageBarcode': storage_barcode,
+            'productName': product_name,
+        },
+    }
+
+
+def _looks_like_wb_or_yandex_label(code):
+    """Код, который точно не наклейка OZON: стикер WB или номер Яндекса с префиксом.
+
+    Наклейка возврата OZON начинается с ii и дальше идут цифры — её не
+    относим к WB, иначе пакет OZON уйдёт мимо их API.
+    """
+    raw = (code or '').strip()
+    if re.fullmatch(r'(?i)ii\d+', raw):
+        return False
+    if raw.startswith('*'):
+        return True
+    if raw.upper().startswith('YM-'):
+        return True
+    return bool(re.search(r'[A-Za-z]', raw)) and '-' not in raw
+
+
+def _yandex_order_id_from_scan(code):
+    """Голый номер заказа Яндекса, если скан похож на их стикер. Иначе None.
+
+    Номер отправления OZON (39761729-0146-3) тоже начинается с цифр, но в нём
+    три части. Такой код к Яндексу не относим.
+    """
+    raw = (code or '').strip()
+    if re.match(r'^\d{6,}-\d{3,}-\d+', raw):
+        return None
+    bare = raw[3:] if raw.upper().startswith('YM-') else raw.lstrip('*')
+    body = bare.split('-')[0]
+    if re.fullmatch(r'\d{8,13}', body):
+        return body
+    return None
+
+
+def _pull_yandex_returns_for_scan(cur, code):
+    """Достаёт возврат Яндекса по номеру заказа, если в нашей базе его ещё нет.
+
+    Список возвратов обновляется по расписанию. Пакет может приехать раньше.
+    Спрашиваем площадку точечно и сохраняем заявку — дальше её примет тот же
+    сканер, что и уже загруженные.
+    """
+    order_id = _yandex_order_id_from_scan(code)
+    if not order_id:
+        return False
+    since = (datetime.now(timezone.utc) - timedelta(days=90)).strftime('%d-%m-%Y')
+    saved = False
+    for sid in list_return_shops(cur) or [None]:
+        creds, enabled = get_credentials(cur, 'yandex_market', sid)
+        if not enabled:
+            continue
+        api_key = (creds.get('apiKey') or '').strip()
+        campaign_id = (creds.get('campaignId') or '').strip()
+        if not api_key or not campaign_id:
+            continue
+        path = (
+            f'/campaigns/{campaign_id}/returns'
+            f'?fromDate={since}&limit=50&orderIds={order_id}'
+        )
+        status, data = http_json(YM_API_BASE + path, 'GET', {'Api-Key': api_key})
+        if status != 200:
+            continue
+        rows = ((data or {}).get('result') or {}).get('returns') or []
+        for it in rows:
+            if str(it.get('orderId') or '') != order_id:
+                continue
+            items = it.get('items') or [{}]
+            for idx, item in enumerate(items):
+                ret_id = str(it.get('id') or '')
+                if not ret_id:
+                    continue
+                decision = (item.get('decision') or {}) if isinstance(item, dict) else {}
+                rec = {
+                    'externalId': ret_id if len(items) == 1 else f'{ret_id}-{idx + 1}',
+                    'postingNumber': str(it.get('orderId') or ''),
+                    'offerId': str(item.get('shopSku') or item.get('offerId') or '') or None,
+                    'sku': item.get('marketSku'),
+                    'productName': item.get('offerName'),
+                    'quantity': item.get('count') or 1,
+                    'mpStatus': ym_status_label(it.get('shipmentStatus')),
+                    'reason': decision.get('reasonType')
+                    or item.get('reasonType')
+                    or it.get('returnType'),
+                    'createdAt': it.get('creationDate') or it.get('createdAt'),
+                    'returnBarcode': str(it.get('orderId') or '') or None,
+                }
+                save_return(cur, 'Yandex', rec, sid)
+                saved = True
+        if saved:
+            break
+    return saved
+
+
+def _unknown_return_message(code):
+    return (
+        f'Возврат {code} не найден. Для OZON — наклейка возврата или номер отправления, '
+        f'для Wildberries — стикер со звёздочкой, номер задания или srid, '
+        f'для Яндекс Маркета — номер заказа с клиентского стикера.'
+    )
 
 
 def stock_picked_up_returns(cur, ids=None, limit=None):
@@ -1143,14 +1542,31 @@ def handler(event: dict, context) -> dict:
                 # Такие вещи заводили руками или они вовсе оставались вне учёта.
                 #
                 # Что печатают на возвратах:
-                #   WB     — код стикера вида *DWto4dQG (со звёздочкой или без) и
-                #            номер сборочного задания цифрами;
-                #   Яндекс — номер заказа покупателя (у нас он внутри YM-61355128771-1).
+                #   WB     — стикер *DWto4dQG (со звёздочкой или без), номер
+                #            сборочного задания и srid заявки;
+                #   Яндекс — номер заказа: 61866041025, 61866041025-1 или YM-61866041025-1.
                 # Ни того, ни другого в API возвратов OZON нет, поэтому сначала ищем
                 # заказ у себя: нашли — принимаем сразу, не тревожа чужую площадку.
                 accepted_other = _accept_return_by_order(cur, conn, code, actor_id, actor_name)
                 if accepted_other is not None:
                     return _resp(200, accepted_other)
+
+                # Заявки Яндекса обновляются по расписанию. Пакет может приехать
+                # раньше: спрашиваем площадку по номеру заказа и принимаем сразу.
+                # Стикер WB и наклейка OZON сюда не попадают — у них другой вид кода.
+                if code.upper().startswith('YM-') or _yandex_order_id_from_scan(code):
+                    if _pull_yandex_returns_for_scan(cur, code):
+                        conn.commit()
+                        accepted_other = _accept_return_by_order(
+                            cur, conn, code, actor_id, actor_name,
+                        )
+                        if accepted_other is not None:
+                            return _resp(200, accepted_other)
+
+                # Стикер WB и номер YM- в кабинете OZON не живут. Не спрашиваем
+                # чужую площадку и не пишем кладовщику «OZON не знает возврат».
+                if _looks_like_wb_or_yandex_label(code):
+                    return _resp(404, {'error': _unknown_return_message(code)})
 
                 # КОД С КОРОБКИ СПРАШИВАЕМ У ВСЕХ КАБИНЕТОВ.
                 #
@@ -1183,7 +1599,7 @@ def handler(event: dict, context) -> dict:
                         rows, creds, shop_id = found_rows, c_try, sid
                         break
                 if not enabled:
-                    return _resp(409, {'error': 'Интеграция OZON выключена'})
+                    return _resp(404, {'error': _unknown_return_message(code)})
                 if not rows and scan_err:
                     return _resp(502, {'error': scan_err})
                 # Что считать попаданием.
@@ -1311,10 +1727,7 @@ def handler(event: dict, context) -> dict:
                                 for r in rows[:5]
                             ],
                         })
-                    return _resp(404, {
-                        'error': f'OZON не знает возврат {code}. Попробуйте отсканировать '
-                                 f'наклейку возврата или номер отправления с клиентского стикера'
-                    })
+                    return _resp(404, {'error': _unknown_return_message(code)})
 
                 saved = 0
                 for it in exact:
