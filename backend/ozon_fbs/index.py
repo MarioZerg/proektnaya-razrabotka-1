@@ -540,9 +540,13 @@ def take_cancelled_cut(cur, order_id) -> bool:
 
     cur.execute(
         "SELECT o.id, o.cut_at, o.cutter_user_id, o.hanger_number, o.workshop_id, "
-        "       o.requires_overlock, o.overlocked_at, o.overlock_user_id "
+        "       o.requires_overlock, o.overlocked_at, o.overlock_user_id, "
+        "       o.sewing_status, o.assigned_user_id, o.sewer_user_id, o.sewn_at "
         "FROM orders o "
-        "WHERE o.sewing_status = 'Раскроено' "
+        # Крой уже есть: не только «Раскроено», но и то, что успели взять в пошив
+        # или сдать на стикеровку, пока новый заказ того же размера ещё не пришёл.
+        "WHERE o.sewing_status IN ('Раскроено', 'В работе', 'Стикеровка') "
+        "  AND o.cut_at IS NOT NULL "
         # Крой ещё никому не передан: иначе одну вешалку отдали бы двум заказам.
         "  AND o.cut_given_to_order_id IS NULL "
         # Только ОТМЕНЁННЫЕ: крой живого заказа ждёт свой покупатель.
@@ -565,25 +569,31 @@ def take_cancelled_cut(cur, order_id) -> bool:
     if not cut:
         return False
     (cut_id, cut_at, cutter_id, hanger, cut_workshop,
-     req_overlock, overlocked_at, overlock_user) = cut
+     req_overlock, overlocked_at, overlock_user, src_status, src_assigned,
+     src_sewer, src_sewn_at) = cut
 
-    # Переносим на новый заказ всё, что относится к физическому крою: время
-    # раскроя, закройщика, вешалку, цех и этап оверлока — швея должна увидеть
-    # вещь ровно такой, какой она висит в цехе.
+    # Новый заказ наследует этап физической вещи: «Раскроено», «В работе» или
+    # «Стикеровка». Иначе терминал по старой бирке печатал ярлык отменённого
+    # отправления, а не нового.
     #
-    # cut_at берём СТАРЫЙ, а не now(): по нему считается очередь пошива и
-    # выработка закройщика. Поставив текущее время, мы приписали бы работу
-    # сегодняшней смене и подвинули вещь в конец очереди, хотя крой давно готов.
+    # cut_at берём СТАРЫЙ, а не now(): по нему очередь пошива и выработка
+    # закройщика. Поставив текущее время, мы приписали бы работу сегодняшней
+    # смене и подвинули вещь в конец очереди, хотя крой давно готов.
     cur.execute(
-        "UPDATE orders SET sewing_status = 'Раскроено', "
+        "UPDATE orders SET sewing_status = %s, "
         "  cut_at = %s, cutter_user_id = %s, hanger_number = %s, "
         "  workshop_id = COALESCE(%s, workshop_id), "
         "  requires_overlock = %s, overlocked_at = %s, overlock_user_id = %s, "
-        "  cut_from_order_id = %s "
+        "  cut_from_order_id = %s, "
+        "  assigned_user_id = CASE WHEN %s IN ('В работе', 'Стикеровка') "
+        "                          THEN %s ELSE assigned_user_id END, "
+        "  sewer_user_id = COALESCE(%s, sewer_user_id), "
+        "  sewn_at = COALESCE(%s, sewn_at) "
         "WHERE id = %s",
-        (cut_at, cutter_id, hanger or 0, cut_workshop,
+        (src_status, cut_at, cutter_id, hanger or 0, cut_workshop,
          bool(req_overlock), overlocked_at, overlock_user,
-         int(cut_id), int(order_id)),
+         int(cut_id), src_status, src_assigned, src_sewer, src_sewn_at,
+         int(order_id)),
     )
     # Старый заказ отдал крой и уходит из работы. Без смены статуса он остался бы
     # в очереди «Раскроено», и его крой попытались бы отдать второй раз.
@@ -2065,15 +2075,38 @@ def get_posting_label(cur, client_id, api_key, order_number, debug=None):
     # ярлык OZON, где напечатан номер отправления, а у вещи в системе внутренний номер
     # с хвостом (…-1-2) — наследство старого способа деления.
     cur.execute(
-        "SELECT ozon_posting_number FROM orders "
+        "SELECT ozon_posting_number, status, ozon_status, cancelled_at, "
+        "       sewing_status, cut_given_to_order_id "
+        "FROM orders "
         "WHERE order_number = %s OR ozon_posting_number = %s "
-        "ORDER BY (order_number = %s) DESC, id LIMIT 1",
+        "ORDER BY (cut_given_to_order_id IS NULL) DESC, "
+        "         (order_number = %s) DESC, id LIMIT 1",
         (order_number, order_number, order_number),
     )
     row = cur.fetchone()
     if not row or not row[0]:
         return 'У этого заказа нет отправления OZON', None
     posting_number = row[0]
+    # Ярлык СТАРОГО отправления после отмены и передачи кроя печатать нельзя:
+    # на вещь уедет стикер отменённого заказа, а не нового покупателя.
+    if row[5] is not None:
+        return (
+            'Крой этого заказа уже отдан другому отправлению. '
+            'Сканируйте бирку закройщика ещё раз — терминал найдёт новый заказ',
+            None,
+        )
+    cancelled = (
+        row[1] == 'Отменён'
+        or row[4] == 'Отменён'
+        or row[3] is not None
+        or (row[2] or '').lower().startswith('cancel')
+    )
+    if cancelled:
+        return (
+            'Заказ отменён — ярлык отправления маркетплейса не печатаем. '
+            'На терминале будет стикер хранения, либо крой уже у нового заказа',
+            None,
+        )
 
     # Сначала собираем отправление на стороне OZON — без этого этикетки просто нет.
     # Упаковщица нажимает «Распечатать ярлык», а система сама переводит заказ в

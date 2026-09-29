@@ -9,12 +9,25 @@ import type { KioskOrder } from '@/lib/kioskApi';
  */
 const KioskOrderNotices = ({ order }: { order: KioskOrder }) => (
   <>
-    {/* Номер на экране НЕ такой, как на отсканированной бумажке.
+    {order.cutFromOrderNumber ? (
+      <div className="flex items-start gap-3 rounded-md border-2 border-emerald-600 bg-emerald-50 p-4 text-emerald-950">
+        <Icon name="Tag" size={32} className="mt-0.5 shrink-0" />
+        <div className="min-w-0">
+          <p className="text-2xl font-bold">Бирка от старого заказа — ярлык новый</p>
+          <p className="text-lg">
+            Отсканирована бирка <b>{order.scannedCode || order.cutFromOrderNumber}</b> от
+            отменённого заказа. Печатаем ярлык отправления{' '}
+            <b>{order.orderNumber}</b>. Стикер маркетплейса старого заказа клеить нельзя
+          </p>
+        </div>
+      </div>
+    ) : (
+    /* Номер на экране НЕ такой, как на отсканированной бумажке.
         Так бывает по делу: OZON переименовывает отправления, и вещь ищется по
         соседнему номеру того же отправления. Но упаковщица видела чужой номер и
         не понимала, ту ли вещь ей выдали. Теперь говорим об этом прямо и просим
-        сверить — молча подменять номер заказа нельзя. */}
-    {order.matchedByFallback && (
+        сверить — молча подменять номер заказа нельзя. */
+    order.matchedByFallback && (
       <div className="flex items-start gap-3 rounded-md border-2 border-amber-500 bg-amber-50 p-4 text-amber-900">
         <Icon name="TriangleAlert" size={32} className="mt-0.5 shrink-0" />
         <div className="min-w-0">
@@ -27,6 +40,7 @@ const KioskOrderNotices = ({ order }: { order: KioskOrder }) => (
           </p>
         </div>
       </div>
+    )
     )}
 
     {/* Куда класть вещь после стикеровки. Контейнеры в цехе разделены:

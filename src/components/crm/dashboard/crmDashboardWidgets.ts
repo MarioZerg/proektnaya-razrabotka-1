@@ -33,9 +33,18 @@ export const buildDashboardWidgets = ({
     { label: 'Новые задания на пошив', shortLabel: 'Новые задания', value: summary.newOrders, icon: 'ListPlus', tone: 'default', path: '/crm/marketplace/sewing-items', stage: 'production', hint: 'Заказы приняты и ждут, когда их возьмут в работу' },
     // Швее и закройщику подписываем «У меня», чтобы цифра не читалась как объём
     // всего цеха: у них в этих виджетах теперь только собственные заказы.
-    { label: isSewer ? 'У меня в пошиве' : 'Товары в пошиве', value: summary.inSewing, icon: 'Shirt', tone: 'default', path: '/crm/marketplace/sewing-items', stage: 'production', hint: isSewer ? 'Вещи, которые вы шьёте прямо сейчас' : 'Вещи в работе у швей' },
-    // Швее раскрой не показываем совсем: она его не делает и повлиять на него
-    // не может — цифра только отвлекает от собственной работы.
+    {
+      label: isSewer ? 'У меня в пошиве' : 'Товары в пошиве',
+      shortLabel: isSewer ? undefined : 'В пошиве',
+      value: summary.inSewing,
+      icon: 'Shirt',
+      tone: 'default',
+      path: '/crm/marketplace/sewing-items?tab=В работе',
+      stage: 'production',
+      hint: isSewer ? 'Вещи, которые вы шьёте прямо сейчас' : 'Сейчас шьют — статус «В работе»',
+    },
+    // Швее «в закрое» не показываем: кроить она не может. Очередь раскроенных
+    // вещей — да: по ней видно, что предстоит шить, хотя взять оттуда нельзя.
     ...(isSewer
       ? []
       : [{ label: isCutter ? 'У меня в закрое' : 'Товары в закрое', value: summary.inCutting, icon: 'Scissors', tone: 'default' as const, path: '/crm/marketplace/sewing-items', stage: 'production' as const, hint: isCutter ? 'Ткань, которую вы кроите прямо сейчас' : 'Ткань в работе у закройщиков' }]),
@@ -47,11 +56,18 @@ export const buildDashboardWidgets = ({
     { label: 'Не отгруженные поставки в цех', shortLabel: 'Не отгружено в цех', value: summary.notShippedToWorkshop, icon: 'TruckElectric', tone: 'warning', path: '/crm/shipments/to-workshop', stage: 'warehouse', hint: 'Материал собран, но со склада ещё не уехал' },
     { label: 'Не принятые поставки в цехе', shortLabel: 'Не принято в цехе', value: summary.notReceivedInWorkshop, icon: 'PackageX', tone: 'warning', path: '/crm/shipments/to-workshop', stage: 'warehouse', hint: 'Привезли в цех, но приёмку никто не подтвердил' },
     { label: isSewer || isCutter ? 'Мои на стикеровке' : 'Товары на стикеровке', shortLabel: isSewer || isCutter ? undefined : 'На стикеровке', value: summary.inStickering, icon: 'Tag', tone: 'default', path: '/crm/marketplace/sewing-items', stage: 'production', hint: 'Сшито и ждёт наклейки стикера маркетплейса' },
-    // «Раскроено» — тоже не для швеи: это итог работы закройщиков, а очередь,
-    // из которой швея берёт вещи, у неё в «Новых заданиях».
-    ...(isSewer
-      ? []
-      : [{ label: 'Раскроено', value: summary.cut, icon: 'CheckCircle2', tone: 'default' as const, path: '/crm/marketplace/sewing-items', stage: 'production' as const, hint: 'Крой готов и передан швеям' }]),
+    {
+      label: 'Раскроено',
+      shortLabel: isSewer ? 'Очередь' : 'Раскроено',
+      value: summary.cut,
+      icon: 'CheckCircle2',
+      tone: 'default' as const,
+      path: '/crm/marketplace/sewing-items?tab=Раскроено',
+      stage: 'production' as const,
+      hint: isSewer
+        ? 'Что скроили дальше — взять отсюда нельзя, выдаст кнопка нового заказа'
+        : 'Крой готов и ждёт пошива',
+    },
   ];
 
   if (canSeeWarehouseWidgets) {

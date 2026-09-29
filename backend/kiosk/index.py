@@ -407,13 +407,16 @@ def is_label_gone(marketplace, ozon_status) -> bool:
     return (marketplace or '').upper() == 'OZON' and (ozon_status or '') in OZON_SHIPMENT_GONE
 
 
-def is_order_cancelled(status, ozon_status=None, ym_status=None) -> bool:
+def is_order_cancelled(status, ozon_status=None, ym_status=None,
+                       cancelled_at=None, sewing_status=None) -> bool:
     """Заказ отменён — вещь дошивают, но она уедет на склад, а не покупателю.
 
     Признак собран по всем площадкам сразу, потому что поле статуса у каждой своё:
       * OZON      — ozon_status ('cancelled');
       * Яндекс    — ym_status;
       * WB        — отдельного поля нет, синхронизация сразу ставит status='Отменён'.
+      * Любая     — cancelled_at, когда площадка уже отметила отмену, а status
+                    ещё не переписан.
 
     Раньше проверка была написана по месту (в четырёх разных ветках) и везде смотрела
     ТОЛЬКО на ozon_status. Отмена WB и Яндекса ловилась лишь тогда, когда наша
@@ -422,6 +425,8 @@ def is_order_cancelled(status, ozon_status=None, ym_status=None) -> bool:
     """
     return (
         status == 'Отменён'
+        or sewing_status == 'Отменён'
+        or cancelled_at is not None
         or 'cancel' in (ozon_status or '').lower()
         or 'cancel' in (ym_status or '').lower()
     )
@@ -755,7 +760,11 @@ def handler(event: dict, context) -> dict:
                 "o.ozon_posting_number, "
                 # Магазин вещи: цех общий, но упаковка и вложения у МЕГАТЮЛЬ и
                 # ДЮНЫ разные. Упаковщица видит метку и берёт нужный пакет.
-                "shp.name, shp.color "
+                "shp.name, shp.color, "
+                # Отмена могла приехать только cancelled_at, без смены status —
+                # без этого поля терминал печатал ярлык СТАРОГО отправления.
+                "o.cancelled_at, o.cut_from_order_id, "
+                "(SELECT c.order_number FROM orders c WHERE c.id = o.cut_from_order_id) "
                 "FROM orders o LEFT JOIN users u ON u.id = o.assigned_user_id "
                 "LEFT JOIN users cu ON cu.id = o.cutter_user_id "
                 "LEFT JOIN users su ON su.id = o.sewer_user_id "
@@ -777,7 +786,12 @@ def handler(event: dict, context) -> dict:
                 # мы разделили накопившиеся отправления на стороне OZON: наклейки в
                 # цехе остались со старыми номерами. Поэтому пробуем ещё и номер без
                 # последнего хвоста — упаковщице не нужно знать про переименования.
-                f"WHERE o.order_number = '{order_number_esc}' "
+                # Крой, который УЖЕ отдали новому заказу, сам по себе не ищем:
+                # его номер на бирке совпадает со сканом, и без отсечения он
+                # выигрывал бы у живого заказа из‑за точного совпадения номера.
+                # Тогда терминал печатал ярлык ОТМЕНЁННОГО отправления.
+                f"WHERE o.cut_given_to_order_id IS NULL AND ("
+                f"   o.order_number = '{order_number_esc}' "
                 f"   OR o.ozon_posting_number = '{order_number_esc}' "
                 f"   OR o.order_number = '{base_number_esc}' "
                 f"   OR o.ozon_posting_number = '{base_number_esc}' "
@@ -801,9 +815,10 @@ def handler(event: dict, context) -> dict:
                 f"{root_clause}"
                 # Ярлык Яндекса: цифры без нашего префикса «YM-».
                 f"{ym_clause}"
+                f")"
                 #
-                # ПОРЯДОК ВАЖЕН: сначала берём вещь, которую сейчас реально стикеруют,
-                # и только потом смотрим на точность совпадения номера.
+                # ПОРЯДОК ВАЖЕН: сначала вещь на стикеровке, потом ЖИВАЯ важнее
+                # отменённой, и только потом точность совпадения номера.
                 #
                 # Почему так: отправление 47971098-0677-1-1/-1-2 OZON разделил на два
                 # СВОИХ номера — «-1» и «-3». Первую вещь уже застикеровали (стала
@@ -811,10 +826,14 @@ def handler(event: dict, context) -> dict:
                 # старую наклейку «-1-2», а система по приоритету точности отдавала
                 # закрытую «-1» и отвечала «уже застикерован». Работа вставала, хотя
                 # незакрытая вещь того же отправления лежала рядом.
+                #
+                # Второй ключ — отмена: при скане бирки закройщика после передачи
+                # кроя живой заказ должен выиграть у отменённого исходника.
                 "ORDER BY CASE o.sewing_status "
                 "    WHEN 'Стикеровка' THEN 1 WHEN 'В работе' THEN 2 "
                 "    WHEN 'Раскроено' THEN 3 WHEN 'На раскрое' THEN 4 "
                 "    WHEN 'Новый' THEN 5 ELSE 6 END, "
+                f"  CASE WHEN ({CANCELLED_ORDER_SQL}) THEN 1 ELSE 0 END, "
                 f"  (o.order_number = '{order_number_esc}') DESC, "
                 f"  (o.ozon_posting_number = '{order_number_esc}') DESC, o.id "
                 "LIMIT 1"
@@ -828,6 +847,9 @@ def handler(event: dict, context) -> dict:
             # это выглядит как «терминал дал чужой заказ».
             scanned_row = row[22]
             exact_match = order_number in (row[1], scanned_row)
+            found_cancelled = is_order_cancelled(
+                row[9], row[10], row[21], row[25], row[6],
+            )
             if row[6] != 'Стикеровка':
                 # Уже застикерованный заказ на терминал не пускаем: иначе на вещь наклеят
                 # второй ярлык. Говорим прямо, что работа по нему закончена.
@@ -839,11 +861,25 @@ def handler(event: dict, context) -> dict:
                 #
                 # Поэтому вместе с отказом отдаём саму вещь: терминал предложит напечатать
                 # стикер хранения и сдать её кладовщику как свободный остаток.
-                msg = (
-                    f'Заказ {order_number} уже застикерован и закрыт'
-                    if row[6] == 'Готовые'
-                    else f'Заказ {order_number} не на стикеровке (статус: {row[6]})'
-                )
+                #
+                # Крой с бирки старого заказа мог уже уйти живому: тогда на экране номер
+                # другого отправления, и сдавать его на склад нельзя — вещь ещё шьют.
+                if row[6] == 'Готовые':
+                    msg = f'Заказ {row[1]} уже застикерован и закрыт'
+                elif found_cancelled:
+                    msg = (
+                        f'Заказ {row[1]} отменён и ещё не на стикеровке '
+                        f'(статус: {row[6]}). Крой ждёт новый заказ того же размера — '
+                        f'ярлык старого отправления печатать нельзя'
+                    )
+                elif row[26]:
+                    msg = (
+                        f'Крой с бирки {order_number} уже передан заказу {row[1]}. '
+                        f'Он ещё не на стикеровке (статус: {row[6]}) — дождитесь пошива. '
+                        f'Ярлык будет от НОВОГО отправления, не от старого заказа'
+                    )
+                else:
+                    msg = f'Заказ {row[1]} не на стикеровке (статус: {row[6]})'
 
                 # СДАВАТЬ НА СКЛАД МОЖНО ТОЛЬКО ВЕЩЬ, КОТОРОЙ НЕКУДА ЕХАТЬ.
                 #
@@ -907,7 +943,10 @@ def handler(event: dict, context) -> dict:
                     'headers': headers,
                     'body': json.dumps({
                         'error': msg,
-                        'canStoreSpare': True,
+                        # Свободный остаток — только закрытый заказ, у которого в цехе
+                        # осталась лишняя вещь. Живой крой (в том числе переданный с
+                        # отменённого) на склад отсюда сдавать нельзя.
+                        'canStoreSpare': row[6] == 'Готовые',
                         'order': {
                             'id': row[0],
                             'orderNumber': row[1],
@@ -936,7 +975,7 @@ def handler(event: dict, context) -> dict:
                 'assignedUserName': row[8],
                 # Заказ отменён клиентом: вещь всё равно дошивается, но уходит не покупателю,
                 # а на склад хранения — упаковщик клеит стикер ХРАНЕНИЯ вместо отправления.
-                'isCancelled': is_order_cancelled(row[9], row[10], row[21]),
+                'isCancelled': found_cancelled,
                 # Отправление уже уехало к покупателю (или отменено на стороне OZON) —
                 # ярлык не выдадут. Вещь закрывают со стикером хранения, как отменённую.
                 'labelGone': is_label_gone(row[11], row[10]),
@@ -964,6 +1003,9 @@ def handler(event: dict, context) -> dict:
                 # чтобы упаковщица сверила вещь, а не молча клеила чужой ярлык.
                 'matchedByFallback': not exact_match,
                 'scannedCode': order_number,
+                # Бирка закройщика осталась от отменённого заказа — печатаем ярлык
+                # НОВОГО отправления, который лежит в orderNumber.
+                'cutFromOrderNumber': row[27],
                 # Магазин вещи — по нему упаковщица берёт правильную упаковку.
                 'shopName': row[23],
                 'shopColor': row[24],
@@ -1121,7 +1163,7 @@ def handler(event: dict, context) -> dict:
                     "ym_status, "
                     # Вещь прошла оверлок: у неё другие ставки и у швеи, и у
                     # упаковщицы — см. расчёт начислений ниже.
-                    "overlocked_at, sewer_user_id FROM orders WHERE id = %s "
+                    "overlocked_at, sewer_user_id, cancelled_at FROM orders WHERE id = %s "
                     "FOR UPDATE",
                     (int(order_id),),
                 )
@@ -1132,7 +1174,7 @@ def handler(event: dict, context) -> dict:
                  order_status, order_ozon_status, order_type, order_material,
                  order_height, order_product, group_key, group_size, group_position,
                  order_marketplace, order_ym_status, order_overlocked_at,
-                 sewer_user_id) = row
+                 sewer_user_id, order_cancelled_at) = row
                 # Признак «вещь прошла оверлок» — по нему ниже выбирается тариф.
                 is_overlocked = order_overlocked_at is not None
                 # Отправление уже уехало к покупателю — ярлык не выдадут, и вещь ему не
@@ -1148,7 +1190,10 @@ def handler(event: dict, context) -> dict:
                 label_printed = bool(body_data.get('labelPrinted'))
                 label_gone = is_label_gone(order_marketplace, order_ozon_status)
                 is_cancelled = (
-                    is_order_cancelled(order_status, order_ozon_status, order_ym_status)
+                    is_order_cancelled(
+                        order_status, order_ozon_status, order_ym_status,
+                        order_cancelled_at, sewing_status,
+                    )
                     or (label_gone and not label_printed)
                 )
 

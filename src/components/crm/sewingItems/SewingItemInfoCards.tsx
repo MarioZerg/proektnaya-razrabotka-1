@@ -64,13 +64,12 @@ const SewingItemInfoCards = ({
           <CardTitle className="text-sm">Материалы</CardTitle>
         </CardHeader>
         <CardContent className="space-y-2">
-          {/* ИЗ КАКОГО КУСКА СДЕЛАНА ВЕЩЬ — ПЕРВОЙ СТРОКОЙ И НАВСЕГДА.
-              Заказ, закрытый куском с перешива, не расходует ни одного рулона:
-              в списке ниже ткань стоит без строки «Рулон #...», и раньше на
-              этом след обрывался — вещь выглядела сшитой из воздуха.
-              Номер стикера и причина отвечают на вопрос «из чего это сшито»
-              и через месяц, когда разбирают жалобу или повторный брак. */}
-          {orderDetail?.repairPiece && (
+          {/* ИЗ КАКОГО КУСКА СДЕЛАНА ВЕЩЬ — ТОЛЬКО ПОКА ОНА НА РАСКРОЕ.
+              Дальше по конвейеру отдельная карточка перешива только путает:
+              швея и упаковщица видят «есть куски», хотя брать ткань уже
+              некому. В расходе материалов ниже по-прежнему видно, что рулон
+              не списывался. */}
+          {selectedOrder.sewingStatus === 'На раскрое' && orderDetail?.repairPiece && (
             <div className="rounded border-2 border-violet-300 bg-violet-50 p-2">
               <div className="flex flex-wrap items-center gap-2">
                 <Icon name="Scissors" size={14} className="shrink-0 text-violet-700" />

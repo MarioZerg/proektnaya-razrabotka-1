@@ -87,6 +87,7 @@ const SewingItems = () => {
     totalMeters,
     totalPieces,
     countForTab,
+    piecesForTab,
     myUnfinishedCount,
     myUnfinishedOrders,
     myInWorkCount,
@@ -201,6 +202,39 @@ const SewingItems = () => {
               }}
               className="pl-9"
             />
+          </div>
+        )}
+
+        {!isProductionRole && (
+          <div className="grid grid-cols-3 gap-2">
+            {(
+              [
+                { tab: 'На раскрое' as TabValue, label: 'В закрое', icon: 'Scissors' },
+                { tab: 'Раскроено' as TabValue, label: 'Раскроено', icon: 'CheckCircle2' },
+                { tab: 'В работе' as TabValue, label: 'В пошиве', icon: 'Shirt' },
+              ] as const
+            ).map((s) => (
+              <button
+                key={s.tab}
+                type="button"
+                onClick={() => {
+                  setActiveTab(s.tab);
+                  setPage(1);
+                }}
+                className={`rounded-lg border p-2.5 text-left transition ${
+                  activeTab === s.tab ? 'border-primary bg-primary/5' : 'border-border hover:border-primary/40'
+                }`}
+              >
+                <p className="flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground">
+                  <Icon name={s.icon} size={12} />
+                  {s.label}
+                </p>
+                <p className="mt-1 text-xl font-bold leading-none tabular-nums">{piecesForTab(s.tab)}</p>
+                <p className="mt-0.5 text-[11px] text-muted-foreground">
+                  шт · {countForTab(s.tab)} зак.
+                </p>
+              </button>
+            ))}
           </div>
         )}
 
@@ -390,6 +424,20 @@ const SewingItems = () => {
         {/* Объясняем, что это за список и что с ним делать. Без пояснения
             вкладка выглядит как «мусорка отменённых», и вещи так и остались бы
             висеть на вешалках: непонятно, шить их или выбрасывать. */}
+        {isSewer && activeTab === 'Раскроено' && !loading && (
+          <div className="rounded-lg border border-violet-300 bg-violet-50 p-3 text-sm text-violet-900">
+            <p className="flex items-start gap-2 font-semibold">
+              <Icon name="Eye" size={16} className="mt-0.5 shrink-0" />
+              Очередь раскроенных вещей — только просмотр
+            </p>
+            <p className="mt-1">
+              Отсюда заказ взять нельзя. Следующую вещь выдаёт кнопка «Получить новый
+              заказ» по очереди. Вкладка нужна, чтобы видеть, что скроили и что
+              предстоит шить дальше.
+            </p>
+          </div>
+        )}
+
         {activeTab === CANCELLED_CUT_TAB && !loading && (
           <div className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
             <p className="flex items-start gap-2 font-semibold">

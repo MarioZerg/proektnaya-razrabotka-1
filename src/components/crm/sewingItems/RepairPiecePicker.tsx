@@ -113,6 +113,10 @@ const RepairPiecePicker = ({
 
   useEffect(load, [orderId, canTake]);
 
+  // Конвейер кроме «На раскрое» этот блок не монтирует. Если всё же вызвали
+  // с canTake=false — ничего не рисуем, в том числе экран загрузки.
+  if (!canTake) return null;
+
   const handleTake = async (piece: RepairPiece) => {
     setTakingId(piece.id);
     try {

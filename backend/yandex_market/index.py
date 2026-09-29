@@ -217,6 +217,79 @@ def log_action(cur, actor_id, actor_name, action, description):
     )
 
 
+_CANCELLED_SQL = (
+    "o.status = 'Отменён' OR o.sewing_status = 'Отменён' "
+    "OR o.cancelled_at IS NOT NULL "
+    "OR strpos(lower(COALESCE(o.ozon_status, '')), 'cancel') = 1 "
+    "OR strpos(upper(COALESCE(o.ym_status, '')), 'CANCEL') > 0"
+)
+
+
+def take_cancelled_cut(cur, order_id) -> bool:
+    """Отдаёт новому заказу готовый крой от ОТМЕНЁННОГО заказа того же размера.
+
+    Со склада Яндекс не подбираем (ярлык один на связку), но висящий крой того
+    же размера забирать можно: ткань уже разрезана, бирка старая, а печатать
+    нужно ярлык НОВОГО отправления.
+    """
+    cur.execute(
+        "SELECT product, material, width, height, workshop_id FROM orders WHERE id = %s",
+        (int(order_id),),
+    )
+    row = cur.fetchone()
+    if not row:
+        return False
+    product, material, width, height, workshop_id = row
+    if not product or not material or not width or not height:
+        return False
+
+    cur.execute(
+        "SELECT o.id, o.cut_at, o.cutter_user_id, o.hanger_number, o.workshop_id, "
+        "       o.requires_overlock, o.overlocked_at, o.overlock_user_id, "
+        "       o.sewing_status, o.assigned_user_id, o.sewer_user_id, o.sewn_at "
+        "FROM orders o "
+        "WHERE o.sewing_status IN ('Раскроено', 'В работе', 'Стикеровка') "
+        "  AND o.cut_at IS NOT NULL "
+        "  AND o.cut_given_to_order_id IS NULL "
+        f"  AND ({_CANCELLED_SQL}) "
+        "  AND o.product = %s AND o.material = %s AND o.width = %s AND o.height = %s "
+        "  AND (o.workshop_id = %s OR o.workshop_id IS NULL OR %s IS NULL) "
+        "  AND o.id <> %s "
+        "ORDER BY o.cut_at ASC NULLS LAST, o.id ASC LIMIT 1 "
+        "FOR UPDATE OF o SKIP LOCKED",
+        (product, material, int(width), int(height),
+         workshop_id, workshop_id, int(order_id)),
+    )
+    cut = cur.fetchone()
+    if not cut:
+        return False
+    (cut_id, cut_at, cutter_id, hanger, cut_workshop,
+     req_overlock, overlocked_at, overlock_user, src_status, src_assigned,
+     src_sewer, src_sewn_at) = cut
+
+    cur.execute(
+        "UPDATE orders SET sewing_status = %s, "
+        "  cut_at = %s, cutter_user_id = %s, hanger_number = %s, "
+        "  workshop_id = COALESCE(%s, workshop_id), "
+        "  requires_overlock = %s, overlocked_at = %s, overlock_user_id = %s, "
+        "  cut_from_order_id = %s, "
+        "  assigned_user_id = CASE WHEN %s IN ('В работе', 'Стикеровка') "
+        "                          THEN %s ELSE assigned_user_id END, "
+        "  sewer_user_id = COALESCE(%s, sewer_user_id), "
+        "  sewn_at = COALESCE(%s, sewn_at) "
+        "WHERE id = %s",
+        (src_status, cut_at, cutter_id, hanger or 0, cut_workshop,
+         bool(req_overlock), overlocked_at, overlock_user,
+         int(cut_id), src_status, src_assigned, src_sewer, src_sewn_at,
+         int(order_id)),
+    )
+    cur.execute(
+        "UPDATE orders SET cut_given_to_order_id = %s, sewing_status = 'Готовые' "
+        "WHERE id = %s",
+        (int(order_id), int(cut_id)),
+    )
+    return True
+
 
 def parse_ym_date(raw):
     """Дата создания заказа из Яндекс.Маркета в формат, понятный базе.
@@ -376,6 +449,7 @@ def sync_orders(cur, api_key, campaign_id, actor_id, actor_name, shop_id=None):
                 continue
             made_any = True
             created += 1
+            take_cancelled_cut(cur, inserted[0])
 
         # Со склада заказы Яндекса НЕ закрываются: всегда идут в пошив целиком.
         #
@@ -428,13 +502,32 @@ def get_order_label(cur, api_key, campaign_id, order_number):
     Возвращает (ошибка, base64_pdf).
     """
     cur.execute(
-        "SELECT ym_order_id, group_position, group_size FROM orders WHERE order_number = %s",
+        "SELECT ym_order_id, group_position, group_size, status, ym_status, "
+        "       cancelled_at, sewing_status, cut_given_to_order_id "
+        "FROM orders WHERE order_number = %s",
         (order_number,),
     )
     row = cur.fetchone()
     if not row or not row[0]:
         return 'Это не заказ Яндекс Маркета', None
-    ym_id, position, size = row
+    if row[7] is not None:
+        return (
+            'Крой этого заказа уже отдан другому отправлению. '
+            'Сканируйте бирку закройщика ещё раз — терминал найдёт новый заказ',
+            None,
+        )
+    ym_status = (row[4] or '').upper()
+    if (
+        row[3] == 'Отменён'
+        or row[6] == 'Отменён'
+        or row[5] is not None
+        or 'CANCEL' in ym_status
+    ):
+        return (
+            'Заказ отменён — ярлык Яндекса этого отправления не печатаем',
+            None,
+        )
+    ym_id, position, size = row[0], row[1], row[2]
 
     status, data = ym_get_raw(
         f'/campaigns/{campaign_id}/orders/{ym_id}/delivery/labels?format=A9', api_key

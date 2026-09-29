@@ -242,8 +242,10 @@ def take_cancelled_cut(cur, order_id) -> dict | None:
     Если ровно в этот момент приходит новый заказ того же размера и материала,
     шить его с нуля незачем — подходящий крой уже висит в цехе.
 
-    Передаём крой новому заказу: он сразу встаёт в очередь «Раскроено», швея
-    берёт его как обычную работу, и на склад ничего лишнего не уезжает.
+    Передаём крой новому заказу: он встаёт на тот же этап, на котором висит
+    вещь (обычно «Раскроено»). Если успели сдать на стикеровку — новый заказ
+    тоже будет на стикеровке, и терминал по старой бирке напечатает ярлык
+    НОВОГО отправления, а не стикер отменённого заказа.
 
     ПОЧЕМУ ЭТО НЕ ТО ЖЕ САМОЕ, ЧТО ПОДБОР СО СКЛАДА. Подбор (match_from_stock)
     ищет ГОТОВУЮ вещь на полке — её остаётся только отстикеровать. Здесь вещи
@@ -277,9 +279,15 @@ def take_cancelled_cut(cur, order_id) -> dict | None:
 
     cur.execute(
         "SELECT o.id, o.order_number, o.cut_at, o.cutter_user_id, o.hanger_number, "
-        "       o.workshop_id, o.requires_overlock, o.overlocked_at, o.overlock_user_id "
+        "       o.workshop_id, o.requires_overlock, o.overlocked_at, o.overlock_user_id, "
+        "       o.sewing_status, o.assigned_user_id, o.sewer_user_id, o.sewn_at "
         "FROM orders o "
-        "WHERE o.sewing_status = 'Раскроено' "
+        # Крой уже есть: не только «Раскроено», но и то, что успели взять в пошив
+        # или сдать на стикеровку, пока новый заказ того же размера ещё не пришёл.
+        # Иначе отшитая вещь уезжала бы на склад со СТАРЫМ ярлыком, а новый заказ
+        # кроили бы заново.
+        "WHERE o.sewing_status IN ('Раскроено', 'В работе', 'Стикеровка') "
+        "  AND o.cut_at IS NOT NULL "
         # Крой ещё никому не передан: иначе одну вешалку отдали бы двум заказам.
         "  AND o.cut_given_to_order_id IS NULL "
         # Только ОТМЕНЁННЫЕ: живой заказ ждёт свой покупатель, его крой не трогаем.
@@ -306,28 +314,36 @@ def take_cancelled_cut(cur, order_id) -> dict | None:
     if not cut:
         return None
     (cut_id, cut_number, cut_at, cutter_id, hanger, cut_workshop,
-     req_overlock, overlocked_at, overlock_user) = cut
+     req_overlock, overlocked_at, overlock_user, src_status, src_assigned,
+     src_sewer, src_sewn_at) = cut
 
-    # НОВЫЙ ЗАКАЗ ВСТАЁТ В ОЧЕРЕДЬ «РАСКРОЕНО» — КАК ОБЫЧНАЯ РАБОТА.
+    # НОВЫЙ ЗАКАЗ НАСЛЕДУЕТ ЭТАП ФИЗИЧЕСКОЙ ВЕЩИ.
     #
-    # Переносим на него всё, что относится к физическому крою: время раскроя,
-    # закройщика, вешалку, цех и этап оверлока. Швея должна увидеть вещь ровно
-    # такой, какой она висит в цехе.
+    # Если крой ещё висит на вешалке — встаёт в «Раскроено». Если швея уже
+    # взяла или сдала на стикеровку, статус копируем: иначе терминал по старой
+    # бирке не нашёл бы живой заказ на стикеровке и печатал ярлык ОТМЕНЁННОГО
+    # отправления.
     #
-    # cut_at берём СТАРЫЙ, а не now(): по нему считается очередь пошива и
-    # выработка закройщика. Поставив текущее время, мы бы приписали работу
-    # сегодняшней смене и подвинули вещь в конец очереди, хотя крой давно готов.
+    # Переносим время раскроя, закройщика, вешалку, цех и оверлок. cut_at берём
+    # СТАРЫЙ, а не now(): по нему очередь пошива и выработка закройщика. Поставив
+    # текущее время, мы бы приписали работу сегодняшней смене и подвинули вещь
+    # в конец очереди, хотя крой давно готов.
     cur.execute(
-        "UPDATE orders SET sewing_status = 'Раскроено', "
+        "UPDATE orders SET sewing_status = %s, "
         "  cut_at = %s, cutter_user_id = %s, hanger_number = %s, "
         "  workshop_id = COALESCE(%s, workshop_id), "
         "  requires_overlock = %s, overlocked_at = %s, overlock_user_id = %s, "
-        "  cut_from_order_id = %s "
+        "  cut_from_order_id = %s, "
+        "  assigned_user_id = CASE WHEN %s IN ('В работе', 'Стикеровка') "
+        "                          THEN %s ELSE assigned_user_id END, "
+        "  sewer_user_id = COALESCE(%s, sewer_user_id), "
+        "  sewn_at = COALESCE(%s, sewn_at) "
         "WHERE id = %s",
         (
-            cut_at, cutter_id, hanger or 0, cut_workshop,
+            src_status, cut_at, cutter_id, hanger or 0, cut_workshop,
             bool(req_overlock), overlocked_at, overlock_user,
-            int(cut_id), int(order_id),
+            int(cut_id), src_status, src_assigned, src_sewer, src_sewn_at,
+            int(order_id),
         ),
     )
 

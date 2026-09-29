@@ -297,9 +297,13 @@ def take_cancelled_cut(cur, order_id) -> bool:
 
     cur.execute(
         "SELECT o.id, o.cut_at, o.cutter_user_id, o.hanger_number, o.workshop_id, "
-        "       o.requires_overlock, o.overlocked_at, o.overlock_user_id "
+        "       o.requires_overlock, o.overlocked_at, o.overlock_user_id, "
+        "       o.sewing_status, o.assigned_user_id, o.sewer_user_id, o.sewn_at "
         "FROM orders o "
-        "WHERE o.sewing_status = 'Раскроено' "
+        # Крой уже есть: не только «Раскроено», но и то, что успели взять в пошив
+        # или сдать на стикеровку, пока новый заказ того же размера ещё не пришёл.
+        "WHERE o.sewing_status IN ('Раскроено', 'В работе', 'Стикеровка') "
+        "  AND o.cut_at IS NOT NULL "
         # Крой ещё никому не передан: иначе одну вешалку отдали бы двум заказам.
         "  AND o.cut_given_to_order_id IS NULL "
         # Только ОТМЕНЁННЫЕ: крой живого заказа ждёт свой покупатель.
@@ -321,21 +325,30 @@ def take_cancelled_cut(cur, order_id) -> bool:
     if not cut:
         return False
     (cut_id, cut_at, cutter_id, hanger, cut_workshop,
-     req_overlock, overlocked_at, overlock_user) = cut
+     req_overlock, overlocked_at, overlock_user, src_status, src_assigned,
+     src_sewer, src_sewn_at) = cut
 
-    # cut_at берём СТАРЫЙ: по нему считается очередь пошива и выработка
-    # закройщика. Поставив now(), мы приписали бы работу сегодняшней смене и
-    # отправили вещь в конец очереди, хотя крой давно готов.
+    # Новый заказ наследует этап физической вещи, иначе терминал по старой
+    # бирке печатал ярлык отменённого отправления.
+    #
+    # cut_at берём СТАРЫЙ: по нему очередь пошива и выработка закройщика.
+    # Поставив now(), мы приписали бы работу сегодняшней смене и отправили
+    # вещь в конец очереди, хотя крой давно готов.
     cur.execute(
-        "UPDATE orders SET sewing_status = 'Раскроено', "
+        "UPDATE orders SET sewing_status = %s, "
         "  cut_at = %s, cutter_user_id = %s, hanger_number = %s, "
         "  workshop_id = COALESCE(%s, workshop_id), "
         "  requires_overlock = %s, overlocked_at = %s, overlock_user_id = %s, "
-        "  cut_from_order_id = %s "
+        "  cut_from_order_id = %s, "
+        "  assigned_user_id = CASE WHEN %s IN ('В работе', 'Стикеровка') "
+        "                          THEN %s ELSE assigned_user_id END, "
+        "  sewer_user_id = COALESCE(%s, sewer_user_id), "
+        "  sewn_at = COALESCE(%s, sewn_at) "
         "WHERE id = %s",
-        (cut_at, cutter_id, hanger or 0, cut_workshop,
+        (src_status, cut_at, cutter_id, hanger or 0, cut_workshop,
          bool(req_overlock), overlocked_at, overlock_user,
-         int(cut_id), int(order_id)),
+         int(cut_id), src_status, src_assigned, src_sewer, src_sewn_at,
+         int(order_id)),
     )
     # Старый заказ отдал крой и уходит из работы: без смены статуса он остался бы
     # в очереди «Раскроено» и его крой попытались бы отдать второй раз.
@@ -1754,10 +1767,26 @@ def get_order_sticker(cur, api_key, use_sandbox, order_number):
 
     Возвращает (ошибка, base64_png).
     """
-    cur.execute("SELECT wb_order_id FROM orders WHERE order_number = %s", (order_number,))
+    cur.execute(
+        "SELECT wb_order_id, status, cancelled_at, sewing_status, "
+        "       cut_given_to_order_id "
+        "FROM orders WHERE order_number = %s",
+        (order_number,),
+    )
     row = cur.fetchone()
     if not row or not row[0]:
         return 'У этого заказа нет сборочного задания WB', None
+    if row[4] is not None:
+        return (
+            'Крой этого заказа уже отдан другому отправлению. '
+            'Сканируйте бирку закройщика ещё раз — терминал найдёт новый заказ',
+            None,
+        )
+    if row[1] == 'Отменён' or row[3] == 'Отменён' or row[2] is not None:
+        return (
+            'Заказ отменён — стикер WB этого отправления не печатаем',
+            None,
+        )
 
     status, data = wb_request(
         'POST', '/api/v3/orders/stickers?type=png&width=58&height=40', api_key, use_sandbox,
