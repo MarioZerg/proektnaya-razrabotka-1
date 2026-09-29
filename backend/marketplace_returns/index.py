@@ -1578,13 +1578,18 @@ def handler(event: dict, context) -> dict:
                 # тем кабинетом, из которого приехал.
                 scan_shops = list_return_shops(cur) or [None]
                 rows = []
-                creds, enabled, scan_err = {}, False, None
+                creds, scan_err = {}, None
                 shop_id = None
+                # Кабинеты с ключами запоминаем списком: по номеру отправления ниже
+                # придётся спросить их ВСЕ заново. Раньше там брались creds от
+                # поиска по штрихкоду, а он по клиентскому стикеру ничего не
+                # находит — и в запрос уходили пустые ключи.
+                scan_creds = []
                 for sid in scan_shops:
                     c_try, en_try = get_credentials(cur, 'ozon', sid)
                     if not en_try:
                         continue
-                    enabled = True
+                    scan_creds.append((sid, c_try))
                     st, data = http_json(
                         OZON_API_BASE + '/v1/returns/list', 'POST',
                         {'Client-Id': (c_try.get('clientId') or '').strip(),
@@ -1598,10 +1603,8 @@ def handler(event: dict, context) -> dict:
                     if found_rows:
                         rows, creds, shop_id = found_rows, c_try, sid
                         break
-                if not enabled:
+                if not scan_creds:
                     return _resp(404, {'error': _unknown_return_message(code)})
-                if not rows and scan_err:
-                    return _resp(502, {'error': scan_err})
                 # Что считать попаданием.
                 #
                 # Раньше требовали, чтобы логистический штрихкод возврата в точности
@@ -1667,51 +1670,63 @@ def handler(event: dict, context) -> dict:
                 #
                 # Поэтому вторая попытка: ищем возврат по номеру отправления.
                 if not exact and re.match(r'^\d{6,}-\d{3,}-\d+$', code):
-                    st2, data2 = http_json(
-                        OZON_API_BASE + '/v1/returns/list', 'POST',
-                        {'Client-Id': (creds.get('clientId') or '').strip(),
-                         'Api-Key': (creds.get('apiKey') or '').strip()},
-                        {'filter': {'posting_number': code}, 'limit': 50, 'last_id': 0},
-                    )
-                    if st2 == 200:
-                        by_posting = [
+                    # Обходим ВСЕ кабинеты: поиск по штрихкоду по клиентскому
+                    # стикеру ничего не нашёл, поэтому чей это магазин — ещё
+                    # неизвестно. Раньше запрос уходил с creds от неудачного
+                    # поиска (пустыми) и возвращал 401 — кладовщик видел
+                    # «возврат не найден» на вещи, которая у OZON есть.
+                    by_posting = []
+                    for sid2, c2 in scan_creds:
+                        st2, data2 = http_json(
+                            OZON_API_BASE + '/v1/returns/list', 'POST',
+                            {'Client-Id': (c2.get('clientId') or '').strip(),
+                             'Api-Key': (c2.get('apiKey') or '').strip()},
+                            {'filter': {'posting_number': code}, 'limit': 50, 'last_id': 0},
+                        )
+                        if st2 != 200:
+                            scan_err = scan_err or error_text(data2)
+                            continue
+                        hits = [
                             r for r in ((data2 or {}).get('returns') or [])
                             if (r.get('posting_number') or '') == code
                         ]
-                        # В отправлении бывает НЕСКОЛЬКО вещей, и на каждой свой пакет,
-                        # но клиентский стикер у них один и тот же.
-                        #
-                        # Раньше мы принимали по такому скану сразу все вещи отправления.
-                        # Кладовщик сканировал первый пакет — система молча зачисляла и
-                        # второй, которого он ещё даже не достал. Сканировал второй —
-                        # получал «уже принята», хотя эту вещь никуда не клали. Особенно
-                        # обидно с одинаковыми размерами: две штуки «Шифон 400x270» с
-                        # разными стикерами выглядят одинаково, а на складе они разные.
-                        #
-                        # Теперь один скан = одна вещь: берём первый возврат отправления,
-                        # который у нас ещё не принят. Второй скан того же стикера примет
-                        # вторую вещь, третий — третью.
-                        if by_posting:
-                            ext_all = [str(r.get('id')) for r in by_posting if r.get('id')]
-                            picked_set = set()
-                            if ext_all:
-                                ids_q = ','.join(
-                                    "'" + i.replace("'", "''") + "'" for i in ext_all
-                                )
-                                cur.execute(
-                                    "SELECT external_id FROM marketplace_returns "
-                                    f"WHERE marketplace = 'OZON' AND external_id IN ({ids_q}) "
-                                    "AND status NOT IN ('new', 'approved')"
-                                )
-                                picked_set = {str(r[0]) for r in cur.fetchall()}
+                        if hits:
+                            by_posting, creds, shop_id = hits, c2, sid2
+                            break
+                    # В отправлении бывает НЕСКОЛЬКО вещей, и на каждой свой пакет,
+                    # но клиентский стикер у них один и тот же.
+                    #
+                    # Раньше мы принимали по такому скану сразу все вещи отправления.
+                    # Кладовщик сканировал первый пакет — система молча зачисляла и
+                    # второй, которого он ещё даже не достал. Сканировал второй —
+                    # получал «уже принята», хотя эту вещь никуда не клали. Особенно
+                    # обидно с одинаковыми размерами: две штуки «Шифон 400x270» с
+                    # разными стикерами выглядят одинаково, а на складе они разные.
+                    #
+                    # Теперь один скан = одна вещь: берём первый возврат отправления,
+                    # который у нас ещё не принят. Второй скан того же стикера примет
+                    # вторую вещь, третий — третью.
+                    if by_posting:
+                        ext_all = [str(r.get('id')) for r in by_posting if r.get('id')]
+                        picked_set = set()
+                        if ext_all:
+                            ids_q = ','.join(
+                                "'" + i.replace("'", "''") + "'" for i in ext_all
+                            )
+                            cur.execute(
+                                "SELECT external_id FROM marketplace_returns "
+                                f"WHERE marketplace = 'OZON' AND external_id IN ({ids_q}) "
+                                "AND status NOT IN ('new', 'approved')"
+                            )
+                            picked_set = {str(r[0]) for r in cur.fetchall()}
 
-                            free = [
-                                r for r in by_posting
-                                if str(r.get('id')) not in picked_set
-                            ]
-                            # Все вещи этого отправления уже приняты — честно скажем об
-                            # этом, вместо того чтобы «принимать» их заново.
-                            exact = [free[0]] if free else [by_posting[0]]
+                        free = [
+                            r for r in by_posting
+                            if str(r.get('id')) not in picked_set
+                        ]
+                        # Все вещи этого отправления уже приняты — честно скажем об
+                        # этом, вместо того чтобы «принимать» их заново.
+                        exact = [free[0]] if free else [by_posting[0]]
 
                 if not exact:
                     if body_data.get('debug'):
@@ -1727,6 +1742,11 @@ def handler(event: dict, context) -> dict:
                                 for r in rows[:5]
                             ],
                         })
+                    # Кабинет ответил ошибкой (неверные ключи, лимит, 401) — это не
+                    # «возврата нет», и молчать об этом нельзя: иначе кладовщик
+                    # ищет вещь, которая у площадки есть, а мы просто не дозвонились.
+                    if scan_err:
+                        return _resp(502, {'error': f'OZON: {scan_err}'})
                     return _resp(404, {'error': _unknown_return_message(code)})
 
                 saved = 0
@@ -1745,7 +1765,9 @@ def handler(event: dict, context) -> dict:
                         'returnBarcode': (it.get('logistic') or {}).get('barcode'),
                     }
                     if rec['externalId']:
-                        save_return(cur, 'OZON', rec)
+                        # Магазин того кабинета, который узнал код: возврат должен
+                        # лечь на склад под своим кабинетом, а не «без магазина».
+                        save_return(cur, 'OZON', rec, shop_id)
                         saved += 1
                 conn.commit()
 
