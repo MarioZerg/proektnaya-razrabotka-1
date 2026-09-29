@@ -1115,7 +1115,7 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
             # В цех уезжают и вещи прямо с ПВЗ (mp_return): кладовщик разбирает
             # привезённое и часть сразу отдаёт упаковщицам, не заводя промежуточный шаг.
             cur.execute(
-                f"UPDATE goods_warehouse SET status = 'repacking' "
+                f"UPDATE goods_warehouse SET status = 'repacking', received_at = now() "
                 f"WHERE id IN ({ids_csv}) AND status IN ('checking', 'mp_return') RETURNING id"
             )
             moved_rows = cur.fetchall()

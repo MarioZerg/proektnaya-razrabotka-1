@@ -600,7 +600,8 @@ def delete_piece(cur, conn, event, body):
     # Только для непотраченных кусков: раскроенный обратно вещью не станет.
     if gw_id and status in ('available', 'reserved'):
         cur.execute(
-            "UPDATE goods_warehouse SET status = 'repacking', shipped_at = NULL "
+            "UPDATE goods_warehouse SET status = 'repacking', shipped_at = NULL, "
+            "received_at = now() "
             "WHERE id = %s AND status = 'returned_to_roll'",
             (int(gw_id),),
         )

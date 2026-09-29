@@ -44,7 +44,7 @@ export const INSPECTION_STAGES: {
   {
     key: 'atPackers',
     title: 'На проверке',
-    hint: 'В цехе, упаковщица осматривает',
+    hint: 'В цехе в этом месяце, с 1 сентября',
     icon: 'Search',
     tone: 'warning',
   },

@@ -3,7 +3,6 @@ import CrmLayout from '@/components/crm/CrmLayout';
 import Icon from '@/components/ui/icon';
 import PickingScanDialog from '@/components/crm/goodsWarehouse/PickingScanDialog';
 import ShippedStuckPanel from '@/components/crm/goodsWarehouse/ShippedStuckPanel';
-import StalePickingPanel from '@/components/crm/goodsWarehouse/StalePickingPanel';
 import SupplyTailsPanel from '@/components/crm/goodsWarehouse/SupplyTailsPanel';
 import ExtraFboPanel from '@/components/crm/goodsWarehouse/ExtraFboPanel';
 import GoodsPickingHeader from '@/components/crm/goodsWarehouse/GoodsPickingHeader';
@@ -66,12 +65,6 @@ const GoodsPicking = () => {
           onOpenChange={setScanOpen}
           onOpenCard={(goodsId) => navigate(`/crm/inventory/goods/${goodsId}`)}
         />
-
-        {/* Вещи, которые искали и не нашли: строка висит со вчера и раньше. Стоит
-            выше остальных панелей — это и есть главный тормоз подбора. Заказ
-            закрывается либо заменой со склада, либо новым пошивом, и решает
-            человек: оба выхода стоят денег. */}
-        <StalePickingPanel onReload={load} />
 
         {/* Позиции, которые уже уехали к клиентам: их закрывает администратор,
             иначе они висят в подборе вечно. */}

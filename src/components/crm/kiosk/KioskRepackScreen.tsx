@@ -202,7 +202,7 @@ const KioskRepackScreen = ({ actorId, actorName, workshopId }: KioskRepackScreen
           </p>
           <div className="flex gap-2">
             <span className="rounded-lg bg-violet-600 px-4 py-2 text-xl font-bold text-white">
-              {countError ? 'очередь неизвестна' : `${waiting} шт. ждёт`}
+              {countError ? 'очередь неизвестна' : `${waiting} шт. за этот месяц`}
             </span>
             {doneCount > 0 && (
               <span className="rounded-lg border border-emerald-400 bg-white px-4 py-2 text-xl font-bold text-emerald-700">
@@ -313,8 +313,8 @@ const KioskRepackScreen = ({ actorId, actorName, workshopId }: KioskRepackScreen
             {countError
               ? 'Очередь не загрузилась — сканировать можно, список вещей на экране не показываем'
               : waiting > 0
-              ? `В цехе ждёт перепаковки ${waiting} шт. Берите вещь и подносите к сканеру`
-              : 'Сюда попадают возвраты, которые кладовщик отправил переупаковать'}
+              ? `В этом месяце на перепаковке ${waiting} шт. Берите вещь и подносите к сканеру`
+              : 'Сюда попадают возвраты, которые кладовщик отправил переупаковать в этом месяце'}
           </p>
         </div>
       ) : (

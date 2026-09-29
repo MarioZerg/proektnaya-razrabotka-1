@@ -1600,6 +1600,22 @@ def handler(event: dict, context) -> dict:
                     }, ensure_ascii=False),
                 }
 
+            # Очередь перепаковки — только вещи, заведённые с 01.09.2026
+            # и отправленные на перепаковку в текущем месяце.
+            #
+            # Раньше счётчик и список брали все строки status='repacking'.
+            # Среди них висели потеряшки: кладовщик заводил товар руками и не
+            # знал, что ту же вещь можно принять по штрихкоду. Карточки копились
+            # месяцами, и число на плитке давно не совпадало с тележкой в цехе.
+            # received_at обновляется в момент отправки на перепаковку.
+            # +3 часа — дата по Москве, как и в остальных складских отсечках.
+            repack_since = (
+                "(received_at + interval '3 hours') >= GREATEST("
+                "TIMESTAMP '2026-09-01', "
+                "date_trunc('month', now() + interval '3 hours'))"
+            )
+            repack_since_gw = repack_since.replace('received_at', 'gw.received_at')
+
             if action == 'repack_list':
                 # Вещи, вернувшиеся от покупателя годными, но с помятой упаковкой: кладовщик
                 # отправил их в цех, упаковщик переупаковывает и возвращает на склад.
@@ -1627,7 +1643,7 @@ def handler(event: dict, context) -> dict:
                     "FROM goods_warehouse gw "
                     "LEFT JOIN orders o ON o.id = gw.order_id "
                     "LEFT JOIN marketplace_returns mr ON mr.id = gw.repack_return_id "
-                    "WHERE gw.status = 'repacking'" + ws_filter +
+                    "WHERE gw.status = 'repacking' AND " + repack_since_gw + ws_filter +
                     " ORDER BY gw.received_at ASC LIMIT 100"
                 )
                 items = [
@@ -1670,7 +1686,8 @@ def handler(event: dict, context) -> dict:
                 cur.execute(
                     "SELECT COUNT(*) FILTER (WHERE repack_workshop_id IS NOT NULL), "
                     "       COUNT(*) FILTER (WHERE repack_workshop_id IS NULL) "
-                    "FROM goods_warehouse WHERE status = 'repacking'" + ws_cond
+                    "FROM goods_warehouse WHERE status = 'repacking' AND "
+                    + repack_since + ws_cond
                 )
                 cnt = cur.fetchone()
                 return {'statusCode': 200, 'headers': headers, 'body': json.dumps({
@@ -1744,11 +1761,26 @@ def handler(event: dict, context) -> dict:
                     "LEFT JOIN orders o ON o.id = gw.order_id "
                     "LEFT JOIN marketplace_returns mr ON mr.goods_warehouse_id = gw.id "
                     "LEFT JOIN workshops w ON w.id = gw.repack_workshop_id "
-                    "WHERE gw.status = 'repacking' AND (" + code_match + ") "
+                    "WHERE gw.status = 'repacking' AND " + repack_since_gw
+                    + " AND (" + code_match + ") "
                     "LIMIT 1"
                 )
                 sc = cur.fetchone()
                 if not sc:
+                    # Старая карточка всё ещё числится «на перепаковке», но в очередь
+                    # этого месяца не входит: её завели руками до 01.09.2026.
+                    cur.execute(
+                        "SELECT 1 FROM goods_warehouse gw "
+                        "LEFT JOIN marketplace_returns mr ON mr.goods_warehouse_id = gw.id "
+                        "LEFT JOIN orders o ON o.id = gw.order_id "
+                        "WHERE gw.status = 'repacking' AND (" + code_match + ") LIMIT 1"
+                    )
+                    if cur.fetchone():
+                        return {'statusCode': 409, 'headers': headers, 'body': json.dumps(
+                            {'error': 'Эта вещь заведена до сентября 2026 и в очередь '
+                                      'перепаковки не входит. Сканируйте то, что отправили '
+                                      'в цех в этом месяце'},
+                            ensure_ascii=False)}
                     # Вещи с таким кодом на перепаковке нет. Разбираемся, что это было,
                     # чтобы упаковщица не гадала: чужой товар с полки или живой заказ.
                     # Ищем тем же набором кодов, что и выше, но уже без фильтра по

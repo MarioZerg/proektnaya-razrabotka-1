@@ -588,7 +588,13 @@ def handle_get(event: dict, headers: dict, dsn: str) -> dict:
                 # положить вещь на полку или отдать упаковщицам на осмотр.
                 "  COUNT(*) FILTER (WHERE status = 'mp_return'), "
                 "  COUNT(*) FILTER (WHERE status = 'checking'), "
-                "  COUNT(*) FILTER (WHERE status = 'repacking'), "
+                # Перепаковка: только вещи, заведённые и отправленные в цех
+                # с 01.09.2026 и в текущем месяце. Старые ручные потеряшки
+                # в этот счётчик не входят — см. ту же отсечку в kiosk/index.py.
+                "  COUNT(*) FILTER (WHERE status = 'repacking' "
+                "    AND (received_at + interval '3 hours') >= GREATEST("
+                "      TIMESTAMP '2026-09-01', "
+                "      date_trunc('month', now() + interval '3 hours'))), "
                 # «Осмотрено» и «Забрано с производства» слиты в один этап: для
                 # кладовщика это одна и та же работа — положить вещь на полку.
                 "  COUNT(*) FILTER (WHERE status IN ('inspected', 'taken')), "
@@ -627,6 +633,15 @@ def handle_get(event: dict, headers: dict, dsn: str) -> dict:
                 # упаковщицей и уже забранные им из цеха. Список нужен окну приёмки, чтобы
                 # проверять сканы в браузере и не дёргать сервер на каждый штрихкод.
                 where_stage = "gw.status IN ('inspected', 'taken')"
+            elif stage == 'atPackers':
+                # Тот же отбор, что у счётчика «На проверке»: с 01.09.2026
+                # и только отправленные на перепаковку в текущем месяце.
+                where_stage = (
+                    "gw.status = 'repacking' "
+                    "AND (gw.received_at + interval '3 hours') >= GREATEST("
+                    "TIMESTAMP '2026-09-01', "
+                    "date_trunc('month', now() + interval '3 hours'))"
+                )
             elif stage_status:
                 where_stage = f"gw.status = '{stage_status}'"
             else:

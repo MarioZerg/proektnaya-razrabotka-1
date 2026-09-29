@@ -7,6 +7,14 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import Icon from '@/components/ui/icon';
 
 export type StatusFilter = 'new' | 'in_progress' | 'done' | 'cancelled';
@@ -73,66 +81,80 @@ const OrdersToolbar = ({
   onSearchChange,
   searching,
 }: OrdersToolbarProps) => {
+  const busyLabel = syncing
+    ? 'Загружаем WB...'
+    : syncingOzon
+      ? 'Загружаем OZON...'
+      : syncingYandex
+        ? 'Загружаем Яндекс...'
+        : refreshingOzon
+          ? 'Обновляем статусы OZON...'
+          : null;
+
   return (
     <>
-      {/* Кнопки добавления и загрузки заказов — только у администратора. Кладовщик и
-          менеджер на этой вкладке лишь смотрят информацию, заказами не занимаются. */}
+      {/* Загрузка, ручной заказ и догрузка по номеру — только у администратора.
+          Раньше это был ряд из шести кнопок, и на экране не оставалось места
+          под сам список. Кладовщик и менеджер вкладку только смотрят. */}
       {canManage && (
-      <div className="flex flex-wrap gap-3">
-        <Button className="bg-blue-600 text-white hover:bg-blue-700" onClick={onOpenManual}>
-          <Icon name="Plus" size={16} className="mr-1.5" />
-          Индивидуальный заказ
-        </Button>
-        <Button
-          className="bg-emerald-600 text-white hover:bg-emerald-700"
-          onClick={onSyncWb}
-          disabled={syncing}
-        >
-          <Icon
-            name={syncing ? 'Loader2' : 'RefreshCw'}
-            size={16}
-            className={`mr-1.5 ${syncing ? 'animate-spin' : ''}`}
-          />
-          {syncing ? 'Загружаем...' : 'Загрузить заказы с API (WB FBS)'}
-        </Button>
-        <Button
-          className="bg-[#005BFF] text-white hover:bg-[#0047cc]"
-          onClick={onSyncOzon}
-          disabled={syncingOzon}
-        >
-          <Icon
-            name={syncingOzon ? 'Loader2' : 'RefreshCw'}
-            size={16}
-            className={`mr-1.5 ${syncingOzon ? 'animate-spin' : ''}`}
-          />
-          {syncingOzon ? 'Загружаем...' : 'Загрузить заказы с API (OZON FBS)'}
-        </Button>
-        <Button
-          className="bg-[#FFCC00] text-black hover:bg-[#e6b800]"
-          onClick={onSyncYandex}
-          disabled={syncingYandex}
-        >
-          <Icon
-            name={syncingYandex ? 'Loader2' : 'RefreshCw'}
-            size={16}
-            className={`mr-1.5 ${syncingYandex ? 'animate-spin' : ''}`}
-          />
-          {syncingYandex ? 'Загружаем...' : 'Загрузить заказы с API (Яндекс FBS)'}
-        </Button>
-        <Button variant="outline" onClick={onRefreshOzonStatuses} disabled={refreshingOzon}>
-          <Icon
-            name={refreshingOzon ? 'Loader2' : 'RefreshCcw'}
-            size={16}
-            className={`mr-1.5 ${refreshingOzon ? 'animate-spin' : ''}`}
-          />
-          {refreshingOzon ? 'Обновляем...' : 'Обновить статусы OZON'}
-        </Button>
-        {/* Аварийная догрузка: заказ есть на OZON, но на конвейер не попал. */}
-        <Button variant="outline" onClick={onPullByNumber}>
-          <Icon name="Search" size={16} className="mr-1.5" />
-          Заказ по номеру
-        </Button>
-      </div>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="outline">
+              <Icon
+                name={busyLabel ? 'Loader2' : 'Ellipsis'}
+                size={16}
+                className={`mr-2 ${busyLabel ? 'animate-spin' : ''}`}
+              />
+              {busyLabel || 'Действия'}
+              <Icon name="ChevronDown" size={14} className="ml-2" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="start" className="w-64">
+            <DropdownMenuItem onClick={onOpenManual}>
+              <Icon name="Plus" size={16} className="mr-2" />
+              Индивидуальный заказ
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={onPullByNumber}>
+              <Icon name="Search" size={16} className="mr-2" />
+              Заказ по номеру
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuLabel>Загрузить с API</DropdownMenuLabel>
+            <DropdownMenuItem onClick={onSyncWb} disabled={syncing}>
+              <Icon
+                name={syncing ? 'Loader2' : 'RefreshCw'}
+                size={16}
+                className={`mr-2 ${syncing ? 'animate-spin' : ''}`}
+              />
+              {syncing ? 'Загружаем WB...' : 'Wildberries FBS'}
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={onSyncOzon} disabled={syncingOzon}>
+              <Icon
+                name={syncingOzon ? 'Loader2' : 'RefreshCw'}
+                size={16}
+                className={`mr-2 ${syncingOzon ? 'animate-spin' : ''}`}
+              />
+              {syncingOzon ? 'Загружаем OZON...' : 'OZON FBS'}
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={onSyncYandex} disabled={syncingYandex}>
+              <Icon
+                name={syncingYandex ? 'Loader2' : 'RefreshCw'}
+                size={16}
+                className={`mr-2 ${syncingYandex ? 'animate-spin' : ''}`}
+              />
+              {syncingYandex ? 'Загружаем Яндекс...' : 'Яндекс FBS'}
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem onClick={onRefreshOzonStatuses} disabled={refreshingOzon}>
+              <Icon
+                name={refreshingOzon ? 'Loader2' : 'RefreshCcw'}
+                size={16}
+                className={`mr-2 ${refreshingOzon ? 'animate-spin' : ''}`}
+              />
+              {refreshingOzon ? 'Обновляем...' : 'Обновить статусы OZON'}
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
       )}
 
       {/* ПОИСК ПО НОМЕРУ — ОТДЕЛЬНО ОТ ФИЛЬТРОВ И ВЫШЕ НИХ.

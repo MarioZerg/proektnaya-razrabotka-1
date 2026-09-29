@@ -37,8 +37,8 @@ const allowedTypesByRole: Record<string, string[]> = {
   packer: ['Упаковка'],
 };
 
-/** Экран работы с рулонами на терминале: закройщик закрывает рулоны, у которых закончился
- * метраж. Если ткань кончилась раньше — указывает недостачу цифровой клавиатурой. */
+/** Экран работы с рулонами на терминале: закройщик закрывает рулон, когда ткань
+ * по факту закончилась, или отмечает бракованный рулон. Недостачу руками не вводит. */
 const KioskRollsScreen = ({ workshopId, shiftNumber, userId, userName, role }: KioskRollsScreenProps) => {
   const { toast } = useToast();
   const [rolls, setRolls] = useState<Roll[]>([]);
@@ -54,7 +54,6 @@ const KioskRollsScreen = ({ workshopId, shiftNumber, userId, userName, role }: K
   const [notFound, setNotFound] = useState('');
   // Список рулонов — запасной путь, когда стикер порван или сканер не берёт.
   const [listOpen, setListOpen] = useState(false);
-  const [shortage, setShortage] = useState('');
   const [saving, setSaving] = useState(false);
   /** Невыкроенные куски от упаковщицы: пока они есть, рулон закрыть нельзя. */
   const [packerBlock, setPackerBlock] = useState<{
@@ -204,17 +203,15 @@ const KioskRollsScreen = ({ workshopId, shiftNumber, userId, userName, role }: K
     }
   };
 
-  const handleClose = async (withShortage: boolean) => {
+  const handleClose = async () => {
     if (!selected) return;
     setSaving(true);
     try {
-      await closeRoll(selected.id, withShortage ? Number(shortage) || 0 : 0, userId, userName);
-      toast({
-        title: 'Рулон закрыт',
-        description: withShortage && Number(shortage) > 0 ? `Недостача: ${shortage} ${selected.unit}` : undefined,
-      });
+      // Недостачу не спрашиваем: рулон закрывают, когда он по факту кончился.
+      // Сколько метров числилось в системе, сервер запишет сам.
+      await closeRoll(selected.id, 0, userId, userName);
+      toast({ title: 'Рулон закрыт' });
       setSelected(null);
-      setShortage('');
       // Возвращаем на экран сканирования: следующий рулон закройщик тоже сканирует.
       setListOpen(false);
       load();
@@ -264,22 +261,6 @@ const KioskRollsScreen = ({ workshopId, shiftNumber, userId, userName, role }: K
   };
 
 
-  // Сколько метров МОГЛО не хватить: всё, что было в рулоне, минус то, что уже ушло
-  // в сшитые вещи. Больше этого числа недостача физически невозможна — эти метры
-  // система видела в заказах. Сервер проверяет то же самое, здесь — чтобы человек
-  // увидел ошибку до нажатия кнопки, а не получил отказ после.
-  const maxPossibleShortage =
-    selected && selected.usedQuantity != null && selected.initialQuantity > 0
-      ? Math.max(0, selected.initialQuantity - selected.usedQuantity)
-      : null;
-
-  // Заявленная недостача невозможна — кнопку закрытия гасим. Иначе человек жмёт её,
-  // ждёт и получает отказ от сервера, не понимая, что исправлять.
-  const shortageTooBig =
-    !!selected &&
-    (Number(shortage) > Number(selected.remainingQuantity || 0) ||
-      (maxPossibleShortage != null && Number(shortage) > maxPossibleShortage));
-
   // Куски от упаковщицы перекрывают любой экран: пока ткань не перекроена, рулон
   // закрыть нельзя, и закройщице надо увидеть список, что искать в цехе.
   const packerCard = packerBlock ? (
@@ -299,15 +280,10 @@ const KioskRollsScreen = ({ workshopId, shiftNumber, userId, userName, role }: K
         {packerCard}
         <KioskRollCloseCard
         selected={selected}
-        shortage={shortage}
-        setShortage={setShortage}
         saving={saving}
-        maxPossibleShortage={maxPossibleShortage}
-        shortageTooBig={shortageTooBig}
         onClose={handleClose}
         onCancel={() => {
           setSelected(null);
-          setShortage('');
           setNotFound('');
         }}
         defectOpen={defectOpen}
