@@ -1,26 +1,18 @@
 import { useEffect, useState } from 'react';
 import CrmLayout from '@/components/crm/CrmLayout';
-import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import Icon from '@/components/ui/icon';
 import { fetchStackPreview } from '@/lib/ordersApi';
 import SewingItemsFilters from '@/components/crm/sewingItems/SewingItemsFilters';
 import DonePeriodFilter from '@/components/crm/sewingItems/DonePeriodFilter';
-import SewingItemsTable from '@/components/crm/sewingItems/SewingItemsTable';
 import SewingItemDetailDialog from '@/components/crm/sewingItems/SewingItemDetailDialog';
 import { useSewingItemsData } from '@/components/crm/sewingItems/useSewingItemsData';
 import { useSewingItemsFilters } from '@/components/crm/sewingItems/useSewingItemsFilters';
 import { useSewingItemOrderDetail } from '@/components/crm/sewingItems/useSewingItemOrderDetail';
 import { useSewingItemsQueueActions } from '@/components/crm/sewingItems/useSewingItemsQueueActions';
 import { isStorekeeperRole } from '@/lib/roles';
-import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
-import NextStackHint from '@/components/crm/sewingItems/NextStackHint';
-import {
-  CANCELLED_CUT_TAB,
-  type TabValue,
-} from '@/components/crm/sewingItems/sewingItemsShared';
+import SewingItemsHeaderControls from '@/components/crm/sewingItems/SewingItemsHeaderControls';
+import SewingItemsQueuePanel from '@/components/crm/sewingItems/SewingItemsQueuePanel';
+import SewingItemsTabsSection from '@/components/crm/sewingItems/SewingItemsTabsSection';
+import SewingItemsResults from '@/components/crm/sewingItems/SewingItemsResults';
 
 const SewingItems = () => {
   const {
@@ -166,77 +158,19 @@ const SewingItems = () => {
       <div className="space-y-4 sm:space-y-6">
         <h1 className="text-xl font-bold">Товары для пошива</h1>
 
-        {/* Конвейер по цехам: у каждого цеха свои ткани и свои сотрудники, поэтому
-            смешанный список читать неудобно. Переключатель открывает конвейер одного
-            цеха. Производственным ролям он не нужен — они и так видят только свой цех. */}
-        {!isProductionRole && workshops.filter((w) => w.isActive).length > 1 && (
-          <Tabs value={workshopFilter} onValueChange={setWorkshopFilter}>
-            <TabsList className="flex h-auto w-full flex-wrap justify-start gap-1">
-              <TabsTrigger value="all" className="shrink-0">
-                Все цеха
-              </TabsTrigger>
-              {workshops
-                .filter((w) => w.isActive)
-                .map((w) => (
-                  <TabsTrigger key={w.id} value={String(w.id)} className="shrink-0">
-                    {w.name}
-                  </TabsTrigger>
-                ))}
-            </TabsList>
-          </Tabs>
-        )}
-
-        {!isProductionRole && (
-          <div className="relative">
-            <Icon
-              name="Search"
-              size={16}
-              className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground"
-            />
-            <Input
-              placeholder="Поиск по номеру заказа или ШК"
-              value={searchQuery}
-              onChange={(e) => {
-                setSearchQuery(e.target.value);
-                setPage(1);
-              }}
-              className="pl-9"
-            />
-          </div>
-        )}
-
-        {!isProductionRole && (
-          <div className="grid grid-cols-3 gap-2">
-            {(
-              [
-                { tab: 'На раскрое' as TabValue, label: 'В закрое', icon: 'Scissors' },
-                { tab: 'Раскроено' as TabValue, label: 'Раскроено', icon: 'CheckCircle2' },
-                { tab: 'В работе' as TabValue, label: 'В пошиве', icon: 'Shirt' },
-              ] as const
-            ).map((s) => (
-              <button
-                key={s.tab}
-                type="button"
-                onClick={() => {
-                  setActiveTab(s.tab);
-                  setPage(1);
-                }}
-                className={`rounded-lg border p-2.5 text-left transition ${
-                  activeTab === s.tab ? 'border-primary bg-primary/5' : 'border-border hover:border-primary/40'
-                }`}
-              >
-                <p className="flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground">
-                  <Icon name={s.icon} size={12} />
-                  {s.label}
-                </p>
-                <p className="mt-1 text-xl font-bold leading-none tabular-nums">{piecesForTab(s.tab)}</p>
-                <p className="mt-0.5 text-[11px] text-muted-foreground">
-                  шт · {countForTab(s.tab)} зак.
-                </p>
-              </button>
-            ))}
-          </div>
-        )}
+        <SewingItemsHeaderControls
+          isProductionRole={isProductionRole}
+          workshops={workshops}
+          workshopFilter={workshopFilter}
+          setWorkshopFilter={setWorkshopFilter}
+          searchQuery={searchQuery}
+          setSearchQuery={setSearchQuery}
+          activeTab={activeTab}
+          setActiveTab={setActiveTab}
+          setPage={setPage}
+          countForTab={countForTab}
+          piecesForTab={piecesForTab}
+        />
 
         <SewingItemsFilters
           employees={employees}
@@ -275,201 +209,43 @@ const SewingItems = () => {
           />
         )}
 
-        {(isCutter || isSewer) && (
-          <div className="flex flex-col gap-2">
-            {/* Что сейчас первое в общей очереди цеха — связка или обычный стек. */}
-            {isCutter && (
-              <NextStackHint
-                workshopId={effectiveWorkshopId}
-                refreshKey={lastTakenStack.length}
-              />
-            )}
-            {isCutter && (
-              <div className="flex flex-wrap gap-2">
-                <Button onClick={() => handleTakeStack()} disabled={takingStack || myUnfinishedCount > 0} className="w-full sm:w-auto">
-                  {takingStack ? (
-                    <>
-                      <Icon name="Loader2" size={16} className="mr-2 animate-spin" />
-                      Берём заказы...
-                    </>
-                  ) : (
-                    <>
-                      <Icon name="Layers" size={16} className="mr-2" />
-                      Взять стек заказов
-                    </>
-                  )}
-                </Button>
-                {/* Добор одной вещи ДО предела заказов на руках.
-                    Раньше кнопка запиралась любым незакрытым заказом: взял стек,
-                    раскроил половину — и добрать вещь под остаток рулона уже
-                    нельзя. Теперь можно добирать, пока на руках меньше лимита.
-                    Связки Яндекса сюда не попадают — заказ из нескольких вещей
-                    раскраивается только целиком, придёт следующий одиночный. */}
-                <Button
-                  variant="outline"
-                  onClick={() => handleTakeStack(true)}
-                  disabled={takingStack || myUnfinishedCount >= cutterLimit}
-                  className="w-full sm:w-auto"
-                  title={
-                    myUnfinishedCount >= cutterLimit
-                      ? `На руках ${myUnfinishedCount} из ${cutterLimit} — раскроите часть`
-                      : undefined
-                  }
-                >
-                  <Icon name="Plus" size={16} className="mr-2" />
-                  Взять 1 заказ
-                  {myUnfinishedCount > 0 && (
-                    <span className="ml-1.5 text-xs text-muted-foreground">
-                      {myUnfinishedCount}/{cutterLimit}
-                    </span>
-                  )}
-                </Button>
-                {/* Кнопка живёт, пока есть нераскроенные заказы — это данные с сервера.
-                    Раньше она зависела от памяти браузера: закройщица обновляла страницу
-                    или заходила с другого планшета, и кнопка пропадала вместе с
-                    возможностью распечатать лист по уже взятому стеку. */}
-                {printQrCuttingEnabled && (myUnfinishedCount > 0 || lastTakenStack.length > 0) && (
-                  <Button variant="outline" onClick={handlePrintTask} className="w-full sm:w-auto">
-                    <Icon name="Printer" size={16} className="mr-2" />
-                    Распечатать задание
-                  </Button>
-                )}
-              </div>
-            )}
-            {/* ЗАМОЧЕК НА КНОПКЕ, когда на руках предельное число заказов.
-                Считается только «В работе»: сдала вещь на стикеровку — замок снялся
-                сразу, ждать упаковщицу не нужно. Темп внутри лимита задаёт таймер
-                пошива на кнопке каждой вещи. */}
-            {isSewer && (
-              <Button
-                onClick={handleTakeOrder}
-                disabled={takingOrder || takeOrderCooldown || takeLocked}
-                className="w-full sm:w-auto"
-              >
-                {takingOrder ? (
-                  <>
-                    <Icon name="Loader2" size={16} className="mr-2 animate-spin" />
-                    Получаем заказ...
-                  </>
-                ) : takeLocked ? (
-                  <>
-                    <Icon name="Lock" size={16} className="mr-2" />
-                    В работе {inWork} из {maxOrders}
-                  </>
-                ) : (
-                  <>
-                    <Icon name="PackagePlus" size={16} className="mr-2" />
-                    Получить новый заказ
-                  </>
-                )}
-              </Button>
-            )}
+        <SewingItemsQueuePanel
+          isCutter={isCutter}
+          isSewer={isSewer}
+          effectiveWorkshopId={effectiveWorkshopId}
+          lastTakenStack={lastTakenStack}
+          takingStack={takingStack}
+          myUnfinishedCount={myUnfinishedCount}
+          cutterLimit={cutterLimit}
+          printQrCuttingEnabled={printQrCuttingEnabled}
+          handleTakeStack={handleTakeStack}
+          handlePrintTask={handlePrintTask}
+          takingOrder={takingOrder}
+          takeOrderCooldown={takeOrderCooldown}
+          takeLocked={takeLocked}
+          inWork={inWork}
+          maxOrders={maxOrders}
+          handleTakeOrder={handleTakeOrder}
+          myInWorkCount={myInWorkCount}
+          myGroups={myGroups}
+        />
 
-            {isSewer && takeLocked && (
-              <p className="text-sm text-muted-foreground">
-                Отправьте хотя бы один заказ на стикеровку — кнопка откроется сразу.
-              </p>
-            )}
-
-            {isCutter && myUnfinishedCount > 0 && (
-              <p className="text-sm text-muted-foreground">
-                У вас {myUnfinishedCount} нераскроенных заказов — раскроите их, прежде чем брать новый стек.
-              </p>
-            )}
-
-            {isSewer && myInWorkCount > 0 && (
-              <p className="text-sm text-muted-foreground">
-                У вас {myInWorkCount} заказов в работе — укажите рулон тесьмы и отправьте их на стикеровку.
-              </p>
-            )}
-
-            {/* Связки Яндекса в работе у швеи: заказ покупателя шьётся целиком одним
-                человеком, поэтому показываем прогресс — сколько вещей заказа уже отшито. */}
-            {isSewer &&
-              myGroups.map((g) => (
-                <div
-                  key={g.groupKey}
-                  className="flex flex-wrap items-center gap-2 rounded-md border border-violet-300 bg-violet-50 px-3 py-2 text-sm text-violet-900"
-                >
-                  <Icon name="Package" size={16} />
-                  <span className="font-semibold">Заказ покупателя целиком</span>
-                  <span className="break-all font-mono-tech text-xs">{g.groupKey}</span>
-                  <Badge className="bg-violet-600 text-white hover:bg-violet-600">
-                    отшито {g.done} из {g.total}
-                  </Badge>
-                </div>
-              ))}
-          </div>
-        )}
-
-        <Tabs
-          value={activeTab}
-          onValueChange={(v) => {
-            setActiveTab(v as TabValue);
-            setPage(1);
-          }}
-        >
-          <TabsList className="flex h-auto w-full flex-nowrap justify-start gap-1 overflow-x-auto sm:flex-wrap">
-            {visibleTabs.map((tab) => (
-              <TabsTrigger key={tab.value} value={tab.value} className="shrink-0 gap-1.5">
-                {tab.label}
-                <Badge variant="secondary" className="ml-1">
-                  {countForTab(tab.value)}
-                </Badge>
-              </TabsTrigger>
-            ))}
-          </TabsList>
-        </Tabs>
-
-        {/* Объясняем, что это за список и что с ним делать. Без пояснения
-            вкладка выглядит как «мусорка отменённых», и вещи так и остались бы
-            висеть на вешалках: непонятно, шить их или выбрасывать. */}
-        {isSewer && activeTab === 'Раскроено' && !loading && (
-          <div className="rounded-lg border border-violet-300 bg-violet-50 p-3 text-sm text-violet-900">
-            <p className="flex items-start gap-2 font-semibold">
-              <Icon name="Eye" size={16} className="mt-0.5 shrink-0" />
-              Очередь раскроенных вещей — только просмотр
-            </p>
-            <p className="mt-1">
-              Отсюда заказ взять нельзя. Следующую вещь выдаёт кнопка «Получить новый
-              заказ» по очереди. Вкладка нужна, чтобы видеть, что скроили и что
-              предстоит шить дальше.
-            </p>
-          </div>
-        )}
-
-        {activeTab === CANCELLED_CUT_TAB && !loading && (
-          <div className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
-            <p className="flex items-start gap-2 font-semibold">
-              <Icon name="Scissors" size={16} className="mt-0.5 shrink-0" />
-              Крой готов, но заказ отменил покупатель — вещи нужно доделать
-            </p>
-            <p className="mt-1">
-              Ткань уже разрезана и в рулон не вернётся. Такую вещь дошивают и сдают
-              на стикеровку как обычно: там ей напечатают складской стикер, и она
-              уедет на полку хранения — ярлыка покупателя у неё не будет. Пока вещь
-              не доведена до конца, она числится в цехе и на склад попасть не может.
-            </p>
-          </div>
-        )}
-
-        {!loading && !listError && (
-          <p className="text-sm text-muted-foreground">
-            Итого на странице: {totalMeters.toFixed(2)} п.м. ({totalPieces} шт.)
-          </p>
-        )}
-
-        {listError && (
-          <WarehouseFetchError
-            title="Не удалось загрузить заказы"
-            description={listError}
-            onRetry={load}
-          />
-        )}
-
-        <SewingItemsTable
+        <SewingItemsTabsSection
+          visibleTabs={visibleTabs}
+          activeTab={activeTab}
+          setActiveTab={setActiveTab}
+          setPage={setPage}
+          countForTab={countForTab}
+          isSewer={isSewer}
           loading={loading}
-          error={listError}
+        />
+
+        <SewingItemsResults
+          loading={loading}
+          listError={listError}
+          load={load}
+          totalMeters={totalMeters}
+          totalPieces={totalPieces}
           pagedOrders={pagedOrders}
           onOpenDetail={openDetail}
           page={page}
