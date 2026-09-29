@@ -34,33 +34,72 @@ def log_action(cur, actor_id, actor_name, action, entity_type, entity_id, descri
     )
 
 
-def reserve_barcodes(cur, type_id, count):
-    """Выдаёт `count` новых штрихкодов для типа материала и сразу занимает номера.
+def reserve_barcodes_bulk(cur, counts):
+    """Бронирует штрихкоды СРАЗУ НА ВСЮ ПРИЁМКУ: {type_id: сколько} -> {type_id: [коды]}.
 
     Зачем счётчик. Раньше номер брался как «максимум среди уже созданных рулонов», и это
     работало, пока стикеры печатались только после подтверждения. Теперь кладовщик получает
     коды сразу при разгрузке машины — рулона с таким номером ещё нет, и «максимум» выдал бы
     двум кладовщикам одинаковые номера на разные рулоны.
 
-    Строка счётчика блокируется до конца транзакции (UPDATE), поэтому две одновременные
+    ПОЧЕМУ ОДНИМ ВЫЗОВОМ, А НЕ ПО ПОЗИЦИИ. Подстраховочный MAX по рулонам ищется
+    регулярным выражением, а под regexp индекса нет — это полный проход по всей
+    таблице рулонов. Пока кладовщик привозил 5 позиций, никто не замечал; на машине
+    от нескольких поставщиков с 37 позициями выходило 37 таких проходов, и приёмка
+    падала с таймаутом 504, не сохранившись вообще. Теперь проход ровно один: один
+    MAX на все типы разом и один UPDATE счётчиков.
+
+    Строки счётчиков блокируются до конца транзакции (UPDATE), поэтому две одновременные
     приёмки получат разные диапазоны номеров.
     """
+    need = {}
+    for raw_type, raw_count in (counts or {}).items():
+        if raw_type in (None, ''):
+            continue
+        type_id = int(raw_type)
+        count = int(raw_count or 0)
+        if count > 0:
+            need[type_id] = need.get(type_id, 0) + count
+    if not need:
+        return {}
+
+    types = sorted(need)
     cur.execute(
-        "INSERT INTO barcode_counters (type_id, last_seq) VALUES (%s, 0) "
-        "ON CONFLICT (type_id) DO NOTHING",
-        (int(type_id),),
+        "INSERT INTO barcode_counters (type_id, last_seq) VALUES "
+        + ','.join(f"({t}, 0)" for t in types)
+        + " ON CONFLICT (type_id) DO NOTHING"
     )
-    # Подстраховка на случай рулонов, созданных до появления счётчика.
+
+    # Подстраховка на случай рулонов, созданных до появления счётчика: максимум
+    # по ВСЕМ типам сразу, одним проходом по таблице вместо прохода на каждый тип.
     cur.execute(
-        "UPDATE barcode_counters SET last_seq = GREATEST(last_seq, COALESCE("
-        "  (SELECT MAX(split_part(barcode, '-', 2)::int) FROM rolls "
-        "   WHERE barcode ~ ('^' || %s || '-[0-9]+$')), 0)) + %s "
-        "WHERE type_id = %s RETURNING last_seq",
-        (str(int(type_id)), int(count), int(type_id)),
+        "SELECT split_part(barcode, '-', 1)::int, MAX(split_part(barcode, '-', 2)::int) "
+        "FROM rolls WHERE barcode ~ '^[0-9]+-[0-9]+$' GROUP BY 1"
     )
-    last_seq = cur.fetchone()[0]
-    first_seq = last_seq - int(count) + 1
-    return [f"{int(type_id)}-{seq:06d}" for seq in range(first_seq, last_seq + 1)]
+    max_by_type = {int(t): int(m) for t, m in cur.fetchall() if m is not None}
+
+    cur.execute(
+        "UPDATE barcode_counters bc "
+        "SET last_seq = GREATEST(bc.last_seq, v.mx::int) + v.inc::int "
+        "FROM (VALUES "
+        + ','.join(f"({t}, {need[t]}, {max_by_type.get(t, 0)})" for t in types)
+        + ") AS v(type_id, inc, mx) "
+        "WHERE bc.type_id = v.type_id::int RETURNING bc.type_id, bc.last_seq"
+    )
+    result = {}
+    for type_id, last_seq in cur.fetchall():
+        type_id = int(type_id)
+        last_seq = int(last_seq)
+        first_seq = last_seq - need[type_id] + 1
+        result[type_id] = [
+            f"{type_id}-{seq:06d}" for seq in range(first_seq, last_seq + 1)
+        ]
+    return result
+
+
+def reserve_barcodes(cur, type_id, count):
+    """Один тип, `count` кодов — тонкая обёртка над reserve_barcodes_bulk."""
+    return reserve_barcodes_bulk(cur, {int(type_id): int(count)}).get(int(type_id), [])
 
 
 def parse_requested_material_ids(body_data):
@@ -556,8 +595,32 @@ def handler(event: dict, context) -> dict:
                     # тихо пропускаем и перечисляем в ответе. Кладовщик видит, что
                     # именно не сошлось, и правит это в уже сохранённой приёмке —
                     # вместо того чтобы набивать всё заново.
+                    # СПРАВОЧНИК МАТЕРИАЛОВ — ОДНИМ ЗАПРОСОМ НА ВСЮ ПРИЁМКУ.
+                    #
+                    # Раньше на каждую строку уходил свой SELECT за типом материала, свои
+                    # два запроса на бронь штрихкодов и свой INSERT. На машине от нескольких
+                    # поставщиков с 37 позициями это под полторы сотни обращений к базе, и
+                    # функция не укладывалась в отведённые 5 секунд: кладовщик забивал всю
+                    # приёмку, жал «Сохранить» и получал ошибку, а приёмка не сохранялась.
+                    requested_ids = set()
+                    for item in items:
+                        try:
+                            requested_ids.add(int(item.get('materialId')))
+                        except (TypeError, ValueError):
+                            continue
+                    type_by_material = {}
+                    if requested_ids:
+                        mids_sql = ','.join(str(i) for i in sorted(requested_ids))
+                        cur.execute(
+                            f"SELECT id, type_id FROM materials WHERE id IN ({mids_sql})"
+                        )
+                        type_by_material = {int(m): t for m, t in cur.fetchall()}
+
+                    # ПРОХОД ПЕРВЫЙ: проверяем строки и считаем, сколько кодов нужно
+                    # каждому типу материала. Ничего ещё не пишем.
                     skipped = []
-                    saved = 0
+                    prepared = []
+                    need_by_type = {}
                     for idx, item in enumerate(items, start=1):
                         material_id = item.get('materialId')
                         quantity = item.get('quantity')
@@ -587,9 +650,8 @@ def handler(event: dict, context) -> dict:
                             skipped.append(f'строка {idx}: метраж должен быть больше нуля')
                             continue
 
-                        cur.execute("SELECT id, type_id FROM materials WHERE id = %s", (material_id,))
-                        mat_row = cur.fetchone()
-                        if not mat_row:
+                        type_id = type_by_material.get(material_id)
+                        if type_id is None:
                             skipped.append(f'строка {idx}: материал #{material_id} не найден в справочнике')
                             continue
 
@@ -599,22 +661,49 @@ def handler(event: dict, context) -> dict:
                             int(item_supplier) if item_supplier not in (None, '') else supplier_sql
                         )
 
-                        # Штрихкоды бронируем СРАЗУ, до подтверждения администратором:
-                        # кладовщик клеит стикеры прямо при разгрузке, иначе рулоны пришлось бы
-                        # разбирать заново после проверки. Номера уже заняты, повторов не будет.
-                        codes = reserve_barcodes(cur, mat_row[1], number_rolls)
-                        codes_sql = "'" + ','.join(codes).replace("'", "''") + "'"
+                        prepared.append({
+                            'materialId': material_id,
+                            'typeId': int(type_id),
+                            'quantity': quantity,
+                            'numberRolls': number_rolls,
+                            'supplierSql': item_supplier_sql,
+                        })
+                        need_by_type[int(type_id)] = (
+                            need_by_type.get(int(type_id), 0) + number_rolls
+                        )
 
+                    # Штрихкоды бронируем СРАЗУ, до подтверждения администратором:
+                    # кладовщик клеит стикеры прямо при разгрузке, иначе рулоны пришлось бы
+                    # разбирать заново после проверки. Номера уже заняты, повторов не будет.
+                    # Бронь — одним вызовом на весь документ.
+                    codes_by_type = reserve_barcodes_bulk(cur, need_by_type)
+                    cursor_by_type = {t: 0 for t in codes_by_type}
+
+                    # ПРОХОД ВТОРОЙ: раздаём коды и копим строки для одного INSERT.
+                    item_rows = []
+                    for row in prepared:
+                        type_id = row['typeId']
+                        pool = codes_by_type.get(type_id, [])
+                        start = cursor_by_type.get(type_id, 0)
+                        codes = pool[start:start + row['numberRolls']]
+                        cursor_by_type[type_id] = start + row['numberRolls']
+                        codes_sql = "'" + ','.join(codes).replace("'", "''") + "'"
                         # total_quantity — исходное количество позиции, которое больше
                         # никто не перезаписывает. Подтверждение делит на рулоны именно
                         # его, поэтому повторная попытка не может «поделить поделённое».
-                        cur.execute(
-                            f"INSERT INTO shipment_items (shipment_id, material_id, quantity, total_quantity, "
-                            f"number_rolls, supplier_id, reserved_barcodes) "
-                            f"VALUES ({shipment_id}, {material_id}, {quantity}, {quantity}, {number_rolls}, "
-                            f"{item_supplier_sql}, {codes_sql})"
+                        item_rows.append(
+                            f"({shipment_id}, {row['materialId']}, {row['quantity']}, "
+                            f"{row['quantity']}, {row['numberRolls']}, "
+                            f"{row['supplierSql']}, {codes_sql})"
                         )
-                        saved += 1
+
+                    saved = len(item_rows)
+                    if item_rows:
+                        cur.execute(
+                            f"INSERT INTO shipment_items (shipment_id, material_id, quantity, "
+                            f"total_quantity, number_rolls, supplier_id, reserved_barcodes) "
+                            f"VALUES {','.join(item_rows)}"
+                        )
 
                     # Ни одной годной позиции — сохранять пустой документ незачем.
                     # Откатываем целиком, чтобы не плодить пустые приёмки в списке.
@@ -795,8 +884,25 @@ def handler(event: dict, context) -> dict:
                 # создание: позиции уже удалены, и выход посреди цикла оставил бы
                 # кладовщика вообще без приёмки. Годное сохраняем, негодное
                 # перечисляем в ответе.
+                # Типы материалов — одним запросом на всю правку, а не по строке:
+                # ровно та же экономия обращений к базе, что и при создании приёмки.
+                # Иначе большая приёмка от нескольких поставщиков не успевала
+                # сохраниться за 5 секунд и падала с таймаутом.
+                requested_ids = set()
+                for item in items:
+                    try:
+                        requested_ids.add(int(item.get('materialId')))
+                    except (TypeError, ValueError):
+                        continue
+                type_by_material = {}
+                if requested_ids:
+                    mids_sql = ','.join(str(i) for i in sorted(requested_ids))
+                    cur.execute(f"SELECT id, type_id FROM materials WHERE id IN ({mids_sql})")
+                    type_by_material = {int(m): t for m, t in cur.fetchall()}
+
                 skipped = []
-                saved = 0
+                prepared = []
+                need_by_type = {}
                 for idx, item in enumerate(items, start=1):
                     material_id = item.get('materialId')
                     quantity = item.get('quantity')
@@ -858,23 +964,59 @@ def handler(event: dict, context) -> dict:
                     prev = [c for c in prev if c not in used_codes]
                     need = int(number_rolls)
                     codes = list(prev[:need])
-                    if len(codes) < need:
-                        cur.execute("SELECT type_id FROM materials WHERE id = %s", (int(material_id),))
-                        type_row = cur.fetchone()
-                        if type_row:
-                            codes += reserve_barcodes(cur, type_row[0], need - len(codes))
                     used_codes.update(codes)
-                    codes_sql = "'" + ','.join(codes).replace("'", "''") + "'" if codes else 'NULL'
+                    # Сколько кодов позиции не хватило — добронируем ПОТОМ, одним
+                    # вызовом на всю правку. Тип материала уже знаем из справочника,
+                    # прочитанного выше, — отдельный SELECT на строку не нужен.
+                    shortfall = need - len(codes)
+                    type_id = type_by_material.get(material_id)
+                    if shortfall > 0 and type_id is not None:
+                        need_by_type[int(type_id)] = (
+                            need_by_type.get(int(type_id), 0) + shortfall
+                        )
 
                     # Исходное количество дублируем в total_quantity: подтверждение
                     # считает разбивку по рулонам только от него (см. approve_supply).
-                    cur.execute(
-                        f"INSERT INTO shipment_items (shipment_id, material_id, quantity, total_quantity, "
-                        f"number_rolls, price, currency, supplier_id, reserved_barcodes) "
-                        f"VALUES ({int(shipment_id)}, {int(material_id)}, {float(quantity)}, {float(quantity)}, "
-                        f"{int(number_rolls)}, {price_sql}, {currency_sql}, {item_supplier_sql}, {codes_sql})"
+                    prepared.append({
+                        'materialId': material_id,
+                        'typeId': None if type_id is None else int(type_id),
+                        'quantity': float(quantity),
+                        'numberRolls': int(number_rolls),
+                        'priceSql': price_sql,
+                        'currencySql': currency_sql,
+                        'supplierSql': item_supplier_sql,
+                        'codes': codes,
+                        'shortfall': shortfall,
+                    })
+
+                # Добронь недостающих кодов — один вызов на весь документ.
+                codes_by_type = reserve_barcodes_bulk(cur, need_by_type)
+                cursor_by_type = {t: 0 for t in codes_by_type}
+
+                item_rows = []
+                for row in prepared:
+                    codes = row['codes']
+                    if row['shortfall'] > 0 and row['typeId'] is not None:
+                        pool = codes_by_type.get(row['typeId'], [])
+                        start = cursor_by_type.get(row['typeId'], 0)
+                        codes = codes + pool[start:start + row['shortfall']]
+                        cursor_by_type[row['typeId']] = start + row['shortfall']
+                    codes_sql = (
+                        "'" + ','.join(codes).replace("'", "''") + "'" if codes else 'NULL'
                     )
-                    saved += 1
+                    item_rows.append(
+                        f"({int(shipment_id)}, {row['materialId']}, {row['quantity']}, "
+                        f"{row['quantity']}, {row['numberRolls']}, {row['priceSql']}, "
+                        f"{row['currencySql']}, {row['supplierSql']}, {codes_sql})"
+                    )
+
+                saved = len(item_rows)
+                if item_rows:
+                    cur.execute(
+                        f"INSERT INTO shipment_items (shipment_id, material_id, quantity, "
+                        f"total_quantity, number_rolls, price, currency, supplier_id, "
+                        f"reserved_barcodes) VALUES {','.join(item_rows)}"
+                    )
 
                 # Все строки оказались негодными — приёмка осталась бы пустой.
                 # Откатываем правку: пусть лучше сохранится прежний состав.
@@ -1361,6 +1503,39 @@ def handler(event: dict, context) -> dict:
                     cur.execute(f"SELECT barcode FROM rolls WHERE barcode IN ({codes_in})")
                     busy_codes = {r[0] for r in cur.fetchall()}
 
+                # ДОБРОНЬ ШТРИХКОДОВ — ТОЖЕ ОДНИМ ВЫЗОВОМ.
+                #
+                # Часть кодов позиции может оказаться занятой (прошлая оборванная попытка,
+                # код попал в две позиции), и тогда взамен нужны новые. Раньше бронь шла
+                # внутри цикла, а каждая бронь — это полный проход по таблице рулонов
+                # регулярным выражением. На приёмке с десятками позиций такие проходы
+                # снова съедали все 5 секунд. Поэтому сначала холостым проходом считаем,
+                # сколько кодов какому типу не хватает, бронируем всё разом, а в основном
+                # цикле лишь раздаём готовое.
+                #
+                # Логика отбора здесь ДОЛЖНА совпадать с основным циклом до последней
+                # строчки, иначе разбивка разойдётся с бронью.
+                shortfall_by_type = {}
+                probe_taken = set()
+                for it in pending_items:
+                    probe_rolls = int(it[3]) if it[3] else 1
+                    if probe_rolls < 1:
+                        probe_rolls = 1
+                    probe_kept = 0
+                    for c in (it[7] or '').split(','):
+                        if not c or c in probe_taken or c in busy_codes:
+                            continue
+                        probe_taken.add(c)
+                        probe_kept += 1
+                    probe_type = type_by_material.get(int(it[1])) if it[1] else None
+                    if probe_kept < probe_rolls and probe_type is not None:
+                        shortfall_by_type[int(probe_type)] = (
+                            shortfall_by_type.get(int(probe_type), 0)
+                            + (probe_rolls - probe_kept)
+                        )
+                extra_by_type = reserve_barcodes_bulk(cur, shortfall_by_type)
+                extra_cursor = {t: 0 for t in extra_by_type}
+
                 created_rolls = []
                 # Коды, уже использованные в этом подтверждении: один штрихкод — один рулон.
                 taken_codes = set()
@@ -1469,7 +1644,18 @@ def handler(event: dict, context) -> dict:
                         codes.append(c)
                         taken_codes.add(c)
                     if len(codes) < number_rolls:
-                        extra = reserve_barcodes(cur, type_id, number_rolls - len(codes))
+                        # Берём из общей брони, посчитанной холостым проходом выше.
+                        shortfall = number_rolls - len(codes)
+                        pool = extra_by_type.get(int(type_id), [])
+                        start = extra_cursor.get(int(type_id), 0)
+                        extra = pool[start:start + shortfall]
+                        extra_cursor[int(type_id)] = start + shortfall
+                        # Брони не хватило — значит холостой проход разошёлся с основным.
+                        # Молча создать рулон без кода нельзя: он потеряется на складе.
+                        if len(extra) < shortfall:
+                            extra += reserve_barcodes(
+                                cur, type_id, shortfall - len(extra)
+                            )
                         codes += extra
                         taken_codes.update(extra)
 
