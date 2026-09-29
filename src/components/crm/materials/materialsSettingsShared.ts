@@ -32,6 +32,27 @@ export const emptyForm: MaterialFormState = {
   shops: [],
 };
 
+/**
+ * Оверлок — обмётка края ткани. В справочнике это только тип «Тюль»:
+ * тесьма, пакеты и фурнитура так не обрабатываются.
+ */
+export const isTulleTypeName = (name: string | null | undefined): boolean =>
+  (name || '').trim().toLowerCase() === 'тюль';
+
+/** Нужно ли в карточке спрашивать про боковой шов на оверлоке. */
+export const formAllowsOverlock = (
+  form: Pick<MaterialFormState, 'typeId' | 'newTypeName'>,
+  types: { id: number; name: string }[],
+): boolean => {
+  if (form.typeId === NEW_TYPE_VALUE) return isTulleTypeName(form.newTypeName);
+  const type = types.find((t) => String(t.id) === form.typeId);
+  return isTulleTypeName(type?.name);
+};
+
+/** Снять оверлок со всех магазинов — тип больше не ткань. */
+export const shopsWithoutOverlock = (shops: MaterialShop[]): MaterialShop[] =>
+  shops.map((s) => (s.requiresOverlock ? { ...s, requiresOverlock: false } : s));
+
 /** Отмечен ли магазин у материала. */
 export const isShopPicked = (shops: MaterialShop[], shopId: number): boolean =>
   shops.some((s) => s.shopId === shopId);

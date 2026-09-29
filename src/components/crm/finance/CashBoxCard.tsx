@@ -46,7 +46,32 @@ const CashBoxCard = ({ balance, transactions, loading, saving, onDeposit }: Cash
               </p>
             </div>
 
-            <div className="rounded-md border border-border">
+            <div className="space-y-2 lg:hidden">
+              {transactions.length === 0 ? (
+                <p className="text-sm text-muted-foreground">Операций по кассе пока нет</p>
+              ) : (
+                visible.map((t) => (
+                  <div key={t.id} className="min-w-0 overflow-hidden rounded-lg border border-border p-3">
+                    <div className="flex items-start justify-between gap-2">
+                      <p className="min-w-0 text-sm leading-snug">{t.description}</p>
+                      <span
+                        className={`shrink-0 tabular-nums font-semibold ${
+                          t.amount < 0 ? 'text-destructive' : 'text-emerald-600'
+                        }`}
+                      >
+                        {formatMoney(t.amount)} ₽
+                      </span>
+                    </div>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      {formatDateTime(t.createdAt)}
+                      {t.createdByName ? ` · ${t.createdByName}` : ''}
+                    </p>
+                  </div>
+                ))
+              )}
+            </div>
+
+            <div className="hidden overflow-x-auto rounded-md border border-border lg:block">
               <Table>
                 <TableHeader>
                   <TableRow className="bg-primary hover:bg-primary">

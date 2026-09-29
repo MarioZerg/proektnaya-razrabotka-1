@@ -3,6 +3,7 @@ import { Badge } from '@/components/ui/badge';
 import Icon from '@/components/ui/icon';
 import type { Material, Shop } from '@/lib/materialsApi';
 import MaterialShopsBadges from '@/components/crm/materials/MaterialShopsBadges';
+import { isTulleTypeName } from '@/components/crm/materials/materialsSettingsShared';
 
 interface MaterialsCardsProps {
   materials: Material[];
@@ -42,7 +43,9 @@ const MaterialsCards = ({
           </Badge>
         </div>
 
-        {m.requiresOverlock && !(m.shops && m.shops.length > 0) && (
+        {isTulleTypeName(typeById.get(m.typeId)) &&
+          m.requiresOverlock &&
+          !(m.shops && m.shops.length > 0) && (
           <Badge
             variant="outline"
             className="mt-2 gap-1 border-fuchsia-300 bg-fuchsia-50 font-normal text-fuchsia-700"
@@ -56,7 +59,11 @@ const MaterialsCards = ({
           <div className="min-w-0">
             <span className="text-muted-foreground">Магазины: </span>
             <div className="mt-1">
-              <MaterialShopsBadges material={m} shopById={shopById} />
+              <MaterialShopsBadges
+                material={m}
+                shopById={shopById}
+                typeName={typeById.get(m.typeId)}
+              />
             </div>
           </div>
           <div>

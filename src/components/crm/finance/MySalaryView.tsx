@@ -87,7 +87,7 @@ const MySalaryView = ({
         </div>
       ) : (
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-4">
-        <div className="space-y-4 lg:col-span-3">
+        <div className="order-2 space-y-4 lg:order-1 lg:col-span-3">
           <MyAccrualsFilter
             dateFrom={myDateFrom}
             dateTo={myDateTo}
@@ -105,7 +105,7 @@ const MySalaryView = ({
             filtered={!!myDateFrom || !!myDateTo}
           />
         </div>
-        <div className="space-y-6 lg:col-span-1">
+        <div className="order-1 space-y-3 lg:order-2 lg:col-span-1 lg:space-y-6">
           <div className="rounded-md border border-border p-4">
             <p className="text-sm text-muted-foreground">К выплате</p>
             <p className="text-xl font-bold">{formatMoney(myBalance)} ₽</p>

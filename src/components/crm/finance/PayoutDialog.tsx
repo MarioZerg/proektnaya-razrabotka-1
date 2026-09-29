@@ -167,7 +167,7 @@ const PayoutDialog = ({ pending, saving, onSubmit }: PayoutDialogProps) => {
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
-        <Button className="bg-blue-600 text-white hover:bg-blue-700">
+        <Button className="h-11 w-full bg-blue-600 text-white hover:bg-blue-700 sm:h-9 sm:w-auto">
           <Icon name="Banknote" size={16} className="mr-2" />
           Выплатить зарплату
         </Button>

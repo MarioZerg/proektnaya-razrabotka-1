@@ -1121,7 +1121,7 @@ def handler(event: dict, context) -> dict:
                     "ym_status, "
                     # Вещь прошла оверлок: у неё другие ставки и у швеи, и у
                     # упаковщицы — см. расчёт начислений ниже.
-                    "overlocked_at FROM orders WHERE id = %s "
+                    "overlocked_at, sewer_user_id FROM orders WHERE id = %s "
                     "FOR UPDATE",
                     (int(order_id),),
                 )
@@ -1131,7 +1131,8 @@ def handler(event: dict, context) -> dict:
                 (sewing_status, width, assigned_user_id, order_number, order_workshop_id,
                  order_status, order_ozon_status, order_type, order_material,
                  order_height, order_product, group_key, group_size, group_position,
-                 order_marketplace, order_ym_status, order_overlocked_at) = row
+                 order_marketplace, order_ym_status, order_overlocked_at,
+                 sewer_user_id) = row
                 # Признак «вещь прошла оверлок» — по нему ниже выбирается тариф.
                 is_overlocked = order_overlocked_at is not None
                 # Отправление уже уехало к покупателю — ярлык не выдадут, и вещь ему не
@@ -1466,17 +1467,20 @@ def handler(event: dict, context) -> dict:
                 # Без этой подстраховки заказ без цеха (FBO приходит в пошив мимо раскроя)
                 # давал нулевую ставку, и начисление молча не создавалось — швея работала
                 # смену бесплатно, а в отчётах выглядела как «не работавшая».
+                # Платим той, кто сдала вещь (sewer_user_id). assigned после раскроя
+                # ещё закройщик: если пошива не было, начисление уходило ему.
+                sewer_pay_id = sewer_user_id
                 sewer_workshop_for_rate = order_workshop_id
-                if assigned_user_id and not sewer_workshop_for_rate:
+                if sewer_pay_id and not sewer_workshop_for_rate:
                     cur.execute(
                         "SELECT w.id FROM users u JOIN workshops w ON w.name = CASE WHEN u.workshop IN ('Цех №2', 'Тестовый цех (QA)') THEN 'Цех №1' ELSE u.workshop END "
                         "WHERE u.id = %s",
-                        (int(assigned_user_id),),
+                        (int(sewer_pay_id),),
                     )
                     sw_row = cur.fetchone()
                     sewer_workshop_for_rate = sw_row[0] if sw_row else None
 
-                if assigned_user_id and width and sewer_workshop_for_rate:
+                if sewer_pay_id and width and sewer_workshop_for_rate:
                     # ВЕЩЬ ПОСЛЕ ОВЕРЛОКА ОПЛАЧИВАЕТСЯ ПО ДРУГОМУ ТАРИФУ.
                     #
                     # Обычный заказ швея шьёт целиком и получает ставку за штуку по
@@ -1503,7 +1507,7 @@ def handler(event: dict, context) -> dict:
                                 "VALUES (%s, 'sewer_piece', %s, %s, %s) "
                                 "ON CONFLICT (order_id, type) WHERE order_id IS NOT NULL DO NOTHING",
                                 (
-                                    int(assigned_user_id), sew_amount, int(order_id),
+                                    int(sewer_pay_id), sew_amount, int(order_id),
                                     f'Пошив заказа #{order_number} после оверлока - {sew_meters} пог.м.',
                                 ),
                             )
@@ -1517,7 +1521,7 @@ def handler(event: dict, context) -> dict:
                         if sewer_rate > 0:
                             cur.execute(
                                 f"INSERT INTO salary_accruals (user_id, type, amount, order_id, description) "
-                                f"VALUES ({int(assigned_user_id)}, 'sewer_piece', {sewer_rate}, {int(order_id)}, "
+                                f"VALUES ({int(sewer_pay_id)}, 'sewer_piece', {sewer_rate}, {int(order_id)}, "
                                 f"'Пошив заказа #{order_number} ({width} см)') "
                                 f"ON CONFLICT (order_id, type) WHERE order_id IS NOT NULL DO NOTHING"
                             )

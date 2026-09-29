@@ -143,7 +143,7 @@ const AdminFinanceView = ({
           человек просто остаётся без зарплаты. Показываем сразу под шапкой. */}
       <MissedAccrualsAlert />
 
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-4">
+      <div className="flex flex-col-reverse gap-6 lg:grid lg:grid-cols-4">
         <AdminOperationsPanel
           employees={employees}
           userFilter={userFilter}

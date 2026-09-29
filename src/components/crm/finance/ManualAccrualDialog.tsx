@@ -88,7 +88,10 @@ const ManualAccrualDialog = ({ employees, mode, saving, onSubmit }: ManualAccrua
       <DialogTrigger asChild>
         {/* Удержание — не наказание, поэтому кнопка не красная: красным
             выделяем только штраф, чтобы его нельзя было нажать по инерции. */}
-        <Button variant={mode === 'penalty' ? 'destructive' : mode === 'deduction' ? 'outline' : 'default'}>
+        <Button
+          variant={mode === 'penalty' ? 'destructive' : mode === 'deduction' ? 'outline' : 'default'}
+          className="h-11 w-full sm:h-9 sm:w-auto"
+        >
           <Icon name={text.icon} size={16} className="mr-2" />
           {text.button}
         </Button>

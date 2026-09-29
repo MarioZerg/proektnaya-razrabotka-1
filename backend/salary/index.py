@@ -586,10 +586,15 @@ def handler(event: dict, context) -> dict:
                         'dateTo': (r[4].isoformat() + 'Z') if r[4] else None,
                     })
 
+                # Швея — это sewer_user_id, а не assigned_user_id. После раскроя
+                # assigned ещё закройщик: если вещь закрыли без пошива (отмена,
+                # старый обход очереди), доначисление вешало пошив на закройщика.
+                # Платим только тем, кто реально сдал вещь (sewn_at).
                 cur.execute(
-                    "SELECT u.id, u.full_name, count(*), min(o.created_at)::date, max(o.created_at)::date "
-                    "FROM orders o JOIN users u ON u.id = o.assigned_user_id "
-                    "WHERE o.sewing_status = 'Готовые' AND COALESCE(o.sewing_status, '') <> 'Со склада' "
+                    "SELECT u.id, u.full_name, count(*), min(o.sewn_at)::date, max(o.sewn_at)::date "
+                    "FROM orders o JOIN users u ON u.id = o.sewer_user_id "
+                    "WHERE o.sewn_at IS NOT NULL "
+                    "  AND COALESCE(o.sewing_status, '') <> 'Со склада' "
                     "  AND NOT EXISTS (SELECT 1 FROM salary_accruals a "
                     "                  WHERE a.order_id = o.id AND a.type = 'sewer_piece') "
                     "GROUP BY u.id, u.full_name ORDER BY count(*) DESC LIMIT 50"
@@ -1140,7 +1145,7 @@ def handler(event: dict, context) -> dict:
                 elif stage == 'Пошив':
                     cur.execute(
                         "SELECT o.id, o.order_number, o.width, o.workshop_id, o.overlocked_at "
-                        "FROM orders o WHERE o.assigned_user_id = %s AND o.sewing_status = 'Готовые' "
+                        "FROM orders o WHERE o.sewer_user_id = %s AND o.sewn_at IS NOT NULL "
                         "  AND COALESCE(o.sewing_status, '') <> 'Со склада' "
                         "  AND NOT EXISTS (SELECT 1 FROM salary_accruals a "
                         "                  WHERE a.order_id = o.id AND a.type = 'sewer_piece')",

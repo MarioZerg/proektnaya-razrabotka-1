@@ -10,7 +10,8 @@ import KioskWorkspace from '@/components/crm/kiosk/KioskWorkspace';
 import { useKioskLogin } from '@/components/crm/kiosk/useKioskLogin';
 import { useKioskShift } from '@/components/crm/kiosk/useKioskShift';
 import { useKioskPreview } from '@/components/crm/kiosk/useKioskPreview';
-import { fetchWorkshops } from '@/lib/workshopsApi';
+import WorkedDayOverlay from '@/components/crm/finance/WorkedDayOverlay';
+import type { WorkedDay } from '@/components/crm/finance/workedDay';
 
 /** Терминал цеха (киоск). Полноэкранный экран для планшета в цехе: сотрудник входит
  * сканированием личного QR-кода с бейджа (формат "{id}-{смена}-{дата}"), пароль не нужен.
@@ -41,6 +42,7 @@ const KioskTerminal = () => {
   // После скана QR сотрудник сначала попадает на экран смены и только потом, нажав
   // «Войти в терминал», переходит в меню с плитками.
   const [enteredMenu, setEnteredMenu] = useState(false);
+  const [closedDay, setClosedDay] = useState<WorkedDay | null>(null);
   // Закрытые цеха (№2, тестовый) из адреса больше не открываем.
   const [retiredKiosk, setRetiredKiosk] = useState(workshopId === '2');
 
@@ -90,6 +92,7 @@ const KioskTerminal = () => {
     setShift(null);
     setScreen('menu');
     setEnteredMenu(false);
+    setClosedDay(null);
     setCode('');
     setTimeout(() => inputRef.current?.focus(), 0);
   };
@@ -105,6 +108,7 @@ const KioskTerminal = () => {
     setEnteredMenu,
     setScreen,
     toast,
+    onClosedDay: setClosedDay,
   });
 
   if (retiredKiosk) {
@@ -121,46 +125,56 @@ const KioskTerminal = () => {
     user.homeWorkshopId !== currentWorkshopId
   );
 
+  const dayOverlay = closedDay ? (
+    <WorkedDayOverlay day={closedDay} onDone={() => setClosedDay(null)} />
+  ) : null;
+
   // Первый экран после скана QR: открытие смены. В меню терминала пускаем только после того,
   // как сотрудник открыл смену и нажал «Войти в терминал».
   if (user && !enteredMenu) {
     return (
-      <KioskShiftGate
-        user={user}
-        shift={shift}
-        workshopId={workshopId}
-        shiftSaving={shiftSaving}
-        onEnterMenu={() => setEnteredMenu(true)}
-        onOpenShift={handleOpenShift}
-        onLogout={handleLogout}
-      />
+      <>
+        {dayOverlay}
+        <KioskShiftGate
+          user={user}
+          shift={shift}
+          workshopId={workshopId}
+          shiftSaving={shiftSaving}
+          onEnterMenu={() => setEnteredMenu(true)}
+          onOpenShift={handleOpenShift}
+          onLogout={handleLogout}
+        />
+      </>
     );
   }
 
   // После входа сотрудник попадает в меню терминала с крупными плитками.
   if (user) {
     return (
-      <KioskWorkspace
-        user={user}
-        shift={shift}
-        workshopId={workshopId}
-        currentWorkshopId={currentWorkshopId}
-        isGuestInWorkshop={isGuestInWorkshop}
-        isPreview={isPreview}
-        screen={screen}
-        setScreen={setScreen}
-        shiftSaving={shiftSaving}
-        defectCheck={defectCheck}
-        setDefectCheck={setDefectCheck}
-        closeBlocked={closeBlocked}
-        lateInfo={lateInfo}
-        onDismissLate={() => setLateInfo(null)}
-        onDismissCloseBlocked={() => setCloseBlocked('')}
-        onLogout={handleLogout}
-        onOpenShift={handleOpenShift}
-        onCloseShift={handleCloseShift}
-        onCloseShiftClick={handleCloseShiftClick}
-      />
+      <>
+        {dayOverlay}
+        <KioskWorkspace
+          user={user}
+          shift={shift}
+          workshopId={workshopId}
+          currentWorkshopId={currentWorkshopId}
+          isGuestInWorkshop={isGuestInWorkshop}
+          isPreview={isPreview}
+          screen={screen}
+          setScreen={setScreen}
+          shiftSaving={shiftSaving}
+          defectCheck={defectCheck}
+          setDefectCheck={setDefectCheck}
+          closeBlocked={closeBlocked}
+          lateInfo={lateInfo}
+          onDismissLate={() => setLateInfo(null)}
+          onDismissCloseBlocked={() => setCloseBlocked('')}
+          onLogout={handleLogout}
+          onOpenShift={handleOpenShift}
+          onCloseShift={handleCloseShift}
+          onCloseShiftClick={handleCloseShiftClick}
+        />
+      </>
     );
   }
 

@@ -3,6 +3,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import Icon from '@/components/ui/icon';
 import { formatMoney } from '@/components/crm/finance/financeShared';
+import { moscowYmd } from '@/lib/dateUtils';
 
 interface MyAccrualsFilterProps {
   dateFrom: string;
@@ -18,18 +19,6 @@ interface MyAccrualsFilterProps {
   /** Сколько строк реально пришло в таблицу: длинные периоды сервер обрезает. */
   shown: number;
 }
-
-/**
- * Дата в виде ГГГГ-ММ-ДД по МЕСТНОМУ времени.
- *
- * Через toISOString() здесь нельзя: он переводит в UTC, и у нас (UTC+3) ночью
- * и ранним утром «Сегодня» подставляло вчерашнее число — сотрудник после ночной
- * смены видел пустой день.
- */
-const iso = (d: Date) =>
-  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(
-    d.getDate(),
-  ).padStart(2, '0')}`;
 
 /**
  * Фильтр по датам в личных финансах сотрудника.
@@ -54,49 +43,54 @@ const MyAccrualsFilter = ({
   shown,
 }: MyAccrualsFilterProps) => {
   const setDay = (offset: number) => {
-    const d = new Date();
-    d.setDate(d.getDate() + offset);
-    setDateFrom(iso(d));
-    setDateTo(iso(d));
+    const d = moscowYmd(offset);
+    setDateFrom(d);
+    setDateTo(d);
   };
 
   const setRange = (kind: 'week' | 'month' | 'prevMonth') => {
-    const now = new Date();
+    const today = moscowYmd(0);
+    const [ys, ms] = today.split('-');
+    const y = Number(ys);
+    const m = Number(ms) - 1;
+    const pad = (n: number) => String(n).padStart(2, '0');
+    const ymd = (year: number, monthIndex: number, day: number) =>
+      `${year}-${pad(monthIndex + 1)}-${pad(day)}`;
     if (kind === 'week') {
-      const from = new Date();
-      from.setDate(from.getDate() - 6);
-      setDateFrom(iso(from));
-      setDateTo(iso(now));
+      setDateFrom(moscowYmd(-6));
+      setDateTo(today);
       return;
     }
     if (kind === 'month') {
-      setDateFrom(iso(new Date(now.getFullYear(), now.getMonth(), 1)));
-      setDateTo(iso(new Date(now.getFullYear(), now.getMonth() + 1, 0)));
+      setDateFrom(ymd(y, m, 1));
+      setDateTo(ymd(y, m, new Date(y, m + 1, 0).getDate()));
       return;
     }
-    setDateFrom(iso(new Date(now.getFullYear(), now.getMonth() - 1, 1)));
-    setDateTo(iso(new Date(now.getFullYear(), now.getMonth(), 0)));
+    const pm = m === 0 ? 11 : m - 1;
+    const py = m === 0 ? y - 1 : y;
+    setDateFrom(ymd(py, pm, 1));
+    setDateTo(ymd(py, pm, new Date(py, pm + 1, 0).getDate()));
   };
 
   const active = !!dateFrom || !!dateTo;
 
   return (
-    <div className="space-y-3 rounded-md border border-border p-4">
-      <div className="flex flex-wrap items-end gap-3">
-        <div className="space-y-1">
+    <div className="space-y-3 rounded-md border border-border p-3 sm:p-4">
+      <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap sm:items-end sm:gap-3">
+        <div className="min-w-0 space-y-1">
           <Label className="text-xs text-muted-foreground">С даты</Label>
           <Input
             type="date"
-            className="h-9 w-[150px]"
+            className="h-11 w-full sm:h-9 sm:w-[150px]"
             value={dateFrom}
             onChange={(e) => setDateFrom(e.target.value)}
           />
         </div>
-        <div className="space-y-1">
+        <div className="min-w-0 space-y-1">
           <Label className="text-xs text-muted-foreground">По дату</Label>
           <Input
             type="date"
-            className="h-9 w-[150px]"
+            className="h-11 w-full sm:h-9 sm:w-[150px]"
             value={dateTo}
             onChange={(e) => setDateTo(e.target.value)}
           />
@@ -105,6 +99,7 @@ const MyAccrualsFilter = ({
           <Button
             variant="ghost"
             size="sm"
+            className="col-span-2 h-11 sm:h-9 sm:w-auto"
             onClick={() => {
               setDateFrom('');
               setDateTo('');
@@ -117,20 +112,20 @@ const MyAccrualsFilter = ({
       </div>
 
       {/* Готовые периоды: набирать дату руками с телефона неудобно. */}
-      <div className="flex flex-wrap gap-2">
-        <Button variant="outline" size="sm" onClick={() => setDay(0)}>
+      <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap">
+        <Button variant="outline" size="sm" className="h-11 sm:h-9" onClick={() => setDay(0)}>
           Сегодня
         </Button>
-        <Button variant="outline" size="sm" onClick={() => setDay(-1)}>
+        <Button variant="outline" size="sm" className="h-11 sm:h-9" onClick={() => setDay(-1)}>
           Вчера
         </Button>
-        <Button variant="outline" size="sm" onClick={() => setRange('week')}>
+        <Button variant="outline" size="sm" className="h-11 sm:h-9" onClick={() => setRange('week')}>
           7 дней
         </Button>
-        <Button variant="outline" size="sm" onClick={() => setRange('month')}>
+        <Button variant="outline" size="sm" className="h-11 sm:h-9" onClick={() => setRange('month')}>
           Этот месяц
         </Button>
-        <Button variant="outline" size="sm" onClick={() => setRange('prevMonth')}>
+        <Button variant="outline" size="sm" className="col-span-2 h-11 sm:h-9" onClick={() => setRange('prevMonth')}>
           Прошлый месяц
         </Button>
       </div>

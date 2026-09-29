@@ -21,9 +21,11 @@ import Icon from '@/components/ui/icon';
 import type { MaterialType, Shop } from '@/lib/materialsApi';
 import {
   NEW_TYPE_VALUE,
+  formAllowsOverlock,
   isShopPicked,
   setShopOverlock,
   shopNeedsOverlock,
+  shopsWithoutOverlock,
   toggleShop,
   type MaterialFormState,
 } from '@/components/crm/materials/materialsSettingsShared';
@@ -54,7 +56,10 @@ const MaterialFormDialog = ({
   setForm,
   saving,
   onSave,
-}: MaterialFormDialogProps) => (
+}: MaterialFormDialogProps) => {
+  const allowsOverlock = formAllowsOverlock(form, types);
+
+  return (
   <Dialog open={dialogOpen} onOpenChange={onDialogOpenChange}>
     <DialogTrigger asChild>
       <Button className="w-full sm:w-auto" onClick={onCreateClick}>
@@ -72,7 +77,16 @@ const MaterialFormDialog = ({
           <Label>Тип</Label>
           <Select
             value={form.typeId}
-            onValueChange={(v) => setForm((f) => ({ ...f, typeId: v }))}
+            onValueChange={(v) =>
+              setForm((f) => {
+                const next: MaterialFormState = { ...f, typeId: v };
+                if (!formAllowsOverlock(next, types)) {
+                  next.requiresOverlock = false;
+                  next.shops = shopsWithoutOverlock(f.shops);
+                }
+                return next;
+              })
+            }
           >
             <SelectTrigger>
               <SelectValue placeholder="Выберите тип" />
@@ -91,7 +105,16 @@ const MaterialFormDialog = ({
               className="mt-2"
               placeholder="Название нового типа"
               value={form.newTypeName}
-              onChange={(e) => setForm((f) => ({ ...f, newTypeName: e.target.value }))}
+              onChange={(e) =>
+                setForm((f) => {
+                  const next: MaterialFormState = { ...f, newTypeName: e.target.value };
+                  if (!formAllowsOverlock(next, types)) {
+                    next.requiresOverlock = false;
+                    next.shops = shopsWithoutOverlock(f.shops);
+                  }
+                  return next;
+                })
+              }
             />
           )}
         </div>
@@ -167,9 +190,9 @@ const MaterialFormDialog = ({
                       <span className="text-sm font-medium">{shop.name}</span>
                     </label>
 
-                    {/* Обработку края спрашиваем только у выбранного магазина:
-                        у невыбранного этот вопрос не имеет смысла. */}
-                    {picked && (
+                    {/* Обработку края спрашиваем только у тюля: тесьма и пакеты
+                        на оверлоке не обмётывают. */}
+                    {picked && allowsOverlock && (
                       <label className="mt-2.5 flex cursor-pointer items-start gap-2.5 border-t pt-2.5">
                         <Checkbox
                           checked={shopNeedsOverlock(form.shops, shop.id)}
@@ -199,7 +222,7 @@ const MaterialFormDialog = ({
 
         {/* Магазин один — разводить нечего, оставляем прежнюю общую галочку:
             выбор из одного пункта был бы лишним шумом. */}
-        {shops.length <= 1 && (
+        {shops.length <= 1 && allowsOverlock && (
           <label className="flex cursor-pointer items-start gap-2.5 rounded-md border p-3">
             <Checkbox
               checked={form.requiresOverlock}
@@ -230,6 +253,7 @@ const MaterialFormDialog = ({
       </div>
     </DialogContent>
   </Dialog>
-);
+  );
+};
 
 export default MaterialFormDialog;

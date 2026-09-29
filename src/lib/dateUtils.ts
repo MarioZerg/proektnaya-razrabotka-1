@@ -1,5 +1,12 @@
 const MSK_TZ = 'Europe/Moscow';
 
+/** Календарная дата по Москве, ГГГГ-ММ-ДД. Смещение — в календарных днях, не в часах. */
+export const moscowYmd = (offsetDays = 0): string => {
+  const d = new Date();
+  if (offsetDays) d.setTime(d.getTime() + offsetDays * 86_400_000);
+  return d.toLocaleDateString('en-CA', { timeZone: MSK_TZ });
+};
+
 export const formatDate = (iso: string): string => {
   const d = new Date(iso);
   return d.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit', year: 'numeric', timeZone: MSK_TZ });

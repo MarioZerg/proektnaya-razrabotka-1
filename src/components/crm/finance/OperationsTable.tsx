@@ -17,9 +17,11 @@ import type { SalaryOperation } from '@/lib/salaryApi';
 import {
   accrualTypeLabels,
   formatAccrualShift,
+  formatDate,
   formatDateTime,
   formatMoney,
 } from '@/components/crm/finance/financeShared';
+import { formatMeters, parseMeters } from '@/components/crm/finance/workedDay';
 import EditAccrualDialog from '@/components/crm/finance/EditAccrualDialog';
 import ConfirmDeleteButton from '@/components/crm/finance/ConfirmDeleteButton';
 import CancelPenaltyDialog from '@/components/crm/finance/CancelPenaltyDialog';
@@ -39,6 +41,52 @@ interface OperationsTableProps {
   error?: string | null;
 }
 
+const amountClass = (op: SalaryOperation) =>
+  op.type === 'penalty'
+    ? 'text-destructive'
+    : op.amount < 0
+      ? 'text-amber-600'
+      : 'text-emerald-600';
+
+const OperationActions = ({
+  op,
+  savingAccrual,
+  onEdit,
+  onDelete,
+  onReload,
+}: {
+  op: SalaryOperation;
+  savingAccrual: boolean;
+  onEdit: (id: number, amount: number, description: string) => Promise<void>;
+  onDelete: (id: number) => void;
+  onReload: () => void;
+}) => {
+  if (!op.paidAt) {
+    return (
+      <div className="flex items-center gap-1">
+        <EditAccrualDialog operation={op} saving={savingAccrual} onSubmit={onEdit} />
+        <ConfirmDeleteButton
+          title="Удалить начисление?"
+          description={`Начисление #${op.id} на сумму ${formatMoney(op.amount)} ₽ будет удалено безвозвратно.`}
+          onConfirm={() => onDelete(op.id)}
+        />
+      </div>
+    );
+  }
+  if (op.type === 'penalty' || op.type === 'deduction') {
+    return (
+      <CancelPenaltyDialog
+        id={op.id}
+        userName={op.userName}
+        amount={op.amount}
+        description={op.description}
+        onDone={onReload}
+      />
+    );
+  }
+  return null;
+};
+
 const OperationsTable = ({
   operations,
   loading,
@@ -53,10 +101,9 @@ const OperationsTable = ({
 }: OperationsTableProps) => {
   return (
     <div className="space-y-4">
-      {/* Телефон: девять колонок в строку не помещаются — половину таблицы
-          (сумму, описание, даты) просто срезало за краем экрана. Показываем
-          то же самое карточками. На компьютере остаётся обычная таблица. */}
-      <div className="space-y-2 md:hidden">
+      {/* Сайдбар съедает ширину: на md таблица из девяти колонок всё ещё
+          не помещается, и её приходится двигать пальцем. Карточки до lg. */}
+      <div className="space-y-2 lg:hidden">
         {loading && operations.length === 0 ? (
           <div className="flex items-center gap-2 p-4 text-sm text-muted-foreground">
             <Icon name="Loader2" size={16} className="animate-spin" />
@@ -67,89 +114,67 @@ const OperationsTable = ({
           <p className="p-4 text-center text-sm text-muted-foreground">Начислений пока нет</p>
           )
         ) : (
-          operations.map((op) => (
-            <div key={op.id} className="rounded-md border border-border bg-card p-3">
+          operations.map((op) => {
+            const meters = parseMeters(op.description);
+            return (
+            <div key={op.id} className="min-w-0 overflow-hidden rounded-lg border border-border bg-card p-3">
               <div className="flex items-start justify-between gap-2">
-                <div className="flex items-center gap-1.5">
-                  {/* Штраф — красный, удержание — янтарное: по цвету сразу
-                      видно, наказание это или обычный расчёт. */}
-                  <Icon
-                    name={op.amount < 0 ? 'MinusCircle' : 'PlusCircle'}
-                    size={15}
-                    className={
-                      op.type === 'penalty'
-                        ? 'text-destructive'
-                        : op.amount < 0
-                          ? 'text-amber-600'
-                          : 'text-emerald-600'
-                    }
-                  />
-                  <span className="text-sm font-medium">
+                <div className="min-w-0">
+                  <p className="text-sm font-semibold leading-snug">{op.userName}</p>
+                  <p className="mt-0.5 text-xs text-muted-foreground">
                     {accrualTypeLabels[op.type] || op.type}
-                  </span>
+                    {op.orderNumber ? ` · #${op.orderNumber}` : ''}
+                  </p>
                 </div>
-                <span
-                  className={`whitespace-nowrap text-base font-bold ${
-                    op.type === 'penalty'
-                      ? 'text-destructive'
-                      : op.amount < 0
-                        ? 'text-amber-600'
-                        : 'text-emerald-600'
-                  }`}
-                >
+                <span className={`shrink-0 tabular-nums text-base font-bold ${amountClass(op)}`}>
                   {formatMoney(op.amount)} ₽
                 </span>
               </div>
 
-              <p className="mt-1 text-sm font-semibold">{op.userName}</p>
-              <p className="mt-1 text-sm text-muted-foreground">
-                {op.orderNumber ? `Заказ #${op.orderNumber} — ` : ''}
-                {op.description}
-              </p>
+              <div className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 text-sm">
+                {meters != null && (
+                  <>
+                    <span className="text-muted-foreground">Метраж</span>
+                    <span className="text-right tabular-nums">{formatMeters(meters)} пог.м.</span>
+                  </>
+                )}
+                <span className="text-muted-foreground">Начислено за</span>
+                <span className="text-right">{formatDate(op.accruedFor)}</span>
+                <span className="text-muted-foreground">Статус</span>
+                <span className="text-right">
+                  {op.paidAt ? 'Выплачено' : 'Ожидает выплаты'}
+                </span>
+              </div>
+
+              {op.description && (
+                <p className="mt-2 text-xs leading-snug text-muted-foreground">{op.description}</p>
+              )}
               {formatAccrualShift(op) && (
                 <p className="mt-0.5 text-xs text-muted-foreground">
                   {formatAccrualShift(op)}
                   {op.shiftIsGuest ? ' · гость' : ''}
                 </p>
               )}
+              <p className="mt-1 text-[11px] text-muted-foreground">
+                Создано: {formatDateTime(op.createdAt)}
+              </p>
 
-              <div className="mt-2 space-y-0.5 text-xs text-muted-foreground">
-                <p>Начислено за: {op.accruedFor}</p>
-                <p>Создано: {formatDateTime(op.createdAt)}</p>
-                <p>{op.paidAt ? `Выплачено: ${formatDateTime(op.paidAt)}` : 'Ожидает выплаты'}</p>
+              <div className="mt-2 flex items-center gap-1 border-t border-border pt-2">
+                <OperationActions
+                  op={op}
+                  savingAccrual={savingAccrual}
+                  onEdit={onEdit}
+                  onDelete={onDelete}
+                  onReload={onReload}
+                />
               </div>
-
-              {!op.paidAt && (
-                <div className="mt-2 flex items-center gap-1 border-t border-border pt-2">
-                  <EditAccrualDialog operation={op} saving={savingAccrual} onSubmit={onEdit} />
-                  <ConfirmDeleteButton
-                    title="Удалить начисление?"
-                    description={`Начисление #${op.id} на сумму ${formatMoney(op.amount)} ₽ будет удалено безвозвратно.`}
-                    onConfirm={() => onDelete(op.id)}
-                  />
-                </div>
-              )}
-
-              {/* Выплаченный штраф удалить нельзя — деньги уже удержаны. Но отменить
-                  его можно: сумма вернётся сотруднику отдельным начислением. */}
-              {!!op.paidAt && (op.type === 'penalty' || op.type === 'deduction') && (
-                <div className="mt-2 flex items-center gap-1 border-t border-border pt-2">
-                  <CancelPenaltyDialog
-                    id={op.id}
-                    userName={op.userName}
-                    amount={op.amount}
-                    description={op.description}
-                    onDone={onReload}
-                  />
-                  <span className="text-xs text-muted-foreground">Отменить штраф</span>
-                </div>
-              )}
             </div>
-          ))
+            );
+          })
         )}
       </div>
 
-      <div className="hidden rounded-md border border-border md:block">
+      <div className="hidden overflow-x-auto rounded-md border border-border lg:block">
         <Table>
           <TableHeader>
             <TableRow className="bg-primary hover:bg-primary">
@@ -189,13 +214,7 @@ const OperationsTable = ({
                       <Icon
                         name={op.amount < 0 ? 'MinusCircle' : 'PlusCircle'}
                         size={14}
-                        className={
-                          op.type === 'penalty'
-                            ? 'text-destructive'
-                            : op.amount < 0
-                              ? 'text-amber-600'
-                              : 'text-emerald-600'
-                        }
+                        className={amountClass(op)}
                       />
                       <span className="text-xs">{accrualTypeLabels[op.type] || op.type}</span>
                     </div>
@@ -208,8 +227,6 @@ const OperationsTable = ({
                       {op.orderNumber ? `Заказ #${op.orderNumber} — ` : ''}
                       {op.description}
                     </p>
-                    {/* За какую смену начислен оклад: при двух сменах за день видно,
-                        что заплачено один раз и именно за эту смену. */}
                     {formatAccrualShift(op) && (
                       <p className="mt-0.5 truncate text-xs text-muted-foreground">
                         {formatAccrualShift(op)}
@@ -220,28 +237,13 @@ const OperationsTable = ({
                   <TableCell className="whitespace-nowrap">{formatDateTime(op.createdAt)}</TableCell>
                   <TableCell className="whitespace-nowrap">{op.paidAt ? formatDateTime(op.paidAt) : '—'}</TableCell>
                   <TableCell>
-                    {!op.paidAt ? (
-                      <div className="flex items-center">
-                        <EditAccrualDialog operation={op} saving={savingAccrual} onSubmit={onEdit} />
-                        <ConfirmDeleteButton
-                          title="Удалить начисление?"
-                          description={`Начисление #${op.id} на сумму ${formatMoney(op.amount)} ₽ будет удалено безвозвратно.`}
-                          onConfirm={() => onDelete(op.id)}
-                        />
-                      </div>
-                    ) : (
-                      // Выплаченный штраф удалить нельзя (деньги удержаны), но можно
-                      // отменить — сумма вернётся сотруднику отдельным начислением.
-                      (op.type === 'penalty' || op.type === 'deduction') && (
-                        <CancelPenaltyDialog
-                          id={op.id}
-                          userName={op.userName}
-                          amount={op.amount}
-                          description={op.description}
-                          onDone={onReload}
-                        />
-                      )
-                    )}
+                    <OperationActions
+                      op={op}
+                      savingAccrual={savingAccrual}
+                      onEdit={onEdit}
+                      onDelete={onDelete}
+                      onReload={onReload}
+                    />
                   </TableCell>
                 </TableRow>
               ))

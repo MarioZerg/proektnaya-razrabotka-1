@@ -30,6 +30,8 @@ import {
   NEW_TYPE_VALUE,
   PAGE_SIZE,
   emptyForm,
+  formAllowsOverlock,
+  shopsWithoutOverlock,
   type MaterialFormState,
 } from '@/components/crm/materials/materialsSettingsShared';
 
@@ -150,14 +152,24 @@ const MaterialsSettings = () => {
         return;
       }
 
+      const allowsOverlock = formAllowsOverlock(
+        {
+          typeId: form.typeId === NEW_TYPE_VALUE ? NEW_TYPE_VALUE : String(typeId),
+          newTypeName: form.newTypeName,
+        },
+        types,
+      );
+      const shops = allowsOverlock ? form.shops : shopsWithoutOverlock(form.shops);
+      const requiresOverlock = allowsOverlock ? form.requiresOverlock : false;
+
       if (editingId) {
         await updateMaterial(editingId, {
           name: form.name.trim(),
           unit: form.unit.trim() || 'шт',
           status: form.status,
-          requiresOverlock: form.requiresOverlock,
+          requiresOverlock,
           typeId,
-          shops: form.shops,
+          shops,
         });
       } else {
         await createMaterial(
@@ -165,8 +177,8 @@ const MaterialsSettings = () => {
           form.name.trim(),
           form.unit.trim() || 'шт',
           form.status,
-          form.requiresOverlock,
-          form.shops
+          requiresOverlock,
+          shops
         );
       }
 

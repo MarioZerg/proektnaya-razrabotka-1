@@ -18,6 +18,7 @@ import Icon from '@/components/ui/icon';
 import type { Material, Shop } from '@/lib/materialsApi';
 import MaterialShopsBadges from '@/components/crm/materials/MaterialShopsBadges';
 import MaterialsCards from '@/components/crm/materials/MaterialsCards';
+import { isTulleTypeName } from '@/components/crm/materials/materialsSettingsShared';
 
 interface MaterialsTableProps {
   loading: boolean;
@@ -113,7 +114,9 @@ const MaterialsTable = ({
                 <TableCell className="whitespace-normal break-words align-top">
                   <div className="font-medium">
                     {m.name}
-                    {m.requiresOverlock && !(m.shops && m.shops.length > 0) && (
+                    {isTulleTypeName(typeById.get(m.typeId)) &&
+                      m.requiresOverlock &&
+                      !(m.shops && m.shops.length > 0) && (
                       <Badge
                         variant="outline"
                         className="ml-2 gap-1 border-fuchsia-300 bg-fuchsia-50 font-normal text-fuchsia-700"
@@ -128,7 +131,11 @@ const MaterialsTable = ({
                   </div>
                 </TableCell>
                 <TableCell className="whitespace-normal align-top">
-                  <MaterialShopsBadges material={m} shopById={shopById} />
+                  <MaterialShopsBadges
+                    material={m}
+                    shopById={shopById}
+                    typeName={typeById.get(m.typeId)}
+                  />
                 </TableCell>
                 <TableCell className="whitespace-normal break-words align-top">
                   {m.avgCost > 0 ? (

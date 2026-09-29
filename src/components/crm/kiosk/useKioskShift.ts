@@ -8,6 +8,9 @@ import {
 } from '@/lib/shiftSessionsApi';
 import { playScanErrorSound, playShiftOpenSound, playShiftCloseSound } from '@/lib/scanSound';
 import { type KioskScreen } from '@/components/crm/kiosk/KioskMenu';
+import { fetchMySalary } from '@/lib/salaryApi';
+import { moscowYmd } from '@/lib/dateUtils';
+import { groupAccrualsByDay, type WorkedDay } from '@/components/crm/finance/workedDay';
 
 type Toast = (opts: {
   title: string;
@@ -26,6 +29,8 @@ interface Params {
   setEnteredMenu: (v: boolean) => void;
   setScreen: (s: KioskScreen) => void;
   toast: Toast;
+  /** Плашка отработанного дня после закрытия смены. */
+  onClosedDay?: (day: WorkedDay) => void;
 }
 
 /**
@@ -47,6 +52,7 @@ export const useKioskShift = ({
   setEnteredMenu,
   setScreen,
   toast,
+  onClosedDay,
 }: Params) => {
   const [shiftSaving, setShiftSaving] = useState(false);
 
@@ -130,7 +136,26 @@ export const useKioskShift = ({
       // Смена закрыта — возвращаем сотрудника на стартовый экран терминала.
       setEnteredMenu(false);
       setScreen('menu');
-      toast({ title: 'Смена закрыта' });
+
+      // Плашка дня: заказы строками, метраж, вычеты и надбавки — одна карточка,
+      // а не тост «смена закрыта» без цифр. Берём сегодня и вчера: смена,
+      // закрытая после полуночи, относится к вчерашнему календарному дню.
+      try {
+        const data = await fetchMySalary(user.id, {
+          dateFrom: moscowYmd(-1),
+          dateTo: moscowYmd(0),
+        });
+        const days = groupAccrualsByDay(data.accruals);
+        const today = moscowYmd(0);
+        const day = days.find((d) => d.date === today) || days[0];
+        if (day) {
+          onClosedDay?.(day);
+        } else {
+          toast({ title: 'Смена закрыта' });
+        }
+      } catch {
+        toast({ title: 'Смена закрыта' });
+      }
     } catch (e) {
       playScanErrorSound();
       const message = e instanceof Error ? e.message : 'Попробуйте ещё раз';
