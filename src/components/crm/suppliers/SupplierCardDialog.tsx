@@ -1,16 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
-import { FormSection } from '@/components/ui/form-section';
 import Icon from '@/components/ui/icon';
 import { useToast } from '@/hooks/use-toast';
 import { useSubmitGuard } from '@/hooks/useSubmitGuard';
@@ -18,73 +8,22 @@ import {
   createSupplier,
   updateSupplier,
   setSupplierPrices,
-  CURRENCIES,
   currencySymbols,
   type Supplier,
 } from '@/lib/suppliersApi';
 import { fetchMaterialsData, type Material, type MaterialType } from '@/lib/materialsApi';
-import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
+import SupplierContactsSection from '@/components/crm/suppliers/supplierCard/SupplierContactsSection';
+import SupplierSettingsSection from '@/components/crm/suppliers/supplierCard/SupplierSettingsSection';
+import SupplierPricesSection from '@/components/crm/suppliers/supplierCard/SupplierPricesSection';
+import {
+  emptyForm,
+  formFromSupplier,
+  payloadFromForm,
+  type PriceRow,
+  type SupplierFormState,
+} from '@/components/crm/suppliers/supplierCard/supplierCardShared';
 
 export type SupplierFormSection = 'contacts' | 'settings' | 'prices';
-
-interface SupplierFormState {
-  name: string;
-  phone: string;
-  address: string;
-  comment: string;
-  currency: string;
-  exchangeRate: string;
-  shortageNormPercent: string;
-}
-
-const emptyForm: SupplierFormState = {
-  name: '',
-  phone: '',
-  address: '',
-  comment: '',
-  currency: 'RUB',
-  exchangeRate: '',
-  shortageNormPercent: '',
-};
-
-interface PriceRow {
-  price: string;
-  currency: string;
-}
-
-const formFromSupplier = (s: Supplier): SupplierFormState => ({
-  name: s.name,
-  phone: s.phone || '',
-  address: s.address || '',
-  comment: s.comment || '',
-  currency: s.currency || 'RUB',
-  exchangeRate: s.exchangeRate != null ? String(s.exchangeRate) : '',
-  shortageNormPercent: s.shortageNormPercent != null ? String(s.shortageNormPercent) : '',
-});
-
-const payloadFromForm = (form: SupplierFormState) => ({
-  name: form.name,
-  phone: form.phone,
-  address: form.address,
-  comment: form.comment,
-  currency: form.currency,
-  exchangeRate:
-    form.currency === 'RUB' || !form.exchangeRate.trim()
-      ? null
-      : Number(form.exchangeRate.replace(',', '.')),
-  shortageNormPercent: form.shortageNormPercent.trim()
-    ? Number(form.shortageNormPercent.replace(',', '.'))
-    : null,
-});
-
-const rublesOf = (row: PriceRow | undefined, rate: number | null) => {
-  const value = Number((row?.price || '').replace(',', '.'));
-  const cur = row?.currency || 'RUB';
-  if (!value) return null;
-  if (cur === 'RUB') return value;
-  if (!rate) return null;
-  return value * rate;
-};
 
 
 interface SupplierCardDialogProps {
@@ -268,268 +207,36 @@ const SupplierCardDialog = ({
           key={`${supplier?.id ?? 'new'}-${focusSection}`}
           className="min-h-0 min-w-0 flex-1 space-y-3 overflow-y-auto overscroll-contain px-4 py-3 [touch-action:pan-y]"
         >
-          <FormSection
-            title="Контакты"
-            hint={form.phone || form.address || undefined}
+          <SupplierContactsSection
+            form={form}
+            setForm={setForm}
             defaultOpen={focusSection === 'contacts' || !supplier}
-          >
-            <div className="space-y-1.5">
-              <Label>Название</Label>
-              <Input
-                className="h-11 sm:h-10"
-                value={form.name}
-                onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
-              />
-            </div>
-            <div className="space-y-1.5">
-              <Label>Телефон</Label>
-              <Input
-                type="tel"
-                inputMode="tel"
-                className="h-11 sm:h-10"
-                value={form.phone}
-                onChange={(e) => setForm((f) => ({ ...f, phone: e.target.value }))}
-              />
-            </div>
-            <div className="space-y-1.5">
-              <Label>Адрес</Label>
-              <Input
-                className="h-11 sm:h-10"
-                value={form.address}
-                onChange={(e) => setForm((f) => ({ ...f, address: e.target.value }))}
-              />
-            </div>
-            <div className="space-y-1.5">
-              <Label>Комментарий</Label>
-              <Input
-                className="h-11 sm:h-10"
-                value={form.comment}
-                onChange={(e) => setForm((f) => ({ ...f, comment: e.target.value }))}
-              />
-            </div>
-          </FormSection>
+          />
 
-          <FormSection
-            title="Настройки"
-            hint={settingsHint}
+          <SupplierSettingsSection
+            form={form}
+            setForm={setForm}
             defaultOpen={focusSection === 'settings' || !supplier}
-          >
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-              <div className="min-w-0 space-y-1.5">
-                <Label>Валюта прайса</Label>
-                <Select
-                  value={form.currency}
-                  onValueChange={(v) => setForm((f) => ({ ...f, currency: v }))}
-                >
-                  <SelectTrigger className="h-11 min-w-0 [&>span]:min-w-0 [&>span]:flex-1 text-base sm:h-10 sm:text-sm">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {CURRENCIES.map((c) => (
-                      <SelectItem key={c} value={c}>
-                        {c} {currencySymbols[c]}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              {form.currency !== 'RUB' && (
-                <div className="min-w-0 space-y-1.5">
-                  <Label>
-                    Рублей за 1 {currencySymbols[form.currency] || form.currency}
-                  </Label>
-                  <Input
-                    inputMode="decimal"
-                    placeholder="65"
-                    className="h-11 min-w-0 sm:h-10"
-                    value={form.exchangeRate}
-                    onChange={(e) => setForm((f) => ({ ...f, exchangeRate: e.target.value }))}
-                  />
-                </div>
-              )}
-            </div>
-            {form.currency !== 'RUB' && (
-              <p className="text-xs text-muted-foreground">
-                Курс подставится при приёмке — администратор сможет поправить его под
-                реальный курс дня.
-              </p>
-            )}
-            <div className="space-y-1.5">
-              <Label>Допустимая недостача в рулоне, %</Label>
-              <Input
-                inputMode="decimal"
-                placeholder="Не задана — штрафов нет"
-                className="h-11 sm:h-10"
-                value={form.shortageNormPercent}
-                onChange={(e) =>
-                  setForm((f) => ({ ...f, shortageNormPercent: e.target.value }))
-                }
-              />
-              <p className="text-xs text-muted-foreground">
-                Сколько метров может не хватить в рулоне без штрафа. Например, 2% — в
-                рулоне 100 м допустимо 2 м недостачи. За превышение сотрудники платят
-                по себестоимости рулона. Оставьте пустым, чтобы не штрафовать.
-              </p>
-            </div>
-          </FormSection>
+            settingsHint={settingsHint}
+          />
 
-          <FormSection
-            title="Прайс материалов"
-            hint={
-              supplier
-                ? (pricesReady ? filledCount : supplier.prices?.length || 0)
-                  ? `${pricesReady ? filledCount : supplier.prices.length} в прайсе`
-                  : 'Прайс пуст'
-                : 'После сохранения'
-            }
+          <SupplierPricesSection
+            supplier={supplier}
+            form={form}
+            rate={rate}
+            rows={rows}
+            setRows={setRows}
+            materials={materials}
+            grouped={grouped}
+            search={search}
+            setSearch={setSearch}
+            pricesLoading={pricesLoading}
+            pricesError={pricesError}
+            pricesReady={pricesReady}
+            filledCount={filledCount}
+            loadPrices={loadPrices}
             defaultOpen={focusSection === 'prices'}
-          >
-            {!supplier ? (
-              <p className="text-sm text-muted-foreground">
-                Сначала сохраните поставщика — затем можно указать цены материалов.
-              </p>
-            ) : (
-              <>
-                <p className="text-sm text-muted-foreground">
-                  Цена за единицу. При приёмке подставится сама. Валютная цена
-                  умножается на курс, рублёвая берётся как есть.
-                </p>
-                {rate ? (
-                  <p className="text-sm">
-                    Курс:{' '}
-                    <b>
-                      1 {currencySymbols[form.currency] || form.currency} = {rate} ₽
-                    </b>
-                  </p>
-                ) : form.currency !== 'RUB' ? (
-                  <p className="text-sm text-destructive">
-                    Нет курса {form.currency} — валютные цены не пересчитаются в рубли.
-                    Укажите курс в настройках.
-                  </p>
-                ) : null}
-
-                {pricesLoading && materials.length === 0 ? (
-                  <div className="flex items-center gap-2 py-4 text-sm text-muted-foreground">
-                    <Icon name="Loader2" size={16} className="animate-spin" />
-                    Загрузка материалов…
-                  </div>
-                ) : pricesError && materials.length === 0 ? (
-                  <WarehouseFetchError
-                    title="Не удалось загрузить материалы"
-                    description={pricesError}
-                    onRetry={loadPrices}
-                  />
-                ) : (
-                  <>
-                    <div className="relative">
-                      <Icon
-                        name="Search"
-                        size={16}
-                        className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground"
-                      />
-                      <Input
-                        value={search}
-                        onChange={(e) => setSearch(e.target.value)}
-                        placeholder="Найти материал"
-                        className="h-11 pl-9 sm:h-10"
-                      />
-                    </div>
-                    {grouped.length === 0 ? (
-                      <p className="text-sm text-muted-foreground">Ничего не нашли.</p>
-                    ) : (
-                      grouped.map((group) => (
-                        <div key={group.type.id} className="space-y-2">
-                          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                            {group.type.name}
-                          </p>
-                          {group.items.map((m) => {
-                            const row = rows[m.id];
-                            const rub = rublesOf(row, rate);
-                            const cur = row?.currency || form.currency || 'RUB';
-                            const value = Number((row?.price || '').replace(',', '.'));
-                            return (
-                              <div
-                                key={m.id}
-                                className="min-w-0 space-y-2 rounded-lg border border-border p-3"
-                              >
-                                <div>
-                                  <p className="font-medium leading-snug">{m.name}</p>
-                                  <p className="text-xs text-muted-foreground">за 1 {m.unit}</p>
-                                </div>
-                                <div className="grid min-w-0 grid-cols-[1fr_7.5rem] gap-2">
-                                  <div className="relative min-w-0">
-                                    <Input
-                                      inputMode="decimal"
-                                      placeholder="—"
-                                      className="h-11 pr-7 sm:h-10"
-                                      value={row?.price ?? ''}
-                                      onChange={(e) =>
-                                        setRows((prev) => ({
-                                          ...prev,
-                                          [m.id]: {
-                                            price: e.target.value,
-                                            currency: prev[m.id]?.currency || form.currency || 'RUB',
-                                          },
-                                        }))
-                                      }
-                                    />
-                                    <span className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-sm text-muted-foreground">
-                                      {currencySymbols[cur]}
-                                    </span>
-                                  </div>
-                                  <Select
-                                    value={cur}
-                                    onValueChange={(v) =>
-                                      setRows((prev) => ({
-                                        ...prev,
-                                        [m.id]: {
-                                          price: prev[m.id]?.price || '',
-                                          currency: v,
-                                        },
-                                      }))
-                                    }
-                                  >
-                                    <SelectTrigger className="h-11 min-w-0 [&>span]:min-w-0 [&>span]:flex-1 text-base sm:h-10 sm:text-sm">
-                                      <SelectValue />
-                                    </SelectTrigger>
-                                    <SelectContent>
-                                      {CURRENCIES.map((c) => (
-                                        <SelectItem key={c} value={c}>
-                                          {c} {currencySymbols[c]}
-                                        </SelectItem>
-                                      ))}
-                                    </SelectContent>
-                                  </Select>
-                                </div>
-                                <p className="text-sm">
-                                  {value ? (
-                                    cur === 'RUB' ? (
-                                      <span className="font-medium">{value.toFixed(2)} ₽</span>
-                                    ) : rub != null ? (
-                                      <span className="text-muted-foreground">
-                                        ≈{' '}
-                                        <span className="font-medium text-foreground">
-                                          {rub.toFixed(2)} ₽
-                                        </span>
-                                      </span>
-                                    ) : (
-                                      <span className="text-destructive">нужен курс</span>
-                                    )
-                                  ) : (
-                                    <span className="text-muted-foreground">Нет цены</span>
-                                  )}
-                                </p>
-                              </div>
-                            );
-                          })}
-                        </div>
-                      ))
-                    )}
-                  </>
-                )}
-              </>
-            )}
-          </FormSection>
+          />
         </div>
 
         <div className="relative z-20 shrink-0 border-t border-border bg-background px-4 py-3">
