@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Navigate, useParams, useSearchParams } from 'react-router-dom';
 import { useToast } from '@/hooks/use-toast';
 import { type KioskUser, type KioskShift } from '@/lib/kioskApi';
+import { fetchWorkshops } from '@/lib/workshopsApi';
 import { type DefectCheck } from '@/lib/shiftSessionsApi';
 import { type KioskScreen } from '@/components/crm/kiosk/KioskMenu';
 import KioskScanLogin from '@/components/crm/kiosk/KioskScanLogin';
