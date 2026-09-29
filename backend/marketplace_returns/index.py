@@ -592,6 +592,26 @@ def log_return_history(cur, gw_id, r_id, order_id, actor_id=None, actor_name=Non
     return next_number
 
 
+def _wb_sticker_number(code):
+    """Цифровой код стикера WB со скана. Иначе None.
+
+    На термоярлыке WB напечатано ДВА вида одного кода: буквенный *DZ5QqmEj
+    (его отдаёт API, он лежит в orders.wb_sticker_barcode) и цифровой
+    58490661473 — крупные цифры под штрихкодом. Сканер отдаёт именно цифры,
+    и до этой правки их не знал никто: скан отвечал «возврат не найден».
+
+    Цифры — первые 5 байт base64-кода как одно 40-битное число, поэтому у
+    номера стикера всегда 11 цифр. Номер сборочного задания WB и номер заказа
+    Яндекса короче (10 цифр и меньше), так что спутать их нельзя.
+    """
+    raw = (code or '').strip().lstrip('*')
+    if not re.fullmatch(r'\d{11}', raw):
+        return None
+    num = int(raw)
+    # 5 байт: число должно уместиться в 40 бит, иначе это не стикер WB.
+    return num if num < (1 << 40) else None
+
+
 def _scan_aliases(code):
     """Все написания одного кода с пакета WB или Яндекса.
 
@@ -636,6 +656,13 @@ def _pick_wb_yandex_order(cur, code, marketplace=None):
         "OR mr.external_id = ANY(%s)))",
     ]
     params = [aliases, aliases, aliases, aliases, aliases, aliases, aliases, aliases, aliases]
+
+    # Цифры с ярлыка WB: сканер отдаёт номер стикера, а в базе лежит его
+    # буквенный вид. Сравниваем с посчитанным из barcode числом.
+    sticker_num = _wb_sticker_number(raw)
+    if sticker_num is not None:
+        conds.append("o.wb_sticker_number = %s")
+        params.append(sticker_num)
 
     # «12345-1» у Яндекса в базе лежит как external_id «12345-1», а голый id
     # возврата — как «12345» при нескольких вещах. Короткий код не разворачиваем:
@@ -984,6 +1011,10 @@ def _looks_like_wb_or_yandex_label(code):
         return False
     if raw.startswith('*'):
         return True
+    # Цифровой код стикера WB. Без этой проверки 11 цифр с ярлыка WB уходили
+    # искать возврат в OZON — кладовщик получал «OZON не знает возврат».
+    if _wb_sticker_number(raw) is not None:
+        return True
     if raw.upper().startswith('YM-'):
         return True
     return bool(re.search(r'[A-Za-z]', raw)) and '-' not in raw
@@ -1063,11 +1094,71 @@ def _pull_yandex_returns_for_scan(cur, code):
     return saved
 
 
+def _fill_wb_sticker_numbers(cur):
+    """Догружает с WB стикеры отправлений, у которых их ещё нет.
+
+    Стикер появляется у заказа, только когда мы сами его печатали. Заказы,
+    уехавшие без печати у нас (собранные вручную, отгруженные с полки), кода
+    не имеют вовсе — и скан цифр с их ярлыка не найдёт ничего, сколько ни
+    сравнивай. Спрашиваем стикеры пачкой у WB и дописываем.
+
+    Берём только живые FBS-заказы: у отменённых спрашивать нечего. Возвращает
+    число заполненных стикеров.
+    """
+    creds, enabled = get_credentials(cur, 'wildberries', None)
+    api_key = (creds.get('apiKey') or '').strip()
+    if not enabled or not api_key:
+        return 0
+    cur.execute(
+        "SELECT wb_order_id FROM orders "
+        "WHERE marketplace = 'WB' AND order_type = 'FBS' AND wb_order_id IS NOT NULL "
+        "  AND (wb_sticker_barcode IS NULL OR wb_sticker_barcode = '') "
+        "  AND COALESCE(sewing_status, '') <> 'Отменён' "
+        "ORDER BY id DESC LIMIT 100"
+    )
+    ids = [int(r[0]) for r in cur.fetchall() if r[0]]
+    if not ids:
+        return 0
+    status, data = http_json(
+        'https://marketplace-api.wildberries.ru'
+        '/api/v3/orders/stickers?type=png&width=58&height=40',
+        'POST', {'Authorization': api_key}, {'orders': ids},
+    )
+    if status != 200 or not isinstance(data, dict):
+        return 0
+    filled = 0
+    for st in (data.get('stickers') or []):
+        barcode = (st.get('barcode') or '').strip()
+        if not barcode:
+            part_a = str(st.get('partA') or '').strip()
+            part_b = str(st.get('partB') or '').strip()
+            barcode = f'{part_a}{part_b}' if (part_a or part_b) else ''
+        order_id = st.get('orderId')
+        if not barcode or not order_id:
+            continue
+        cur.execute(
+            "UPDATE orders SET wb_sticker_barcode = %s "
+            "WHERE wb_order_id = %s AND (wb_sticker_barcode IS NULL OR wb_sticker_barcode = '')",
+            (barcode[:60], int(order_id)),
+        )
+        filled += cur.rowcount or 0
+    return filled
+
+
 def _unknown_return_message(code):
+    # Цифры с ярлыка WB мы теперь понимаем, но сам ярлык может быть не нашим:
+    # такой стикер печатается только на наши FBS-отправления. Говорим об этом
+    # прямо, иначе кладовщик перебирает коды и думает, что сканер сломан.
+    if _wb_sticker_number(code) is not None:
+        return (
+            f'Стикер WB {code} не найден среди наших отправлений. Проверьте, что '
+            f'сканируете ярлык Wildberries с нашего пакета, либо отсканируйте '
+            f'наклейку возврата или номер отправления.'
+        )
     return (
         f'Возврат {code} не найден. Для OZON — наклейка возврата или номер отправления, '
-        f'для Wildberries — стикер со звёздочкой, номер задания или srid, '
-        f'для Яндекс Маркета — номер заказа с клиентского стикера.'
+        f'для Wildberries — стикер со звёздочкой, номер задания, srid или цифры '
+        f'под штрихкодом ярлыка, для Яндекс Маркета — номер заказа с клиентского стикера.'
     )
 
 
@@ -1550,6 +1641,19 @@ def handler(event: dict, context) -> dict:
                 accepted_other = _accept_return_by_order(cur, conn, code, actor_id, actor_name)
                 if accepted_other is not None:
                     return _resp(200, accepted_other)
+
+                # Цифры с ярлыка WB не нашлись: скорее всего, у этого заказа стикер
+                # у нас не сохранён — его печатали не мы. Догружаем стикеры с WB и
+                # пробуем ещё раз, вместо того чтобы отправлять кладовщика заводить
+                # вещь руками.
+                if _wb_sticker_number(code) is not None:
+                    if _fill_wb_sticker_numbers(cur):
+                        conn.commit()
+                        accepted_other = _accept_return_by_order(
+                            cur, conn, code, actor_id, actor_name,
+                        )
+                        if accepted_other is not None:
+                            return _resp(200, accepted_other)
 
                 # Заявки Яндекса обновляются по расписанию. Пакет может приехать
                 # раньше: спрашиваем площадку по номеру заказа и принимаем сразу.
@@ -2042,20 +2146,45 @@ def handler(event: dict, context) -> dict:
                 # Поэтому сначала ставим необработанные (new/approved/picked_up),
                 # и лишь если рабочих не осталось — отдаём последнюю, чтобы
                 # человек увидел понятную причину отказа.
+                #
+                # Цифры с ярлыка WB (58490661473) в самой заявке не лежат: там srid
+                # и номер задания. Поэтому дополнительно идём через заказ — у него
+                # номер стикера посчитан из буквенного кода в wb_sticker_number.
+                sticker_num = _wb_sticker_number(code)
                 cur.execute(
                     "SELECT r.id, r.marketplace, r.external_id, r.posting_number, r.product_name, "
                     "r.return_reason, r.status, r.outcome, mi.material, mi.width, mi.height "
                     "FROM marketplace_returns r "
                     "LEFT JOIN marketplace_items mi ON mi.id = r.marketplace_item_id "
                     "WHERE r.return_barcode = %s OR r.posting_number = %s OR r.external_id = %s "
+                    "   OR (%s IS NOT NULL AND r.order_id IN ("
+                    "        SELECT id FROM orders WHERE wb_sticker_number = %s)) "
                     "ORDER BY CASE WHEN r.status IN ('new', 'approved', 'picked_up') THEN 0 ELSE 1 END, "
                     "         CASE WHEN r.goods_warehouse_id IS NULL THEN 0 ELSE 1 END, r.id "
                     "LIMIT 1",
-                    (code, code, code),
+                    (code, code, code, sticker_num, sticker_num),
                 )
                 row = cur.fetchone()
+                if not row and sticker_num is not None and _fill_wb_sticker_numbers(cur):
+                    # Стикер этого отправления мы не печатали — цифры сравнивать было
+                    # не с чем. Догрузили коды с WB и ищем ещё раз.
+                    conn.commit()
+                    cur.execute(
+                        "SELECT r.id, r.marketplace, r.external_id, r.posting_number, "
+                        "r.product_name, r.return_reason, r.status, r.outcome, "
+                        "mi.material, mi.width, mi.height "
+                        "FROM marketplace_returns r "
+                        "LEFT JOIN marketplace_items mi ON mi.id = r.marketplace_item_id "
+                        "WHERE r.order_id IN (SELECT id FROM orders WHERE wb_sticker_number = %s) "
+                        "ORDER BY CASE WHEN r.status IN ('new', 'approved', 'picked_up') "
+                        "              THEN 0 ELSE 1 END, "
+                        "         CASE WHEN r.goods_warehouse_id IS NULL THEN 0 ELSE 1 END, r.id "
+                        "LIMIT 1",
+                        (sticker_num,),
+                    )
+                    row = cur.fetchone()
                 if not row:
-                    return _resp(404, {'error': f'Возврат по коду {code} не найден'})
+                    return _resp(404, {'error': _unknown_return_message(code)})
                 # Заявку в статусе 'new' раньше отвергали: «не одобрена администратором».
                 # На практике одобрение никто не проставляет — вещи забирают с ПВЗ по коду
                 # выдачи, и все заявки остаются новыми. Кладовщик стоял с коробкой в руках

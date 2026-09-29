@@ -1742,6 +1742,20 @@ def handler(event: dict, context) -> dict:
                 # физически невозможно — он не входит в область поиска. Именно поэтому
                 # добавить сюда ярлыки FBS безопасно.
                 bare_esc = scan_code.lstrip('*').replace("'", "''")
+                # Цифры под штрихкодом ярлыка WB (58490661473). В базе лежит
+                # буквенный вид (*DZ5QqmEj), поэтому сравниваем с числом,
+                # посчитанным из него в orders.wb_sticker_number. Без этого
+                # упаковщица пикала ярлык WB и получала «вещь не найдена».
+                sticker_raw = scan_code.strip().lstrip('*')
+                sticker_num = (
+                    int(sticker_raw)
+                    if re.fullmatch(r'\d{11}', sticker_raw)
+                    and int(sticker_raw) < (1 << 40) else None
+                )
+                sticker_sql = (
+                    f"   OR o.wb_sticker_number = {sticker_num} "
+                    if sticker_num is not None else ""
+                )
                 code_match = (
                     f"      mr.return_barcode = '{code_esc}' "
                     f"   OR mr.posting_number = '{code_esc}' "
@@ -1752,6 +1766,7 @@ def handler(event: dict, context) -> dict:
                     f"   OR o.wb_sticker_barcode = '*{bare_esc}' "
                     f"   OR CAST(o.wb_order_id AS TEXT) = '{bare_esc}' "
                     f"   OR CAST(o.ym_order_id AS TEXT) = '{bare_esc}' "
+                    + sticker_sql
                 )
                 cur.execute(
                     "SELECT gw.id, gw.status, gw.storage_barcode, o.order_number, o.product, "

@@ -27,6 +27,7 @@ from shared import (
     release_fbo_from_shelf,
     resolve_ozon_barcode,
     try_match_orders_from_stock,
+    wb_sticker_number,
 )
 from exports import export_stock_ozon_xlsx, export_stock_wb_xlsx, export_stock_xlsx
 
@@ -1413,6 +1414,14 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
             # звёздочкой (*DWto4dQG), а сканеры в разных режимах отдают его то с
             # ней, то без. Ищем по обоим написаниям, чтобы кладовщик не разбирался.
             bare_esc = order_number.lstrip('*').replace("'", "''")
+            # Цифры под штрихкодом ярлыка WB. В базе лежит буквенный вид кода,
+            # поэтому сравниваем с посчитанным из него числом — иначе скан
+            # ярлыка WB отвечал «заказ не найден».
+            sticker_num = wb_sticker_number(order_number)
+            sticker_sql = (
+                f"   OR o.wb_sticker_number = {sticker_num} "
+                if sticker_num is not None else ""
+            )
 
             # ПРИНИМАЕМ ВОЗВРАТ ЛЮБОЙ ПЛОЩАДКИ, А НЕ ТОЛЬКО OZON.
             #
@@ -1446,6 +1455,7 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                 f"   OR o.wb_sticker_barcode = '*{bare_esc}' "
                 f"   OR CAST(o.wb_order_id AS TEXT) = '{bare_esc}' "
                 f"   OR CAST(o.ym_order_id AS TEXT) = '{bare_esc}' "
+                + sticker_sql +
                 # Сначала точное попадание в наш номер, затем ещё не принятые вещи.
                 f"ORDER BY (o.order_number = '{order_number_esc}') DESC, "
                 f"         (gw.id IS NOT NULL AND COALESCE(gw.status, '') <> 'mp_return') DESC, "
@@ -1460,7 +1470,8 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                     'headers': headers,
                     'body': json.dumps({
                         'error': f'Заказ {order_number} не найден. Отсканируйте номер '
-                                 f'отправления OZON, код стикера WB или номер заказа '
+                                 f'отправления OZON, стикер WB (буквенный код или '
+                                 f'цифры под штрихкодом) или номер заказа '
                                  f'Яндекс Маркета'
                     }, ensure_ascii=False),
                 }

@@ -1,6 +1,7 @@
 import base64
 import json
 import os
+import re
 import uuid
 import urllib.request
 import urllib.error
@@ -490,6 +491,53 @@ def handle_create_supply(cur, conn, body_data, api_key, use_sandbox):
     return _resp(200, {'wbSupplyId': wb_supply_id})
 
 
+def fill_missing_stickers(cur, conn, api_key, use_sandbox):
+    """Догружает с WB коды стикеров у отправлений, где их ещё нет.
+
+    Код стикера сохраняется, только когда ярлык печатали МЫ. Заказы, ярлык
+    которых печатали в кабинете WB, кода не имеют вовсе — и скан такого ярлыка
+    не находил ничего, хотя заказ лежит в базе. WB отдаёт стикеры пачкой, так
+    что спрашиваем их разом по всем «безкодовым» заданиям.
+
+    Возвращает, сколько кодов дописали.
+    """
+    cur.execute(
+        "SELECT wb_order_id FROM orders "
+        "WHERE marketplace = 'WB' AND order_type = 'FBS' AND wb_order_id IS NOT NULL "
+        "  AND (wb_sticker_barcode IS NULL OR wb_sticker_barcode = '') "
+        "  AND COALESCE(sewing_status, '') <> 'Отменён' "
+        "ORDER BY id DESC LIMIT 100"
+    )
+    ids = [int(r[0]) for r in cur.fetchall() if r[0]]
+    if not ids:
+        return 0
+    status, data = wb_request(
+        'POST', '/api/v3/orders/stickers?type=png&width=58&height=40',
+        api_key, use_sandbox, {'orders': ids},
+    )
+    if status != 200 or not isinstance(data, dict):
+        return 0
+    filled = 0
+    for st in (data.get('stickers') or []):
+        code = (st.get('barcode') or '').strip()
+        if not code:
+            part_a = str(st.get('partA') or '').strip()
+            part_b = str(st.get('partB') or '').strip()
+            code = f'{part_a}{part_b}' if (part_a or part_b) else ''
+        wb_oid = st.get('orderId')
+        if not code or not wb_oid:
+            continue
+        cur.execute(
+            "UPDATE orders SET wb_sticker_barcode = %s "
+            "WHERE wb_order_id = %s AND (wb_sticker_barcode IS NULL OR wb_sticker_barcode = '')",
+            (code[:60], int(wb_oid)),
+        )
+        filled += cur.rowcount or 0
+    if filled:
+        conn.commit()
+    return filled
+
+
 def handle_scan_order(cur, conn, body_data, api_key, use_sandbox):
     """Сканирование готового FBS-заказа WB в поставку: добавляет сборочное задание в
     WB-поставку (PATCH /api/marketplace/v3/supplies/{sid}/orders) и фиксирует связь у нас."""
@@ -516,17 +564,49 @@ def handle_scan_order(cur, conn, body_data, api_key, use_sandbox):
     # Ищем готовый (после стикеровки) FBS-заказ WB. Кладовщик может отсканировать как
     # номер сборочного задания, так и ШТРИХКОД С ЯРЛЫКА WB — на стикере печатается
     # именно он. Ищем сразу по обоим, чтобы человек не разбирался, что у него в руках.
+    # Цифры под штрихкодом ярлыка WB (58490661473) — это тот же стикер, что мы
+    # храним буквами (*DZ5QqmEj). Сканер отдаёт цифры, и без этой ветки сборка
+    # поставки отвечала «заказ не найден» на ярлык, который сама же и напечатала.
+    sticker_bare = (order_number or '').strip().lstrip('*')
+    sticker_num = (
+        int(sticker_bare)
+        if re.fullmatch(r'\d{11}', sticker_bare) and int(sticker_bare) < (1 << 40)
+        else None
+    )
     cur.execute(
         "SELECT o.id, o.wb_order_id, o.sewing_status, o.product, o.fulfilled_from_stock_id, "
         "gw.shipping_labeled_at "
         "FROM orders o "
         "LEFT JOIN goods_warehouse gw ON gw.id = o.fulfilled_from_stock_id "
-        "WHERE (o.order_number = %s OR o.wb_sticker_barcode = %s) "
+        "WHERE (o.order_number = %s OR o.wb_sticker_barcode = %s "
+        "       OR o.wb_sticker_barcode = %s OR o.wb_sticker_barcode = %s "
+        "       OR (%s IS NOT NULL AND o.wb_sticker_number = %s)) "
         "AND o.marketplace = 'WB' AND o.order_type = 'FBS'",
-        (order_number, order_number),
+        (order_number, order_number, sticker_bare, f'*{sticker_bare}',
+         sticker_num, sticker_num),
     )
     o_row = cur.fetchone()
+    if not o_row and sticker_num is not None:
+        # Цифры с ярлыка не совпали ни с одним стикером: у части заказов кода
+        # у нас просто нет — их ярлыки печатали не мы. Спрашиваем стикеры у WB
+        # пачкой и ищем ещё раз, вместо отказа кладовщику у коробки.
+        if fill_missing_stickers(cur, conn, api_key, use_sandbox):
+            cur.execute(
+                "SELECT o.id, o.wb_order_id, o.sewing_status, o.product, "
+                "o.fulfilled_from_stock_id, gw.shipping_labeled_at "
+                "FROM orders o "
+                "LEFT JOIN goods_warehouse gw ON gw.id = o.fulfilled_from_stock_id "
+                "WHERE o.wb_sticker_number = %s "
+                "AND o.marketplace = 'WB' AND o.order_type = 'FBS'",
+                (sticker_num,),
+            )
+            o_row = cur.fetchone()
     if not o_row:
+        if sticker_num is not None:
+            return _resp(404, {
+                'error': f'Стикер WB {order_number} не найден среди наших FBS-заказов. '
+                         f'Проверьте, что сканируете ярлык с нашего пакета'
+            })
         return _resp(404, {'error': f'Заказ {order_number} не найден среди WB FBS заказов'})
     order_id, wb_order_id, sewing_status, product, from_stock_id, labeled_at = o_row
 
