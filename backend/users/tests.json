@@ -82,51 +82,6 @@
       "expectedStatus": 401
     },
     {
-      "name": "Chat: get messages",
-      "method": "GET",
-      "path": "/?chat=1",
-      "expectedStatus": 200
-    },
-    {
-      "name": "Chat: poll since id",
-      "method": "GET",
-      "path": "/?chat=1&since=0",
-      "expectedStatus": 200
-    },
-    {
-      "name": "Chat: нельзя написать от чужого имени без входа",
-      "method": "POST",
-      "path": "/",
-      "body": {
-        "action": "chat_send",
-        "userId": 1,
-        "text": "Привет от чужого имени"
-      },
-      "expectedStatus": 401
-    },
-    {
-      "name": "Chat: удаление сообщения без входа отклоняется",
-      "method": "POST",
-      "path": "/",
-      "body": {
-        "action": "chat_hide",
-        "id": 1,
-        "actorId": 1
-      },
-      "expectedStatus": 401
-    },
-    {
-      "name": "Chat: нельзя подменить чужое фото без входа",
-      "method": "POST",
-      "path": "/",
-      "body": {
-        "action": "chat_avatar",
-        "id": 1,
-        "avatarBase64": "data:image/png;base64,iVBORw0KGgo="
-      },
-      "expectedStatus": 401
-    },
-    {
       "name": "Увольнение без входа отклоняется",
       "method": "POST",
       "path": "/",

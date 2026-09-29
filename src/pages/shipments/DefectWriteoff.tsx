@@ -31,6 +31,7 @@ import {
 import { Badge } from '@/components/ui/badge';
 import Icon from '@/components/ui/icon';
 import { useToast } from '@/hooks/use-toast';
+import { useSubmitGuard } from '@/hooks/useSubmitGuard';
 import { fetchShipments, createShipmentDefectWriteoff, type Shipment } from '@/lib/shipmentsApi';
 import { fetchRolls, type Roll } from '@/lib/rollsApi';
 import { formatDateTime as formatDate } from '@/lib/dateUtils';
@@ -65,7 +66,7 @@ const DefectWriteoff = () => {
   const [listError, setListError] = useState<string | null>(null);
 
   const [dialogOpen, setDialogOpen] = useState(false);
-  const [saving, setSaving] = useState(false);
+  const { busy: saving, run } = useSubmitGuard();
   const [comment, setComment] = useState('');
   const [rows, setRows] = useState<ItemRow[]>([{ ...emptyRow }]);
 
@@ -105,7 +106,7 @@ const DefectWriteoff = () => {
   const updateRow = (idx: number, field: keyof ItemRow, value: string) =>
     setRows((r) => r.map((row, i) => (i === idx ? { ...row, [field]: value } : row)));
 
-  const handleSave = async () => {
+  const handleSave = () => {
     const items = rows
       .filter((r) => r.rollId && r.quantity)
       .map((r) => ({ rollId: Number(r.rollId), quantity: Number(r.quantity) }));
@@ -113,20 +114,19 @@ const DefectWriteoff = () => {
       toast({ title: 'Добавьте хотя бы одну позицию', variant: 'destructive' });
       return;
     }
-    setSaving(true);
-    try {
-      await createShipmentDefectWriteoff({
-        comment: comment.trim() || undefined,
-        items,
-      });
-      toast({ title: 'Списание брака оформлено' });
-      setDialogOpen(false);
-      load();
-    } catch (e) {
-      toast({ title: 'Ошибка', description: e instanceof Error ? e.message : undefined, variant: 'destructive' });
-    } finally {
-      setSaving(false);
-    }
+    void run(async () => {
+      try {
+        await createShipmentDefectWriteoff({
+          comment: comment.trim() || undefined,
+          items,
+        });
+        toast({ title: 'Списание брака оформлено' });
+        setDialogOpen(false);
+        load();
+      } catch (e) {
+        toast({ title: 'Ошибка', description: e instanceof Error ? e.message : undefined, variant: 'destructive' });
+      }
+    });
   };
 
   return (

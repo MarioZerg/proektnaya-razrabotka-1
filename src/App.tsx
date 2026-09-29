@@ -3,7 +3,7 @@ import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, Routes, Route } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import { lazy, Suspense } from "react";
 
 // Страницы загружаются по мере открытия, а не все сразу при входе.
@@ -11,7 +11,6 @@ import { lazy, Suspense } from "react";
 // вход открывался очень долго. Экран входа и терминал цеха грузим сразу: это
 // первые экраны, их ждать нельзя.
 const Crm = lazy(() => import("./pages/Crm"));
-const Chat = lazy(() => import("./pages/Chat"));
 const WarehouseMaterials = lazy(() => import("./pages/inventory/WarehouseMaterials"));
 const WorkshopMaterials = lazy(() => import("./pages/inventory/WorkshopMaterials"));
 const Rolls = lazy(() => import("./pages/inventory/Rolls"));
@@ -50,7 +49,6 @@ const TerminationGuide = lazy(() => import("./pages/inventory/TerminationGuide")
 const CuttingGuide = lazy(() => import("./pages/inventory/CuttingGuide"));
 const ShelvesSettings = lazy(() => import("./pages/settings/ShelvesSettings"));
 const MaterialsSettings = lazy(() => import("./pages/settings/MaterialsSettings"));
-const OzonAssets = lazy(() => import("./pages/settings/OzonAssets"));
 const HangersSettings = lazy(() => import("./pages/settings/HangersSettings"));
 const UsersSettings = lazy(() => import("./pages/settings/UsersSettings"));
 const CompanySettings = lazy(() => import("./pages/settings/CompanySettings"));
@@ -121,7 +119,7 @@ const App = () => (
             {/* Терминал цеха: вход по личному QR-коду сотрудника, без пароля. */}
             <Route path="/kiosk/:workshopId" element={<KioskTerminal />} />
             <Route path="/crm" element={<Crm />} />
-            <Route path="/crm/chat" element={<Chat />} />
+            <Route path="/crm/chat" element={<Navigate to="/crm" replace />} />
             <Route path="/crm/inventory/warehouse-materials" element={<WarehouseMaterials />} />
             <Route path="/crm/analytics/material" element={<MaterialAnalysis />} />
             {/* Старые адреса ведут на объединённую страницу: на них есть ссылки
@@ -169,8 +167,6 @@ const App = () => (
             <Route path="/crm/inventory/cutting-guide" element={<CuttingGuide />} />
             <Route path="/crm/settings/shelves" element={<ShelvesSettings />} />
             <Route path="/crm/settings/materials" element={<MaterialsSettings />} />
-            {/* Готовые картинки и таблицы для кабинета OZON. */}
-            <Route path="/crm/settings/ozon-assets" element={<OzonAssets />} />
             <Route path="/crm/settings/hangers" element={<HangersSettings />} />
             <Route path="/crm/settings/users" element={<UsersSettings />} />
             <Route path="/crm/settings/company" element={<CompanySettings />} />

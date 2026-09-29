@@ -12,6 +12,7 @@ import { printManagerReport } from '@/lib/printManagerReport';
 import { payManagerAccrual } from '@/lib/managerFinanceApi';
 import { useAuth } from '@/context/AuthContext';
 import { useToast } from '@/hooks/use-toast';
+import { useIdSubmitGuard } from '@/hooks/useSubmitGuard';
 
 const money = (v: number) => Math.round(v).toLocaleString('ru-RU');
 
@@ -56,47 +57,40 @@ const ManagerAccrualsPanel = ({ userId, canPay = false }: Props) => {
   const { toast } = useToast();
   const [data, setData] = useState<ManagerBalance | null>(null);
   const [loading, setLoading] = useState(true);
-  // Какой отчёт сейчас собирается: сборка занимает секунду-другую, и без
-  // отметки человек жмёт кнопку повторно.
-  const [busyId, setBusyId] = useState<number | null>(null);
+  const { busyId, run: runDownload } = useIdSubmitGuard();
+  const { busyId: payingId, run: runPay } = useIdSubmitGuard();
 
-  // Выплата по конкретному отчёту: вознаграждение уходит в зарплату и
-  // дальше проходит через кассу вместе с оплатой труда цеха.
-  const [payingId, setPayingId] = useState<number | null>(null);
-
-  const pay = async (a: ManagerAccrual) => {
-    setPayingId(a.id);
-    try {
-      await payManagerAccrual(a.id, user?.id);
-      toast({
-        title: 'Передано в зарплату',
-        description: `${money(a.net)} ₽ за ${dmy(a.periodStart)} — ${dmy(a.periodEnd)}`,
-      });
-      await load(true);
-    } catch (e) {
-      toast({
-        title: 'Не удалось выплатить',
-        description: e instanceof Error ? e.message : undefined,
-        variant: 'destructive',
-      });
-    } finally {
-      setPayingId(null);
-    }
+  const pay = (a: ManagerAccrual) => {
+    void runPay(a.id, async () => {
+      try {
+        await payManagerAccrual(a.id, user?.id);
+        toast({
+          title: 'Передано в зарплату',
+          description: `${money(a.net)} ₽ за ${dmy(a.periodStart)} — ${dmy(a.periodEnd)}`,
+        });
+        await load(true);
+      } catch (e) {
+        toast({
+          title: 'Не удалось выплатить',
+          description: e instanceof Error ? e.message : undefined,
+          variant: 'destructive',
+        });
+      }
+    });
   };
 
-  const download = async (a: ManagerAccrual) => {
-    setBusyId(a.id);
-    try {
-      await printManagerReport(a, user?.name || 'Менеджер маркетплейсов');
-    } catch (e) {
-      toast({
-        title: 'Не удалось собрать отчёт',
-        description: e instanceof Error ? e.message : undefined,
-        variant: 'destructive',
-      });
-    } finally {
-      setBusyId(null);
-    }
+  const download = (a: ManagerAccrual) => {
+    void runDownload(a.id, async () => {
+      try {
+        await printManagerReport(a, user?.name || 'Менеджер маркетплейсов');
+      } catch (e) {
+        toast({
+          title: 'Не удалось собрать отчёт',
+          description: e instanceof Error ? e.message : undefined,
+          variant: 'destructive',
+        });
+      }
+    });
   };
 
   const load = useCallback(

@@ -128,7 +128,7 @@ const DocumentsSection = ({
   const uploaded = new Map(data.documents.map((d) => [d.docType, d]));
 
   return (
-    <div className="space-y-3 rounded-md border border-border p-4">
+    <div className="min-w-0 space-y-3 rounded-md border border-border p-3">
       <div>
         <p className="font-bold">Документы</p>
         <p className="mt-1 text-sm text-muted-foreground">
@@ -143,7 +143,7 @@ const DocumentsSection = ({
           return (
             <div
               key={req.docType}
-              className="flex flex-wrap items-start justify-between gap-3 rounded-md border border-border p-3"
+              className="min-w-0 space-y-3 rounded-md border border-border p-3"
             >
               <div className="flex min-w-0 items-start gap-2.5">
                 <Icon
@@ -164,29 +164,30 @@ const DocumentsSection = ({
                 </div>
               </div>
 
-              <div className="flex shrink-0 items-center gap-2">
+              <input
+                ref={(el) => (refs.current[req.docType] = el)}
+                type="file"
+                accept="image/jpeg,image/png,image/heic,image/webp,application/pdf"
+                className="hidden"
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  if (f) handleFile(req.docType, f);
+                  e.target.value = '';
+                }}
+              />
+              <div className={isAdmin && doc?.fileUrl ? 'grid grid-cols-2 gap-2' : ''}>
                 {isAdmin && doc?.fileUrl && (
-                  <Button variant="outline" size="sm" asChild>
+                  <Button variant="outline" size="sm" className="h-11 w-full sm:h-9" asChild>
                     <a href={doc.fileUrl} target="_blank" rel="noreferrer">
                       <Icon name="Eye" size={14} className="mr-1.5" />
                       Открыть
                     </a>
                   </Button>
                 )}
-                <input
-                  ref={(el) => (refs.current[req.docType] = el)}
-                  type="file"
-                  accept="image/jpeg,image/png,image/heic,image/webp,application/pdf"
-                  className="hidden"
-                  onChange={(e) => {
-                    const f = e.target.files?.[0];
-                    if (f) handleFile(req.docType, f);
-                    e.target.value = '';
-                  }}
-                />
                 <Button
-                  variant={doc ? 'ghost' : 'default'}
+                  variant={doc ? 'outline' : 'default'}
                   size="sm"
+                  className="h-11 w-full sm:h-9"
                   disabled={uploading === req.docType}
                   onClick={() => refs.current[req.docType]?.click()}
                 >
@@ -227,9 +228,9 @@ const DocumentsSection = ({
             </p>
           )}
 
-          <div className="flex flex-wrap gap-2">
+          <div className="grid grid-cols-1 gap-2">
             {data.docsStatus.state === 'blocked' && (
-              <Button size="sm" disabled={busy} onClick={handleUnblock}>
+              <Button size="sm" className="h-11 w-full sm:h-9" disabled={busy} onClick={handleUnblock}>
                 <Icon name="LockOpen" size={14} className="mr-1.5" />
                 Вернуть в работу
               </Button>
@@ -238,6 +239,7 @@ const DocumentsSection = ({
               <Button
                 size="sm"
                 variant="outline"
+                className="h-11 w-full sm:h-9"
                 disabled={busy}
                 onClick={() => setRejectOpen(true)}
               >
@@ -259,11 +261,11 @@ const DocumentsSection = ({
               <p className="text-xs text-muted-foreground">
                 Сотрудник увидит это сообщение и получит новые 7 дней на загрузку
               </p>
-              <div className="flex gap-2">
-                <Button size="sm" disabled={busy || !reason.trim()} onClick={handleReject}>
+              <div className="grid grid-cols-1 gap-2">
+                <Button size="sm" className="h-11 w-full sm:h-9" disabled={busy || !reason.trim()} onClick={handleReject}>
                   Отклонить и дать новый срок
                 </Button>
-                <Button size="sm" variant="ghost" onClick={() => setRejectOpen(false)}>
+                <Button size="sm" variant="ghost" className="h-11 w-full sm:h-9" onClick={() => setRejectOpen(false)}>
                   Отмена
                 </Button>
               </div>

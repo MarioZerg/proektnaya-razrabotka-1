@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useSubmitGuard } from '@/hooks/useSubmitGuard';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
@@ -22,31 +23,30 @@ const SendToSewingDialog = ({ item, onOpenChange, onDone }: SendToSewingDialogPr
   const { toast } = useToast();
   const { user } = useAuth();
   const [reason, setReason] = useState('');
-  const [saving, setSaving] = useState(false);
+  const { busy: saving, run } = useSubmitGuard();
 
-  const handleSend = async () => {
+  const handleSend = () => {
     if (!item || !reason.trim()) return;
-    setSaving(true);
-    try {
-      const res = await sendGoodsToSewing(item.id, reason.trim(), user?.id, user?.name);
-      toast({
-        title: 'Вещь списана, заказ отправлен в пошив',
-        description: res.returnedOrder
-          ? `Заказ ${res.returnedOrder} вернулся в производство`
-          : 'Вещь убрана со склада',
-      });
-      setReason('');
-      onOpenChange(false);
-      onDone();
-    } catch (e) {
-      toast({
-        title: 'Не удалось отправить в пошив',
-        description: e instanceof Error ? e.message : undefined,
-        variant: 'destructive',
-      });
-    } finally {
-      setSaving(false);
-    }
+    void run(async () => {
+      try {
+        const res = await sendGoodsToSewing(item.id, reason.trim(), user?.id, user?.name);
+        toast({
+          title: 'Вещь списана, заказ отправлен в пошив',
+          description: res.returnedOrder
+            ? `Заказ ${res.returnedOrder} вернулся в производство`
+            : 'Вещь убрана со склада',
+        });
+        setReason('');
+        onOpenChange(false);
+        onDone();
+      } catch (e) {
+        toast({
+          title: 'Не удалось отправить в пошив',
+          description: e instanceof Error ? e.message : undefined,
+          variant: 'destructive',
+        });
+      }
+    });
   };
 
   return (

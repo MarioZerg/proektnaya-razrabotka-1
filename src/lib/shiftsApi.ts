@@ -1,4 +1,5 @@
 import fetchWithRetry from '@/lib/fetchWithRetry';
+import { isRetiredWorkshop } from '@/lib/workshopsApi';
 const SHIFTS_URL = 'https://functions.poehali.dev/88851192-9090-480d-b9f7-aecfea5e7bdf';
 
 /**
@@ -37,12 +38,17 @@ export const fetchShifts = async (workshopId?: number): Promise<ShiftListItem[]>
   // сервер захлёбывается от залпа, поэтому с повтором.
   const res = await fetchWithRetry(`${SHIFTS_URL}${qs}`);
   const data = await res.json();
-  return data.shifts || [];
+  return ((data.shifts || []) as ShiftListItem[]).filter(
+    (s) => !isRetiredWorkshop({ id: s.workshopId, name: s.workshopName }),
+  );
 };
 
 export const fetchShiftDetail = async (id: number): Promise<ShiftDetail> => {
   const res = await fetch(`${SHIFTS_URL}?id=${id}`);
   const data = await res.json();
+  if (!data.shift || isRetiredWorkshop({ id: data.shift.workshopId, name: data.shift.workshopName })) {
+    throw new Error(data.error || 'Смена не найдена');
+  }
   return data.shift;
 };
 
@@ -60,7 +66,9 @@ export interface WorkingShiftToday {
 export const fetchWorkingToday = async (): Promise<WorkingShiftToday[]> => {
   const res = await fetch(`${SHIFTS_URL}?today=1`);
   const data = await res.json();
-  return data.working || [];
+  return ((data.working || []) as WorkingShiftToday[]).filter(
+    (s) => !isRetiredWorkshop({ id: s.workshopId, name: s.workshopName }),
+  );
 };
 
 /** Цикличный график смены: работает workDays дней, отдыхает offDays, отсчёт от startDate. */

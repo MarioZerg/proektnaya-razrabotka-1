@@ -5,6 +5,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Textarea } from '@/components/ui/textarea';
 import Icon from '@/components/ui/icon';
 import { useToast } from '@/hooks/use-toast';
+import { useSubmitGuard } from '@/hooks/useSubmitGuard';
 import { useAuth } from '@/context/AuthContext';
 import { printStorageSticker } from '@/lib/printStorageSticker';
 import {
@@ -36,6 +37,7 @@ const ReturnScanCard = ({ onProcessed }: ReturnScanCardProps) => {
   const [scanning, setScanning] = useState(false);
   const [found, setFound] = useState<MarketplaceReturn | null>(null);
   const [damageNote, setDamageNote] = useState('');
+  const { busy, run } = useSubmitGuard();
   const [processing, setProcessing] = useState<string | null>(null);
   // Полка выбирается прямо здесь: если вещь целая (клиент отказался при вручении,
   // упаковку даже не вскрывали), кладовщик кладёт её сразу и не гоняет через
@@ -82,7 +84,7 @@ const ReturnScanCard = ({ onProcessed }: ReturnScanCardProps) => {
     }
   };
 
-  const handleProcess = async (outcome: 'utilized' | 'repack' | 'stored') => {
+  const handleProcess = (outcome: 'utilized' | 'repack' | 'stored') => {
     if (!found) return;
     if (outcome === 'utilized' && !damageNote.trim()) {
       toast({
@@ -92,50 +94,54 @@ const ReturnScanCard = ({ onProcessed }: ReturnScanCardProps) => {
       });
       return;
     }
-    setProcessing(outcome);
-    try {
-      const res = await processMarketplaceReturn({
-        id: found.id,
-        outcome,
-        damageNote: damageNote.trim() || undefined,
-        actorId: user?.id,
-        actorName: user?.name,
-        shelfId: outcome === 'stored' && shelfId ? Number(shelfId) : undefined,
-      });
-
-      if (outcome === 'stored' && res.storageBarcode) {
-        // Стикер хранения нужен в любом случае: по нему вещь потом находят на полке.
-        printStorageSticker({
-          storageBarcode: res.storageBarcode,
-          title: found.material && found.width
-            ? `${found.material} ${found.width}×${found.height}`
-            : found.productName,
-          orderNumber: found.postingNumber || found.externalId,
-        });
-      }
-
-      const messages = {
-        utilized: 'Товар утилизирован — попадёт в отчёт администратору',
-        repack: 'Отправлено в цех на перепаковку — упаковщик увидит на терминале',
-        stored: res.placedOnShelf
-          ? `Лежит на полке ${res.shelfName} — наклейте стикер хранения`
-          : 'Наклейте стикер хранения и отсканируйте вещь на полку',
-      };
-      toast({ title: 'Возврат обработан', description: messages[outcome] });
+    void run(async () => {
+      const current = found;
+      setProcessing(outcome);
       setFound(null);
-      setDamageNote('');
-      setShelfId('');
-      onProcessed();
-      setTimeout(() => inputRef.current?.focus(), 0);
-    } catch (e) {
-      toast({
-        title: 'Ошибка',
-        description: e instanceof Error ? e.message : undefined,
-        variant: 'destructive',
-      });
-    } finally {
-      setProcessing(null);
-    }
+      try {
+        const res = await processMarketplaceReturn({
+          id: current.id,
+          outcome,
+          damageNote: damageNote.trim() || undefined,
+          actorId: user?.id,
+          actorName: user?.name,
+          shelfId: outcome === 'stored' && shelfId ? Number(shelfId) : undefined,
+        });
+
+        if (outcome === 'stored' && res.storageBarcode) {
+          // Стикер хранения нужен в любом случае: по нему вещь потом находят на полке.
+          printStorageSticker({
+            storageBarcode: res.storageBarcode,
+            title: current.material && current.width
+              ? `${current.material} ${current.width}×${current.height}`
+              : current.productName,
+            orderNumber: current.postingNumber || current.externalId,
+          });
+        }
+
+        const messages = {
+          utilized: 'Товар утилизирован — попадёт в отчёт администратору',
+          repack: 'Отправлено в цех на перепаковку — упаковщик увидит на терминале',
+          stored: res.placedOnShelf
+            ? `Лежит на полке ${res.shelfName} — наклейте стикер хранения`
+            : 'Наклейте стикер хранения и отсканируйте вещь на полку',
+        };
+        toast({ title: 'Возврат обработан', description: messages[outcome] });
+        setDamageNote('');
+        setShelfId('');
+        onProcessed();
+        setTimeout(() => inputRef.current?.focus(), 0);
+      } catch (e) {
+        setFound(current);
+        toast({
+          title: 'Ошибка',
+          description: e instanceof Error ? e.message : undefined,
+          variant: 'destructive',
+        });
+      } finally {
+        setProcessing(null);
+      }
+    });
   };
 
   return (
@@ -233,7 +239,7 @@ const ReturnScanCard = ({ onProcessed }: ReturnScanCardProps) => {
             <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
               <Button
                 onClick={() => handleProcess('stored')}
-                disabled={processing !== null}
+                disabled={busy || processing !== null}
                 className="h-14"
               >
                 <Icon name="PackageCheck" size={18} className="mr-2" />
@@ -242,7 +248,7 @@ const ReturnScanCard = ({ onProcessed }: ReturnScanCardProps) => {
               <Button
                 variant="outline"
                 onClick={() => handleProcess('repack')}
-                disabled={processing !== null}
+                disabled={busy || processing !== null}
                 className="h-14"
               >
                 <Icon name="PackageOpen" size={18} className="mr-2" />
@@ -251,7 +257,7 @@ const ReturnScanCard = ({ onProcessed }: ReturnScanCardProps) => {
               <Button
                 variant="outline"
                 onClick={() => handleProcess('utilized')}
-                disabled={processing !== null}
+                disabled={busy || processing !== null}
                 className="h-14 text-destructive hover:bg-destructive/10 hover:text-destructive"
               >
                 <Icon name="Trash2" size={18} className="mr-2" />

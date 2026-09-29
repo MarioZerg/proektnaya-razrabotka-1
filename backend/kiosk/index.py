@@ -6,6 +6,26 @@ from datetime import datetime, timedelta, date
 
 import psycopg2
 
+CLOSED_WORKSHOP_NAMES = ('Цех №2', 'Тестовый цех (QA)')
+KEEP_WORKSHOP_NAME = 'Цех №1'
+
+
+def remap_closed_workshop_id(cur, workshop_id):
+    """Второй цех закрыт: все действия, пришедшие с его id, идут в первый."""
+    if workshop_id in (None, '', 0):
+        return workshop_id
+    try:
+        wid = int(workshop_id)
+    except (TypeError, ValueError):
+        return workshop_id
+    cur.execute("SELECT name FROM workshops WHERE id = %s", (wid,))
+    row = cur.fetchone()
+    if not row or row[0] not in CLOSED_WORKSHOP_NAMES:
+        return wid
+    cur.execute("SELECT id FROM workshops WHERE name = %s", (KEEP_WORKSHOP_NAME,))
+    keep = cur.fetchone()
+    return keep[0] if keep else wid
+
 
 def issue_kiosk_session(cur, user_id, role) -> str:
     """Выдаёт ключ сессии сотруднику, вошедшему на терминал сканированием бейджа.
@@ -962,6 +982,8 @@ def handler(event: dict, context) -> dict:
         conn = psycopg2.connect(dsn)
         try:
             cur = conn.cursor()
+            if 'workshopId' in body_data:
+                body_data['workshopId'] = remap_closed_workshop_id(cur, body_data.get('workshopId'))
 
             # Вход на терминал по QR-коду сотрудника формата "{userId}-{shiftNumber}-{ГГГГММДД}"
             # (например 3-20-20250513). Пароль не нужен — терминал стоит в цехе, вход по личному
@@ -985,7 +1007,9 @@ def handler(event: dict, context) -> dict:
                 cur.execute(
                     "SELECT u.id, u.full_name, u.role, u.is_active, w.id, "
                     "u.contract_terminated_at "
-                    "FROM users u LEFT JOIN workshops w ON w.name = u.workshop WHERE u.id = %s",
+                    "FROM users u LEFT JOIN workshops w ON w.name = CASE "
+                    "WHEN u.workshop IN ('Цех №2', 'Тестовый цех (QA)') THEN 'Цех №1' ELSE u.workshop END "
+                    "WHERE u.id = %s",
                     (user_id,),
                 )
                 u_row = cur.fetchone()
@@ -1056,7 +1080,7 @@ def handler(event: dict, context) -> dict:
                             'name': u_row[1],
                             'role': u_row[2],
                             'shiftFromCode': shift_from_code,
-                            'homeWorkshopId': u_row[4],
+                            'homeWorkshopId': remap_closed_workshop_id(cur, u_row[4]),
                             # Из чего выбирать должность при открытии смены.
                             'allowedRoles': allowed_roles,
                         },
@@ -1340,7 +1364,7 @@ def handler(event: dict, context) -> dict:
                 if not packer_workshop_for_pack:
                     # Смена не открыта (бывает у админа) — берём штатный цех профиля.
                     cur.execute(
-                        "SELECT w.id FROM users u JOIN workshops w ON w.name = u.workshop "
+                        "SELECT w.id FROM users u JOIN workshops w ON w.name = CASE WHEN u.workshop IN ('Цех №2', 'Тестовый цех (QA)') THEN 'Цех №1' ELSE u.workshop END "
                         "WHERE u.id = %s",
                         (int(packer_id),),
                     )
@@ -1445,7 +1469,7 @@ def handler(event: dict, context) -> dict:
                 sewer_workshop_for_rate = order_workshop_id
                 if assigned_user_id and not sewer_workshop_for_rate:
                     cur.execute(
-                        "SELECT w.id FROM users u JOIN workshops w ON w.name = u.workshop "
+                        "SELECT w.id FROM users u JOIN workshops w ON w.name = CASE WHEN u.workshop IN ('Цех №2', 'Тестовый цех (QA)') THEN 'Цех №1' ELSE u.workshop END "
                         "WHERE u.id = %s",
                         (int(assigned_user_id),),
                     )
@@ -1501,7 +1525,7 @@ def handler(event: dict, context) -> dict:
                 # Упаковщица получает ставку за пог.м. на стикеровке — берётся из тарифов ЕЁ
                 # СОБСТВЕННОГО цеха (users.workshop её профиля), а не цеха заказа.
                 cur.execute(
-                    "SELECT w.id FROM users u JOIN workshops w ON w.name = u.workshop WHERE u.id = %s",
+                    "SELECT w.id FROM users u JOIN workshops w ON w.name = CASE WHEN u.workshop IN ('Цех №2', 'Тестовый цех (QA)') THEN 'Цех №1' ELSE u.workshop END WHERE u.id = %s",
                     (int(packer_id),),
                 )
                 packer_workshop_row = cur.fetchone()
@@ -1983,7 +2007,7 @@ def handler(event: dict, context) -> dict:
                 repack_amount = 0.0
                 if actor_id:
                     cur.execute(
-                        "SELECT w.id FROM users u JOIN workshops w ON w.name = u.workshop "
+                        "SELECT w.id FROM users u JOIN workshops w ON w.name = CASE WHEN u.workshop IN ('Цех №2', 'Тестовый цех (QA)') THEN 'Цех №1' ELSE u.workshop END "
                         "WHERE u.id = %s",
                         (int(actor_id),),
                     )
@@ -2980,6 +3004,7 @@ def handler(event: dict, context) -> dict:
                     "SELECT w.id, w.name, s.shift_number "
                     "FROM workshops w JOIN shifts s ON s.workshop_id = w.id "
                     "WHERE w.is_active = true AND s.is_active = true "
+                    "AND w.name NOT IN ('Цех №2', 'Тестовый цех (QA)') "
                     "ORDER BY w.id, s.shift_number"
                 )
                 by_workshop = {}
@@ -3189,7 +3214,7 @@ def handler(event: dict, context) -> dict:
 
                 cur.execute(
                     "SELECT u.full_name, u.role, w.id, u.is_active FROM users u "
-                    "LEFT JOIN workshops w ON w.name = u.workshop WHERE u.id = %s",
+                    "LEFT JOIN workshops w ON w.name = CASE WHEN u.workshop IN ('Цех №2', 'Тестовый цех (QA)') THEN 'Цех №1' ELSE u.workshop END WHERE u.id = %s",
                     (int(actor_uid),),
                 )
                 au = cur.fetchone()

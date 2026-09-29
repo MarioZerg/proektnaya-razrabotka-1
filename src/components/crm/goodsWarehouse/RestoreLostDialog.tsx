@@ -12,6 +12,7 @@ import {
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import Icon from '@/components/ui/icon';
 import { useToast } from '@/hooks/use-toast';
+import { useSubmitGuard } from '@/hooks/useSubmitGuard';
 import { useAuth } from '@/context/AuthContext';
 import { restoreLostGoods } from '@/lib/goodsWarehouseApi';
 import { fetchShelves, type Shelf } from '@/lib/shelvesApi';
@@ -55,7 +56,7 @@ const RestoreLostDialog = ({
   const [shelvesError, setShelvesError] = useState<string | null>(null);
   const [shelfId, setShelfId] = useState<string>('');
   const [note, setNote] = useState('');
-  const [saving, setSaving] = useState(false);
+  const { busy: saving, run } = useSubmitGuard();
 
   const loadShelves = () => {
     fetchShelves()
@@ -73,38 +74,37 @@ const RestoreLostDialog = ({
     loadShelves();
   }, [open]);
 
-  const handleRestore = async () => {
-    setSaving(true);
-    try {
-      const res = await restoreLostGoods(
-        goodsId,
-        shelfId ? Number(shelfId) : null,
-        note.trim(),
-        user?.id,
-        user?.name,
-      );
-      toast({
-        title: 'Товар вернулся на склад',
-        description: [
-          res.shelfName ? `Лежит на полке «${res.shelfName}»` : 'Вещь снова на хранении',
-          res.matched > 0 ? `Сразу закрыто заказов: ${res.matched}` : null,
-        ]
-          .filter(Boolean)
-          .join('. '),
-      });
-      setNote('');
-      setShelfId('');
-      onOpenChange(false);
-      onDone();
-    } catch (e) {
-      toast({
-        title: 'Не удалось вернуть товар',
-        description: e instanceof Error ? e.message : undefined,
-        variant: 'destructive',
-      });
-    } finally {
-      setSaving(false);
-    }
+  const handleRestore = () => {
+    void run(async () => {
+      try {
+        const res = await restoreLostGoods(
+          goodsId,
+          shelfId ? Number(shelfId) : null,
+          note.trim(),
+          user?.id,
+          user?.name,
+        );
+        toast({
+          title: 'Товар вернулся на склад',
+          description: [
+            res.shelfName ? `Лежит на полке «${res.shelfName}»` : 'Вещь снова на хранении',
+            res.matched > 0 ? `Сразу закрыто заказов: ${res.matched}` : null,
+          ]
+            .filter(Boolean)
+            .join('. '),
+        });
+        setNote('');
+        setShelfId('');
+        onOpenChange(false);
+        onDone();
+      } catch (e) {
+        toast({
+          title: 'Не удалось вернуть товар',
+          description: e instanceof Error ? e.message : undefined,
+          variant: 'destructive',
+        });
+      }
+    });
   };
 
   return (

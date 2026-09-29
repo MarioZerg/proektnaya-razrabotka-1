@@ -29,6 +29,7 @@ import {
 import { Badge } from '@/components/ui/badge';
 import Icon from '@/components/ui/icon';
 import { useToast } from '@/hooks/use-toast';
+import { useSubmitGuard } from '@/hooks/useSubmitGuard';
 import { fetchShipments, createShipmentReturnToSupplier, type Shipment } from '@/lib/shipmentsApi';
 import { fetchSuppliers, type Supplier } from '@/lib/suppliersApi';
 import { fetchRolls, type Roll } from '@/lib/rollsApi';
@@ -52,7 +53,7 @@ const ReturnToSupplier = () => {
   const [listError, setListError] = useState<string | null>(null);
 
   const [dialogOpen, setDialogOpen] = useState(false);
-  const [saving, setSaving] = useState(false);
+  const { busy: saving, run } = useSubmitGuard();
   const [supplierId, setSupplierId] = useState('');
   const [comment, setComment] = useState('');
   const [rows, setRows] = useState<ItemRow[]>([{ ...emptyRow }]);
@@ -97,7 +98,7 @@ const ReturnToSupplier = () => {
   const updateRow = (idx: number, field: keyof ItemRow, value: string) =>
     setRows((r) => r.map((row, i) => (i === idx ? { ...row, [field]: value } : row)));
 
-  const handleSave = async () => {
+  const handleSave = () => {
     const items = rows
       .filter((r) => r.rollId && r.quantity)
       .map((r) => ({ rollId: Number(r.rollId), quantity: Number(r.quantity) }));
@@ -105,21 +106,20 @@ const ReturnToSupplier = () => {
       toast({ title: 'Добавьте хотя бы одну позицию', variant: 'destructive' });
       return;
     }
-    setSaving(true);
-    try {
-      await createShipmentReturnToSupplier({
-        supplierId: supplierId ? Number(supplierId) : undefined,
-        comment: comment.trim() || undefined,
-        items,
-      });
-      toast({ title: 'Возврат поставщику оформлен' });
-      setDialogOpen(false);
-      load();
-    } catch (e) {
-      toast({ title: 'Ошибка', description: e instanceof Error ? e.message : undefined, variant: 'destructive' });
-    } finally {
-      setSaving(false);
-    }
+    void run(async () => {
+      try {
+        await createShipmentReturnToSupplier({
+          supplierId: supplierId ? Number(supplierId) : undefined,
+          comment: comment.trim() || undefined,
+          items,
+        });
+        toast({ title: 'Возврат поставщику оформлен' });
+        setDialogOpen(false);
+        load();
+      } catch (e) {
+        toast({ title: 'Ошибка', description: e instanceof Error ? e.message : undefined, variant: 'destructive' });
+      }
+    });
   };
 
   return (

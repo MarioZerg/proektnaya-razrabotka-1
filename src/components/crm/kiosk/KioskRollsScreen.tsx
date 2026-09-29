@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useGlobalScanner } from '@/hooks/useGlobalScanner';
+import { useSubmitGuard } from '@/hooks/useSubmitGuard';
 import { playScanSound } from '@/lib/scanSound';
 import { useToast } from '@/hooks/use-toast';
 import {
@@ -54,7 +55,7 @@ const KioskRollsScreen = ({ workshopId, shiftNumber, userId, userName, role }: K
   const [notFound, setNotFound] = useState('');
   // Список рулонов — запасной путь, когда стикер порван или сканер не берёт.
   const [listOpen, setListOpen] = useState(false);
-  const [saving, setSaving] = useState(false);
+  const { busy: saving, run } = useSubmitGuard();
   /** Невыкроенные куски от упаковщицы: пока они есть, рулон закрыть нельзя. */
   const [packerBlock, setPackerBlock] = useState<{
     total: number;
@@ -186,78 +187,75 @@ const KioskRollsScreen = ({ workshopId, shiftNumber, userId, userName, role }: K
    * иначе цех расходует материал, которого физически нет, и расхождение всплывает
    * только на инвентаризации.
    */
-  const handleAccept = async (roll: Roll) => {
-    setSaving(true);
-    try {
-      await acceptRoll(roll.id, userId, userName);
-      toast({ title: `Рулон #${roll.barcode} принят`, description: 'Можно работать' });
-      load();
-    } catch (e) {
-      toast({
-        title: 'Не удалось принять рулон',
-        description: e instanceof Error ? e.message : undefined,
-        variant: 'destructive',
-      });
-    } finally {
-      setSaving(false);
-    }
+  const handleAccept = (roll: Roll) => {
+    void run(async () => {
+      try {
+        await acceptRoll(roll.id, userId, userName);
+        toast({ title: `Рулон #${roll.barcode} принят`, description: 'Можно работать' });
+        load();
+      } catch (e) {
+        toast({
+          title: 'Не удалось принять рулон',
+          description: e instanceof Error ? e.message : undefined,
+          variant: 'destructive',
+        });
+      }
+    });
   };
 
-  const handleClose = async () => {
+  const handleClose = () => {
     if (!selected) return;
-    setSaving(true);
-    try {
-      // Недостачу не спрашиваем: рулон закрывают, когда он по факту кончился.
-      // Сколько метров числилось в системе, сервер запишет сам.
-      await closeRoll(selected.id, 0, userId, userName);
-      toast({ title: 'Рулон закрыт' });
-      setSelected(null);
-      // Возвращаем на экран сканирования: следующий рулон закройщик тоже сканирует.
-      setListOpen(false);
-      load();
-    } catch (e) {
-      // В цехе лежит невыкроенный материал от упаковщицы — это не обычная ошибка,
-      // а задача закройщице. Показываем крупной карточкой со списком кусков:
-      // мелкую строку внизу экрана от станка не разглядеть.
-      if (e instanceof PackerPiecesError) {
-        setPackerBlock({ total: e.total, pieces: e.pieces, unit: e.unit });
-        return;
+    void run(async () => {
+      try {
+        // Недостачу не спрашиваем: рулон закрывают, когда он по факту кончился.
+        // Сколько метров числилось в системе, сервер запишет сам.
+        await closeRoll(selected.id, 0, userId, userName);
+        toast({ title: 'Рулон закрыт' });
+        setSelected(null);
+        // Возвращаем на экран сканирования: следующий рулон закройщик тоже сканирует.
+        setListOpen(false);
+        load();
+      } catch (e) {
+        // В цехе лежит невыкроенный материал от упаковщицы — это не обычная ошибка,
+        // а задача закройщице. Показываем крупной карточкой со списком кусков:
+        // мелкую строку внизу экрана от станка не разглядеть.
+        if (e instanceof PackerPiecesError) {
+          setPackerBlock({ total: e.total, pieces: e.pieces, unit: e.unit });
+          return;
+        }
+        toast({
+          title: 'Не удалось закрыть рулон',
+          description: e instanceof Error ? e.message : undefined,
+          variant: 'destructive',
+        });
       }
-      toast({
-        title: 'Не удалось закрыть рулон',
-        description: e instanceof Error ? e.message : undefined,
-        variant: 'destructive',
-      });
-    } finally {
-      setSaving(false);
-    }
+    });
   };
 
   // Брак в начале рулона (больше 10 пог.м): резать дальше нельзя. Рулон отставляем —
   // он остаётся в цехе, но в раскрой не идёт, а кладовщик заберёт его на склад.
-  const handleFlagDefect = async () => {
+  const handleFlagDefect = () => {
     if (!selected || !defectReason.trim()) return;
-    setSaving(true);
-    try {
-      await flagRollDefect(selected.id, defectReason.trim(), userId, userName);
-      toast({
-        title: `Рулон #${selected.barcode} отставлен`,
-        description: 'Резать его нельзя. Кладовщик заберёт рулон на склад — сообщите руководителю',
-      });
-      setDefectOpen(false);
-      setDefectReason('');
-      setSelected(null);
-      setListOpen(false);
-      load();
-    } catch (e) {
-      toast({
-        title: 'Не удалось отметить рулон',
-        description: e instanceof Error ? e.message : undefined,
-        variant: 'destructive',
-      });
-    } finally {
-      setSaving(false);
-    }
+    void run(async () => {
+      try {
+        await flagRollDefect(selected.id, defectReason.trim(), userId, userName);
+        toast({
+          title: `Рулон #${selected.barcode} отставлен`,
+          description: 'Резать его нельзя. Кладовщик заберёт рулон на склад — сообщите руководителю',
+        });
+        setDefectOpen(false);
+        setDefectReason('');
+        setSelected(null);
+        setListOpen(false);
+        load();
+      } catch (e) {
+        toast({
+          title: 'Не удалось отметить рулон',
+          description: e instanceof Error ? e.message : undefined,
+          variant: 'destructive',
+        });
+      }
+    });
   };
 
 

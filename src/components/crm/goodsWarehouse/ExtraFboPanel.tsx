@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useIdSubmitGuard } from '@/hooks/useSubmitGuard';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import Icon from '@/components/ui/icon';
@@ -38,39 +39,42 @@ const ExtraFboPanel = ({ items, onReload }: ExtraFboPanelProps) => {
   const { toast } = useToast();
   const { user } = useAuth();
   const [open, setOpen] = useState(false);
-  const [busyId, setBusyId] = useState<number | null>(null);
+  const { busyId, run } = useIdSubmitGuard();
+  const [hiddenIds, setHiddenIds] = useState<number[]>([]);
 
   // Вернуть на полки может админ и старший кладовщик: решение меняет и состав
   // заявки, и остатки склада. Сервер проверяет право ещё раз — спрятанной
   // кнопки для защиты мало.
   const canRelease = user?.role === 'admin' || user?.role === 'senior_storekeeper';
 
-  if (!items.length) return null;
+  const visible = items.filter((i) => !hiddenIds.includes(i.id));
+  if (!visible.length) return null;
 
-  const handleRelease = async (item: PickingOrder) => {
-    setBusyId(item.id);
-    try {
-      const res = await releaseGoodsToShelf(item.id, null, undefined, user?.id, user?.name);
-      toast({
-        title: 'Вещь вернулась на полки',
-        description:
-          `${res.product || 'Товар'} · ${res.storageBarcode || ''} — ` +
-          `полка ${res.shelfName || 'не указана'}. ` +
-          // Ярлык снят намеренно: на вещи был OZN чужой заявки, и с ним она
-          // уедет не туда. Без стикера хранения вещь на полке не опознать.
-          'Наклейте стикер хранения: ярлык поставки снят' +
-          (res.matched ? `. Закрыто заказов: ${res.matched}` : ''),
-      });
-      onReload();
-    } catch (e) {
-      toast({
-        title: 'Не удалось вернуть вещь',
-        description: e instanceof Error ? e.message : undefined,
-        variant: 'destructive',
-      });
-    } finally {
-      setBusyId(null);
-    }
+  const handleRelease = (item: PickingOrder) => {
+    void run(item.id, async () => {
+      setHiddenIds((ids) => [...ids, item.id]);
+      try {
+        const res = await releaseGoodsToShelf(item.id, null, undefined, user?.id, user?.name);
+        toast({
+          title: 'Вещь вернулась на полки',
+          description:
+            `${res.product || 'Товар'} · ${res.storageBarcode || ''} — ` +
+            `полка ${res.shelfName || 'не указана'}. ` +
+            // Ярлык снят намеренно: на вещи был OZN чужой заявки, и с ним она
+            // уедет не туда. Без стикера хранения вещь на полке не опознать.
+            'Наклейте стикер хранения: ярлык поставки снят' +
+            (res.matched ? `. Закрыто заказов: ${res.matched}` : ''),
+        });
+        onReload();
+      } catch (e) {
+        setHiddenIds((ids) => ids.filter((id) => id !== item.id));
+        toast({
+          title: 'Не удалось вернуть вещь',
+          description: e instanceof Error ? e.message : undefined,
+          variant: 'destructive',
+        });
+      }
+    });
   };
 
   return (
@@ -83,7 +87,7 @@ const ExtraFboPanel = ({ items, onReload }: ExtraFboPanelProps) => {
         <Icon name="PackageX" size={18} className="mt-0.5 shrink-0 text-amber-700" />
         <div className="flex-1">
           <p className="text-sm font-semibold text-amber-900">
-            Собрано лишнего: {items.length}
+            Собрано лишнего: {visible.length}
           </p>
           <p className="text-sm text-amber-900">
             Эти размеры заявка уже набрала коробами — в короб они не пойдут.
@@ -100,7 +104,7 @@ const ExtraFboPanel = ({ items, onReload }: ExtraFboPanelProps) => {
       </CollapsibleTrigger>
       <CollapsibleContent>
         <div className="space-y-2 border-t border-amber-300 p-3">
-          {items.map((item) => (
+          {visible.map((item) => (
             <div
               key={item.id}
               className="flex flex-wrap items-center gap-3 rounded-md border border-amber-200 bg-white px-3 py-2"

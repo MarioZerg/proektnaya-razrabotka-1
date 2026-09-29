@@ -9,6 +9,15 @@ import {
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/context/AuthContext';
 
+/** Вещь в подборе без полки — отдельная кнопка фильтра, не смешиваем с именованными. */
+const NO_SHELF = '__none__';
+
+export type PickingShelfStat = {
+  key: string;
+  name: string;
+  count: number;
+};
+
 /**
  * Данные страницы «Товар к подбору»: загрузка, сверка с маркетплейсом и счётчики.
  *
@@ -26,6 +35,8 @@ export const useGoodsPicking = () => {
   const [loading, setLoading] = useState(true);
   const [listError, setListError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
+  /** Какую полку смотрим: null — все, иначе ключ полки или «без полки». */
+  const [shelfFilter, setShelfFilter] = useState<string | null>(null);
   const [scanOpen, setScanOpen] = useState(false);
   const [rematching, setRematching] = useState(false);
 
@@ -149,7 +160,7 @@ export const useGoodsPicking = () => {
   const extraItems = useMemo(() => orders.filter((o) => o.extraForSupply), [orders]);
   const workOrders = useMemo(() => orders.filter((o) => !o.extraForSupply), [orders]);
 
-  const filtered = useMemo(() => {
+  const searchFiltered = useMemo(() => {
     const q = search.trim().toLowerCase();
     if (!q) return workOrders;
     return workOrders.filter(
@@ -164,8 +175,44 @@ export const useGoodsPicking = () => {
         o.marketplace?.toLowerCase().includes(q) ||
         o.orderType?.toLowerCase().includes(q)
     );
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [orders, search]);
+  }, [workOrders, search]);
+
+  /** Сколько штук к подбору на каждой полке — по текущему поиску/FBS/FBO. */
+  const shelfStats = useMemo<PickingShelfStat[]>(() => {
+    const map = new Map<string, number>();
+    for (const o of searchFiltered) {
+      const key = o.shelfName?.trim() || NO_SHELF;
+      map.set(key, (map.get(key) || 0) + 1);
+    }
+    const named: PickingShelfStat[] = [];
+    let none: PickingShelfStat | null = null;
+    for (const [key, count] of map) {
+      if (key === NO_SHELF) {
+        none = { key, name: 'Без полки', count };
+      } else {
+        named.push({ key, name: key, count });
+      }
+    }
+    named.sort((a, b) => a.name.localeCompare(b.name, 'ru', { numeric: true }));
+    if (none) named.push(none);
+    return named;
+  }, [searchFiltered]);
+
+  // Полка исчезла из списка (всё собрали или сменился поиск) — сбрасываем фильтр,
+  // иначе экран остаётся пустым, хотя работа ещё есть.
+  useEffect(() => {
+    if (!shelfFilter) return;
+    if (!shelfStats.some((s) => s.key === shelfFilter)) {
+      setShelfFilter(null);
+    }
+  }, [shelfStats, shelfFilter]);
+
+  const filtered = useMemo(() => {
+    if (!shelfFilter) return searchFiltered;
+    return searchFiltered.filter(
+      (o) => (o.shelfName?.trim() || NO_SHELF) === shelfFilter
+    );
+  }, [searchFiltered, shelfFilter]);
 
   /** Разбивка отобранного по площадке и схеме: «OZON FBS: 9», «OZON FBO: 19». */
   const byScheme = useMemo(() => {
@@ -178,14 +225,15 @@ export const useGoodsPicking = () => {
   }, [filtered]);
 
   /** Главные числа дня: сколько собирать по FBS и сколько по FBO.
-   * Работа разная — FBS клеится поштучно, FBO уезжает коробкой. */
+   * Работа разная — FBS клеится поштучно, FBO уезжает коробкой.
+   * Считаем до фильтра полки: плитки — план дня, а не остаток на одной полке. */
   const fbsCount = useMemo(
-    () => filtered.filter((o) => (o.orderType || '').toUpperCase() === 'FBS').length,
-    [filtered]
+    () => searchFiltered.filter((o) => (o.orderType || '').toUpperCase() === 'FBS').length,
+    [searchFiltered]
   );
   const fboCount = useMemo(
-    () => filtered.filter((o) => (o.orderType || '').toUpperCase() === 'FBO').length,
-    [filtered]
+    () => searchFiltered.filter((o) => (o.orderType || '').toUpperCase() === 'FBO').length,
+    [searchFiltered]
   );
 
   return {
@@ -193,6 +241,9 @@ export const useGoodsPicking = () => {
     listError,
     search,
     setSearch,
+    shelfFilter,
+    setShelfFilter,
+    shelfStats,
     scanOpen,
     setScanOpen,
     rematching,

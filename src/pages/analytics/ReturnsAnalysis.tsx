@@ -62,8 +62,8 @@ const ReturnsAnalysis = () => {
 
   return (
     <CrmLayout>
-      <div className="space-y-6">
-        <div className="flex flex-wrap items-start justify-between gap-3">
+      <div className="space-y-4 sm:space-y-6">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div>
             <h1 className="text-xl font-bold">Анализ возвратов</h1>
             <p className="mt-1 text-sm text-muted-foreground">
@@ -71,7 +71,7 @@ const ReturnsAnalysis = () => {
             </p>
           </div>
           <Select value={days} onValueChange={setDays}>
-            <SelectTrigger className="w-full sm:w-[180px]">
+            <SelectTrigger className="h-11 w-full sm:h-10 sm:w-[180px]">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -83,18 +83,18 @@ const ReturnsAnalysis = () => {
           </Select>
         </div>
 
-        <div className="flex flex-wrap gap-2">
+        <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap sm:gap-2">
           <Card className="border-border shadow-none">
-            <CardContent className="flex items-center gap-2 px-4 py-3">
+            <CardContent className="flex flex-col gap-0.5 px-3 py-3 sm:flex-row sm:items-center sm:gap-2 sm:px-4">
               <Icon name="Undo2" size={18} className="text-muted-foreground" />
-              <span className="text-sm text-muted-foreground">Всего возвратов</span>
+              <span className="text-xs text-muted-foreground sm:text-sm">Всего возвратов</span>
               <span className="text-lg font-bold">{totalReturns}</span>
             </CardContent>
           </Card>
           <Card className="border-border shadow-none">
-            <CardContent className="flex items-center gap-2 px-4 py-3">
+            <CardContent className="flex flex-col gap-0.5 px-3 py-3 sm:flex-row sm:items-center sm:gap-2 sm:px-4">
               <Icon name="Trash2" size={18} className="text-destructive" />
-              <span className="text-sm text-muted-foreground">Утилизировано</span>
+              <span className="text-xs text-muted-foreground sm:text-sm">Утилизировано</span>
               <span className="text-lg font-bold">{totalUtilized}</span>
             </CardContent>
           </Card>
@@ -127,46 +127,97 @@ const ReturnsAnalysis = () => {
                   </p>
                   )
                 ) : (
-                  <Table>
-                    <TableHeader>
-                      <TableRow className="bg-primary hover:bg-primary">
-                        <TableHead className="text-primary-foreground">Швея</TableHead>
-                        <TableHead className="text-primary-foreground">Закройщик</TableHead>
-                        <TableHead className="text-primary-foreground">Отшито</TableHead>
-                        <TableHead className="text-primary-foreground">Вернулось</TableHead>
-                        <TableHead className="text-primary-foreground">% возвратов</TableHead>
-                        <TableHead className="text-primary-foreground">Утилизировано</TableHead>
-                        <TableHead className="text-primary-foreground">Перепаковка</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
+                  <>
+                    <div className="space-y-2 p-3 lg:hidden">
                       {bySewer.map((r) => (
-                        <TableRow key={`${r.sewerName}-${r.cutterName}`}>
-                          <TableCell className="font-medium">{r.sewerName}</TableCell>
-                          <TableCell className="text-sm text-muted-foreground">
-                            {r.cutterName}
-                          </TableCell>
-                          <TableCell>{r.madeTotal || '—'}</TableCell>
-                          <TableCell className="font-medium">{r.total}</TableCell>
-                          <TableCell>
-                            {r.returnRate === null ? (
-                              '—'
-                            ) : (
-                              <Badge
-                                variant={r.returnRate >= HIGH_RETURN_RATE ? 'destructive' : 'secondary'}
-                              >
-                                {r.returnRate}%
-                              </Badge>
-                            )}
-                          </TableCell>
-                          <TableCell className={r.utilized > 0 ? 'font-medium text-destructive' : ''}>
-                            {r.utilized}
-                          </TableCell>
-                          <TableCell>{r.repack}</TableCell>
-                        </TableRow>
+                        <div
+                          key={`${r.sewerName}-${r.cutterName}`}
+                          className="min-w-0 overflow-hidden rounded-lg border border-border bg-card p-3"
+                        >
+                          <p className="break-words font-semibold leading-snug">{r.sewerName}</p>
+                          <p className="mt-0.5 text-xs text-muted-foreground">
+                            Закройщик: {r.cutterName || '—'}
+                          </p>
+                          <div className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 text-sm">
+                            <span className="text-muted-foreground">Отшито</span>
+                            <span className="text-right tabular-nums">{r.madeTotal || '—'}</span>
+                            <span className="text-muted-foreground">Вернулось</span>
+                            <span className="text-right font-medium tabular-nums">{r.total}</span>
+                            <span className="text-muted-foreground">% возвратов</span>
+                            <span className="text-right">
+                              {r.returnRate === null ? (
+                                '—'
+                              ) : (
+                                <Badge
+                                  variant={
+                                    r.returnRate >= HIGH_RETURN_RATE ? 'destructive' : 'secondary'
+                                  }
+                                >
+                                  {r.returnRate}%
+                                </Badge>
+                              )}
+                            </span>
+                            <span className="text-muted-foreground">Утиль</span>
+                            <span
+                              className={`text-right tabular-nums ${
+                                r.utilized > 0 ? 'font-medium text-destructive' : ''
+                              }`}
+                            >
+                              {r.utilized}
+                            </span>
+                            <span className="text-muted-foreground">Перепаковка</span>
+                            <span className="text-right tabular-nums">{r.repack}</span>
+                          </div>
+                        </div>
                       ))}
-                    </TableBody>
-                  </Table>
+                    </div>
+                    <div className="hidden lg:block">
+                      <Table>
+                        <TableHeader>
+                          <TableRow className="bg-primary hover:bg-primary">
+                            <TableHead className="text-primary-foreground">Швея</TableHead>
+                            <TableHead className="text-primary-foreground">Закройщик</TableHead>
+                            <TableHead className="text-primary-foreground">Отшито</TableHead>
+                            <TableHead className="text-primary-foreground">Вернулось</TableHead>
+                            <TableHead className="text-primary-foreground">% возвратов</TableHead>
+                            <TableHead className="text-primary-foreground">Утилизировано</TableHead>
+                            <TableHead className="text-primary-foreground">Перепаковка</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {bySewer.map((r) => (
+                            <TableRow key={`${r.sewerName}-${r.cutterName}`}>
+                              <TableCell className="font-medium">{r.sewerName}</TableCell>
+                              <TableCell className="text-sm text-muted-foreground">
+                                {r.cutterName}
+                              </TableCell>
+                              <TableCell>{r.madeTotal || '—'}</TableCell>
+                              <TableCell className="font-medium">{r.total}</TableCell>
+                              <TableCell>
+                                {r.returnRate === null ? (
+                                  '—'
+                                ) : (
+                                  <Badge
+                                    variant={
+                                      r.returnRate >= HIGH_RETURN_RATE ? 'destructive' : 'secondary'
+                                    }
+                                  >
+                                    {r.returnRate}%
+                                  </Badge>
+                                )}
+                              </TableCell>
+                              <TableCell
+                                className={r.utilized > 0 ? 'font-medium text-destructive' : ''}
+                              >
+                                {r.utilized}
+                              </TableCell>
+                              <TableCell>{r.repack}</TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    </div>
+                  </>
                 )}
               </CardContent>
             </Card>

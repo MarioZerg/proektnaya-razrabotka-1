@@ -20,8 +20,6 @@ const UsersSettings = () => {
     setRoleFilter,
     search,
     setSearch,
-    workshopFilter,
-    setWorkshopFilter,
     tab,
     setTab,
     activeCount,
@@ -109,8 +107,6 @@ const UsersSettings = () => {
           onUnarchive={handleUnarchive}
           roleFilter={roleFilter}
           setRoleFilter={setRoleFilter}
-          workshopFilter={workshopFilter}
-          setWorkshopFilter={setWorkshopFilter}
           search={search}
           setSearch={setSearch}
           onOpenCard={openCard}

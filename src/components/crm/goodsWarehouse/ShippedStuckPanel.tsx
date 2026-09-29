@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import Icon from '@/components/ui/icon';
 import { useToast } from '@/hooks/use-toast';
+import { useSubmitGuard } from '@/hooks/useSubmitGuard';
 import { useAuth } from '@/context/AuthContext';
 import { shortProductName } from '@/lib/shortProductName';
 import {
@@ -42,7 +43,7 @@ const ShippedStuckPanel = ({ onReload }: ShippedStuckPanelProps) => {
   const [items, setItems] = useState<ShippedStuckItem[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
-  const [closing, setClosing] = useState(false);
+  const { busy: closing, run } = useSubmitGuard();
 
   // Кнопка только у тех, кто отвечает за склад деньгами.
   const canClose = user?.role === 'admin' || user?.role === 'senior_storekeeper';
@@ -74,31 +75,31 @@ const ShippedStuckPanel = ({ onReload }: ShippedStuckPanelProps) => {
   }
   if (items.length === 0) return null;
 
-  const handleClose = async () => {
-    if (closing) return;
-    setClosing(true);
-    try {
-      const res = await closeShippedStuck(
-        items.map((i) => i.id),
-        user?.id,
-        user?.name,
-      );
-      toast({
-        title: `Закрыто позиций: ${res.closed}`,
-        description: 'Эти вещи уже у клиентов — из подбора они убраны',
-      });
-      setOpen(false);
-      load();
-      onReload();
-    } catch (e) {
-      toast({
-        title: 'Не удалось закрыть',
-        description: e instanceof Error ? e.message : undefined,
-        variant: 'destructive',
-      });
-    } finally {
-      setClosing(false);
-    }
+  const handleClose = () => {
+    void run(async () => {
+      const snapshot = items;
+      setItems([]);
+      try {
+        const res = await closeShippedStuck(
+          snapshot.map((i) => i.id),
+          user?.id,
+          user?.name,
+        );
+        toast({
+          title: `Закрыто позиций: ${res.closed}`,
+          description: 'Эти вещи уже у клиентов — из подбора они убраны',
+        });
+        setOpen(false);
+        onReload();
+      } catch (e) {
+        setItems(snapshot);
+        toast({
+          title: 'Не удалось закрыть',
+          description: e instanceof Error ? e.message : undefined,
+          variant: 'destructive',
+        });
+      }
+    });
   };
 
   return (

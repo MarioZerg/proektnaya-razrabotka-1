@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import type { SupplyBox, SupplyDetail } from '@/lib/marketplaceSuppliesApi';
 import { fetchOzonBoxLabel } from '@/lib/ozonFboApi';
 import { useToast } from '@/hooks/use-toast';
+import { useSubmitGuard } from '@/hooks/useSubmitGuard';
 import { useScannerAutoSubmit } from '@/hooks/useScannerAutoSubmit';
 import { printWbBoxLabel } from '@/lib/wbBoxLabel';
 import { printBoxLabelFromUrl } from '@/lib/printMarketplaceLabel';
@@ -46,7 +47,7 @@ export const useSupplyBoxCard = ({
 }: UseSupplyBoxCardArgs) => {
   const [orderNumber, setOrderNumber] = useState('');
   const [scanning, setScanning] = useState(false);
-  const [closing, setClosing] = useState(false);
+  const { busy: closing, run } = useSubmitGuard();
   const [printing, setPrinting] = useState(false);
   const [fetchingLabel, setFetchingLabel] = useState(false);
   const { toast } = useToast();
@@ -108,10 +109,9 @@ export const useSupplyBoxCard = ({
 
   // OZON FBO: закрываем короб — сервер создаёт грузоместо на OZON и тянет PDF
   // этикетки именно этого короба. Печатать её кладовщик будет кнопкой ниже.
-  const handleCloseOzon = async () => {
+  const handleCloseOzon = () => {
     if (!onCloseOzonBox) return;
-    setClosing(true);
-    try {
+    void run(async () => {
       await onCloseOzonBox(box.id);
       // СРАЗУ ИДЁМ ЗА СТИКЕРОМ, НЕ ЗАСТАВЛЯЯ ЖАТЬ ВТОРУЮ КНОПКУ.
       //
@@ -124,19 +124,14 @@ export const useSupplyBoxCard = ({
       // Ошибку здесь не показываем: короб уже закрыт, и если площадка
       // задерживает файл, об этом скажет сам handleFetchLabel.
       await handleFetchLabel();
-    } finally {
-      setClosing(false);
-    }
+    });
   };
 
-  const handleCloseAndPrint = async () => {
-    setClosing(true);
-    try {
+  const handleCloseAndPrint = () => {
+    void run(async () => {
       await onCloseBox(box.id);
       await printWbBoxLabel(supply, box);
-    } finally {
-      setClosing(false);
-    }
+    });
   };
 
   /**

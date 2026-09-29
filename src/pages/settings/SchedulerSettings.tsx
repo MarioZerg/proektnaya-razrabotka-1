@@ -3,6 +3,7 @@ import CrmLayout from '@/components/crm/CrmLayout';
 import { usePolling } from '@/hooks/usePolling';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import Icon from '@/components/ui/icon';
 import { useAuth } from '@/context/AuthContext';
 import SchedulerJobCard from '@/components/crm/scheduler/SchedulerJobCard';
@@ -13,6 +14,19 @@ import {
   type SchedulerJob,
 } from '@/lib/schedulerStatusApi';
 import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
+
+const TAB_SHORT: Record<string, string> = {
+  orders: 'Заказы',
+  cancels: 'Отмены',
+  service: 'Склад',
+};
+
+const RECONCILE_TAB = 'reconcile';
+
+const brokenCount = (jobs: SchedulerJob[], groupKey: string) =>
+  jobs.filter(
+    (j) => j.group === groupKey && (j.state === 'late' || j.state === 'never'),
+  ).length;
 
 /**
  * Планировщик — состояние фоновых заданий.
@@ -25,9 +39,8 @@ import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchE
  * Поэтому страница показывает не «настроено / не настроено», а факт: когда каждое
  * задание отработало в последний раз и что нашло.
  *
- * Задания сгруппированы по смыслу работы, а не по маркетплейсам: админ открывает
- * страницу с вопросом «что сломалось», и ему важно сразу видеть ЧТО именно —
- * приём заказов, ловля отмен или служебная работа склада.
+ * Вкладки — по смыслу работы: приём заказов, отмены, склад и сверка с площадками.
+ * Админ открывает страницу с вопросом «что сломалось» и сразу видит нужный раздел.
  */
 const SchedulerSettings = () => {
   const { user } = useAuth();
@@ -36,15 +49,14 @@ const SchedulerSettings = () => {
   const [jobs, setJobs] = useState<SchedulerJob[]>([]);
   const [groups, setGroups] = useState<SchedulerGroup[]>([]);
   const [problems, setProblems] = useState(0);
-  // Задания, которые бьют чаще, чем задумано: прямой перерасход на облако.
   const [tooOften, setTooOften] = useState(0);
   const [extraPerMonth, setExtraPerMonth] = useState(0);
   const [loading, setLoading] = useState(true);
   const [listError, setListError] = useState<string | null>(null);
+  const [tab, setTab] = useState<string | null>(null);
 
   const load = () => {
     setLoading(true);
-    // Передаём себя: ссылки с ключом запуска сервер отдаёт только администратору.
     fetchSchedulerStatus(user?.id)
       .then((d) => {
         setListError(null);
@@ -65,10 +77,12 @@ const SchedulerSettings = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id]);
 
-  // Обновляем сами: страницу держат открытой, а задания продолжают работать.
-  // Через usePolling, а не свой setInterval: тот опрашивал сервер и в свёрнутой
-  // вкладке, и ночью — а эту страницу админ нередко оставляет открытой на день.
   usePolling(load, 120000, !!user?.id && isAdmin);
+
+  const currentTab =
+    tab && (groups.some((g) => g.key === tab) || tab === RECONCILE_TAB)
+      ? tab
+      : groups.find((g) => brokenCount(jobs, g.key) > 0)?.key || groups[0]?.key || RECONCILE_TAB;
 
   if (!isAdmin) {
     return (
@@ -80,8 +94,8 @@ const SchedulerSettings = () => {
 
   return (
     <CrmLayout>
-      <div className="space-y-6">
-        <div className="flex flex-wrap items-start justify-between gap-3">
+      <div className="space-y-4">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div>
             <h1 className="text-xl font-bold">Планировщик</h1>
             <p className="mt-1 text-sm text-muted-foreground">
@@ -89,7 +103,12 @@ const SchedulerSettings = () => {
               ведут склад. Работают сами, без открытой системы
             </p>
           </div>
-          <Button variant="outline" size="sm" onClick={load} disabled={loading}>
+          <Button
+            variant="outline"
+            className="h-11 w-full sm:h-9 sm:w-auto"
+            onClick={load}
+            disabled={loading}
+          >
             <Icon
               name={loading ? 'Loader2' : 'RefreshCw'}
               size={14}
@@ -107,7 +126,6 @@ const SchedulerSettings = () => {
           />
         )}
 
-        {/* Общее состояние: одной строкой, чтобы не вчитываться в карточки. */}
         {!loading && !listError && (
           <div
             className={`flex items-center gap-3 rounded-lg border px-4 py-3 ${
@@ -127,10 +145,6 @@ const SchedulerSettings = () => {
           </div>
         )}
 
-        {/* Перерасход из-за расписания. Отдельно от поломок: задания при этом
-            «работают», их просто дёргают в десятки раз чаще нужного — счёт растёт,
-            а база начинает отвечать отказами. В одной карточке это не видно,
-            видно только суммой. */}
         {!loading && tooOften > 0 && (
           <div className="flex items-start gap-3 rounded-lg border border-amber-300 bg-amber-50 px-4 py-3">
             <Icon name="Timer" size={24} className="mt-0.5 shrink-0 text-amber-600" />
@@ -153,42 +167,50 @@ const SchedulerSettings = () => {
             Загрузка...
           </div>
         ) : (
-          groups.map((g) => {
-            const groupJobs = jobs.filter((j) => j.group === g.key);
-            if (groupJobs.length === 0) return null;
-            // Сломанные задания внутри раздела — сразу видно, сколько именно.
-            const broken = groupJobs.filter(
-              (j) => j.state === 'late' || j.state === 'never',
-            ).length;
+          <Tabs value={currentTab} onValueChange={setTab} className="min-w-0">
+            <TabsList className="flex h-auto w-full flex-wrap justify-start gap-1">
+              {groups.map((g) => {
+                const broken = brokenCount(jobs, g.key);
+                return (
+                  <TabsTrigger key={g.key} value={g.key} className="shrink-0 gap-1.5">
+                    {TAB_SHORT[g.key] || g.title}
+                    {broken > 0 ? (
+                      <span className="rounded-full bg-amber-100 px-1.5 py-0 text-[11px] font-bold text-amber-900">
+                        {broken}
+                      </span>
+                    ) : null}
+                  </TabsTrigger>
+                );
+              })}
+              <TabsTrigger value={RECONCILE_TAB} className="shrink-0">
+                Сверка
+              </TabsTrigger>
+            </TabsList>
 
-            return (
-              <div key={g.key} className="space-y-2">
-                <div className="flex flex-wrap items-baseline gap-x-3">
-                  <h2 className="font-bold">{g.title}</h2>
+            {groups.map((g) => {
+              const groupJobs = jobs.filter((j) => j.group === g.key);
+              return (
+                <TabsContent key={g.key} value={g.key} className="mt-4 space-y-3">
                   <p className="text-sm text-muted-foreground">{g.hint}</p>
-                  {broken > 0 && (
-                    <span className="rounded-full bg-amber-100 px-2 py-0.5 text-xs font-bold text-amber-900">
-                      не работает: {broken}
-                    </span>
+                  {groupJobs.length === 0 ? (
+                    <p className="text-sm text-muted-foreground">Заданий в этом разделе нет.</p>
+                  ) : (
+                    <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                      {groupJobs.map((j) => (
+                        <SchedulerJobCard key={j.key} job={j} />
+                      ))}
+                    </div>
                   )}
-                </div>
-                <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-                  {groupJobs.map((j) => (
-                    <SchedulerJobCard key={j.key} job={j} />
-                  ))}
-                </div>
-              </div>
-            );
-          })
+                </TabsContent>
+              );
+            })}
+
+            <TabsContent value={RECONCILE_TAB} className="mt-4">
+              <MarketplaceReconcile />
+            </TabsContent>
+          </Tabs>
         )}
 
-        {/* Сверка с площадками. Планировщик выше показывает, что задания ЗАПУСКАЮТСЯ,
-            но запускаться они могут и впустую: 117 заказов OZON однажды висели на
-            площадке, а до цеха не доехали. Сверка ловит именно это. */}
-        <MarketplaceReconcile />
-
-        {/* Куда идти, если задание перестало работать. Ссылки на задания живут во
-            внешнем сервисе — без этой подсказки админ не знает, где их искать. */}
         <Card className="shadow-none">
           <CardContent className="py-4 text-sm text-muted-foreground">
             <p className="font-medium text-foreground">Если задание не работает</p>

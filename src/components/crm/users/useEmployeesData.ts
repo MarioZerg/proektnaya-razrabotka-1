@@ -13,7 +13,6 @@ export const useEmployeesData = () => {
   const [listError, setListError] = useState<string | null>(null);
   const [roleFilter, setRoleFilter] = useState<string>('all');
   const [search, setSearch] = useState('');
-  const [workshopFilter, setWorkshopFilter] = useState<string>('all');
 
   // Работающие и уволенные — на разных вкладках. Архив открывают редко, поэтому
   // по умолчанию показываем тех, кто работает сейчас.
@@ -55,7 +54,6 @@ export const useEmployeesData = () => {
       return haystack.includes(q);
     }
     if (roleFilter !== 'all' && e.role !== roleFilter) return false;
-    if (workshopFilter !== 'all' && (e.workshop || '') !== workshopFilter) return false;
     return true;
   });
 
@@ -69,8 +67,6 @@ export const useEmployeesData = () => {
     setRoleFilter,
     search,
     setSearch,
-    workshopFilter,
-    setWorkshopFilter,
     tab,
     setTab,
     activeCount,

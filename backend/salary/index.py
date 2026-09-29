@@ -167,7 +167,7 @@ def handler(event: dict, context) -> dict:
             # если цех не указан — берём тариф первого по списку цеха как запасной вариант.
             cur.execute(
                 "SELECT u.id, COALESCE(w.id, (SELECT id FROM workshops ORDER BY id LIMIT 1)) "
-                "FROM users u LEFT JOIN workshops w ON w.name = u.workshop "
+                "FROM users u LEFT JOIN workshops w ON w.name = CASE WHEN u.workshop IN ('Цех №2', 'Тестовый цех (QA)') THEN 'Цех №1' ELSE u.workshop END "
                 "WHERE u.role = 'admin' AND u.is_active = true"
             )
             admin_workshop_rows = cur.fetchall()
@@ -1084,7 +1084,7 @@ def handler(event: dict, context) -> dict:
                 # Цех сотрудника — запасной вариант, если у заказа цех не проставлен
                 # (частая причина самой дыры).
                 cur.execute(
-                    "SELECT w.id FROM users u LEFT JOIN workshops w ON w.name = u.workshop WHERE u.id = %s",
+                    "SELECT w.id FROM users u LEFT JOIN workshops w ON w.name = CASE WHEN u.workshop IN ('Цех №2', 'Тестовый цех (QA)') THEN 'Цех №1' ELSE u.workshop END WHERE u.id = %s",
                     (m_user_id,),
                 )
                 uw = cur.fetchone()

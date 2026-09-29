@@ -5,6 +5,7 @@ import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import Icon from '@/components/ui/icon';
 import { useToast } from '@/hooks/use-toast';
+import { useSubmitGuard } from '@/hooks/useSubmitGuard';
 import { useGlobalScanner } from '@/hooks/useGlobalScanner';
 import { playScanSound } from '@/lib/scanSound';
 import { createDefect, scanDefectRoll, type ScannedDefectRoll } from '@/lib/kioskApi';
@@ -52,7 +53,7 @@ const KioskDefectWriteoffPanel = ({
   const [reasonCode, setReasonCode] = useState('');
   const [quantity, setQuantity] = useState('');
   const [comment, setComment] = useState('');
-  const [saving, setSaving] = useState(false);
+  const { busy: saving, run } = useSubmitGuard();
   const [scanning, setScanning] = useState(false);
   // Отсканировали рулон, который брать нельзя — показываем причину крупно.
   const [scanError, setScanError] = useState('');
@@ -98,42 +99,41 @@ const KioskDefectWriteoffPanel = ({
   const quantityNumber = Number(quantity.replace(',', '.'));
   const tooMuch = !!roll && quantityNumber > roll.remaining;
 
-  const handleSubmit = async () => {
+  const handleSubmit = () => {
     if (!roll || !quantity || !reasonCode || tooMuch) return;
-    setSaving(true);
-    try {
-      const res = await createDefect({
-        userId,
-        rollId: roll.id,
-        quantity: quantityNumber,
-        reasonCode,
-        comment: comment.trim() || undefined,
-      });
+    void run(async () => {
+      try {
+        const res = await createDefect({
+          userId,
+          rollId: roll.id,
+          quantity: quantityNumber,
+          reasonCode,
+          comment: comment.trim() || undefined,
+        });
 
-      // Стикер печатаем сразу: без него кладовщик не сможет принять брак на склад.
-      printDefectSticker({
-        barcode: res.defectBarcode,
-        materialName: roll.materialName,
-        quantity: quantityNumber,
-        unit: res.unit || roll.unit,
-        reasonLabel: res.reasonLabel,
-        userId: res.actorId,
-      });
+        // Стикер печатаем сразу: без него кладовщик не сможет принять брак на склад.
+        printDefectSticker({
+          barcode: res.defectBarcode,
+          materialName: roll.materialName,
+          quantity: quantityNumber,
+          unit: res.unit || roll.unit,
+          reasonLabel: res.reasonLabel,
+          userId: res.actorId,
+        });
 
-      toast({
-        title: `Брак оформлен: ${res.defectBarcode}`,
-        description: 'Наклейте стикер и положите брак в контейнер — кладовщик заберёт его на склад',
-      });
-      reset();
-    } catch (e) {
-      toast({
-        title: 'Не удалось оформить брак',
-        description: e instanceof Error ? e.message : undefined,
-        variant: 'destructive',
-      });
-    } finally {
-      setSaving(false);
-    }
+        toast({
+          title: `Брак оформлен: ${res.defectBarcode}`,
+          description: 'Наклейте стикер и положите брак в контейнер — кладовщик заберёт его на склад',
+        });
+        reset();
+      } catch (e) {
+        toast({
+          title: 'Не удалось оформить брак',
+          description: e instanceof Error ? e.message : undefined,
+          variant: 'destructive',
+        });
+      }
+    });
   };
 
   // Гость в чужом цехе оформляет брак через штатного сотрудника — сканер ему не даём.

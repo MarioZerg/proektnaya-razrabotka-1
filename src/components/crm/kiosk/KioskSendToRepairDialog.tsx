@@ -9,6 +9,7 @@ import {
 } from '@/components/ui/dialog';
 import Icon from '@/components/ui/icon';
 import { useToast } from '@/hooks/use-toast';
+import { useSubmitGuard } from '@/hooks/useSubmitGuard';
 import { useAuth } from '@/context/AuthContext';
 import { printRepairSticker } from '@/lib/printRepairSticker';
 import {
@@ -66,7 +67,7 @@ const KioskSendToRepairDialog = ({
 }: KioskSendToRepairDialogProps) => {
   const { toast } = useToast();
   const { user } = useAuth();
-  const [saving, setSaving] = useState(false);
+  const { busy: saving, run } = useSubmitGuard();
   const [reasons, setReasons] = useState<RepairReason[]>([]);
   const [reasonsError, setReasonsError] = useState<string | null>(null);
   const [reasonsLoading, setReasonsLoading] = useState(true);
@@ -115,60 +116,58 @@ const KioskSendToRepairDialog = ({
   const canSend =
     !!goodsWarehouseId && !!chosen && (!needsCustom || customReason.trim().length > 0);
 
-  const handleSend = async () => {
+  const handleSend = () => {
     if (!goodsWarehouseId || !chosen) return;
-    setSaving(true);
-    try {
-      const r = await sendToRepair(
-        goodsWarehouseId,
-        needsCustom
-          ? { label: customReason.trim() }
-          : { code: chosen.code, label: chosen.label },
-        { id: user?.id, name: user?.name },
-      );
+    void run(async () => {
+      try {
+        const r = await sendToRepair(
+          goodsWarehouseId,
+          needsCustom
+            ? { label: customReason.trim() }
+            : { code: chosen.code, label: chosen.label },
+          { id: user?.id, name: user?.name },
+        );
 
-      // СНАЧАЛА ЗАКРЫВАЕМ ОКНО, ПЕЧАТАЕМ ПОСЛЕ — ИНАЧЕ ТЕРМИНАЛ ЗАВИСАЕТ.
-      //
-      // Печать идёт в скрытом iframe: он забирает фокус себе и вызывает
-      // window.print(), который ОСТАНАВЛИВАЕТ страницу до закрытия диалога
-      // печати. А это окно — модальное: оно держит фокус-ловушку и пытается
-      // вернуть фокус обратно. Два механизма тянут фокус друг у друга, и
-      // терминал замирает с открытым окном причин: кнопки не нажимаются,
-      // упаковщице остаётся только перезагружать планшет.
-      //
-      // Поэтому порядок строгий: закрыли окно, отпустили вещь, и только
-      // потом, следующим кадром, отправили стикер на принтер. К этому моменту
-      // ловушки фокуса уже нет и забирать его некому.
-      onOpenChange(false);
-      onSent?.();
-      setSaving(false);
+        // СНАЧАЛА ЗАКРЫВАЕМ ОКНО, ПЕЧАТАЕМ ПОСЛЕ — ИНАЧЕ ТЕРМИНАЛ ЗАВИСАЕТ.
+        //
+        // Печать идёт в скрытом iframe: он забирает фокус себе и вызывает
+        // window.print(), который ОСТАНАВЛИВАЕТ страницу до закрытия диалога
+        // печати. А это окно — модальное: оно держит фокус-ловушку и пытается
+        // вернуть фокус обратно. Два механизма тянут фокус друг у друга, и
+        // терминал замирает с открытым окном причин: кнопки не нажимаются,
+        // упаковщице остаётся только перезагружать планшет.
+        //
+        // Поэтому порядок строгий: закрыли окно, отпустили вещь, и только
+        // потом, следующим кадром, отправили стикер на принтер. К этому моменту
+        // ловушки фокуса уже нет и забирать его некому.
+        onOpenChange(false);
+        onSent?.();
 
-      toast({
-        title: `Отправлено в перешив · ${r.barcode}`,
-        description: `${r.reasonLabel}. Наклейте стикер на вещь — закройщик найдёт её по номеру`,
-      });
-
-      // 300 мс — время закрытия окна. Печатать раньше нельзя: окно ещё в DOM
-      // и фокус-ловушка жива.
-      setTimeout(() => {
-        printRepairSticker({
-          barcode: r.barcode,
-          material: r.material,
-          width: r.width,
-          height: r.height,
-          reason: r.reasonLabel,
-          orderNumber: r.orderNumber || orderNumber,
+        toast({
+          title: `Отправлено в перешив · ${r.barcode}`,
+          description: `${r.reasonLabel}. Наклейте стикер на вещь — закройщик найдёт её по номеру`,
         });
-      }, 300);
-      return;
-    } catch (e) {
-      toast({
-        title: 'Не удалось отправить',
-        description: e instanceof Error ? e.message : undefined,
-        variant: 'destructive',
-      });
-      setSaving(false);
-    }
+
+        // 300 мс — время закрытия окна. Печатать раньше нельзя: окно ещё в DOM
+        // и фокус-ловушка жива.
+        setTimeout(() => {
+          printRepairSticker({
+            barcode: r.barcode,
+            material: r.material,
+            width: r.width,
+            height: r.height,
+            reason: r.reasonLabel,
+            orderNumber: r.orderNumber || orderNumber,
+          });
+        }, 300);
+      } catch (e) {
+        toast({
+          title: 'Не удалось отправить',
+          description: e instanceof Error ? e.message : undefined,
+          variant: 'destructive',
+        });
+      }
+    });
   };
 
   return (

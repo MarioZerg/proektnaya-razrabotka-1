@@ -25,6 +25,26 @@ MSK = timezone(timedelta(hours=3))
 SQL_MSK_NOW = "(now() + interval '3 hours')"
 SQL_MSK_TODAY = "(now() + interval '3 hours')::date"
 
+CLOSED_WORKSHOP_NAMES = ('Цех №2', 'Тестовый цех (QA)')
+KEEP_WORKSHOP_NAME = 'Цех №1'
+
+
+def remap_closed_workshop_id(cur, workshop_id):
+    """Второй цех закрыт: открытие смены и прочие действия идут в первый."""
+    if workshop_id in (None, '', 0):
+        return workshop_id
+    try:
+        wid = int(workshop_id)
+    except (TypeError, ValueError):
+        return workshop_id
+    cur.execute("SELECT name FROM workshops WHERE id = %s", (wid,))
+    row = cur.fetchone()
+    if not row or row[0] not in CLOSED_WORKSHOP_NAMES:
+        return wid
+    cur.execute("SELECT id FROM workshops WHERE name = %s", (KEEP_WORKSHOP_NAME,))
+    keep = cur.fetchone()
+    return keep[0] if keep else wid
+
 
 def msk_now() -> datetime:
     """Текущее московское время без часового пояса — в одной шкале с графиком работы.
@@ -274,7 +294,8 @@ def accrue_shift_salary(cur, user_id, session_id, session_workshop_id, accrual_d
     # из цеха профиля сотрудника.
     rate_workshop_id = session_workshop_id
     if not rate_workshop_id and user_row and user_row[1]:
-        cur.execute("SELECT id FROM workshops WHERE name = %s", (user_row[1],))
+        ws_name = KEEP_WORKSHOP_NAME if user_row[1] in CLOSED_WORKSHOP_NAMES else user_row[1]
+        cur.execute("SELECT id FROM workshops WHERE name = %s", (ws_name,))
         w_row = cur.fetchone()
         rate_workshop_id = w_row[0] if w_row else None
     if not rate_workshop_id:
@@ -679,11 +700,14 @@ def handler(event: dict, context) -> dict:
                 cur.execute("SELECT workshop, shift_number FROM users WHERE id = %s", (int(user_id),))
                 u_row = cur.fetchone()
                 home_workshop_name, home_shift_number = u_row if u_row else (None, None)
+                if home_workshop_name in CLOSED_WORKSHOP_NAMES:
+                    home_workshop_name = KEEP_WORKSHOP_NAME
 
                 cur.execute(
                     "SELECT s.workshop_id, w.name, s.shift_number, s.name FROM shifts s "
                     "JOIN workshops w ON w.id = s.workshop_id "
                     "WHERE s.is_active = true AND w.is_active = true "
+                    "AND w.name NOT IN ('Цех №2', 'Тестовый цех (QA)') "
                     # Смена недоступна сегодня, если день отмечен выходным вручную ИЛИ
                     # выпадает на отдых по цикличному графику (2/2 и т.п.).
                     "AND NOT EXISTS ("
@@ -827,6 +851,7 @@ def handler(event: dict, context) -> dict:
             if action == 'open':
                 user_id = body_data.get('userId')
                 req_workshop_id = body_data.get('workshopId')
+                req_workshop_id = remap_closed_workshop_id(cur, req_workshop_id)
                 req_shift_number = body_data.get('shiftNumber')
                 req_role = body_data.get('role')
                 opened_by_admin = bool(body_data.get('openedByAdmin'))
@@ -848,6 +873,8 @@ def handler(event: dict, context) -> dict:
                 if not u_row:
                     return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': 'Сотрудник не найден'})}
                 home_workshop_name, home_shift_number, shift_free, shift_from, user_role = u_row
+                if home_workshop_name in CLOSED_WORKSHOP_NAMES:
+                    home_workshop_name = KEEP_WORKSHOP_NAME
 
                 # Кладовщик не привязан ни к цеху, ни к смене: он открывает и закрывает смену
                 # по личному графику из профиля (shift_from). Цех/смену ему не требуем и не
@@ -1163,7 +1190,7 @@ def handler(event: dict, context) -> dict:
                 # текущую смену в новый цех, чтобы заказы, лимиты и настройки брались из
                 # того цеха, где человек реально стоит.
                 user_id = body_data.get('userId')
-                new_workshop_id = body_data.get('workshopId')
+                new_workshop_id = remap_closed_workshop_id(cur, body_data.get('workshopId'))
                 if not user_id or not new_workshop_id:
                     return {
                         'statusCode': 400,

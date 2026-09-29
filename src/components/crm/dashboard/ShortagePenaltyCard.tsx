@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -43,6 +43,8 @@ const ShortagePenaltyCard = () => {
   const [busyId, setBusyId] = useState<number | null>(null);
   const [bulkBusy, setBulkBusy] = useState(false);
   const [open, setOpen] = useState(false);
+  // Повторный клик прилетает раньше, чем React успевает заблокировать кнопку.
+  const inFlight = useRef(new Set<number>());
 
   const load = () => {
     setLoading(true);
@@ -59,43 +61,63 @@ const ShortagePenaltyCard = () => {
 
   useEffect(load, []);
 
+  const dropItem = (rollId: number) => {
+    setItems((prev) => prev.filter((i) => i.rollId !== rollId));
+  };
+
+  const restoreItem = (item: PendingPenalty) => {
+    setItems((prev) => (prev.some((i) => i.rollId === item.rollId) ? prev : [...prev, item]));
+  };
+
   const handleCharge = async (item: PendingPenalty) => {
+    if (inFlight.current.has(item.rollId) || bulkBusy) return;
+    inFlight.current.add(item.rollId);
     setBusyId(item.rollId);
+    dropItem(item.rollId);
     try {
-      await chargePenalty(item.rollId);
-      toast({
-        title: 'Штраф начислен',
-        description:
-          item.users.length === 1
-            ? `Рулон ${item.barcode}: ${money(item.total)} ₽ удержано с ${item.users[0].name}`
-            : `Рулон ${item.barcode}: ${money(item.total)} ₽ поделено между ${item.users.length} — по ${money(item.perUser || 0)} ₽`,
-      });
-      load();
+      const res = await chargePenalty(item.rollId);
+      if (!res.already) {
+        toast({
+          title: 'Штраф начислен',
+          description:
+            item.users.length === 1
+              ? `Рулон ${item.barcode}: ${money(item.total)} ₽ удержано с ${item.users[0].name}`
+              : `Рулон ${item.barcode}: ${money(item.total)} ₽ поделено между ${item.users.length} — по ${money(item.perUser || 0)} ₽`,
+        });
+      }
     } catch (e) {
+      restoreItem(item);
       toast({
         title: 'Не удалось начислить',
         description: e instanceof Error ? e.message : undefined,
         variant: 'destructive',
       });
     } finally {
-      setBusyId(null);
+      inFlight.current.delete(item.rollId);
+      setBusyId((id) => (id === item.rollId ? null : id));
     }
   };
 
   const handleDismiss = async (item: PendingPenalty) => {
+    if (inFlight.current.has(item.rollId) || bulkBusy) return;
+    inFlight.current.add(item.rollId);
     setBusyId(item.rollId);
+    dropItem(item.rollId);
     try {
-      await dismissPenalty(item.rollId);
-      toast({ title: 'Недостача списана на поставщика' });
-      load();
+      const res = await dismissPenalty(item.rollId);
+      if (!res.already) {
+        toast({ title: 'Недостача списана на поставщика' });
+      }
     } catch (e) {
+      restoreItem(item);
       toast({
         title: 'Не удалось выполнить',
         description: e instanceof Error ? e.message : undefined,
         variant: 'destructive',
       });
     } finally {
-      setBusyId(null);
+      inFlight.current.delete(item.rollId);
+      setBusyId((id) => (id === item.rollId ? null : id));
     }
   };
 
@@ -111,19 +133,30 @@ const ShortagePenaltyCard = () => {
   const sortedItems = [...items].sort((a, b) => (b.reason ? 0 : b.total) - (a.reason ? 0 : a.total));
 
   const handleDismissAllClean = async () => {
+    if (bulkBusy || noPenaltyItems.length === 0) return;
     setBulkBusy(true);
+    const snapshot = noPenaltyItems;
+    const ids = new Set(snapshot.map((i) => i.rollId));
+    setItems((prev) => prev.filter((i) => !ids.has(i.rollId)));
     try {
-      // По одному запросу на рулон: отдельного массового действия на сервере нет,
-      // а очередь тут небольшая — десятки записей, не тысячи.
-      for (const item of noPenaltyItems) {
-        await dismissPenalty(item.rollId);
+      for (const item of snapshot) {
+        if (inFlight.current.has(item.rollId)) continue;
+        inFlight.current.add(item.rollId);
+        try {
+          await dismissPenalty(item.rollId);
+        } finally {
+          inFlight.current.delete(item.rollId);
+        }
       }
       toast({
         title: 'Убрано из очереди',
-        description: `${noPenaltyItems.length} шт. — недостача в пределах нормы`,
+        description: `${snapshot.length} шт. — недостача в пределах нормы`,
       });
-      load();
     } catch (e) {
+      setItems((prev) => {
+        const have = new Set(prev.map((i) => i.rollId));
+        return [...prev, ...snapshot.filter((i) => !have.has(i.rollId))];
+      });
       toast({
         title: 'Не удалось убрать все',
         description: e instanceof Error ? e.message : undefined,
@@ -280,8 +313,11 @@ const ShortagePenaltyCard = () => {
                       size="sm"
                       variant="outline"
                       onClick={() => handleDismiss(item)}
-                      disabled={busyId === item.rollId}
+                      disabled={busyId === item.rollId || bulkBusy}
                     >
+                      {busyId === item.rollId ? (
+                        <Icon name="Loader2" size={14} className="mr-1 animate-spin" />
+                      ) : null}
                       Убрать из списка
                     </Button>
                   </div>
@@ -321,7 +357,7 @@ const ShortagePenaltyCard = () => {
                       <Button
                         size="sm"
                         onClick={() => handleCharge(item)}
-                        disabled={busyId === item.rollId}
+                        disabled={busyId === item.rollId || bulkBusy}
                       >
                         {busyId === item.rollId ? (
                           <Icon name="Loader2" size={14} className="mr-1 animate-spin" />
@@ -334,8 +370,11 @@ const ShortagePenaltyCard = () => {
                         size="sm"
                         variant="outline"
                         onClick={() => handleDismiss(item)}
-                        disabled={busyId === item.rollId}
+                        disabled={busyId === item.rollId || bulkBusy}
                       >
+                        {busyId === item.rollId ? (
+                          <Icon name="Loader2" size={14} className="mr-1 animate-spin" />
+                        ) : null}
                         Вина поставщика
                       </Button>
                     </div>

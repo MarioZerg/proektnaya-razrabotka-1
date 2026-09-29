@@ -125,6 +125,8 @@ def check_conflict(cur, user_id, starts_on, ends_on):
     if not u:
         return None
     workshop_name, shift_number = u[0], u[1]
+    if workshop_name in ('Цех №2', 'Тестовый цех (QA)'):
+        workshop_name = 'Цех №1'
     if not workshop_name or shift_number is None:
         return None
 
@@ -273,7 +275,8 @@ def handler(event: dict, context) -> dict:
 
             workshop_id = None
             if u_row[2]:
-                cur.execute("SELECT id FROM workshops WHERE name = %s", (u_row[2],))
+                ws_name = 'Цех №1' if u_row[2] in ('Цех №2', 'Тестовый цех (QA)') else u_row[2]
+                cur.execute("SELECT id FROM workshops WHERE name = %s", (ws_name,))
                 w = cur.fetchone()
                 workshop_id = w[0] if w else None
 

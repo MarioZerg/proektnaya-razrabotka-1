@@ -10,6 +10,13 @@ import psycopg2
 ROLES = {'sewer', 'cutter', 'packer', 'storekeeper', 'senior_storekeeper', 'cleaner',
          'admin', 'manager', 'accountant'}
 
+CLOSED_WORKSHOP_NAMES = ('Цех №2', 'Тестовый цех (QA)')
+KEEP_WORKSHOP_NAME = 'Цех №1'
+
+
+def public_workshop_name(name):
+    return KEEP_WORKSHOP_NAME if name in CLOSED_WORKSHOP_NAMES else name
+
 
 def issue_session(cur, user_id, role, real_user_id=None) -> str:
     """Заводит сессию и возвращает токен.
@@ -285,12 +292,14 @@ def handler(event: dict, context) -> dict:
         try:
             cur = conn.cursor()
             cur.execute(
-                "SELECT COALESCE(w.name, 'Без цеха') AS ceh, COUNT(*) "
+                "SELECT COALESCE("
+                "  CASE WHEN w.name IN ('Цех №2', 'Тестовый цех (QA)') THEN 'Цех №1' ELSE w.name END, "
+                "  'Без цеха') AS ceh, COUNT(*) "
                 "FROM shift_sessions ss "
                 "LEFT JOIN workshops w ON w.id = ss.workshop_id "
                 "WHERE ss.closed_at IS NULL "
-                "GROUP BY COALESCE(w.name, 'Без цеха') "
-                "ORDER BY COALESCE(w.name, 'Без цеха')"
+                "GROUP BY 1 "
+                "ORDER BY 1"
             )
             rows = cur.fetchall()
         finally:
@@ -321,7 +330,8 @@ def handler(event: dict, context) -> dict:
                 "SELECT DISTINCT ON (u.role) u.id, u.full_name, u.role, u.workshop, "
                 "  u.shift_number, w.id, COALESCE(u.can_overlock, false) "
                 "FROM users u "
-                "LEFT JOIN workshops w ON w.name = u.workshop "
+                "LEFT JOIN workshops w ON w.name = CASE "
+                "WHEN u.workshop IN ('Цех №2', 'Тестовый цех (QA)') THEN 'Цех №1' ELSE u.workshop END "
                 "WHERE u.is_active = true AND u.role <> '' "
                 # Расторгнувших договор в списке для входа не показываем: их
                 # доступ закрыт, и предлагать им кнопку входа незачем.
@@ -339,7 +349,7 @@ def handler(event: dict, context) -> dict:
                 'id': r[0],
                 'name': r[1],
                 'role': r[2],
-                'workshopName': r[3],
+                'workshopName': public_workshop_name(r[3]),
                 'shiftNumber': r[4],
                 'workshopId': r[5],
                 # Допуск к оверлоку: по нему в списке входов видно, чем этот
@@ -574,7 +584,7 @@ def handler(event: dict, context) -> dict:
                 "SELECT u.id, u.full_name, u.is_active, u.workshop, u.shift_number, w.id, "
                 "ur.is_approved, u.contract_terminated_at "
                 "FROM users u "
-                "LEFT JOIN workshops w ON w.name = u.workshop "
+                "LEFT JOIN workshops w ON w.name = CASE WHEN u.workshop IN ('Цех №2', 'Тестовый цех (QA)') THEN 'Цех №1' ELSE u.workshop END "
                 "LEFT JOIN user_roles ur ON ur.user_id = u.id AND ur.role = %s "
                 "WHERE u.id = %s",
                 (role, int(user_id)),
@@ -613,7 +623,7 @@ def handler(event: dict, context) -> dict:
                     'name': full_name,
                     'role': role,
                     'workshopId': workshop_id,
-                    'workshopName': workshop_name,
+                    'workshopName': public_workshop_name(workshop_name),
                     'shiftNumber': shift_number,
                     'token': token,
                 }
@@ -653,7 +663,7 @@ def handler(event: dict, context) -> dict:
 
             cur.execute(
                 "SELECT u.id, u.full_name, u.is_active, u.workshop, u.shift_number, w.id "
-                "FROM users u LEFT JOIN workshops w ON w.name = u.workshop WHERE u.id = %s",
+                "FROM users u LEFT JOIN workshops w ON w.name = CASE WHEN u.workshop IN ('Цех №2', 'Тестовый цех (QA)') THEN 'Цех №1' ELSE u.workshop END WHERE u.id = %s",
                 (int(target_id),),
             )
             row = cur.fetchone()
@@ -698,7 +708,7 @@ def handler(event: dict, context) -> dict:
                     'role': role or roles[0],
                     'availableRoles': roles,
                     'workshopId': workshop_id,
-                    'workshopName': workshop_name,
+                    'workshopName': public_workshop_name(workshop_name),
                     'shiftNumber': shift_number,
                     'token': token,
                 },

@@ -22,6 +22,26 @@ from authz import (
 # обрезаются, ничего не теряя.
 ROLLS_LIST_LIMIT = 2000
 
+CLOSED_WORKSHOP_NAMES = ('Цех №2', 'Тестовый цех (QA)')
+KEEP_WORKSHOP_NAME = 'Цех №1'
+
+
+def remap_closed_workshop_id(cur, workshop_id):
+    """Второй цех закрыт: рулон, отправленный туда, идёт в первый."""
+    if workshop_id in (None, '', 0):
+        return workshop_id
+    try:
+        wid = int(workshop_id)
+    except (TypeError, ValueError):
+        return workshop_id
+    cur.execute("SELECT name FROM workshops WHERE id = %s", (wid,))
+    row = cur.fetchone()
+    if not row or row[0] not in CLOSED_WORKSHOP_NAMES:
+        return wid
+    cur.execute("SELECT id FROM workshops WHERE name = %s", (KEEP_WORKSHOP_NAME,))
+    keep = cur.fetchone()
+    return keep[0] if keep else wid
+
 
 def log_action(cur, actor_id, actor_name, action, entity_type, entity_id, description):
     """Пишет запись в журнал действий (audit_log) в той же транзакции перед commit().
@@ -1743,6 +1763,8 @@ def handler(event: dict, context) -> dict:
         conn = psycopg2.connect(dsn)
         try:
             cur = conn.cursor()
+            if 'workshopId' in body_data:
+                body_data['workshopId'] = remap_closed_workshop_id(cur, body_data.get('workshopId'))
 
             # КТО ПРИШЁЛ — определяем по ключу сессии, а не по телу запроса.
             #
@@ -3065,8 +3087,10 @@ def handler(event: dict, context) -> dict:
                 if not row:
                     return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': 'Рулон не найден'})}
                 if row[1] is not None:
-                    return {'statusCode': 409, 'headers': headers,
-                            'body': json.dumps({'error': 'Штраф по этому рулону уже начислен'}, ensure_ascii=False)}
+                    # Повторный клик, пока строка ещё на экране: штраф уже стоит.
+                    return {'statusCode': 200, 'headers': headers,
+                            'body': json.dumps({'success': True, 'already': True},
+                                               ensure_ascii=False)}
                 # Удерживаем по ФАКТИЧЕСКОМУ остатку на момент закрытия — ровно по той
                 # сумме, которую администратор видел на дашборде перед нажатием кнопки.
                 # Раньше здесь бралось введённое сотрудницей число, и удержание
@@ -3090,9 +3114,24 @@ def handler(event: dict, context) -> dict:
                 if not item_id:
                     return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите id'})}
                 cur.execute(
-                    "UPDATE rolls SET penalty_total = 0 WHERE id = %s AND penalty_total IS NULL",
+                    "UPDATE rolls SET penalty_total = 0 WHERE id = %s AND penalty_total IS NULL "
+                    "RETURNING id",
                     (int(item_id),),
                 )
+                if not cur.fetchone():
+                    cur.execute(
+                        "SELECT id, penalty_total FROM rolls WHERE id = %s",
+                        (int(item_id),),
+                    )
+                    row = cur.fetchone()
+                    if not row:
+                        return {'statusCode': 404, 'headers': headers,
+                                'body': json.dumps({'error': 'Рулон не найден'}, ensure_ascii=False)}
+                    # Повторный клик, пока строка ещё не успела исчезнуть: решение
+                    # уже принято, второй раз списывать нечего.
+                    return {'statusCode': 200, 'headers': headers,
+                            'body': json.dumps({'success': True, 'already': True},
+                                               ensure_ascii=False)}
                 conn.commit()
                 return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True})}
 

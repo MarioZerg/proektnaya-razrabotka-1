@@ -1,4 +1,5 @@
 import fetchWithRetry from '@/lib/fetchWithRetry';
+import { isRetiredWorkshop } from '@/lib/workshopsApi';
 
 const SHIFT_SESSIONS_URL = 'https://functions.poehali.dev/6143d29d-094c-4dc6-a520-eb0eeb10d8a0';
 
@@ -130,7 +131,9 @@ export interface AvailableShift {
 export const fetchAvailableShifts = async (userId: number): Promise<AvailableShift[]> => {
   const res = await fetch(`${SHIFT_SESSIONS_URL}?available_shifts=1&userId=${userId}`);
   const data = await res.json();
-  return data.shifts || [];
+  return ((data.shifts || []) as AvailableShift[]).filter(
+    (s) => !isRetiredWorkshop({ id: s.workshopId, name: s.workshopName }),
+  );
 };
 
 const postAction = async (payload: Record<string, unknown>) => {

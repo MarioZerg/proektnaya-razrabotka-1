@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { Navigate, useNavigate, useParams } from 'react-router-dom';
 import CrmLayout from '@/components/crm/CrmLayout';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -32,6 +32,7 @@ import {
 import { fetchEmployees, type Employee } from '@/lib/usersApi';
 import { roleLabels, type Role } from '@/lib/roles';
 import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
+import { isRetiredWorkshop } from '@/lib/workshopsApi';
 
 const ShiftDetailPage = () => {
   const { id } = useParams<{ id: string }>();
@@ -165,6 +166,10 @@ const ShiftDetailPage = () => {
         </div>
       </CrmLayout>
     );
+  }
+
+  if (shift && isRetiredWorkshop({ id: shift.workshopId, name: shift.workshopName })) {
+    return <Navigate to="/crm/shifts/list" replace />;
   }
 
   if (!shift) {

@@ -28,8 +28,9 @@ def handler(event: dict, context) -> dict:
     Полностью повторяет раздел "Материал на производстве" физического склада:
     группирует остатки рулонов со статусом in_workshop по материалу, цеху и смене.
     У каждого цеха свой набор именованных смен (например у Цеха №1 — "Смена № 1" и
-    "Смена № 2", у Цеха №2 — "5/2"), поэтому колонки строятся динамически по всем
-    цехам сразу: список колонок = все смены всех активных цехов. Рулон в статусе
+    "Смена № 2"), поэтому колонки строятся динамически по всем действующим цехам:
+    список колонок = все смены активных цехов. Закрытые «Цех №2» и QA не показываем.
+    Рулон в статусе
     in_workshop ОБЯЗАН иметь смену (гарантируется CHECK-ограничением БД
     rolls_workshop_requires_shift) — колонки "Без смены" в отчёте больше нет.
 
@@ -79,7 +80,7 @@ def handler(event: dict, context) -> dict:
         cur.execute(
             f"SELECT w.id, w.name, w.shift_names, COALESCE(w.material_free_shifts, '[]'::jsonb) "
             f"FROM workshops w "
-            f"WHERE w.is_active = true {workshop_condition} ORDER BY w.id"
+            f"WHERE w.is_active = true AND w.name NOT IN ('Цех №2', 'Тестовый цех (QA)') {workshop_condition} ORDER BY w.id"
         )
         workshop_rows = cur.fetchall()
 
@@ -132,9 +133,12 @@ def handler(event: dict, context) -> dict:
             f"COALESCE(SUM(r.remaining_quantity) FILTER (WHERE r.accepted_at IS NULL), 0), "
             f"COUNT(r.id) FILTER (WHERE r.accepted_at IS NULL) "
             f"FROM rolls r "
+            f"JOIN workshops w ON w.id = r.workshop_id "
             f"JOIN materials m ON m.id = r.material_id "
             f"JOIN material_types mt ON mt.id = m.type_id "
-            f"WHERE r.status = 'in_workshop' AND r.remaining_quantity > 0 {workshop_condition_rolls} "
+            f"WHERE r.status = 'in_workshop' AND r.remaining_quantity > 0 "
+            f"AND w.is_active = true AND w.name NOT IN ('Цех №2', 'Тестовый цех (QA)') "
+            f"{workshop_condition_rolls} "
             f"GROUP BY mt.id, mt.name, mt.sort_order, m.id, m.name, m.unit, m.sort_order, r.workshop_id, r.shift_number "
             f"ORDER BY mt.sort_order, m.sort_order"
         )

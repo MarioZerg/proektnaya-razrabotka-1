@@ -104,16 +104,12 @@ const VacationSection = ({ userId, role, actorId }: VacationSectionProps) => {
   };
 
   return (
-    <div className="space-y-3 rounded-md border border-border p-3">
-      <div className="flex items-center gap-2">
-        <Icon name="Palmtree" size={18} className="text-muted-foreground" />
-        <p className="text-sm font-medium">Отпуск</p>
-        {right && right.perYear && (
-          <Badge variant="secondary">
-            {right.usedInYear} из {right.perYear} за год
-          </Badge>
-        )}
-      </div>
+    <div className="space-y-3">
+      {right && right.perYear ? (
+        <Badge variant="secondary">
+          {right.usedInYear} из {right.perYear} за год
+        </Badge>
+      ) : null}
 
       {loading && !right ? (
         <p className="text-sm text-muted-foreground">Загрузка…</p>
@@ -139,17 +135,17 @@ const VacationSection = ({ userId, role, actorId }: VacationSectionProps) => {
             </p>
           )}
 
-          <div className="flex flex-wrap items-end gap-2">
+          <div className="grid grid-cols-1 gap-2">
             <div className="space-y-1.5">
               <Label className="text-xs text-muted-foreground">Дата начала</Label>
               <Input
                 type="date"
                 value={startsOn}
                 onChange={(e) => setStartsOn(e.target.value)}
-                className="w-44"
+                className="h-11 w-full min-w-0 sm:h-10"
               />
             </div>
-            <Button onClick={handleCreate} disabled={saving || !startsOn}>
+            <Button className="h-11 w-full sm:h-10" onClick={handleCreate} disabled={saving || !startsOn}>
               {saving ? (
                 <Icon name="Loader2" size={16} className="mr-1 animate-spin" />
               ) : (
@@ -164,15 +160,15 @@ const VacationSection = ({ userId, role, actorId }: VacationSectionProps) => {
               {items.map((v) => (
                 <div
                   key={v.id}
-                  className="flex items-center justify-between gap-2 rounded-md border border-border px-3 py-2 text-sm"
+                  className="flex flex-col gap-2 rounded-md border border-border px-3 py-2 text-sm sm:flex-row sm:items-center sm:justify-between"
                 >
-                  <span>
+                  <span className="min-w-0">
                     {fmt(v.startsOn)} — {fmt(v.endsOn)}
                     <span className="ml-2 text-xs text-muted-foreground">
                       {v.workYear}-й год
                     </span>
                   </span>
-                  <Button size="sm" variant="outline" onClick={() => handleCancel(v.id)}>
+                  <Button size="sm" variant="outline" className="h-11 w-full sm:h-9 sm:w-auto" onClick={() => handleCancel(v.id)}>
                     Отменить
                   </Button>
                 </div>

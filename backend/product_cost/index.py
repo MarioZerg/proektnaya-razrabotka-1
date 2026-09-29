@@ -684,7 +684,7 @@ def handler(event: dict, context) -> dict:
                 if manager and manager.get('isActive') else 0
             )
             groups, extras = _calc_groups(cur, settings, manager_per_unit)
-            cur.execute("SELECT id, name FROM workshops ORDER BY id")
+            cur.execute("SELECT id, name FROM workshops WHERE name NOT IN ('Цех №2', 'Тестовый цех (QA)') ORDER BY id")
             workshops = [{'id': r[0], 'name': r[1]} for r in cur.fetchall()]
             return _resp(200, {
                 'settings': settings,

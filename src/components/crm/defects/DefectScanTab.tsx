@@ -11,6 +11,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { useToast } from '@/hooks/use-toast';
+import { useSubmitGuard } from '@/hooks/useSubmitGuard';
 import { useAuth } from '@/context/AuthContext';
 import {
   fetchPendingDefects,
@@ -38,7 +39,7 @@ const DefectScanTab = () => {
 
   const [pending, setPending] = useState<PendingDefect[]>([]);
   const [listError, setListError] = useState<string | null>(null);
-  const [saving, setSaving] = useState(false);
+  const { busy: saving, run } = useSubmitGuard();
   const [lastReceived, setLastReceived] = useState<string[]>([]);
   // Кусок, который кладовщик не нашёл: спрашиваем комментарий перед отправкой.
   const [missingTarget, setMissingTarget] = useState<PendingDefect | null>(null);
@@ -60,28 +61,28 @@ const DefectScanTab = () => {
 
   useEffect(load, []);
 
-  const handleScan = async (value: string) => {
+  const handleScan = (value: string) => {
     const code = value.trim().toUpperCase();
-    if (!code || saving) return;
-    setSaving(true);
-    try {
-      const res = await receiveDefect(code, user?.id, user?.name);
-      toast({
-        title: `Принят брак: ${res.materialName}`,
-        description: `${formatQty(res.quantity)} ${res.unit || ''} — ${res.reasonLabel} (нашёл: ${res.foundBy})`,
-      });
-      setLastReceived((prev) => [code, ...prev].slice(0, 10));
-      load();
-    } catch (e) {
-      toast({
-        title: 'Не удалось принять брак',
-        description: e instanceof Error ? e.message : undefined,
-        variant: 'destructive',
-      });
-    } finally {
-      setSaving(false);
-      setTimeout(() => hiddenRef.current?.focus(), 0);
-    }
+    if (!code) return;
+    void run(async () => {
+      try {
+        const res = await receiveDefect(code, user?.id, user?.name);
+        toast({
+          title: `Принят брак: ${res.materialName}`,
+          description: `${formatQty(res.quantity)} ${res.unit || ''} — ${res.reasonLabel} (нашёл: ${res.foundBy})`,
+        });
+        setLastReceived((prev) => [code, ...prev].slice(0, 10));
+        setPending((prev) => prev.filter((p) => p.barcode.toUpperCase() !== code));
+      } catch (e) {
+        toast({
+          title: 'Не удалось принять брак',
+          description: e instanceof Error ? e.message : undefined,
+          variant: 'destructive',
+        });
+      } finally {
+        setTimeout(() => hiddenRef.current?.focus(), 0);
+      }
+    });
   };
 
   // Держим фокус на скрытом поле: планшет или мышь могут его увести, и тогда
@@ -95,32 +96,32 @@ const DefectScanTab = () => {
     return () => clearInterval(t);
   }, [missingTarget]);
 
-  const handleMissing = async () => {
+  const handleMissing = () => {
     if (!missingTarget) return;
-    setSaving(true);
-    try {
-      await markDefectMissing(
-        missingTarget.barcode,
-        missingComment.trim(),
-        user?.id,
-        user?.name,
-      );
-      toast({
-        title: 'Отправлено администратору',
-        description: `Стикер ${missingTarget.barcode} — решение примет администратор`,
-      });
-      setMissingTarget(null);
-      setMissingComment('');
-      load();
-    } catch (e) {
-      toast({
-        title: 'Не удалось отправить',
-        description: e instanceof Error ? e.message : undefined,
-        variant: 'destructive',
-      });
-    } finally {
-      setSaving(false);
-    }
+    void run(async () => {
+      const target = missingTarget;
+      try {
+        await markDefectMissing(
+          target.barcode,
+          missingComment.trim(),
+          user?.id,
+          user?.name,
+        );
+        toast({
+          title: 'Отправлено администратору',
+          description: `Стикер ${target.barcode} — решение примет администратор`,
+        });
+        setMissingTarget(null);
+        setMissingComment('');
+        setPending((prev) => prev.filter((p) => p.barcode !== target.barcode));
+      } catch (e) {
+        toast({
+          title: 'Не удалось отправить',
+          description: e instanceof Error ? e.message : undefined,
+          variant: 'destructive',
+        });
+      }
+    });
   };
 
   const totalPending = pending.reduce((sum, p) => sum + p.quantity, 0);

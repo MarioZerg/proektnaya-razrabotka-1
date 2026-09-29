@@ -9,7 +9,7 @@ import {
 import Icon from '@/components/ui/icon';
 import { roleLabels } from '@/lib/roles';
 import type { Employee } from '@/lib/usersApi';
-import { roleOptions, workshopOptions } from '@/components/crm/users/usersShared';
+import { roleOptions } from '@/components/crm/users/usersShared';
 import EmployeeCard from '@/components/crm/users/EmployeeCard';
 
 interface EmployeesTableProps {
@@ -19,8 +19,6 @@ interface EmployeesTableProps {
   filtered: Employee[];
   roleFilter: string;
   setRoleFilter: (value: string) => void;
-  workshopFilter: string;
-  setWorkshopFilter: (value: string) => void;
   /** Поиск по имени, логину, телефону или почте. */
   search: string;
   setSearch: (value: string) => void;
@@ -55,8 +53,6 @@ const EmployeesTable = ({
   filtered,
   roleFilter,
   setRoleFilter,
-  workshopFilter,
-  setWorkshopFilter,
   search,
   setSearch,
   onOpenCard,
@@ -107,19 +103,6 @@ const EmployeesTable = ({
             {roleOptions.map((r) => (
               <SelectItem key={r} value={r}>
                 {roleLabels[r]}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        <Select value={workshopFilter} onValueChange={setWorkshopFilter}>
-          <SelectTrigger className="w-full sm:w-[180px]">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">Все цеха</SelectItem>
-            {workshopOptions.map((w) => (
-              <SelectItem key={w} value={w}>
-                {w}
               </SelectItem>
             ))}
           </SelectContent>

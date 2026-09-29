@@ -6,24 +6,39 @@ interface LogsSummaryTilesProps {
 }
 
 /** Итоги за выбранный период — сколько чего сделали в цехе. */
-const TILES: { key: keyof LogSummary; label: string; icon: string; className: string }[] = [
-  { key: 'shiftsOpened', label: 'Смен открыто', icon: 'LogIn', className: 'text-emerald-600' },
-  { key: 'shiftsClosed', label: 'Смен закрыто', icon: 'LogOut', className: 'text-muted-foreground' },
-  { key: 'taken', label: 'Заказов взято', icon: 'HandHelping', className: 'text-sky-600' },
-  { key: 'cut', label: 'Раскроено', icon: 'Scissors', className: 'text-amber-600' },
-  { key: 'sewn', label: 'Сшито', icon: 'Shirt', className: 'text-violet-600' },
-  { key: 'packed', label: 'Упаковано', icon: 'Package', className: 'text-blue-600' },
+const TILES: {
+  metric: keyof LogSummary;
+  label: string;
+  short: string;
+  icon: string;
+  className: string;
+}[] = [
+  { metric: 'shiftsOpened', label: 'Смен открыто', short: 'Открыто', icon: 'LogIn', className: 'text-emerald-600' },
+  { metric: 'shiftsClosed', label: 'Смен закрыто', short: 'Закрыто', icon: 'LogOut', className: 'text-muted-foreground' },
+  { metric: 'taken', label: 'Заказов взято', short: 'Взято', icon: 'HandHelping', className: 'text-sky-600' },
+  { metric: 'cut', label: 'Раскроено', short: 'Раскрой', icon: 'Scissors', className: 'text-amber-600' },
+  { metric: 'sewn', label: 'Сшито', short: 'Пошив', icon: 'Shirt', className: 'text-violet-600' },
+  { metric: 'packed', label: 'Упаковано', short: 'Упаковка', icon: 'Package', className: 'text-blue-600' },
 ];
 
+const tileCount = (summary: LogSummary | null, metric: keyof LogSummary) => {
+  if (!summary) return '—';
+  const n = summary[metric];
+  return n == null ? '—' : n;
+};
+
 const LogsSummaryTiles = ({ summary }: LogsSummaryTilesProps) => (
-  <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+  <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 sm:gap-3 lg:grid-cols-6">
     {TILES.map((t) => (
-      <div key={t.key} className="rounded-lg border border-border p-3">
+      <div key={t.metric} className="rounded-lg border border-border p-2.5 sm:p-3">
         <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-          <Icon name={t.icon} size={13} className={t.className} />
-          {t.label}
+          <Icon name={t.icon} size={13} className={`shrink-0 ${t.className}`} />
+          <span className="sm:hidden">{t.short}</span>
+          <span className="hidden sm:inline">{t.label}</span>
         </div>
-        <p className="mt-1 text-2xl font-bold">{summary ? summary[t.key] : '—'}</p>
+        <p className="mt-1 text-xl font-bold tabular-nums sm:text-2xl">
+          {tileCount(summary, t.metric)}
+        </p>
       </div>
     ))}
   </div>

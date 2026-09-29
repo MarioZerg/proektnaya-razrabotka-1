@@ -43,6 +43,28 @@ const formatAt = (at: string) => {
   });
 };
 
+const EventMeta = ({ e }: { e: LogEvent }) => (
+  <>
+    {e.orderNumber ? (
+      <div>
+        <div className="font-mono-tech break-all text-xs">{e.orderNumber}</div>
+        {e.marketplace && (
+          <Badge variant="outline" className="mt-0.5 text-[10px]">
+            {e.marketplace}
+          </Badge>
+        )}
+        {e.storageBarcode && (
+          <div className="font-mono-tech break-all text-[10px] text-muted-foreground">
+            полка {e.storageBarcode}
+          </div>
+        )}
+      </div>
+    ) : (
+      <span className="text-xs text-muted-foreground">—</span>
+    )}
+  </>
+);
+
 const LogsTable = ({ items, loading, error = null }: LogsTableProps) => {
   if (loading && items.length === 0) {
     return (
@@ -67,73 +89,103 @@ const LogsTable = ({ items, loading, error = null }: LogsTableProps) => {
   }
 
   return (
-    <div className="overflow-x-auto rounded-lg border border-border">
-      <Table>
-        <TableHeader>
-          <TableRow>
-            <TableHead className="w-[110px]">Когда</TableHead>
-            <TableHead>Кто</TableHead>
-            <TableHead>Что сделал</TableHead>
-            <TableHead>Заказ</TableHead>
-            <TableHead>Цех</TableHead>
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {items.map((e, idx) => (
-            <TableRow key={`${e.at}-${idx}`}>
-              <TableCell className="whitespace-nowrap text-xs text-muted-foreground">
-                {formatAt(e.at)}
-              </TableCell>
-              <TableCell>
-                <div className="font-medium leading-tight">{e.who}</div>
-                {e.role && (
-                  <div className="text-xs text-muted-foreground">
-                    {roleLabels[e.role] || e.role}
-                  </div>
-                )}
-              </TableCell>
-              <TableCell>
-                <div className="flex items-start gap-1.5">
-                  <Icon
-                    name={categoryIcon(e.category)}
-                    size={14}
-                    className="mt-0.5 shrink-0 text-muted-foreground"
-                  />
-                  <div>
-                    <div className="font-medium leading-tight">{e.actionTitle}</div>
-                    {e.description && (
-                      <div className="text-xs text-muted-foreground">{e.description}</div>
-                    )}
-                  </div>
+    <>
+      {/* На телефоне пять колонок таблицы не влезают: «что сделал» и заказ
+          обрезаются. Карточка держит время, человека и действие на одном экране. */}
+      <div className="space-y-2 md:hidden">
+        {items.map((e, idx) => (
+          <div
+            key={`${e.at}-${idx}`}
+            className="min-w-0 overflow-hidden rounded-lg border border-border bg-card p-3"
+          >
+            <div className="flex items-start justify-between gap-2">
+              <div className="flex min-w-0 items-start gap-2">
+                <Icon
+                  name={categoryIcon(e.category)}
+                  size={16}
+                  className="mt-0.5 shrink-0 text-muted-foreground"
+                />
+                <div className="min-w-0">
+                  <p className="break-words font-medium leading-snug">{e.actionTitle}</p>
+                  {e.description ? (
+                    <p className="mt-0.5 break-words text-xs text-muted-foreground">
+                      {e.description}
+                    </p>
+                  ) : null}
                 </div>
-              </TableCell>
-              <TableCell>
-                {e.orderNumber ? (
-                  <div>
-                    <div className="font-mono-tech text-xs">{e.orderNumber}</div>
-                    {e.marketplace && (
-                      <Badge variant="outline" className="mt-0.5 text-[10px]">
-                        {e.marketplace}
-                      </Badge>
-                    )}
-                    {e.storageBarcode && (
-                      <div className="font-mono-tech text-[10px] text-muted-foreground">
-                        полка {e.storageBarcode}
-                      </div>
-                    )}
-                  </div>
-                ) : (
-                  <span className="text-xs text-muted-foreground">—</span>
-                )}
-              </TableCell>
-              <TableCell className="text-xs text-muted-foreground">
-                {e.workshop || '—'}
-              </TableCell>
+              </div>
+              <time className="shrink-0 whitespace-nowrap text-xs tabular-nums text-muted-foreground">
+                {formatAt(e.at)}
+              </time>
+            </div>
+
+            <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-muted-foreground">
+              <span className="font-medium text-foreground">{e.who}</span>
+              {e.role ? <span>{roleLabels[e.role] || e.role}</span> : null}
+              {e.workshop ? <span>{e.workshop}</span> : null}
+            </div>
+
+            {e.orderNumber ? (
+              <div className="mt-2">
+                <EventMeta e={e} />
+              </div>
+            ) : null}
+          </div>
+        ))}
+      </div>
+
+      <div className="hidden overflow-x-auto rounded-lg border border-border md:block">
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead className="w-[110px]">Когда</TableHead>
+              <TableHead>Кто</TableHead>
+              <TableHead>Что сделал</TableHead>
+              <TableHead>Заказ</TableHead>
+              <TableHead>Цех</TableHead>
             </TableRow>
-          ))}
-        </TableBody>
-      </Table>
-    </div>
+          </TableHeader>
+          <TableBody>
+            {items.map((e, idx) => (
+              <TableRow key={`${e.at}-${idx}`}>
+                <TableCell className="whitespace-nowrap text-xs text-muted-foreground">
+                  {formatAt(e.at)}
+                </TableCell>
+                <TableCell>
+                  <div className="font-medium leading-tight">{e.who}</div>
+                  {e.role && (
+                    <div className="text-xs text-muted-foreground">
+                      {roleLabels[e.role] || e.role}
+                    </div>
+                  )}
+                </TableCell>
+                <TableCell>
+                  <div className="flex items-start gap-1.5">
+                    <Icon
+                      name={categoryIcon(e.category)}
+                      size={14}
+                      className="mt-0.5 shrink-0 text-muted-foreground"
+                    />
+                    <div>
+                      <div className="font-medium leading-tight">{e.actionTitle}</div>
+                      {e.description && (
+                        <div className="text-xs text-muted-foreground">{e.description}</div>
+                      )}
+                    </div>
+                  </div>
+                </TableCell>
+                <TableCell>
+                  <EventMeta e={e} />
+                </TableCell>
+                <TableCell className="text-xs text-muted-foreground">
+                  {e.workshop || '—'}
+                </TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      </div>
+    </>
   );
 };
 

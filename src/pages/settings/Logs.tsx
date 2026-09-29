@@ -13,10 +13,10 @@ const Logs = () => {
 
   return (
     <CrmLayout>
-      <div className="space-y-6">
+      <div className="space-y-4 sm:space-y-6">
         <div>
-          <h1 className="flex items-center gap-2 text-2xl font-semibold">
-            <Icon name="ScrollText" size={24} />
+          <h1 className="flex items-center gap-2 text-xl font-bold">
+            <Icon name="ScrollText" size={22} className="shrink-0" />
             Журнал действий
           </h1>
           <p className="mt-1 text-sm text-muted-foreground">

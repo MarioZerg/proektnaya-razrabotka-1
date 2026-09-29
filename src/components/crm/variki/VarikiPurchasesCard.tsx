@@ -3,6 +3,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import Icon from '@/components/ui/icon';
 import { useToast } from '@/hooks/use-toast';
+import { useIdSubmitGuard } from '@/hooks/useSubmitGuard';
 import { useAuth } from '@/context/AuthContext';
 import {
   fetchAllPurchases,
@@ -35,7 +36,7 @@ const VarikiPurchasesCard = () => {
 
   const [items, setItems] = useState<VarikiPurchase[]>([]);
   const [listError, setListError] = useState<string | null>(null);
-  const [busyId, setBusyId] = useState<number | null>(null);
+  const { busyId, run } = useIdSubmitGuard();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [targetId, setTargetId] = useState<number | null>(null);
 
@@ -73,51 +74,51 @@ const VarikiPurchasesCard = () => {
       return;
     }
 
-    setBusyId(targetId);
-    try {
-      const base64 = await new Promise<string>((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => resolve(String(reader.result));
-        reader.onerror = () => reject(new Error('Не удалось прочитать файл'));
-        reader.readAsDataURL(file);
-      });
-      await attachCoupon(targetId, base64, file.name, user?.id, user?.name);
-      toast({
-        title: 'Купон отправлен',
-        description: 'Сотрудник увидит его в магазине вариков',
-      });
-      load();
-    } catch (err) {
-      toast({
-        title: 'Не удалось прикрепить купон',
-        description: err instanceof Error ? err.message : undefined,
-        variant: 'destructive',
-      });
-    } finally {
-      setBusyId(null);
-      setTargetId(null);
-    }
+    void run(targetId, async () => {
+      try {
+        const base64 = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(String(reader.result));
+          reader.onerror = () => reject(new Error('Не удалось прочитать файл'));
+          reader.readAsDataURL(file);
+        });
+        await attachCoupon(targetId, base64, file.name, user?.id, user?.name);
+        toast({
+          title: 'Купон отправлен',
+          description: 'Сотрудник увидит его в магазине вариков',
+        });
+        setItems((prev) => prev.filter((p) => p.id !== targetId));
+      } catch (err) {
+        toast({
+          title: 'Не удалось прикрепить купон',
+          description: err instanceof Error ? err.message : undefined,
+          variant: 'destructive',
+        });
+      } finally {
+        setTargetId(null);
+      }
+    });
   };
 
-  const handleCancel = async (p: VarikiPurchase) => {
+  const handleCancel = (p: VarikiPurchase) => {
     const reason = window.prompt(
       `Отменить покупку «${p.title}»? Сотруднику вернётся ${p.price} вариков.\n\nПричина:`,
     );
     if (!reason?.trim()) return;
-    setBusyId(p.id);
-    try {
-      await cancelPurchase(p.id, reason.trim(), user?.id, user?.name);
-      toast({ title: 'Покупка отменена', description: 'Варики возвращены сотруднику' });
-      load();
-    } catch (err) {
-      toast({
-        title: 'Не удалось отменить',
-        description: err instanceof Error ? err.message : undefined,
-        variant: 'destructive',
-      });
-    } finally {
-      setBusyId(null);
-    }
+    void run(p.id, async () => {
+      setItems((prev) => prev.filter((i) => i.id !== p.id));
+      try {
+        await cancelPurchase(p.id, reason.trim(), user?.id, user?.name);
+        toast({ title: 'Покупка отменена', description: 'Варики возвращены сотруднику' });
+      } catch (err) {
+        setItems((prev) => (prev.some((i) => i.id === p.id) ? prev : [...prev, p]));
+        toast({
+          title: 'Не удалось отменить',
+          description: err instanceof Error ? err.message : undefined,
+          variant: 'destructive',
+        });
+      }
+    });
   };
 
   if (listError && items.length === 0) {

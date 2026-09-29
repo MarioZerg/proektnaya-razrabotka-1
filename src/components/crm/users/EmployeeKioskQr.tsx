@@ -107,7 +107,7 @@ const EmployeeKioskQr = ({ employeeId, fullName, shiftNumber, workshop }: Employ
           onRetry={loadWorkshops}
         />
       ) : (
-      <div className="flex items-center gap-3">
+      <div className="flex min-w-0 items-center gap-3">
         {qrDataUrl ? (
           <img src={qrDataUrl} alt="QR сотрудника" className="h-28 w-28 shrink-0" />
         ) : (
@@ -119,7 +119,7 @@ const EmployeeKioskQr = ({ employeeId, fullName, shiftNumber, workshop }: Employ
           <p className="text-xs text-muted-foreground">
             Цех {workshopId}, смена {shiftNumber ?? '—'}
           </p>
-          <Button size="sm" variant="outline" onClick={handlePrint} disabled={!qrDataUrl}>
+          <Button size="sm" variant="outline" className="h-11 w-full sm:h-9" onClick={handlePrint} disabled={!qrDataUrl}>
             <Icon name="Printer" size={14} className="mr-1.5" />
             Печать бейджа
           </Button>

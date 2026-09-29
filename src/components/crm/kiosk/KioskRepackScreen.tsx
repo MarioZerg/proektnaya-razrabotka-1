@@ -8,6 +8,7 @@ import Icon from '@/components/ui/icon';
 import KioskSendToRepairDialog from '@/components/crm/kiosk/KioskSendToRepairDialog';
 import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
 import { useToast } from '@/hooks/use-toast';
+import { useSubmitGuard } from '@/hooks/useSubmitGuard';
 import { printStorageSticker } from '@/lib/printStorageSticker';
 import { printDisposeSticker } from '@/lib/printDisposeSticker';
 import { useScannerAutoSubmit } from '@/hooks/useScannerAutoSubmit';
@@ -50,7 +51,7 @@ const KioskRepackScreen = ({ actorId, actorName, workshopId }: KioskRepackScreen
   const { toast } = useToast();
   /** Единственная вещь на экране — только что отсканированная. */
   const [item, setItem] = useState<RepackItem | null>(null);
-  const [processing, setProcessing] = useState(false);
+  const { busy: processing, run } = useSubmitGuard();
   const [note, setNote] = useState('');
   /** Спрашиваем про новый пакет перед закрытием перепаковки. */
   const [bagAsk, setBagAsk] = useState(false);
@@ -114,74 +115,75 @@ const KioskRepackScreen = ({ actorId, actorName, workshopId }: KioskRepackScreen
   // по ним теряются.
   useScannerAutoSubmit(barcode, handleScan, !scanning && !item);
 
-  const handleFinish = async (outcome: 'repacked' | 'utilized', newBag?: boolean) => {
+  const handleFinish = (outcome: 'repacked' | 'utilized', newBag?: boolean) => {
     if (!item) return;
     // Причину брака упаковщица больше не выбирает — на экране только три
     // решения: перепаковать, в брак, вернуть на рулон. Разбираться, ЧТО именно
     // с вещью не так, всё равно будет администратор, когда вещь дойдёт до него
     // со стикером. Лишний экран выбора только тормозил работу на потоке.
+    const current = item;
     const text = note.trim() || 'Брак при перепаковке';
-    setProcessing(true);
-    setBagAsk(false);
-    try {
-      const res = await finishRepack({
-        id: item.id,
-        outcome,
-        newBag,
-        note: text,
-        actorId,
-        actorName,
-        workshopId,
-      });
-
-      const title =
-        item.material && item.width
-          ? `${item.material} ${item.width}×${item.height}`
-          : item.product;
-
-      if (outcome === 'repacked' && res.storageBarcode) {
-        // Печатаем стикер хранения сразу: кладовщик по нему положит вещь на полку.
-        printStorageSticker({
-          storageBarcode: res.storageBarcode,
-          title,
-          orderNumber: item.orderNumber,
+    void run(async () => {
+      setBagAsk(false);
+      setItem(null);
+      try {
+        const res = await finishRepack({
+          id: current.id,
+          outcome,
+          newBag,
+          note: text,
+          actorId,
+          actorName,
+          workshopId,
         });
-        toast({
-          title: res.accrued ? `Вещь переупакована · +${res.accrued} ₽` : 'Вещь переупакована',
-          description: 'Наклейте стикер хранения — кладовщик заберёт вещь на полку',
-        });
-      } else {
-        // Бракованную вещь тоже стикеруем: без наклейки она уезжает из цеха безымянной,
-        // и на складе никто не знает, что это и за что списано.
-        if (res.storageBarcode) {
-          printDisposeSticker({
+
+        const title =
+          current.material && current.width
+            ? `${current.material} ${current.width}×${current.height}`
+            : current.product;
+
+        if (outcome === 'repacked' && res.storageBarcode) {
+          // Печатаем стикер хранения сразу: кладовщик по нему положит вещь на полку.
+          printStorageSticker({
             storageBarcode: res.storageBarcode,
             title,
-            orderNumber: item.orderNumber,
-            reason: res.disposeReason || text,
+            orderNumber: current.orderNumber,
+          });
+          toast({
+            title: res.accrued ? `Вещь переупакована · +${res.accrued} ₽` : 'Вещь переупакована',
+            description: 'Наклейте стикер хранения — кладовщик заберёт вещь на полку',
+          });
+        } else {
+          // Бракованную вещь тоже стикеруем: без наклейки она уезжает из цеха безымянной,
+          // и на складе никто не знает, что это и за что списано.
+          if (res.storageBarcode) {
+            printDisposeSticker({
+              storageBarcode: res.storageBarcode,
+              title,
+              orderNumber: current.orderNumber,
+              reason: res.disposeReason || text,
+            });
+          }
+          toast({
+            title: 'Товар отправлен на утилизацию',
+            description: 'Наклейте стикер брака — кладовщик передаст вещь администратору',
           });
         }
+
+        // Экран очищаем полностью: следующая вещь начинается с чистого скана.
+        setNote('');
+        setDoneCount((n) => n + 1);
+        loadCount();
+        focusInput();
+      } catch (e) {
+        setItem(current);
         toast({
-          title: 'Товар отправлен на утилизацию',
-          description: 'Наклейте стикер брака — кладовщик передаст вещь администратору',
+          title: 'Ошибка',
+          description: e instanceof Error ? e.message : undefined,
+          variant: 'destructive',
         });
       }
-
-      // Экран очищаем полностью: следующая вещь начинается с чистого скана.
-      setItem(null);
-      setNote('');
-      setDoneCount((n) => n + 1);
-      loadCount();
-      focusInput();
-    } catch (e) {
-      toast({
-        title: 'Ошибка',
-        description: e instanceof Error ? e.message : undefined,
-        variant: 'destructive',
-      });
-    } finally {
-      setProcessing(false);
-    }
+    });
   };
 
   return (

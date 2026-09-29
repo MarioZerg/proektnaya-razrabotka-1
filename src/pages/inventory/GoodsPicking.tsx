@@ -37,6 +37,9 @@ const GoodsPicking = () => {
     byScheme,
     fbsCount,
     fboCount,
+    shelfFilter,
+    setShelfFilter,
+    shelfStats,
   } = useGoodsPicking();
 
   return (
@@ -58,6 +61,9 @@ const GoodsPicking = () => {
           workOrdersCount={workOrders.length}
           fbsCount={fbsCount}
           fboCount={fboCount}
+          shelfFilter={shelfFilter}
+          setShelfFilter={setShelfFilter}
+          shelfStats={shelfStats}
         />
 
         <PickingScanDialog
@@ -107,6 +113,7 @@ const GoodsPicking = () => {
           loading={loading}
           error={listError}
           search={search}
+          shelfFilter={shelfFilter}
           workOrders={workOrders}
           filtered={filtered}
           byScheme={byScheme}

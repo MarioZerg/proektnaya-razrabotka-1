@@ -17,6 +17,7 @@ import {
   setEtrnStatus,
   attachSignedEtrn,
   refreshEtrnCargo,
+  isEtrnSupplyClosed,
   type EtrnDocument,
   type EtrnEditableFields,
 } from '@/lib/etrnApi';
@@ -100,6 +101,7 @@ const toInput = (v: unknown, type?: string): string => {
  */
 const EtrnCard = ({ supply, isManager }: EtrnCardProps) => {
   const { toast } = useToast();
+  const supplyClosed = isEtrnSupplyClosed(supply.status);
   const [doc, setDoc] = useState<EtrnDocument | null>(null);
   const [loading, setLoading] = useState(true);
   const [listError, setListError] = useState<string | null>(null);
@@ -262,9 +264,11 @@ const EtrnCard = ({ supply, isManager }: EtrnCardProps) => {
     );
   }
 
-  // Накладной ещё нет. Кладовщику показываем предупреждение, а не пустоту: без
-  // документа груз на СЦ не примут, и узнать об этом лучше до выезда машины.
+  // Накладной ещё нет. У закрытой поставки заполнять уже нечего — блок прячем.
+  // У живой кладовщику показываем предупреждение, а не пустоту: без документа
+  // груз на СЦ не примут, и узнать об этом лучше до выезда машины.
   if (!doc) {
+    if (supplyClosed) return null;
     return (
       <SupplySection
         title="ЭТрН"
@@ -293,7 +297,7 @@ const EtrnCard = ({ supply, isManager }: EtrnCardProps) => {
     );
   }
 
-  const locked = doc.status === 'Подписана';
+  const locked = doc.status === 'Подписана' || supplyClosed;
 
   return (
     <SupplySection

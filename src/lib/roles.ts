@@ -470,9 +470,6 @@ const adminNav: NavItem[] = [
       { label: 'Поставщики', path: '/crm/settings/suppliers' },
       { label: 'Товары на маркетплейсе', path: '/crm/settings/marketplace-items' },
       { label: 'Интеграции маркетплейсов', path: '/crm/settings/marketplace-integrations' },
-      // Готовые картинки и таблицы для кабинета OZON: логотип, баннеры,
-      // заполненный шаблон товаров, листовки в пакет.
-      { label: 'Материалы для OZON', path: '/crm/settings/ozon-assets' },
       { label: 'Планировщик', path: '/crm/settings/scheduler' },
       { label: 'Полки на складе', path: '/crm/settings/shelves' },
       { label: 'Вешалки', path: '/crm/settings/hangers' },
@@ -499,23 +496,10 @@ const baseNavByRole: Record<Role, NavItem[]> = {
  * Меню роли. «Инструкции» добавляются последним пунктом и собираются под роль:
  * человек видит только те памятки, что относятся к его работе.
  */
-/**
- * Чат доступен ВСЕМ без исключения — это общая переписка компании, а не раздел
- * какого-то отдела. Поэтому добавляется в меню всем ролям одинаково, сразу после
- * главной: рабочие вопросы задают чаще, чем открывают справочники.
- */
-const chatNavItem: NavItem = { label: 'Чат', icon: 'MessagesSquare', path: '/crm/chat' };
-
 export const navByRole: Record<Role, NavItem[]> = Object.fromEntries(
   (Object.keys(baseNavByRole) as Role[]).map((role) => {
     const guides = buildGuidesNav(role);
     const base = baseNavByRole[role];
-    // Бухгалтер — исключение из «чат всем»: у него в меню ровно один пункт,
-    // и рабочая переписка цеха к его задаче отношения не имеет. Добавили бы
-    // чат — получилось бы меню из двух пунктов, где второй никому не нужен.
-    if (role === 'accountant') return [role, base];
-    // Чат ставим вторым пунктом — сразу после «Главной».
-    const withChat = [base[0], chatNavItem, ...base.slice(1)];
-    return [role, guides.children?.length ? [...withChat, guides] : withChat];
+    return [role, guides.children?.length ? [...base, guides] : base];
   }),
 ) as Record<Role, NavItem[]>;

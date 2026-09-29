@@ -89,7 +89,7 @@ const PassportSection = ({ data, userId, actorId, onChanged }: PassportSectionPr
   };
 
   return (
-    <div className="space-y-3 rounded-md border border-border p-4">
+    <div className="min-w-0 space-y-3 rounded-md border border-border p-3">
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div>
           <p className="font-bold">Данные для договора</p>
@@ -107,12 +107,12 @@ const PassportSection = ({ data, userId, actorId, onChanged }: PassportSectionPr
       </div>
 
       {scans.length > 0 ? (
-        <div className="flex flex-wrap gap-2">
+        <div className="grid grid-cols-1 gap-2">
           {scans.map((d) => (
-            <Button key={d.docType} variant="outline" size="sm" asChild>
+            <Button key={d.docType} variant="outline" size="sm" className="h-11 w-full justify-start sm:h-9" asChild>
               <a href={d.fileUrl || '#'} target="_blank" rel="noreferrer">
-                <Icon name="Eye" size={14} className="mr-1.5" />
-                {d.label}
+                <Icon name="Eye" size={14} className="mr-1.5 shrink-0" />
+                <span className="truncate">{d.label}</span>
               </a>
             </Button>
           ))}
@@ -218,12 +218,12 @@ const PassportSection = ({ data, userId, actorId, onChanged }: PassportSectionPr
         </p>
       )}
 
-      <div className="flex flex-wrap gap-2">
+      <div className="grid grid-cols-1 gap-2">
         <Button
           size="sm"
           disabled={saving || !filled}
           onClick={() => handleSave(true)}
-          className="bg-emerald-600 text-white hover:bg-emerald-700"
+          className="h-11 w-full bg-emerald-600 text-white hover:bg-emerald-700 sm:h-9"
         >
           {saving ? (
             <Icon name="Loader2" size={14} className="mr-1.5 animate-spin" />
@@ -232,7 +232,7 @@ const PassportSection = ({ data, userId, actorId, onChanged }: PassportSectionPr
           )}
           Данные проверены
         </Button>
-        <Button size="sm" variant="outline" disabled={saving} onClick={() => handleSave(false)}>
+        <Button size="sm" variant="outline" className="h-11 w-full sm:h-9" disabled={saving} onClick={() => handleSave(false)}>
           Сохранить черновик
         </Button>
       </div>

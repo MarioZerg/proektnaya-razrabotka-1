@@ -5,6 +5,7 @@ import { Input } from '@/components/ui/input';
 import { Card, CardContent } from '@/components/ui/card';
 import Icon from '@/components/ui/icon';
 import { useToast } from '@/hooks/use-toast';
+import { useSubmitGuard } from '@/hooks/useSubmitGuard';
 import { useAuth } from '@/context/AuthContext';
 import { fetchKioskOrder, closeKioskOrder, type KioskOrder } from '@/lib/kioskApi';
 import { playScanSound, playScanErrorSound } from '@/lib/scanSound';
@@ -18,7 +19,7 @@ const Kiosk = () => {
   const [orderNumber, setOrderNumber] = useState('');
   const [searching, setSearching] = useState(false);
   const [order, setOrder] = useState<KioskOrder | null>(null);
-  const [closing, setClosing] = useState(false);
+  const { busy: closing, run } = useSubmitGuard();
   const inputRef = useRef<HTMLInputElement>(null);
 
   const handleSearch = async () => {
@@ -46,20 +47,19 @@ const Kiosk = () => {
 
   useScannerAutoSubmit(orderNumber, handleSearch, !searching && !order);
 
-  const handleClose = async () => {
+  const handleClose = () => {
     if (!order || !user) return;
-    setClosing(true);
-    try {
-      await closeKioskOrder(order.id, user.id, user.id, user.name);
-      toast({ title: `Заказ ${order.orderNumber} закрыт`, description: 'Начислена зарплата швее и упаковщице' });
-      setOrder(null);
-      setOrderNumber('');
-      inputRef.current?.focus();
-    } catch (e) {
-      toast({ title: 'Ошибка', description: e instanceof Error ? e.message : undefined, variant: 'destructive' });
-    } finally {
-      setClosing(false);
-    }
+    void run(async () => {
+      try {
+        await closeKioskOrder(order.id, user.id, user.id, user.name);
+        toast({ title: `Заказ ${order.orderNumber} закрыт`, description: 'Начислена зарплата швее и упаковщице' });
+        setOrder(null);
+        setOrderNumber('');
+        inputRef.current?.focus();
+      } catch (e) {
+        toast({ title: 'Ошибка', description: e instanceof Error ? e.message : undefined, variant: 'destructive' });
+      }
+    });
   };
 
   // Упаковщица работает только на киоске в цехе, а не из личного кабинета. Страницу

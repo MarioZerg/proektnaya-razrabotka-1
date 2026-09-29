@@ -12,6 +12,7 @@ import {
 } from '@/components/ui/dialog';
 import Icon from '@/components/ui/icon';
 import { useToast } from '@/hooks/use-toast';
+import { useSubmitGuard } from '@/hooks/useSubmitGuard';
 import { useAuth } from '@/context/AuthContext';
 import {
   fetchRolls,
@@ -43,7 +44,7 @@ const DefectRollsPanel = () => {
   const [onStock, setOnStock] = useState<Roll[]>([]);
   const [open, setOpen] = useState(false);
   const [barcode, setBarcode] = useState('');
-  const [saving, setSaving] = useState(false);
+  const { busy: saving, run } = useSubmitGuard();
   const [declining, setDeclining] = useState<Roll | null>(null);
   const [declineReason, setDeclineReason] = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
@@ -66,51 +67,51 @@ const DefectRollsPanel = () => {
 
   useEffect(load, []);
 
-  const handleScan = async () => {
+  const handleScan = () => {
     const value = barcode.trim();
-    if (!value || saving) return;
-    setBarcode('');
-    setSaving(true);
-    try {
-      const res = await receiveDefectRoll(value, user?.id, user?.name);
-      toast({
-        title: `Рулон ${res.barcode} принят на склад`,
-        description: `${res.materialName} — ${formatQty(res.remaining)} ${res.unit || ''}. ${res.reason || ''}`,
-      });
-      load();
-    } catch (e) {
-      toast({
-        title: 'Не удалось забрать рулон',
-        description: e instanceof Error ? e.message : undefined,
-        variant: 'destructive',
-      });
-    } finally {
-      setSaving(false);
-      setTimeout(() => inputRef.current?.focus(), 0);
-    }
+    if (!value) return;
+    void run(async () => {
+      setBarcode('');
+      try {
+        const res = await receiveDefectRoll(value, user?.id, user?.name);
+        toast({
+          title: `Рулон ${res.barcode} принят на склад`,
+          description: `${res.materialName} — ${formatQty(res.remaining)} ${res.unit || ''}. ${res.reason || ''}`,
+        });
+        load();
+      } catch (e) {
+        toast({
+          title: 'Не удалось забрать рулон',
+          description: e instanceof Error ? e.message : undefined,
+          variant: 'destructive',
+        });
+      } finally {
+        setTimeout(() => inputRef.current?.focus(), 0);
+      }
+    });
   };
 
-  const handleDecline = async () => {
+  const handleDecline = () => {
     if (!declining || !declineReason.trim()) return;
-    setSaving(true);
-    try {
-      await declineDefectRoll(declining.id, declineReason.trim(), user?.id);
-      toast({
-        title: 'Отказано в заборе',
-        description: `Рулон ${declining.barcode} снова доступен для раскроя`,
-      });
-      setDeclining(null);
-      setDeclineReason('');
-      load();
-    } catch (e) {
-      toast({
-        title: 'Ошибка',
-        description: e instanceof Error ? e.message : undefined,
-        variant: 'destructive',
-      });
-    } finally {
-      setSaving(false);
-    }
+    void run(async () => {
+      const roll = declining;
+      try {
+        await declineDefectRoll(roll.id, declineReason.trim(), user?.id);
+        toast({
+          title: 'Отказано в заборе',
+          description: `Рулон ${roll.barcode} снова доступен для раскроя`,
+        });
+        setDeclining(null);
+        setDeclineReason('');
+        load();
+      } catch (e) {
+        toast({
+          title: 'Ошибка',
+          description: e instanceof Error ? e.message : undefined,
+          variant: 'destructive',
+        });
+      }
+    });
   };
 
   // Пока брака нет вообще, панель не занимает место на странице.

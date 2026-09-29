@@ -3,6 +3,8 @@ import os
 
 import psycopg2
 
+CLOSED_WORKSHOP_NAMES = ('Цех №2', 'Тестовый цех (QA)')
+
 SETTINGS_KEYS = [
     'working_day_start',
     'working_day_end',
@@ -104,7 +106,7 @@ def handler(event: dict, context) -> dict:
             if workshop_id:
                 cur.execute(
                     "SELECT id, name, is_active, shifts_count, allowed_products, allowed_materials, "
-                    "created_at, updated_at FROM workshops WHERE id = %s",
+                    "created_at, updated_at FROM workshops WHERE id = %s AND name NOT IN ('Цех №2', 'Тестовый цех (QA)')",
                     (int(workshop_id),),
                 )
                 row = cur.fetchone()
@@ -149,11 +151,12 @@ def handler(event: dict, context) -> dict:
 
             cur.execute(
                 "SELECT w.id, w.name, w.is_active, w.shifts_count, w.created_at, w.updated_at, "
-                "(SELECT COUNT(*) FROM users u WHERE u.workshop = w.name), w.shift_names, "
+                "(SELECT COUNT(*) FROM users u WHERE u.workshop = w.name "
+                "OR (w.name = 'Цех №1' AND u.workshop IN ('Цех №2', 'Тестовый цех (QA)'))), w.shift_names, "
                 # Материалы цеха нужны в списке: по ним фильтруются заявки и подсказки
                 # в интерфейсе, чтобы цех не видел чужие ткани.
                 "w.allowed_materials "
-                "FROM workshops w ORDER BY w.id"
+                "FROM workshops w WHERE w.name NOT IN ('Цех №2', 'Тестовый цех (QA)') ORDER BY w.id"
             )
             workshops = [
                 {
@@ -188,6 +191,12 @@ def handler(event: dict, context) -> dict:
 
                 if not name:
                     return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите название цеха'})}
+                if name in CLOSED_WORKSHOP_NAMES:
+                    return {
+                        'statusCode': 400,
+                        'headers': headers,
+                        'body': json.dumps({'error': 'Этот цех закрыт — производство только в цехе №1'}, ensure_ascii=False),
+                    }
 
                 name_esc = name.replace("'", "''")
                 cur.execute(f"SELECT id FROM workshops WHERE name = '{name_esc}'")
@@ -226,6 +235,23 @@ def handler(event: dict, context) -> dict:
                 workshop_id = body_data.get('id')
                 if not workshop_id:
                     return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите id'})}
+
+                cur.execute("SELECT name FROM workshops WHERE id = %s", (int(workshop_id),))
+                existing = cur.fetchone()
+                if not existing:
+                    return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': 'Цех не найден'})}
+                if existing[0] in CLOSED_WORKSHOP_NAMES:
+                    return {
+                        'statusCode': 400,
+                        'headers': headers,
+                        'body': json.dumps({'error': 'Этот цех закрыт — его больше нельзя менять'}, ensure_ascii=False),
+                    }
+                if (body_data.get('name') or '').strip() in CLOSED_WORKSHOP_NAMES:
+                    return {
+                        'statusCode': 400,
+                        'headers': headers,
+                        'body': json.dumps({'error': 'Этот цех закрыт — производство только в цехе №1'}, ensure_ascii=False),
+                    }
 
                 fields = []
                 if 'name' in body_data:

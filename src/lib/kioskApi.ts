@@ -1,5 +1,6 @@
 import { setAuthToken } from '@/lib/authToken';
 import type { TakenOrder } from '@/lib/ordersApi';
+import { isRetiredWorkshop } from '@/lib/workshopsApi';
 
 const KIOSK_URL = 'https://functions.poehali.dev/646f604e-57e9-47fb-b2ca-dd424abfba48';
 
@@ -533,7 +534,7 @@ export const fetchOpenShiftOptions = async (): Promise<OpenShiftWorkshop[]> => {
   });
   const data = await res.json();
   if (!res.ok) throw new Error(data.error || 'Не удалось загрузить цеха');
-  return data.workshops || [];
+  return ((data.workshops || []) as OpenShiftWorkshop[]).filter((w) => !isRetiredWorkshop(w));
 };
 
 /** Рулоны цеха, по которым можно оформить брак, вместе с подходящими причинами.

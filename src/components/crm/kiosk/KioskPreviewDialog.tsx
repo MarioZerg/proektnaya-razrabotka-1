@@ -65,8 +65,9 @@ const KioskPreviewDialog = ({ open, onOpenChange, adminName }: KioskPreviewDialo
     fetchWorkshops()
       .then((list) => {
         setListError(null);
-        setWorkshops(list);
-        if (list.length > 0) setWorkshopId((prev) => prev || String(list[0].id));
+        const active = list.filter((w) => w.isActive);
+        setWorkshops(active);
+        if (active.length > 0) setWorkshopId((prev) => prev || String(active[0].id));
       })
       .catch((e) => {
         setListError(e instanceof Error ? e.message : 'Не удалось загрузить цеха');

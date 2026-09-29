@@ -14,6 +14,7 @@ import Icon from '@/components/ui/icon';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/context/AuthContext';
 import { saveCostSettings, type CostSettings } from '@/lib/productCostApi';
+import { isRetiredWorkshop } from '@/lib/workshopsApi';
 
 interface CostSettingsPanelProps {
   settings: CostSettings;
@@ -34,9 +35,13 @@ interface CostSettingsPanelProps {
 const CostSettingsPanel = ({ settings, workshops, onSaved }: CostSettingsPanelProps) => {
   const { toast } = useToast();
   const { user } = useAuth();
-  const [workshopId, setWorkshopId] = useState(
-    settings.workshopId ? String(settings.workshopId) : '',
-  );
+  const visibleWorkshops = workshops.filter((w) => !isRetiredWorkshop(w));
+  const [workshopId, setWorkshopId] = useState(() => {
+    if (settings.workshopId && visibleWorkshops.some((w) => w.id === settings.workshopId)) {
+      return String(settings.workshopId);
+    }
+    return visibleWorkshops[0] ? String(visibleWorkshops[0].id) : '';
+  });
   const [shortage, setShortage] = useState(
     String(settings.shortagePercent ?? 5),
   );
@@ -79,7 +84,7 @@ const CostSettingsPanel = ({ settings, workshops, onSaved }: CostSettingsPanelPr
                 <SelectValue placeholder="Выберите цех" />
               </SelectTrigger>
               <SelectContent>
-                {workshops.map((w) => (
+                {visibleWorkshops.map((w) => (
                   <SelectItem key={w.id} value={String(w.id)}>
                     {w.name}
                   </SelectItem>

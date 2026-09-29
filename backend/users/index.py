@@ -9,11 +9,19 @@ import uuid
 import boto3
 import psycopg2
 
-from authz import AuthError, auth_error_response, current_user, require_admin, require_auth
+from authz import AuthError, auth_error_response, require_admin
 
 
 ROLES = {'sewer', 'cutter', 'packer', 'storekeeper', 'senior_storekeeper', 'cleaner',
          'admin', 'manager', 'accountant'}
+
+CLOSED_WORKSHOP_NAMES = ('Цех №2', 'Тестовый цех (QA)')
+KEEP_WORKSHOP_NAME = 'Цех №1'
+
+
+def public_workshop(name):
+    """Второй цех закрыт: в списках и карточках показываем первый."""
+    return KEEP_WORKSHOP_NAME if name in CLOSED_WORKSHOP_NAMES else name
 
 
 # График по умолчанию для каждой должности. Цех работает сменами 2/2 по 12 часов,
@@ -92,73 +100,6 @@ def avatar_error(base64_data) -> str:
     return ''
 
 
-# Сколько живёт отметка «человек печатает». Столько же, сколько пауза между
-# нажатиями клавиш у медленно печатающего человека: короче — надпись мигает,
-# длиннее — висит после того, как человек передумал писать.
-TYPING_TTL_SECONDS = 7
-
-# Сколько человек считается «в сети» после последнего обращения чата к серверу.
-# Чат в покое опрашивает сервер реже, чем в разговоре, поэтому запас берём с
-# перекрытием: иначе читающий человек мигал бы «зашёл — ушёл».
-ONLINE_TTL_SECONDS = 120
-
-
-def chat_touch_presence(cur, user_id: int, typing: bool) -> None:
-    """Отмечает, что человек смотрит в чат (и, если typing, набирает сообщение).
-
-    Вызывается изнутри обычного опроса новых сообщений — отдельного запроса
-    «я тут» у чата нет: каждый вызов облачной функции оплачивается, и держать
-    ради зелёной точки второй поток обращений было бы расточительно.
-    """
-    typing_value = 'now()' if typing else 'NULL'
-    # Когда человек просто читает, старую отметку о печати не стираем: она погаснет
-    # сама через TYPING_TTL_SECONDS. Иначе «печатает...» гасло бы у соседа каждый раз,
-    # когда сам печатающий на секунду переключился на другую вкладку.
-    keep_typing = 'chat_presence.typing_at' if not typing else 'now()'
-    try:
-        cur.execute(
-            f"INSERT INTO chat_presence (user_id, last_seen_at, typing_at) "
-            f"VALUES (%s, now(), {typing_value}) "
-            f"ON CONFLICT (user_id) DO UPDATE SET last_seen_at = now(), "
-            f"typing_at = {keep_typing}",
-            (user_id,),
-        )
-    except psycopg2.Error:
-        # Зелёная точка — украшение, переписка — работа. Если таблицы присутствия
-        # почему-то нет (функция обновилась раньше, чем применилась миграция), чат
-        # должен продолжать работать, а не отдавать ошибку на каждый опрос.
-        cur.connection.rollback()
-
-
-def chat_presence(cur) -> dict:
-    """Кто сейчас в чате и кто печатает.
-
-    Возвращает всех, включая самого спрашивающего: кто именно спрашивает, для
-    этого запроса неважно, а браузер уберёт себя из списка сам. Так опрос новых
-    сообщений остаётся без проверки токена и не тратит на неё запрос к базе
-    каждые несколько секунд.
-    """
-    try:
-        cur.execute(
-            "SELECT p.user_id, u.full_name, "
-            "       NULLIF(COALESCE(u.avatar_url, u.max_avatar_url), ''), "
-            "       (p.typing_at IS NOT NULL "
-            f"        AND p.typing_at > now() - interval '{TYPING_TTL_SECONDS} seconds') "
-            "FROM chat_presence p JOIN users u ON u.id = p.user_id "
-            f"WHERE p.last_seen_at > now() - interval '{ONLINE_TTL_SECONDS} seconds' "
-            "  AND u.is_active = true AND u.archived_at IS NULL "
-            "ORDER BY u.full_name"
-        )
-        rows = cur.fetchall()
-    except psycopg2.Error:
-        cur.connection.rollback()
-        return {'online': [], 'typing': []}
-    return {
-        'online': [{'userId': r[0], 'userName': r[1], 'avatarUrl': r[2]} for r in rows],
-        'typing': [{'userId': r[0], 'userName': r[1]} for r in rows if r[3]],
-    }
-
-
 def handler(event: dict, context) -> dict:
     """Управляет сотрудниками: список, создание, редактирование, график смен, зарплата, аватар.
 
@@ -193,25 +134,6 @@ def handler(event: dict, context) -> dict:
         убирает её и отключает учётную запись, если других должностей не осталось
     POST /  { action: 'remove_role', id, role } — убирает должность у пользователя
 
-    ЧАТ СОТРУДНИКОВ (живёт здесь же — тариф ограничивает число облачных функций,
-    а заводить отдельную ради переписки расточительно; тема общая — люди):
-    GET  /?chat=1              - последние сообщения ленты, плюс me (свой профиль
-                                 с фото — чтобы человек мог сменить его прямо в чате)
-    GET  /?chat=1&since=123    - только новее id=123 (этим лента живёт в реальном
-                                 времени: ответ почти всегда пустой и очень дешёвый)
-    GET  /?chat=1&before=123   - более старые сообщения (история вверх)
-    Любой запрос ленты отдаёт online (кто сейчас в чате) и typing (кто набирает
-    сообщение). Отметку о себе ставят те же запросы: &ping=1 — «смотрю в чат»,
-    &typing=1 — «печатаю». Отдельных обращений ради зелёной точки нет: каждый
-    вызов функции оплачивается.
-    POST /  { action: 'chat_send', text }              - отправить сообщение
-    POST /  { action: 'chat_hide', id }                - убрать сообщение
-                                 (своё — автор, любое — администратор)
-    POST /  { action: 'chat_avatar', avatarBase64 }    - поставить себе фото
-    POST /  { action: 'chat_avatar', remove: true }    - убрать своё фото
-        Автор и владелец фото определяются по токену сессии, а не по id из тела
-        запроса: иначе можно было бы написать от чужого имени и подменить чужое фото.
-
     Логин сотрудника генерируется из email (часть до @). Пароль хранится как
     PBKDF2-HMAC-SHA256 с солью. Аватар загружается в S3, сохраняется публичная ссылка.
 
@@ -238,140 +160,6 @@ def handler(event: dict, context) -> dict:
 
     headers = {'Access-Control-Allow-Origin': '*', 'Content-Type': 'application/json'}
     dsn = os.environ['DATABASE_URL']
-
-    params = event.get('queryStringParameters') or {}
-
-    # --- Чат сотрудников ---------------------------------------------------------
-    # Сколько сообщений отдаём при открытии: цеху нужны последние вопросы смены,
-    # а не переписка месячной давности.
-    CHAT_PAGE = 50
-    CHAT_MAX_TEXT = 2000
-
-    def _chat_row(r):
-        return {
-            'id': r[0],
-            'userId': r[1],
-            'userName': r[2],
-            'text': r[3],
-            'createdAt': r[4].isoformat() + 'Z',
-            # Фото автора: сначала загруженное администратором, иначе — из профиля MAX.
-            # Берём его в момент чтения, а не пишем в сообщение: человек сменил аватар —
-            # он обновится сразу во всей переписке, включая старые сообщения.
-            'avatarUrl': (r[5] if len(r) > 5 else None),
-        }
-
-    # Сообщения всегда читаем вместе с фото автора — отдельный запрос за аватарами
-    # на каждое сообщение превратил бы дешёвый опрос в десятки запросов.
-    CHAT_SELECT = (
-        "SELECT m.id, m.user_id, m.user_name, m.text, m.created_at, "
-        "       NULLIF(COALESCE(u.avatar_url, u.max_avatar_url), '') "
-        "FROM chat_messages m LEFT JOIN users u ON u.id = m.user_id "
-    )
-
-    if method == 'GET' and params.get('chat'):
-        conn = psycopg2.connect(dsn)
-        try:
-            cur = conn.cursor()
-            since = params.get('since')
-            before = params.get('before')
-            typing = params.get('typing') in ('1', 'true')
-            # Токен разбираем только когда он реально нужен: при открытии чата (нужен
-            # свой профиль для смены фото) и когда человек отмечается в сети. Обычный
-            # опрос новых сообщений идёт без него — иначе каждые несколько секунд
-            # уходил бы лишний запрос к базе за проверкой сессии.
-            me = None
-            if not since or typing or params.get('ping') in ('1', 'true'):
-                me = current_user(cur, event)
-                if me:
-                    chat_touch_presence(cur, me['id'], typing)
-                # current_user продлевает сессию, а отметка присутствия пишет строку —
-                # без commit обе записи откатятся при закрытии соединения.
-                conn.commit()
-
-            if before:
-                cur.execute(
-                    CHAT_SELECT + "WHERE m.hidden_at IS NULL AND m.id < %s "
-                    "ORDER BY m.id DESC LIMIT %s",
-                    (int(before), CHAT_PAGE),
-                )
-                rows = list(reversed(cur.fetchall()))
-                return {
-                    'statusCode': 200,
-                    'headers': headers,
-                    'body': json.dumps(
-                        {
-                            'messages': [_chat_row(r) for r in rows],
-                            'hasMore': len(rows) == CHAT_PAGE,
-                        },
-                        ensure_ascii=False,
-                    ),
-                }
-
-            # Кто в чате и кто печатает — отдаём вместе с живой лентой: список
-            # крошечный, а надпись «Лена печатает...» должна появляться сразу.
-            # При подгрузке старой истории (ветка выше) он не нужен вовсе.
-            presence = chat_presence(cur)
-
-            if since:
-                # Горячий запрос: его шлёт каждый открытый чат каждые несколько секунд.
-                # Условие по id попадает в индекс — при отсутствии новых сообщений
-                # запрос не читает ни одной строки.
-                cur.execute(
-                    CHAT_SELECT + "WHERE m.hidden_at IS NULL AND m.id > %s "
-                    "ORDER BY m.id ASC LIMIT 200",
-                    (int(since),),
-                )
-                return {
-                    'statusCode': 200,
-                    'headers': headers,
-                    'body': json.dumps(
-                        {'messages': [_chat_row(r) for r in cur.fetchall()], **presence},
-                        ensure_ascii=False,
-                    ),
-                }
-
-            cur.execute(
-                CHAT_SELECT + "WHERE m.hidden_at IS NULL ORDER BY m.id DESC LIMIT %s",
-                (CHAT_PAGE,),
-            )
-            # Читаем свежие сверху (так работает индекс), отдаём в порядке беседы.
-            rows = list(reversed(cur.fetchall()))
-            # Своё фото отдаём при открытии чата: человек меняет его там же, где
-            # переписывается, и должен видеть, что стоит сейчас. Даже если он ещё
-            # ни разу не писал и в ленте его фотографии нет.
-            my_profile = None
-            if me:
-                cur.execute(
-                    "SELECT NULLIF(COALESCE(avatar_url, max_avatar_url), ''), "
-                    "       avatar_url IS NOT NULL "
-                    "FROM users WHERE id = %s",
-                    (me['id'],),
-                )
-                my_row = cur.fetchone()
-                my_profile = {
-                    'id': me['id'],
-                    'name': me['name'],
-                    'role': me['role'],
-                    'avatarUrl': my_row[0] if my_row else None,
-                    # Своё фото загружено вручную — значит, его можно убрать.
-                    # Фото из MAX убирать нечего: оно подтянется при следующем входе.
-                    'ownAvatar': bool(my_row[1]) if my_row else False,
-                }
-            return {
-                'statusCode': 200,
-                'headers': headers,
-                'body': json.dumps(
-                    {
-                        'messages': [_chat_row(r) for r in rows],
-                        'hasMore': len(rows) == CHAT_PAGE,
-                        'me': my_profile,
-                        **presence,
-                    },
-                    ensure_ascii=False,
-                ),
-            }
-        finally:
-            conn.close()
 
     if method == 'GET':
         conn = psycopg2.connect(dsn)
@@ -424,7 +212,7 @@ def handler(event: dict, context) -> dict:
                     'email': r[2],
                     'fullName': r[3],
                     'role': r[4],
-                    'workshop': r[5],
+                    'workshop': public_workshop(r[5]),
                     'salary': float(r[6]) if r[6] is not None else 0,
                     'shiftFrom': r[7].strftime('%H:%M') if r[7] else None,
                     'shiftTo': r[8].strftime('%H:%M') if r[8] else None,
@@ -432,7 +220,7 @@ def handler(event: dict, context) -> dict:
                     'isActive': r[10],
                     'createdAt': r[11].isoformat() + 'Z',
                     'updatedAt': r[12].isoformat() + 'Z',
-                    'shiftNumber': r[13],
+                    'shiftNumber': 3 if r[5] in CLOSED_WORKSHOP_NAMES else r[13],
                     'maxUserId': r[14],
                     'phone': r[15],
                     'registeredViaMax': r[16],
@@ -489,172 +277,7 @@ def handler(event: dict, context) -> dict:
             # запрос и завести себе второй аккаунт с ролью «администратор», а
             # дальше делать в системе что угодно уже законно. Это обесценивало
             # все остальные проверки прав.
-            #
-            # Чат сотрудников — исключение: писать в него может каждый, там нет
-            # ни денег, ни материалов. Но именно ВОШЕДШИЙ: кто написал сообщение и
-            # чьё фото меняется, сервер берёт из токена, а не из тела запроса —
-            # иначе можно было бы написать от чужого имени или подменить чужое фото.
-            CHAT_ACTIONS = ('chat_send', 'chat_hide', 'chat_avatar')
-            chat_actor = None
-            if action in CHAT_ACTIONS:
-                chat_actor = require_auth(cur, event)
-            else:
-                require_admin(cur, event)
-
-            if action == 'chat_send':
-                chat_user_id = chat_actor['id']
-                chat_text = (body_data.get('text') or '').strip()
-                if not chat_text:
-                    return {
-                        'statusCode': 400,
-                        'headers': headers,
-                        'body': json.dumps({'error': 'Введите текст сообщения'}, ensure_ascii=False),
-                    }
-                if len(chat_text) > CHAT_MAX_TEXT:
-                    return {
-                        'statusCode': 400,
-                        'headers': headers,
-                        'body': json.dumps(
-                            {'error': f'Сообщение длиннее {CHAT_MAX_TEXT} символов'},
-                            ensure_ascii=False,
-                        ),
-                    }
-                # Имя автора берём из профиля, а не с клиента: иначе можно было бы
-                # написать от чужого имени, подменив его в запросе.
-                cur.execute(
-                    "SELECT full_name, NULLIF(COALESCE(avatar_url, max_avatar_url), '') "
-                    "FROM users WHERE id = %s",
-                    (int(chat_user_id),),
-                )
-                author_row = cur.fetchone()
-                if not author_row:
-                    return {
-                        'statusCode': 404,
-                        'headers': headers,
-                        'body': json.dumps({'error': 'Сотрудник не найден'}, ensure_ascii=False),
-                    }
-                cur.execute(
-                    "INSERT INTO chat_messages (user_id, user_name, text) VALUES (%s, %s, %s) "
-                    "RETURNING id, user_id, user_name, text, created_at",
-                    (int(chat_user_id), author_row[0] or 'Сотрудник', chat_text),
-                )
-                inserted = cur.fetchone()
-                new_message = _chat_row(list(inserted) + [author_row[1]])
-                # Само сообщение фиксируем сразу и отдельно: потерять реплику человека
-                # из-за возни с отметкой «печатает» было бы совсем глупо.
-                conn.commit()
-                # Сообщение ушло — печатать больше нечего. Гасим «печатает...» сразу,
-                # не дожидаясь, пока отметка истечёт сама: иначе у собеседника надпись
-                # висит ещё несколько секунд поверх только что пришедшего сообщения.
-                try:
-                    cur.execute(
-                        "INSERT INTO chat_presence (user_id, last_seen_at, typing_at) "
-                        "VALUES (%s, now(), NULL) "
-                        "ON CONFLICT (user_id) DO UPDATE SET last_seen_at = now(), typing_at = NULL",
-                        (int(chat_user_id),),
-                    )
-                    conn.commit()
-                except psycopg2.Error:
-                    conn.rollback()
-                return {
-                    'statusCode': 200,
-                    'headers': headers,
-                    'body': json.dumps({'success': True, 'message': new_message}, ensure_ascii=False),
-                }
-
-            if action == 'chat_hide':
-                message_id = body_data.get('id')
-                chat_actor_id = chat_actor['id']
-                if not message_id:
-                    return {
-                        'statusCode': 400,
-                        'headers': headers,
-                        'body': json.dumps({'error': 'Укажите id сообщения'}, ensure_ascii=False),
-                    }
-                # Своё сообщение убирает автор, любое — администратор. Проверка на
-                # сервере: без неё правило обходится подменой запроса.
-                if chat_actor['role'] == 'admin':
-                    cur.execute(
-                        "UPDATE chat_messages SET hidden_at = now(), hidden_by = %s "
-                        "WHERE id = %s AND hidden_at IS NULL RETURNING id",
-                        (int(chat_actor_id), int(message_id)),
-                    )
-                else:
-                    cur.execute(
-                        "UPDATE chat_messages SET hidden_at = now(), hidden_by = %s "
-                        "WHERE id = %s AND user_id = %s AND hidden_at IS NULL RETURNING id",
-                        (int(chat_actor_id), int(message_id), int(chat_actor_id)),
-                    )
-                hidden = cur.fetchone()
-                conn.commit()
-                if not hidden:
-                    return {
-                        'statusCode': 403,
-                        'headers': headers,
-                        'body': json.dumps({'error': 'Можно убрать только своё сообщение'}, ensure_ascii=False),
-                    }
-                return {
-                    'statusCode': 200,
-                    'headers': headers,
-                    'body': json.dumps({'success': True}, ensure_ascii=False),
-                }
-
-            if action == 'chat_avatar':
-                # Сотрудник ставит себе фото САМ, прямо из чата.
-                #
-                # Раньше фото загружал только администратор через карточку сотрудника,
-                # и до него доходили единицы: в ленте висели кружки с инициалами, а в
-                # переписке двух Лен и трёх Наташ не разобрать, кто кому отвечает.
-                # Просить админа поменять фотографию из-за такой мелочи никто не шёл.
-                #
-                # Меняем ТОЛЬКО своё: id владельца берём из токена и тело запроса на
-                # него не влияет — иначе одной строчкой в консоли можно было бы
-                # поставить чужому человеку любую картинку.
-                target_id = chat_actor['id']
-                if body_data.get('remove'):
-                    # Убираем только загруженное вручную. Под ним может лежать фото из
-                    # профиля MAX — оно и станет видно снова, вместо пустых инициалов.
-                    cur.execute(
-                        "UPDATE users SET avatar_url = NULL, updated_at = now() "
-                        "WHERE id = %s "
-                        "RETURNING NULLIF(max_avatar_url, '')",
-                        (target_id,),
-                    )
-                    row = cur.fetchone()
-                    conn.commit()
-                    return {
-                        'statusCode': 200,
-                        'headers': headers,
-                        'body': json.dumps(
-                            {'success': True, 'avatarUrl': row[0] if row else None, 'ownAvatar': False},
-                            ensure_ascii=False,
-                        ),
-                    }
-
-                avatar_base64 = body_data.get('avatarBase64')
-                problem = avatar_error(avatar_base64)
-                if problem:
-                    return {
-                        'statusCode': 400,
-                        'headers': headers,
-                        'body': json.dumps({'error': problem}, ensure_ascii=False),
-                    }
-                avatar_url = upload_avatar(avatar_base64)
-                cur.execute(
-                    "UPDATE users SET avatar_url = %s, updated_at = now() WHERE id = %s",
-                    (avatar_url, target_id),
-                )
-                conn.commit()
-                # Ссылку возвращаем сразу: чат подставляет её во все сообщения автора,
-                # не дожидаясь следующего опроса, — человек видит результат мгновенно.
-                return {
-                    'statusCode': 200,
-                    'headers': headers,
-                    'body': json.dumps(
-                        {'success': True, 'avatarUrl': avatar_url, 'ownAvatar': True},
-                        ensure_ascii=False,
-                    ),
-                }
+            require_admin(cur, event)
 
             if action == 'create':
                 full_name = (body_data.get('fullName') or '').strip()
@@ -717,8 +340,12 @@ def handler(event: dict, context) -> dict:
                     shift_to = def_to
                 if not workshop and schedule == '2/2':
                     workshop = 'Цех №1'
+                if workshop in CLOSED_WORKSHOP_NAMES:
+                    workshop = 'Цех №1'
 
                 full_name_esc = full_name.replace("'", "''")
+                login_esc = login.replace("'", "''")
+                email_esc = email.replace("'", "''")
                 role_esc = role.replace("'", "''")
                 workshop_esc = workshop.replace("'", "''")
                 avatar_sql = f"'{avatar_url}'" if avatar_url else 'NULL'
@@ -767,7 +394,11 @@ def handler(event: dict, context) -> dict:
                         return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Некорректная роль'})}
                     fields.append(f"role = '{body_data['role']}'")
                 if 'workshop' in body_data:
-                    fields.append(f"workshop = '{str(body_data['workshop']).replace(chr(39), chr(39)*2)}'")
+                    workshop_val = str(body_data['workshop'])
+                    if workshop_val in CLOSED_WORKSHOP_NAMES:
+                        workshop_val = 'Цех №1'
+                        fields.append('shift_number = 3')
+                    fields.append(f"workshop = '{workshop_val.replace(chr(39), chr(39)*2)}'")
                 if 'salary' in body_data:
                     fields.append(f"salary = {float(body_data['salary'])}")
                 if 'shiftFrom' in body_data:

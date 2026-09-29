@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useSubmitGuard } from '@/hooks/useSubmitGuard';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -38,31 +39,30 @@ const CancelPenaltyDialog = ({ id, userName, amount, description, onDone }: Prop
   const { toast } = useToast();
   const [open, setOpen] = useState(false);
   const [reason, setReason] = useState('');
-  const [busy, setBusy] = useState(false);
+  const { busy, run } = useSubmitGuard();
 
   const refund = Math.abs(amount);
 
-  const submit = async () => {
+  const submit = () => {
     if (!reason.trim()) return;
-    setBusy(true);
-    try {
-      await cancelPenalty(id, reason.trim());
-      toast({
-        title: 'Штраф отменён',
-        description: `${userName} получит ${formatMoney(refund)} ₽ в следующую выплату`,
-      });
-      setOpen(false);
-      setReason('');
-      onDone();
-    } catch (e) {
-      toast({
-        title: 'Не удалось отменить штраф',
-        description: e instanceof Error ? e.message : undefined,
-        variant: 'destructive',
-      });
-    } finally {
-      setBusy(false);
-    }
+    void run(async () => {
+      try {
+        await cancelPenalty(id, reason.trim());
+        toast({
+          title: 'Штраф отменён',
+          description: `${userName} получит ${formatMoney(refund)} ₽ в следующую выплату`,
+        });
+        setOpen(false);
+        setReason('');
+        onDone();
+      } catch (e) {
+        toast({
+          title: 'Не удалось отменить штраф',
+          description: e instanceof Error ? e.message : undefined,
+          variant: 'destructive',
+        });
+      }
+    });
   };
 
   return (

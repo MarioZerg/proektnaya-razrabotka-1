@@ -328,6 +328,7 @@ def handler(event: dict, context) -> dict:
                     'FROM etrn_documents e '
                     'JOIN marketplace_supplies s ON s.id = e.supply_id '
                     "WHERE e.status = 'На подписи' "
+                    "  AND COALESCE(s.status, '') NOT IN ('Выполнена', 'Отменена') "
                     'ORDER BY e.doc_date NULLS LAST, e.id',
                 )
                 items = [

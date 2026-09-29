@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useSubmitGuard } from '@/hooks/useSubmitGuard';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
@@ -37,31 +38,30 @@ const NotFoundDialog = ({ item, onOpenChange, onDone }: NotFoundDialogProps) => 
   const { toast } = useToast();
   const { user } = useAuth();
   const [note, setNote] = useState('');
-  const [saving, setSaving] = useState(false);
+  const { busy: saving, run } = useSubmitGuard();
 
-  const handleConfirm = async () => {
+  const handleConfirm = () => {
     if (!item) return;
-    setSaving(true);
-    try {
-      const res = await markGoodsNotFound(item.id, note.trim(), user?.id, user?.name);
-      toast({
-        title: 'Товар списан со склада',
-        description: res.returnedOrder
-          ? `Заказ ${res.returnedOrder} отправлен в цех на пошив`
-          : 'Вещь убрана из подбора',
-      });
-      setNote('');
-      onOpenChange(false);
-      onDone();
-    } catch (e) {
-      toast({
-        title: 'Не удалось списать товар',
-        description: e instanceof Error ? e.message : undefined,
-        variant: 'destructive',
-      });
-    } finally {
-      setSaving(false);
-    }
+    void run(async () => {
+      try {
+        const res = await markGoodsNotFound(item.id, note.trim(), user?.id, user?.name);
+        toast({
+          title: 'Товар списан со склада',
+          description: res.returnedOrder
+            ? `Заказ ${res.returnedOrder} отправлен в цех на пошив`
+            : 'Вещь убрана из подбора',
+        });
+        setNote('');
+        onOpenChange(false);
+        onDone();
+      } catch (e) {
+        toast({
+          title: 'Не удалось списать товар',
+          description: e instanceof Error ? e.message : undefined,
+          variant: 'destructive',
+        });
+      }
+    });
   };
 
   return (

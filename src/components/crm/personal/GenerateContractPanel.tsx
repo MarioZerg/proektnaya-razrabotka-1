@@ -83,7 +83,7 @@ const GenerateContractPanel = ({
   };
 
   return (
-    <div className="space-y-3 rounded-md border border-border p-4">
+    <div className="min-w-0 space-y-3 rounded-md border border-border p-3">
       <div>
         <p className="font-bold">Договор</p>
         <p className="mt-1 text-sm text-muted-foreground">
@@ -108,10 +108,11 @@ const GenerateContractPanel = ({
       )}
 
       {hasTemplate && (
-        <div className="flex flex-wrap gap-2">
+        <div className="grid grid-cols-1 gap-2">
           <Button
             variant="outline"
             size="sm"
+            className="h-11 w-full sm:h-9"
             disabled={!ready || busy !== null}
             onClick={handlePreview}
           >
@@ -125,6 +126,7 @@ const GenerateContractPanel = ({
 
           <Button
             size="sm"
+            className="h-11 w-full sm:h-9"
             disabled={!ready || !previewUrl || busy !== null}
             onClick={handleSend}
           >

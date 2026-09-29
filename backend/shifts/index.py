@@ -5,6 +5,9 @@ from datetime import date, timedelta
 
 import psycopg2
 
+CLOSED_WORKSHOP_NAMES = ('Цех №2', 'Тестовый цех (QA)')
+KEEP_WORKSHOP_NAME = 'Цех №1'
+
 
 def is_cycle_day_off(cycle_work: int, cycle_off: int, start: date, day: date) -> bool:
     """Работает ли смена в этот день по цикличному графику (2/2, 3/3 и т.п.).
@@ -174,7 +177,7 @@ def handler(event: dict, context) -> dict:
                     "(SELECT COUNT(*) FROM shift_sessions ss WHERE ss.workshop_id = s.workshop_id "
                     "  AND ss.shift_number = s.shift_number AND ss.closed_at IS NULL) "
                     "FROM shifts s JOIN workshops w ON w.id = s.workshop_id "
-                    "WHERE s.is_active = true AND w.is_active = true "
+                    "WHERE s.is_active = true AND w.is_active = true AND w.name NOT IN ('Цех №2', 'Тестовый цех (QA)') "
                     "AND NOT EXISTS (SELECT 1 FROM shift_calendar sc "
                     "  WHERE sc.workshop_id = s.workshop_id AND sc.shift_number = s.shift_number "
                     "  AND sc.calendar_date = (now() + interval '3 hours')::date) "
@@ -251,14 +254,20 @@ def handler(event: dict, context) -> dict:
                 row = cur.fetchone()
                 if not row:
                     return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': 'Смена не найдена'})}
+                if row[2] in CLOSED_WORKSHOP_NAMES:
+                    return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': 'Смена не найдена'})}
 
                 cur.execute(
                     # Уволенных (архив) в составе смены не показываем: смена — это
                     # кто выйдет на работу, а не кто когда-то в ней числился.
+                    # Людей закрытого второго цеха показываем в смене №3 первого,
+                    # пока миграция не переписала им workshop/shift_number.
                     "SELECT id, full_name, role, shift_free FROM users "
-                    "WHERE workshop = %s AND shift_number = %s "
-                    "AND is_active = true AND archived_at IS NULL ORDER BY full_name",
-                    (row[2], row[3]),
+                    "WHERE is_active = true AND archived_at IS NULL AND ("
+                    "  (workshop = %s AND shift_number = %s)"
+                    "  OR (%s = 'Цех №1' AND %s = 3 AND workshop IN ('Цех №2', 'Тестовый цех (QA)'))"
+                    ") ORDER BY full_name",
+                    (row[2], row[3], row[2], row[3]),
                 )
                 employees = [
                     {'id': r[0], 'fullName': r[1], 'role': r[2], 'shiftFree': r[3]}
@@ -279,10 +288,17 @@ def handler(event: dict, context) -> dict:
                 }
                 return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'shift': detail})}
 
-            where_clause = f"WHERE s.workshop_id = {int(workshop_id_filter)}" if workshop_id_filter else ""
+            where_clause = (
+                f"WHERE s.workshop_id = {int(workshop_id_filter)} AND w.name NOT IN ('Цех №2', 'Тестовый цех (QA)')"
+                if workshop_id_filter
+                else "WHERE w.name NOT IN ('Цех №2', 'Тестовый цех (QA)')"
+            )
             cur.execute(
                 f"SELECT s.id, s.workshop_id, w.name, s.shift_number, s.name, s.is_active, w.is_active, "
-                f"(SELECT COUNT(*) FROM users u WHERE u.workshop = w.name AND u.shift_number = s.shift_number) "
+                f"(SELECT COUNT(*) FROM users u WHERE "
+                f"  (u.workshop = w.name AND u.shift_number = s.shift_number) "
+                f"  OR (w.name = 'Цех №1' AND s.shift_number = 3 "
+                f"      AND u.workshop IN ('Цех №2', 'Тестовый цех (QA)'))) "
                 f"FROM shifts s JOIN workshops w ON w.id = s.workshop_id "
                 f"{where_clause} ORDER BY s.workshop_id, s.shift_number"
             )
@@ -430,6 +446,9 @@ def handler(event: dict, context) -> dict:
                 if not row:
                     return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': 'Смена не найдена'})}
                 workshop_name, shift_number = row
+                if workshop_name in CLOSED_WORKSHOP_NAMES:
+                    workshop_name = KEEP_WORKSHOP_NAME
+                    shift_number = 3
                 workshop_name_esc = workshop_name.replace("'", "''")
 
                 cur.execute(

@@ -15,6 +15,7 @@ import {
 import Icon from '@/components/ui/icon';
 import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
 import { useToast } from '@/hooks/use-toast';
+import { useSubmitGuard } from '@/hooks/useSubmitGuard';
 import { useAuth } from '@/context/AuthContext';
 import StocktakeScanner from '@/components/crm/stocktakes/StocktakeScanner';
 import StocktakeReportView from '@/components/crm/stocktakes/StocktakeReportView';
@@ -58,7 +59,7 @@ const Stocktakes = () => {
   const [pending, setPending] = useState<Stocktake | null>(null);
   const [loading, setLoading] = useState(true);
   const [listError, setListError] = useState<string | null>(null);
-  const [saving, setSaving] = useState(false);
+  const { busy: saving, run } = useSubmitGuard();
   const [note, setNote] = useState('');
   const [rejectReason, setRejectReason] = useState('');
 
@@ -91,111 +92,106 @@ const Stocktakes = () => {
     setActive(act);
   };
 
-  const handleStart = async () => {
-    setSaving(true);
-    try {
-      await startStocktake(user?.id, user?.name);
-      toast({ title: 'Инвентаризация начата', description: 'Сканируйте стикеры GW с полок' });
-      load();
-    } catch (e) {
-      toast({
-        title: 'Не удалось начать',
-        description: e instanceof Error ? e.message : undefined,
-        variant: 'destructive',
-      });
-    } finally {
-      setSaving(false);
-    }
+  const handleStart = () => {
+    void run(async () => {
+      try {
+        await startStocktake(user?.id, user?.name);
+        toast({ title: 'Инвентаризация начата', description: 'Сканируйте стикеры GW с полок' });
+        await load();
+      } catch (e) {
+        toast({
+          title: 'Не удалось начать',
+          description: e instanceof Error ? e.message : undefined,
+          variant: 'destructive',
+        });
+      }
+    });
   };
 
-  const handleClose = async () => {
+  const handleClose = () => {
     if (!active) return;
-    setSaving(true);
-    try {
-      const res = await closeStocktake(active.id, note, user?.id, user?.name);
-      toast({
-        title: 'Инвентаризация закрыта',
-        description:
-          res.missingCount > 0
-            ? `Не найдено ${res.missingCount} — отправлено администратору на подтверждение`
-            : 'Расхождений нет, отправлено администратору',
-      });
-      setNote('');
-      load();
-    } catch (e) {
-      toast({
-        title: 'Не удалось закрыть',
-        description: e instanceof Error ? e.message : undefined,
-        variant: 'destructive',
-      });
-    } finally {
-      setSaving(false);
-    }
+    void run(async () => {
+      try {
+        const res = await closeStocktake(active.id, note, user?.id, user?.name);
+        toast({
+          title: 'Инвентаризация закрыта',
+          description:
+            res.missingCount > 0
+              ? `Не найдено ${res.missingCount} — отправлено администратору на подтверждение`
+              : 'Расхождений нет, отправлено администратору',
+        });
+        setNote('');
+        await load();
+      } catch (e) {
+        toast({
+          title: 'Не удалось закрыть',
+          description: e instanceof Error ? e.message : undefined,
+          variant: 'destructive',
+        });
+      }
+    });
   };
 
-  const handleApprove = async () => {
+  const handleApprove = () => {
     if (!pending) return;
-    setSaving(true);
-    try {
-      const res = await approveStocktake(
-        pending.id,
-        pending.report?.missingCount ?? 0,
-        user?.id,
-        user?.name,
-      );
-      toast({
-        title: 'Инвентаризация подтверждена',
-        description: `Списано ненайденных: ${res.disposed}. Переставлено на верные полки: ${res.moved}`,
-      });
-      load();
-    } catch (e) {
-      toast({
-        title: 'Не удалось подтвердить',
-        description: e instanceof Error ? e.message : undefined,
-        variant: 'destructive',
-      });
-    } finally {
-      setSaving(false);
-    }
+    void run(async () => {
+      try {
+        const res = await approveStocktake(
+          pending.id,
+          pending.report?.missingCount ?? 0,
+          user?.id,
+          user?.name,
+        );
+        toast({
+          title: 'Инвентаризация подтверждена',
+          description: `Списано ненайденных: ${res.disposed}. Переставлено на верные полки: ${res.moved}`,
+        });
+        await load();
+      } catch (e) {
+        toast({
+          title: 'Не удалось подтвердить',
+          description: e instanceof Error ? e.message : undefined,
+          variant: 'destructive',
+        });
+      }
+    });
   };
 
-  const handleCancel = async (id: number) => {
-    setSaving(true);
-    try {
-      await cancelStocktake(id, undefined, user?.id, user?.name);
-      toast({
-        title: 'Инвентаризация отменена',
-        description: 'Товар не затронут — ничего не списано',
-      });
-      load();
-    } catch (e) {
-      toast({
-        title: 'Не удалось отменить',
-        description: e instanceof Error ? e.message : undefined,
-        variant: 'destructive',
-      });
-    } finally {
-      setSaving(false);
-    }
+  const handleCancel = (id: number) => {
+    void run(async () => {
+      try {
+        await cancelStocktake(id, undefined, user?.id, user?.name);
+        toast({
+          title: 'Инвентаризация отменена',
+          description: 'Товар не затронут — ничего не списано',
+        });
+        await load();
+      } catch (e) {
+        toast({
+          title: 'Не удалось отменить',
+          description: e instanceof Error ? e.message : undefined,
+          variant: 'destructive',
+        });
+      }
+    });
   };
 
-  const handleReject = async () => {
+  const handleReject = () => {
     if (!pending || !rejectReason.trim()) return;
-    setSaving(true);
-    try {
-      await rejectStocktake(pending.id, rejectReason.trim(), user?.id, user?.name);
-      toast({ title: 'Возвращено на пересчёт' });
-      setRejectReason('');
-      load();
-    } catch (e) {
-      toast({
-        title: 'Не удалось вернуть',
-        description: e instanceof Error ? e.message : undefined,
-        variant: 'destructive',
-      });
-    } finally {
-      setSaving(false);
-    }
+    void run(async () => {
+      try {
+        await rejectStocktake(pending.id, rejectReason.trim(), user?.id, user?.name);
+        toast({ title: 'Возвращено на пересчёт' });
+        setRejectReason('');
+        await load();
+      } catch (e) {
+        toast({
+          title: 'Не удалось вернуть',
+          description: e instanceof Error ? e.message : undefined,
+          variant: 'destructive',
+        });
+      }
+    });
   };
 
   return (

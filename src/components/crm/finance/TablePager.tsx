@@ -14,22 +14,22 @@ const TablePager = ({ page, totalPages, total, setPage }: TablePagerProps) => {
 
   return (
     <div className="flex items-center justify-between gap-2 pt-3">
-      <span className="text-xs text-muted-foreground">Всего записей: {total}</span>
+      <span className="text-xs text-muted-foreground">Всего: {total}</span>
       <div className="flex items-center gap-2">
         <Button
           variant="outline"
-          size="sm"
+          className="h-11 w-11 sm:h-9 sm:w-9"
           onClick={() => setPage(Math.max(1, page - 1))}
           disabled={page <= 1}
         >
           <Icon name="ChevronLeft" size={15} />
         </Button>
-        <span className="text-sm text-muted-foreground">
+        <span className="min-w-[4.5rem] text-center text-sm text-muted-foreground">
           {page} / {totalPages}
         </span>
         <Button
           variant="outline"
-          size="sm"
+          className="h-11 w-11 sm:h-9 sm:w-9"
           onClick={() => setPage(Math.min(totalPages, page + 1))}
           disabled={page >= totalPages}
         >

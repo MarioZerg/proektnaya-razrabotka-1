@@ -70,7 +70,7 @@ const SbpSection = ({ data, userId, actorId, isAdmin, onChanged }: SbpSectionPro
   };
 
   return (
-    <div className="space-y-3 rounded-md border border-border p-4">
+    <div className="min-w-0 space-y-3 rounded-md border border-border p-3">
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div>
           <p className="font-bold">Куда переводить деньги</p>
@@ -113,8 +113,8 @@ const SbpSection = ({ data, userId, actorId, isAdmin, onChanged }: SbpSectionPro
         номер или банк изменятся, поправьте здесь и предупредите администратора
       </p>
 
-      <div className="flex flex-wrap gap-2">
-        <Button size="sm" disabled={saving || !dirty} onClick={handleSave}>
+      <div className="grid grid-cols-1 gap-2">
+        <Button size="sm" className="h-11 w-full sm:h-9" disabled={saving || !dirty} onClick={handleSave}>
           {saving ? (
             <Icon name="Loader2" size={14} className="mr-1.5 animate-spin" />
           ) : (
@@ -124,7 +124,7 @@ const SbpSection = ({ data, userId, actorId, isAdmin, onChanged }: SbpSectionPro
         </Button>
 
         {isAdmin && data.sbpPhone && !data.sbpConfirmed && (
-          <Button size="sm" variant="outline" disabled={confirming} onClick={handleConfirm}>
+          <Button size="sm" variant="outline" className="h-11 w-full sm:h-9" disabled={confirming} onClick={handleConfirm}>
             {confirming ? (
               <Icon name="Loader2" size={14} className="mr-1.5 animate-spin" />
             ) : (

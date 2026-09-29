@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import Icon from '@/components/ui/icon';
 import { useToast } from '@/hooks/use-toast';
+import { useSubmitGuard } from '@/hooks/useSubmitGuard';
 import { useAuth } from '@/context/AuthContext';
 import { shortProductName } from '@/lib/shortProductName';
 import {
@@ -33,7 +34,7 @@ const SupplyTailsPanel = ({ onReload }: SupplyTailsPanelProps) => {
   const [items, setItems] = useState<SupplyTailItem[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
-  const [clearing, setClearing] = useState(false);
+  const { busy: clearing, run } = useSubmitGuard();
 
   // Освобождение вещи — решение об остатках склада, поэтому не для всех.
   const canClear = user?.role === 'admin' || user?.role === 'senior_storekeeper';
@@ -65,40 +66,40 @@ const SupplyTailsPanel = ({ onReload }: SupplyTailsPanelProps) => {
   }
   if (items.length === 0) return null;
 
-  const handleClear = async () => {
-    if (clearing) return;
-    setClearing(true);
-    try {
-      // ЧИСТИМ ПОРЦИЯМИ, ПОКА НЕ ЗАКОНЧИТСЯ.
-      //
-      // Сервер за один раз берёт ограниченное число вещей: на сотне записей
-      // одним запросом функция упиралась в лимит времени и отвечала ошибкой.
-      // Здесь просто повторяем вызов, пока сервер сообщает об остатке — для
-      // человека это одно нажатие.
-      let rest = items.map((i) => i.id);
-      let total = 0;
-      while (rest.length > 0) {
-        const res = await clearSupplyTails(rest, user?.id, user?.name);
-        total += res.freed;
-        if (!res.remaining) break;
-        rest = rest.slice(rest.length - res.remaining);
+  const handleClear = () => {
+    void run(async () => {
+      const snapshot = items;
+      setItems([]);
+      try {
+        // ЧИСТИМ ПОРЦИЯМИ, ПОКА НЕ ЗАКОНЧИТСЯ.
+        //
+        // Сервер за один раз берёт ограниченное число вещей: на сотне записей
+        // одним запросом функция упиралась в лимит времени и отвечала ошибкой.
+        // Здесь просто повторяем вызов, пока сервер сообщает об остатке — для
+        // человека это одно нажатие.
+        let rest = snapshot.map((i) => i.id);
+        let total = 0;
+        while (rest.length > 0) {
+          const res = await clearSupplyTails(rest, user?.id, user?.name);
+          total += res.freed;
+          if (!res.remaining) break;
+          rest = rest.slice(rest.length - res.remaining);
+        }
+        toast({
+          title: `Освобождено вещей: ${total}`,
+          description: 'Записи старых поставок сняты — вещи снова свободны',
+        });
+        setOpen(false);
+        onReload();
+      } catch (e) {
+        setItems(snapshot);
+        toast({
+          title: 'Не удалось освободить',
+          description: e instanceof Error ? e.message : undefined,
+          variant: 'destructive',
+        });
       }
-      toast({
-        title: `Освобождено вещей: ${total}`,
-        description: 'Записи старых поставок сняты — вещи снова свободны',
-      });
-      setOpen(false);
-      load();
-      onReload();
-    } catch (e) {
-      toast({
-        title: 'Не удалось освободить',
-        description: e instanceof Error ? e.message : undefined,
-        variant: 'destructive',
-      });
-    } finally {
-      setClearing(false);
-    }
+    });
   };
 
   return (

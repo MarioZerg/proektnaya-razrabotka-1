@@ -15,6 +15,26 @@ from authz import (
 
 VALID_TYPES = {'from_supplier', 'to_workshop', 'return_to_supplier', 'defect_writeoff', 'workshop_writeoff'}
 
+CLOSED_WORKSHOP_NAMES = ('Цех №2', 'Тестовый цех (QA)')
+KEEP_WORKSHOP_NAME = 'Цех №1'
+
+
+def remap_closed_workshop_id(cur, workshop_id):
+    """Второй цех закрыт: заявки и отгрузки в него идут в первый."""
+    if workshop_id in (None, '', 0):
+        return workshop_id
+    try:
+        wid = int(workshop_id)
+    except (TypeError, ValueError):
+        return workshop_id
+    cur.execute("SELECT name FROM workshops WHERE id = %s", (wid,))
+    row = cur.fetchone()
+    if not row or row[0] not in CLOSED_WORKSHOP_NAMES:
+        return wid
+    cur.execute("SELECT id FROM workshops WHERE name = %s", (KEEP_WORKSHOP_NAME,))
+    keep = cur.fetchone()
+    return keep[0] if keep else wid
+
 
 def log_action(cur, actor_id, actor_name, action, entity_type, entity_id, description, details=None):
     """Пишет запись в журнал действий (audit_log) в той же транзакции перед commit()."""
@@ -530,6 +550,8 @@ def handler(event: dict, context) -> dict:
         conn = psycopg2.connect(dsn)
         try:
             cur = conn.cursor()
+            if 'workshopId' in body_data:
+                body_data['workshopId'] = remap_closed_workshop_id(cur, body_data.get('workshopId'))
 
             # КТО ПРИШЁЛ — из ключа сессии, а не из тела запроса.
             #
@@ -747,7 +769,7 @@ def handler(event: dict, context) -> dict:
                     doer = require_auth(cur, event)
                     created_by = doer['id']
                     cur.execute(
-                        "SELECT w.id, u.role FROM users u LEFT JOIN workshops w ON w.name = u.workshop "
+                        "SELECT w.id, u.role FROM users u LEFT JOIN workshops w ON w.name = CASE WHEN u.workshop IN ('Цех №2', 'Тестовый цех (QA)') THEN 'Цех №1' ELSE u.workshop END "
                         "WHERE u.id = %s",
                         (int(created_by),),
                     )
@@ -2208,7 +2230,10 @@ def handler(event: dict, context) -> dict:
                         if actor_role != 'admin':
                             if actor_role not in ('sewer', 'cutter', 'packer'):
                                 return {'statusCode': 403, 'headers': headers, 'body': json.dumps({'error': 'Принять заявку в цехе может только сотрудник этого цеха'})}
-                            cur.execute("SELECT id FROM workshops WHERE name = %s", (actor_workshop_name,))
+                            cur.execute(
+                                "SELECT id FROM workshops WHERE name = %s",
+                                ('Цех №1' if actor_workshop_name in ('Цех №2', 'Тестовый цех (QA)') else actor_workshop_name,),
+                            )
                             wr = cur.fetchone()
                             actor_workshop_id = wr[0] if wr else None
                             if actor_workshop_id != workshop_id or (
@@ -2288,7 +2313,10 @@ def handler(event: dict, context) -> dict:
                         if actor_role != 'admin':
                             if actor_role not in ('sewer', 'cutter', 'packer'):
                                 return {'statusCode': 403, 'headers': headers, 'body': json.dumps({'error': 'Отказать в приёме заявки может только сотрудник этого цеха'})}
-                            cur.execute("SELECT id FROM workshops WHERE name = %s", (actor_workshop_name,))
+                            cur.execute(
+                                "SELECT id FROM workshops WHERE name = %s",
+                                ('Цех №1' if actor_workshop_name in ('Цех №2', 'Тестовый цех (QA)') else actor_workshop_name,),
+                            )
                             wr = cur.fetchone()
                             actor_workshop_id = wr[0] if wr else None
                             if actor_workshop_id != workshop_id or (

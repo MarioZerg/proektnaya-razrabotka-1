@@ -627,7 +627,7 @@ export const chargePenalty = async (rollId: number) => {
   });
   const data = await res.json();
   if (!res.ok) throw new Error(data.error || 'Не удалось начислить штраф');
-  return data;
+  return data as { success?: boolean; already?: boolean; penalty?: unknown };
 };
 
 /** Признать недостачу виной поставщика и никого не штрафовать. */
@@ -639,7 +639,7 @@ export const dismissPenalty = async (rollId: number) => {
   });
   const data = await res.json();
   if (!res.ok) throw new Error(data.error || 'Не удалось выполнить');
-  return data;
+  return data as { success?: boolean; already?: boolean };
 };
 
 /** Закройщик отставил рулон: брак в начале полотна, резать дальше нельзя. */

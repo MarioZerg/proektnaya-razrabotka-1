@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useSubmitGuard } from '@/hooks/useSubmitGuard';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -60,36 +61,36 @@ const RollWriteOffDialog = ({
   const { user } = useAuth();
   const [qty, setQty] = useState('');
   const [reason, setReason] = useState('');
-  const [busy, setBusy] = useState(false);
+  const { busy, run } = useSubmitGuard();
 
   const value = parseFloat(qty.replace(',', '.'));
   const valid = !Number.isNaN(value) && value > 0 && value <= remaining;
   const tooMuch = !Number.isNaN(value) && value > remaining;
 
-  const submit = async () => {
-    setBusy(true);
-    try {
-      const r = await writeOffRoll(rollId, value, {
-        actorId: user?.id,
-        reason: reason.trim(),
-      });
-      toast({
-        title: `Списано ${formatQuantity(value)} ${unit}`,
-        description: `В рулоне осталось ${formatQuantity(r.remainingQuantity)} ${unit}`,
-      });
-      setQty('');
-      setReason('');
-      onOpenChange(false);
-      onDone();
-    } catch (e) {
-      toast({
-        title: 'Не удалось списать',
-        description: e instanceof Error ? e.message : undefined,
-        variant: 'destructive',
-      });
-    } finally {
-      setBusy(false);
-    }
+  const submit = () => {
+    if (!valid) return;
+    void run(async () => {
+      try {
+        const r = await writeOffRoll(rollId, value, {
+          actorId: user?.id,
+          reason: reason.trim(),
+        });
+        toast({
+          title: `Списано ${formatQuantity(value)} ${unit}`,
+          description: `В рулоне осталось ${formatQuantity(r.remainingQuantity)} ${unit}`,
+        });
+        setQty('');
+        setReason('');
+        onOpenChange(false);
+        onDone();
+      } catch (e) {
+        toast({
+          title: 'Не удалось списать',
+          description: e instanceof Error ? e.message : undefined,
+          variant: 'destructive',
+        });
+      }
+    });
   };
 
   return (

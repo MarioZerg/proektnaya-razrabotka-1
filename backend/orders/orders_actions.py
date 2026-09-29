@@ -1115,7 +1115,7 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                     if sew_user and sew_width and sew_status != 'Со склада':
                         if not sew_workshop:
                             cur.execute(
-                                "SELECT w.id FROM users u JOIN workshops w ON w.name = u.workshop "
+                                "SELECT w.id FROM users u JOIN workshops w ON w.name = CASE WHEN u.workshop IN ('Цех №2', 'Тестовый цех (QA)') THEN 'Цех №1' ELSE u.workshop END "
                                 "WHERE u.id = %s",
                                 (int(sew_user),),
                             )
@@ -1729,7 +1729,7 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                 cutter_workshop_for_rate = order_workshop_id
                 if order_assigned_user_id and not cutter_workshop_for_rate:
                         cur.execute(
-                                "SELECT w.id FROM users u JOIN workshops w ON w.name = u.workshop "
+                                "SELECT w.id FROM users u JOIN workshops w ON w.name = CASE WHEN u.workshop IN ('Цех №2', 'Тестовый цех (QA)') THEN 'Цех №1' ELSE u.workshop END "
                                 "WHERE u.id = %s",
                                 (int(order_assigned_user_id),),
                         )
@@ -2634,7 +2634,7 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
             ov_rate_workshop = ov_workshop
             if not ov_rate_workshop:
                 cur.execute(
-                    "SELECT w.id FROM users u JOIN workshops w ON w.name = u.workshop "
+                    "SELECT w.id FROM users u JOIN workshops w ON w.name = CASE WHEN u.workshop IN ('Цех №2', 'Тестовый цех (QA)') THEN 'Цех №1' ELSE u.workshop END "
                     "WHERE u.id = %s",
                     (int(actor_id),),
                 )

@@ -32,7 +32,7 @@ import {
 import { Badge } from '@/components/ui/badge';
 import Icon from '@/components/ui/icon';
 import { useToast } from '@/hooks/use-toast';
-import { fetchWorkshops, createWorkshop, deleteWorkshop, type Workshop } from '@/lib/workshopsApi';
+import { fetchWorkshops, createWorkshop, deleteWorkshop, isRetiredWorkshop, type Workshop } from '@/lib/workshopsApi';
 import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
 
 const Workshops = () => {
@@ -75,6 +75,14 @@ const Workshops = () => {
 
   const handleCreate = async () => {
     if (!createName.trim()) return;
+    if (isRetiredWorkshop({ name: createName.trim() })) {
+      toast({
+        title: 'Этот цех закрыт',
+        description: 'Производство только в цехе №1',
+        variant: 'destructive',
+      });
+      return;
+    }
     setCreating(true);
     try {
       await createWorkshop(createName.trim(), Number(createShifts) || 1);
@@ -131,7 +139,7 @@ const Workshops = () => {
               <div className="space-y-1.5">
                 <Label>Название</Label>
                 <Input
-                  placeholder="Например: Цех №3"
+                    placeholder="Например: Цех №1"
                   value={createName}
                   onChange={(e) => setCreateName(e.target.value)}
                 />

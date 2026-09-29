@@ -2407,39 +2407,12 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
             extra_sql = ""
             ozon_shipped, ozon_problems, ozon_remaining = 0, [], 0
             if new_status == 'Отгрузка':
-                # ЭТрН. С 01.09 сортировочные центры принимают только электронные
-                # транспортные документы, бумажные версии не принимаются, а за
-                # нарушение порядка оформления предусмотрена ответственность по
-                # ст. 11.14.3 КоАП РФ. Машина без подписанной накладной уедет зря:
-                # на воротах СЦ груз развернут. Поэтому отгрузку FBO не открываем,
-                # пока подписанный документ от оператора не загружен в поставку.
-                if supply_type == 'FBO':
-                    cur.execute(
-                        'SELECT status, signed_file_url FROM etrn_documents WHERE supply_id = %s',
-                        (int(supply_id),),
-                    )
-                    etrn = cur.fetchone()
-                    if not etrn:
-                        return {
-                            'statusCode': 409,
-                            'headers': headers,
-                            'body': json.dumps({
-                                'error': 'По поставке не заведена транспортная накладная (ЭТрН). '
-                                         'СЦ принимает груз только с электронным документом.',
-                                'etrnMissing': True,
-                            }, ensure_ascii=False),
-                        }
-                    if etrn[0] != 'Подписана' or not etrn[1]:
-                        return {
-                            'statusCode': 409,
-                            'headers': headers,
-                            'body': json.dumps({
-                                'error': f'Транспортная накладная не подписана (статус «{etrn[0]}»). '
-                                         'Подпишите её в Диадоке и загрузите подписанный документ.',
-                                'etrnNotSigned': True,
-                            }, ensure_ascii=False),
-                        }
-
+                # ЭТрН по FBO оформляет перевозчик (Газелька) у себя, наша карточка —
+                # задел под кросс-докинг. Закрытие поставки от неё не зависит:
+                # иначе уже уехавшая заявка висела бы на сборке, а на дашборде
+                # требовали бы заполнить накладную, которая к этой перевозке
+                # уже не относится.
+                #
                 # Отменённые заказы отгружать нельзя: на маркетплейсе их больше нет.
                 # Кладовщик должен сначала отправить такие вещи на полку хранения —
                 # прямо из строки поставки, кнопкой «На полку».
@@ -2684,7 +2657,8 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                             # если у смены цех не указан — из цеха профиля кладовщика.
                             rate_workshop_id = session_workshop_id
                             if not rate_workshop_id and user_row[1]:
-                                cur.execute("SELECT id FROM workshops WHERE name = %s", (user_row[1],))
+                                ws_name = 'Цех №1' if user_row[1] in ('Цех №2', 'Тестовый цех (QA)') else user_row[1]
+                                cur.execute("SELECT id FROM workshops WHERE name = %s", (ws_name,))
                                 w_row = cur.fetchone()
                                 rate_workshop_id = w_row[0] if w_row else None
                             if rate_workshop_id:

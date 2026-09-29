@@ -11,6 +11,7 @@ import {
 } from '@/lib/usersApi';
 import type { Role } from '@/lib/roles';
 import type { CardFormState } from '@/components/crm/users/usersShared';
+import { isRetiredWorkshop } from '@/lib/workshopsApi';
 
 interface UseEmployeeCardArgs {
   /** Обновить список сотрудников после действия с должностями. */
@@ -39,7 +40,7 @@ export const useEmployeeCard = ({ setEmployees, load }: UseEmployeeCardArgs) => 
     setCardForm({
       fullName: emp.fullName,
       role: emp.role,
-      workshop: emp.workshop || '',
+      workshop: isRetiredWorkshop({ name: emp.workshop }) ? 'Цех №1' : emp.workshop || '',
       shiftFrom: emp.shiftFrom || '',
       shiftTo: emp.shiftTo || '',
       workSchedule: emp.workSchedule || '',

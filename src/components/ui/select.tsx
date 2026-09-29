@@ -38,11 +38,6 @@ const SelectScrollUpButton = React.forwardRef<
     ref={ref}
     className={cn(
       "flex cursor-default items-center justify-center py-1",
-      // Стрелки автопрокрутки задуманы для мыши: наведение на них само мотает
-      // список. Пальцем в них попадаешь постоянно — чуть повёл вверх, палец
-      // оказался над верхней стрелкой, и список отматывало в самое начало.
-      // На сенсорных экранах убираем: там прокрутка и так работает пальцем.
-      "[@media(pointer:coarse)]:hidden",
       className
     )}
     {...props}
@@ -60,8 +55,6 @@ const SelectScrollDownButton = React.forwardRef<
     ref={ref}
     className={cn(
       "flex cursor-default items-center justify-center py-1",
-      // То же, что и у верхней стрелки: пальцу она только мешает.
-      "[@media(pointer:coarse)]:hidden",
       className
     )}
     {...props}
@@ -80,35 +73,26 @@ const SelectContent = React.forwardRef<
     <SelectPrimitive.Content
       ref={ref}
       className={cn(
-        "relative z-50 min-w-[8rem] overflow-hidden rounded-md border bg-popover text-popover-foreground shadow-md data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2",
-        // На телефоне список из десятка материалов уезжал за нижний край экрана, и
-        // до дальних пунктов было не добраться. Держим окошко примерно в 4 строки —
-        // дальше прокрутка пальцем внутри него. На компьютере высота прежняя.
-        // Вторым числом страхуемся, если поле у самого низа и места мало: Radix
-        // сам считает, сколько видимого экрана осталось под список.
-        "max-h-[min(10rem,var(--radix-select-content-available-height))]",
+        "relative z-50 min-w-[8rem] overflow-hidden rounded-md border bg-popover text-popover-foreground shadow-md",
+        // Анимация zoom/translate на родителе ломает overflow-scroll в iOS:
+        // доскроллили до низа, чуть вверх — список прыгает в начало.
+        "sm:data-[state=open]:animate-in sm:data-[state=closed]:animate-out sm:data-[state=closed]:fade-out-0 sm:data-[state=open]:fade-in-0 sm:data-[state=closed]:zoom-out-95 sm:data-[state=open]:zoom-in-95 sm:data-[side=bottom]:slide-in-from-top-2 sm:data-[side=left]:slide-in-from-right-2 sm:data-[side=right]:slide-in-from-left-2 sm:data-[side=top]:slide-in-from-bottom-2",
+        "max-h-[min(70dvh,var(--radix-select-content-available-height))]",
         "sm:max-h-[min(24rem,var(--radix-select-content-available-height))]",
-        position === "popper" &&
-          "data-[side=bottom]:translate-y-1 data-[side=left]:-translate-x-1 data-[side=right]:translate-x-1 data-[side=top]:-translate-y-1",
         className
       )}
       position={position}
       {...props}
     >
-      <SelectScrollUpButton />
       <SelectPrimitive.Viewport
         className={cn(
-          "p-1",
-          // Без стрелок автопрокрутки список должен листаться сам: включаем
-          // обычную прокрутку и плавную инерцию, как в остальных списках телефона.
-          "overflow-y-auto overscroll-contain [-webkit-overflow-scrolling:touch]",
+          "max-h-[inherit] overflow-y-auto overscroll-y-contain p-1 [overflow-anchor:none] [touch-action:pan-y] [-webkit-overflow-scrolling:touch]",
           position === "popper" &&
-            "h-[var(--radix-select-trigger-height)] w-full min-w-[var(--radix-select-trigger-width)]"
+            "w-full min-w-[var(--radix-select-trigger-width)]"
         )}
       >
         {children}
       </SelectPrimitive.Viewport>
-      <SelectScrollDownButton />
     </SelectPrimitive.Content>
   </SelectPrimitive.Portal>
 ))
@@ -129,13 +113,19 @@ SelectLabel.displayName = SelectPrimitive.Label.displayName
 const SelectItem = React.forwardRef<
   React.ElementRef<typeof SelectPrimitive.Item>,
   React.ComponentPropsWithoutRef<typeof SelectPrimitive.Item>
->(({ className, children, ...props }, ref) => (
+>(({ className, children, onPointerMove, ...props }, ref) => (
   <SelectPrimitive.Item
     ref={ref}
     className={cn(
-      "relative flex w-full cursor-default select-none items-center rounded-sm py-1.5 pl-8 pr-2 text-sm outline-none focus:bg-accent focus:text-accent-foreground data-[disabled]:pointer-events-none data-[disabled]:opacity-50",
+      "relative flex w-full cursor-default select-none items-center rounded-sm py-2.5 pl-8 pr-2 text-base outline-none focus:bg-accent focus:text-accent-foreground data-[disabled]:pointer-events-none data-[disabled]:opacity-50 sm:py-1.5 sm:text-sm",
       className
     )}
+    onPointerMove={(e) => {
+      // Пальцем ведём список: Radix фокусирует пункт под пальцем, браузер
+      // прокручивает его в кадр — с низа сразу прыгает к выбранному в начале.
+      if (e.pointerType !== "mouse") e.preventDefault()
+      onPointerMove?.(e)
+    }}
     {...props}
   >
     <span className="absolute left-2 flex h-3.5 w-3.5 items-center justify-center">

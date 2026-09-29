@@ -136,12 +136,7 @@ const ShiftCycleSetup = ({
     );
 
   return (
-    <div className="space-y-4 rounded-md border border-border p-4">
-      <div className="flex items-center gap-2">
-        <Icon name="CalendarSync" size={18} className="text-muted-foreground" />
-        <p className="font-medium">Автоматический график смены</p>
-      </div>
-
+    <div className="space-y-4">
       {workWeekdays && (
         <p className="text-sm text-muted-foreground">
           Сейчас работает по дням недели:{' '}
@@ -158,29 +153,29 @@ const ShiftCycleSetup = ({
         </p>
       )}
 
-      <div className="flex flex-wrap gap-2">
+      <div className="grid grid-cols-2 gap-2">
         <Button
           variant={mode === 'cycle' ? 'default' : 'outline'}
-          size="sm"
+          className="h-11 sm:h-9"
           onClick={() => setMode('cycle')}
         >
           Цикл 2/2, 3/3
         </Button>
         <Button
           variant={mode === 'weekdays' ? 'default' : 'outline'}
-          size="sm"
+          className="h-11 sm:h-9"
           onClick={() => setMode('weekdays')}
         >
-          По дням недели (5/2)
+          По дням (5/2)
         </Button>
       </div>
 
       {mode === 'cycle' && (
-        <div className="flex flex-wrap items-end gap-3">
+        <div className="grid grid-cols-2 gap-3 sm:flex sm:flex-wrap sm:items-end">
           <div className="space-y-1.5">
             <Label>Работает, дней</Label>
             <Input
-              className="w-28"
+              className="h-11 sm:h-10 sm:w-28"
               value={workDays}
               onChange={(e) => setWorkDays(e.target.value.replace(/\D/g, ''))}
               inputMode="numeric"
@@ -189,22 +184,22 @@ const ShiftCycleSetup = ({
           <div className="space-y-1.5">
             <Label>Отдыхает, дней</Label>
             <Input
-              className="w-28"
+              className="h-11 sm:h-10 sm:w-28"
               value={offDays}
               onChange={(e) => setOffDays(e.target.value.replace(/\D/g, ''))}
               inputMode="numeric"
             />
           </div>
-          <div className="space-y-1.5">
+          <div className="col-span-2 space-y-1.5 sm:col-span-1">
             <Label>Первый выход</Label>
             <Input
               type="date"
-              className="w-full sm:w-44"
+              className="h-11 w-full sm:h-10 sm:w-44"
               value={startDate}
               onChange={(e) => setStartDate(e.target.value)}
             />
           </div>
-          <Button onClick={() => saveCycle()} disabled={saving}>
+          <Button className="col-span-2 h-11 sm:h-10 sm:w-auto" onClick={() => saveCycle()} disabled={saving}>
             {saving ? <Icon name="Loader2" size={16} className="animate-spin" /> : 'Применить'}
           </Button>
         </div>
@@ -213,12 +208,13 @@ const ShiftCycleSetup = ({
       {mode === 'weekdays' && (
         <div className="space-y-3">
           <Label>Рабочие дни недели</Label>
-          <div className="flex flex-wrap gap-2">
+          <div className="grid grid-cols-7 gap-1">
             {WEEKDAYS.map((d) => (
               <button
                 key={d.num}
+                type="button"
                 onClick={() => toggleDay(d.num)}
-                className={`h-10 w-12 rounded-md border text-sm font-medium transition ${
+                className={`h-11 rounded-md border text-sm font-medium transition ${
                   selectedDays.includes(d.num)
                     ? 'border-primary bg-primary text-primary-foreground'
                     : 'border-border bg-background text-muted-foreground hover:bg-muted'
@@ -228,14 +224,14 @@ const ShiftCycleSetup = ({
               </button>
             ))}
           </div>
-          <Button onClick={saveWeekdays} disabled={saving}>
+          <Button className="h-11 w-full sm:h-10 sm:w-auto" onClick={saveWeekdays} disabled={saving}>
             {saving ? <Icon name="Loader2" size={16} className="animate-spin" /> : 'Применить'}
           </Button>
         </div>
       )}
 
       {(cycle || workWeekdays) && (
-        <Button variant="outline" size="sm" onClick={handleDisable} disabled={saving}>
+        <Button variant="outline" className="h-11 w-full sm:h-9 sm:w-auto" onClick={handleDisable} disabled={saving}>
           Выключить автоматический график
         </Button>
       )}

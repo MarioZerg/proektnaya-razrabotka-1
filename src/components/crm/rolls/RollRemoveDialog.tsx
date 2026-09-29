@@ -13,6 +13,7 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import Icon from '@/components/ui/icon';
 import { useToast } from '@/hooks/use-toast';
+import { useSubmitGuard } from '@/hooks/useSubmitGuard';
 import { deleteRoll } from '@/lib/rollsApi';
 import { formatQuantity } from '@/lib/formatQuantity';
 
@@ -52,7 +53,7 @@ const RollRemoveDialog = ({
   const { toast } = useToast();
   const [confirm, setConfirm] = useState('');
   const [reason, setReason] = useState('');
-  const [saving, setSaving] = useState(false);
+  const { busy: saving, run } = useSubmitGuard();
 
   useEffect(() => {
     if (open) {
@@ -64,25 +65,24 @@ const RollRemoveDialog = ({
   const codeOk = confirm.trim().toUpperCase() === barcode.toUpperCase();
   const reasonOk = reason.trim().length >= 3;
 
-  const handleRemove = async () => {
-    setSaving(true);
-    try {
-      await deleteRoll(rollId, reason.trim());
-      toast({
-        title: 'Рулон убран со склада',
-        description: 'В приёмке позиция осталась с пометкой «убран»',
-      });
-      onOpenChange(false);
-      onDone();
-    } catch (e) {
-      toast({
-        title: 'Не удалось убрать',
-        description: e instanceof Error ? e.message : undefined,
-        variant: 'destructive',
-      });
-    } finally {
-      setSaving(false);
-    }
+  const handleRemove = () => {
+    void run(async () => {
+      try {
+        await deleteRoll(rollId, reason.trim());
+        toast({
+          title: 'Рулон убран со склада',
+          description: 'В приёмке позиция осталась с пометкой «убран»',
+        });
+        onOpenChange(false);
+        onDone();
+      } catch (e) {
+        toast({
+          title: 'Не удалось убрать',
+          description: e instanceof Error ? e.message : undefined,
+          variant: 'destructive',
+        });
+      }
+    });
   };
 
   return (

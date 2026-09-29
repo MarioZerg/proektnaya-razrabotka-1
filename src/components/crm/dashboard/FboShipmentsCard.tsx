@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useIdSubmitGuard } from '@/hooks/useSubmitGuard';
 import { useNavigate } from 'react-router-dom';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -55,7 +56,7 @@ const FboShipmentsCard = () => {
   const [items, setItems] = useState<FboBoardItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [listError, setListError] = useState<string | null>(null);
-  const [busyId, setBusyId] = useState<number | null>(null);
+  const { busyId, run } = useIdSubmitGuard();
 
   const load = () => {
     setLoading(true);
@@ -72,23 +73,23 @@ const FboShipmentsCard = () => {
 
   useEffect(load, []);
 
-  const answer = async (item: FboBoardItem, shipped: boolean) => {
-    setBusyId(item.id);
-    try {
-      await confirmGazelkaShip(item.id, shipped);
-      toast({
-        title: shipped ? 'Отгрузка отмечена' : 'Напоминание перенесено на завтра',
-      });
-      load();
-    } catch (e) {
-      toast({
-        title: 'Не удалось сохранить',
-        description: e instanceof Error ? e.message : undefined,
-        variant: 'destructive',
-      });
-    } finally {
-      setBusyId(null);
-    }
+  const answer = (item: FboBoardItem, shipped: boolean) => {
+    void run(item.id, async () => {
+      setItems((prev) => prev.filter((i) => i.id !== item.id));
+      try {
+        await confirmGazelkaShip(item.id, shipped);
+        toast({
+          title: shipped ? 'Отгрузка отмечена' : 'Напоминание перенесено на завтра',
+        });
+      } catch (e) {
+        setItems((prev) => (prev.some((i) => i.id === item.id) ? prev : [...prev, item]));
+        toast({
+          title: 'Не удалось сохранить',
+          description: e instanceof Error ? e.message : undefined,
+          variant: 'destructive',
+        });
+      }
+    });
   };
 
   if (!loading && items.length === 0 && !listError) return null;

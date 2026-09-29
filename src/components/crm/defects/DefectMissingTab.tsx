@@ -11,6 +11,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { useToast } from '@/hooks/use-toast';
+import { useSubmitGuard } from '@/hooks/useSubmitGuard';
 import { useAuth } from '@/context/AuthContext';
 import {
   fetchMissingDefects,
@@ -35,7 +36,7 @@ const DefectMissingTab = () => {
   const [items, setItems] = useState<MissingDefect[]>([]);
   const [loading, setLoading] = useState(true);
   const [listError, setListError] = useState<string | null>(null);
-  const [saving, setSaving] = useState(false);
+  const { busy: saving, run } = useSubmitGuard();
   const [target, setTarget] = useState<MissingDefect | null>(null);
   const [mode, setMode] = useState<'penalty' | 'writeoff'>('writeoff');
   const [comment, setComment] = useState('');
@@ -55,36 +56,37 @@ const DefectMissingTab = () => {
 
   useEffect(load, []);
 
-  const handleResolve = async () => {
+  const handleResolve = () => {
     if (!target) return;
-    setSaving(true);
-    try {
-      const res = await resolveMissingDefect(
-        target.id,
-        mode,
-        comment.trim(),
-        user?.id,
-        user?.name,
-      );
-      toast({
-        title: mode === 'penalty' ? 'Удержание начислено' : 'Списано как потерянное',
-        description:
-          mode === 'penalty'
-            ? `С сотрудника ${target.userName} удержано ${res.penaltyAmount} ₽`
-            : undefined,
-      });
+    void run(async () => {
+      const item = target;
       setTarget(null);
-      setComment('');
-      load();
-    } catch (e) {
-      toast({
-        title: 'Не удалось сохранить решение',
-        description: e instanceof Error ? e.message : undefined,
-        variant: 'destructive',
-      });
-    } finally {
-      setSaving(false);
-    }
+      try {
+        const res = await resolveMissingDefect(
+          item.id,
+          mode,
+          comment.trim(),
+          user?.id,
+          user?.name,
+        );
+        toast({
+          title: mode === 'penalty' ? 'Удержание начислено' : 'Списано как потерянное',
+          description:
+            mode === 'penalty'
+              ? `С сотрудника ${item.userName} удержано ${res.penaltyAmount} ₽`
+              : undefined,
+        });
+        setComment('');
+        setItems((prev) => prev.filter((i) => i.id !== item.id));
+      } catch (e) {
+        setTarget(item);
+        toast({
+          title: 'Не удалось сохранить решение',
+          description: e instanceof Error ? e.message : undefined,
+          variant: 'destructive',
+        });
+      }
+    });
   };
 
   const waiting = items.filter((i) => !i.resolvedAt);

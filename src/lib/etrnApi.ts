@@ -137,12 +137,18 @@ export interface EtrnPendingItem {
   supplyNumber: string | null;
 }
 
+/** Поставка уже закрыта — ЭТрН к ней заполнять не нужно и на дашборд не вешаем. */
+export const isEtrnSupplyClosed = (status: string | null | undefined) =>
+  status === 'Выполнена' || status === 'Отменена';
+
 /** Накладные, ожидающие подписи руководителя. */
 export const fetchPendingEtrn = async (): Promise<EtrnPendingItem[]> => {
   const res = await fetch(`${ETRN_URL}?view=pending`);
   const data = await res.json();
   if (!res.ok) throw new Error(data.error || 'Не удалось загрузить очередь на подпись');
-  return data.items || [];
+  const items = (data.items || []) as EtrnPendingItem[];
+  // Живая функция ещё может отдать закрытые поставки — на дашборде их не показываем.
+  return items.filter((d) => !isEtrnSupplyClosed(d.supplyStatus));
 };
 
 /** Результат проверки связи с Контуром. */

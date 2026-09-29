@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useSubmitGuard } from '@/hooks/useSubmitGuard';
 import { getAccessZone } from '@/lib/roles';
 import type { GoodsWarehouseItem } from '@/lib/goodsWarehouseApi';
 import { printStorageStickers } from '@/lib/printStorageSticker';
@@ -28,9 +29,9 @@ export const useGoodsWarehouseTableActions = ({
 }: UseGoodsWarehouseTableActionsArgs) => {
   const [lostId, setLostId] = useState<number | null>(null);
   const [lostReason, setLostReason] = useState('');
-  const [saving, setSaving] = useState(false);
+  const { busy: saving, run: runLost } = useSubmitGuard();
   const [deleteId, setDeleteId] = useState<number | null>(null);
-  const [deleting, setDeleting] = useState(false);
+  const { busy: deleting, run: runDelete } = useSubmitGuard();
   /** Какой вещи сейчас тянем ярлык у маркетплейса: он приходит по сети, не мгновенно. */
   const [labelBusyId, setLabelBusyId] = useState<number | null>(null);
   /**
@@ -160,15 +161,12 @@ export const useGoodsWarehouseTableActions = ({
     setSelectedIds([]);
   };
 
-  const handleConfirmDelete = async () => {
+  const handleConfirmDelete = () => {
     if (!deleteId || !onDelete) return;
-    setDeleting(true);
-    try {
+    void runDelete(async () => {
       await onDelete(deleteId);
       setDeleteId(null);
-    } finally {
-      setDeleting(false);
-    }
+    });
   };
 
   const openLostDialog = (id: number) => {
@@ -176,15 +174,12 @@ export const useGoodsWarehouseTableActions = ({
     setLostReason('');
   };
 
-  const handleConfirmLost = async () => {
+  const handleConfirmLost = () => {
     if (!lostId) return;
-    setSaving(true);
-    try {
+    void runLost(async () => {
       await onMarkLost(lostId, lostReason.trim());
       setLostId(null);
-    } finally {
-      setSaving(false);
-    }
+    });
   };
 
   return {

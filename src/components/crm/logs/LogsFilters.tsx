@@ -31,6 +31,9 @@ interface LogsFiltersProps {
   onReload: () => void;
 }
 
+const periodBtn =
+  'h-11 min-w-0 sm:h-9 sm:w-auto';
+
 /** Фильтры журнала: период, этап работы, сотрудник и поиск по номеру заказа. */
 const LogsFilters = ({
   stage,
@@ -52,44 +55,54 @@ const LogsFilters = ({
   onReload,
 }: LogsFiltersProps) => (
   <div className="space-y-3 rounded-lg border border-border p-3">
-    <div className="flex flex-wrap gap-2">
-      <Button variant="outline" size="sm" onClick={onToday}>
+    <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap">
+      <Button variant="outline" className={periodBtn} onClick={onToday}>
         Сегодня
       </Button>
-      <Button variant="outline" size="sm" onClick={onYesterday}>
+      <Button variant="outline" className={periodBtn} onClick={onYesterday}>
         Вчера
       </Button>
-      <Button variant="outline" size="sm" onClick={onWeek}>
+      <Button variant="outline" className={periodBtn} onClick={onWeek}>
         Неделя
       </Button>
-      <Button variant="outline" size="sm" onClick={onReload}>
+      <Button variant="outline" className={periodBtn} onClick={onReload}>
         <Icon name="RefreshCw" size={14} className="mr-1.5" />
         Обновить
       </Button>
       {activeFiltersCount > 0 && (
-        <Button variant="ghost" size="sm" onClick={onReset}>
+        <Button variant="ghost" className={`${periodBtn} col-span-2 sm:col-span-1`} onClick={onReset}>
           <Icon name="X" size={14} className="mr-1.5" />
           Сбросить ({activeFiltersCount})
         </Button>
       )}
     </div>
 
-    <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+    <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
       <div className="space-y-1.5">
         <Label className="text-xs">Дата с</Label>
-        <Input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} />
+        <Input
+          type="date"
+          value={dateFrom}
+          onChange={(e) => setDateFrom(e.target.value)}
+          className="h-11 sm:h-10"
+        />
       </div>
       <div className="space-y-1.5">
         <Label className="text-xs">Дата по</Label>
-        <Input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} />
+        <Input
+          type="date"
+          value={dateTo}
+          onChange={(e) => setDateTo(e.target.value)}
+          className="h-11 sm:h-10"
+        />
       </div>
-      <div className="space-y-1.5">
+      <div className="col-span-2 space-y-1.5 lg:col-span-1">
         <Label className="text-xs">Этап</Label>
         <Select
           value={stage || 'all'}
           onValueChange={(v) => setStage(v === 'all' ? '' : (v as LogStage))}
         >
-          <SelectTrigger>
+          <SelectTrigger className="h-11 sm:h-10">
             <SelectValue placeholder="Все этапы" />
           </SelectTrigger>
           <SelectContent>
@@ -102,13 +115,13 @@ const LogsFilters = ({
           </SelectContent>
         </Select>
       </div>
-      <div className="space-y-1.5">
+      <div className="col-span-2 space-y-1.5 lg:col-span-1">
         <Label className="text-xs">Сотрудник</Label>
         <Select
           value={userId ? String(userId) : 'all'}
           onValueChange={(v) => setUserId(v === 'all' ? '' : Number(v))}
         >
-          <SelectTrigger>
+          <SelectTrigger className="h-11 sm:h-10">
             <SelectValue placeholder="Все сотрудники" />
           </SelectTrigger>
           <SelectContent>
@@ -121,12 +134,13 @@ const LogsFilters = ({
           </SelectContent>
         </Select>
       </div>
-      <div className="space-y-1.5">
+      <div className="col-span-2 space-y-1.5 lg:col-span-1">
         <Label className="text-xs">Поиск</Label>
         <Input
           placeholder="Номер заказа или штрихкод"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
+          className="h-11 sm:h-10"
         />
       </div>
     </div>

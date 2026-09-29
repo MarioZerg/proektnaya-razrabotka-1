@@ -9,6 +9,7 @@ import {
 import { Input } from '@/components/ui/input';
 import Icon from '@/components/ui/icon';
 import { useToast } from '@/hooks/use-toast';
+import { useSubmitGuard } from '@/hooks/useSubmitGuard';
 import { useAuth } from '@/context/AuthContext';
 import { packerReturnToRoll, fetchSuitableRolls } from '@/lib/rollsApi';
 import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
@@ -66,7 +67,7 @@ const KioskReturnToRollDialog = ({
   const { user } = useAuth();
 
   const [barcode, setBarcode] = useState('');
-  const [saving, setSaving] = useState(false);
+  const { busy: saving, run } = useSubmitGuard();
   const [loading, setLoading] = useState(false);
   const [rolls, setRolls] = useState<SuitableRoll[]>([]);
   const [listError, setListError] = useState<string | null>(null);
@@ -103,39 +104,38 @@ const KioskReturnToRollDialog = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, goodsWarehouseId, user?.id]);
 
-  const save = async (code: string) => {
+  const save = (code: string) => {
     if (!code.trim()) {
       toast({ title: 'Отсканируйте рулон', variant: 'destructive' });
       inputRef.current?.focus();
       return;
     }
-    setSaving(true);
-    try {
-      // Метраж не передаём: сервер посчитает его сам по ширине вещи.
-      const res = await packerReturnToRoll({
-        barcode: code.trim(),
-        goodsWarehouseId,
-        userId: user?.id,
-        userName: user?.name,
-      });
-      toast({
-        title: `Вернули на рулон: ${res.added} ${res.unit || ''}`.trim(),
-        description: `${res.materialName || res.barcode} · на рулоне стало ${res.remainingQuantity}. `
-          + 'Вещь снята с перепаковки',
-      });
-      onOpenChange(false);
-      // Вещь распустили в материал — отпускаем её с экрана, чтобы упаковщица
-      // сразу сканировала следующую и не могла нажать по ней ещё одно действие.
-      onReturned?.();
-    } catch (e) {
-      toast({
-        title: 'Не удалось вернуть материал',
-        description: e instanceof Error ? e.message : undefined,
-        variant: 'destructive',
-      });
-    } finally {
-      setSaving(false);
-    }
+    void run(async () => {
+      try {
+        // Метраж не передаём: сервер посчитает его сам по ширине вещи.
+        const res = await packerReturnToRoll({
+          barcode: code.trim(),
+          goodsWarehouseId,
+          userId: user?.id,
+          userName: user?.name,
+        });
+        toast({
+          title: `Вернули на рулон: ${res.added} ${res.unit || ''}`.trim(),
+          description: `${res.materialName || res.barcode} · на рулоне стало ${res.remainingQuantity}. `
+            + 'Вещь снята с перепаковки',
+        });
+        onOpenChange(false);
+        // Вещь распустили в материал — отпускаем её с экрана, чтобы упаковщица
+        // сразу сканировала следующую и не могла нажать по ней ещё одно действие.
+        onReturned?.();
+      } catch (e) {
+        toast({
+          title: 'Не удалось вернуть материал',
+          description: e instanceof Error ? e.message : undefined,
+          variant: 'destructive',
+        });
+      }
+    });
   };
 
   return (

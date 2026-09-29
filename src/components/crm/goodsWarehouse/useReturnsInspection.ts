@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useToast } from '@/hooks/use-toast';
+import { useSubmitGuard } from '@/hooks/useSubmitGuard';
 import { useAuth } from '@/context/AuthContext';
 import { fetchShelves, type Shelf } from '@/lib/shelvesApi';
 import { printStorageStickers } from '@/lib/printStorageSticker';
@@ -61,7 +62,7 @@ export const useReturnsInspection = () => {
   const [loading, setLoading] = useState(true);
   const [listError, setListError] = useState<string | null>(null);
   const [selected, setSelected] = useState<number[]>([]);
-  const [acting, setActing] = useState(false);
+  const { busy: acting, run } = useSubmitGuard();
   const [disposeReason, setDisposeReason] = useState('');
   // Полки для укладки прямо с разбора — грузим один раз при открытии страницы.
   const [shelves, setShelves] = useState<Shelf[]>([]);
@@ -74,7 +75,7 @@ export const useReturnsInspection = () => {
 
   const load = (nextStage: InspectionStage = stage) => {
     setLoading(true);
-    fetchInspection(nextStage)
+    return fetchInspection(nextStage)
       .then((data) => {
         setListError(null);
         setCounts(data.counts);
@@ -146,25 +147,24 @@ export const useReturnsInspection = () => {
     (i) => selected.includes(i.id) && i.receiveReason === 'cancelled_labeled',
   ).length;
 
-  const handleMoveToWorkshop = async () => {
-    setActing(true);
-    try {
-      const res = await moveToWorkshop(selected, user?.id, user?.name);
-      toast({
-        title: 'Передано в цех',
-        description: `Упаковщицы получили вещей: ${res.moved}`,
-      });
-      setSelected([]);
-      load();
-    } catch (e) {
-      toast({
-        title: 'Не удалось передать',
-        description: e instanceof Error ? e.message : undefined,
-        variant: 'destructive',
-      });
-    } finally {
-      setActing(false);
-    }
+  const handleMoveToWorkshop = () => {
+    void run(async () => {
+      try {
+        const res = await moveToWorkshop(selected, user?.id, user?.name);
+        toast({
+          title: 'Передано в цех',
+          description: `Упаковщицы получили вещей: ${res.moved}`,
+        });
+        setSelected([]);
+        await load();
+      } catch (e) {
+        toast({
+          title: 'Не удалось передать',
+          description: e instanceof Error ? e.message : undefined,
+          variant: 'destructive',
+        });
+      }
+    });
   };
 
   // Вещь приехала в порядке — в цех её везти незачем, сразу в очередь на укладку.
@@ -173,86 +173,83 @@ export const useReturnsInspection = () => {
   // Раньше вещь уходила «ждать укладки» и второй раз всплывала в виджете «Разложить
   // по полкам»: кладовщик заново её сканировал и выбирал полку. Двойная работа — вещь
   // уже у него в руках, полку он знает.
-  const handleToShelf = async () => {
+  const handleToShelf = () => {
     if (!shelfId) {
       toast({ title: 'Выберите полку', variant: 'destructive' });
       return;
     }
-    setActing(true);
-    try {
-      const res = await toShelfFromInspection(selected, Number(shelfId), user?.id, user?.name);
-      // Печатаем ОДНОЙ лентой, а не по стикеру на вещь: при выборе нескольких товаров
-      // окна печати открывались стопкой друг на друга, и кладовщик закрывал их по одному.
-      // Рулонный принтер режет ленту сам по границе наклеек.
-      printStorageStickers(
-        res.items.map((i) => ({
-          storageBarcode: i.storageBarcode,
-          title:
-            i.material && i.width && i.height
-              ? `${i.material} ${i.width}x${i.height}`
-              : i.product || 'Возврат',
-          orderNumber: i.orderNumber,
-        }))
-      );
-      toast({
-        title: `Положено на «${res.shelfName}»: ${res.moved}`,
-        description:
-          res.moved > 1
-            ? `Лента из ${res.moved} стикеров отправлена на печать`
-            : 'Стикер хранения отправлен на печать',
-      });
-      setSelected([]);
-      load();
-    } catch (e) {
-      toast({
-        title: 'Не удалось положить на полку',
-        description: e instanceof Error ? e.message : undefined,
-        variant: 'destructive',
-      });
-    } finally {
-      setActing(false);
-    }
+    void run(async () => {
+      try {
+        const res = await toShelfFromInspection(selected, Number(shelfId), user?.id, user?.name);
+        // Печатаем ОДНОЙ лентой, а не по стикеру на вещь: при выборе нескольких товаров
+        // окна печати открывались стопкой друг на друга, и кладовщик закрывал их по одному.
+        // Рулонный принтер режет ленту сам по границе наклеек.
+        printStorageStickers(
+          res.items.map((i) => ({
+            storageBarcode: i.storageBarcode,
+            title:
+              i.material && i.width && i.height
+                ? `${i.material} ${i.width}x${i.height}`
+                : i.product || 'Возврат',
+            orderNumber: i.orderNumber,
+          }))
+        );
+        toast({
+          title: `Положено на «${res.shelfName}»: ${res.moved}`,
+          description:
+            res.moved > 1
+              ? `Лента из ${res.moved} стикеров отправлена на печать`
+              : 'Стикер хранения отправлен на печать',
+        });
+        setSelected([]);
+        await load();
+      } catch (e) {
+        toast({
+          title: 'Не удалось положить на полку',
+          description: e instanceof Error ? e.message : undefined,
+          variant: 'destructive',
+        });
+      }
+    });
   };
 
-  const handleDispose = async () => {
+  const handleDispose = () => {
     if (!disposeReason.trim()) {
       toast({ title: 'Укажите причину утилизации', variant: 'destructive' });
       return;
     }
-    setActing(true);
-    try {
-      const res = await sendToDispose(selected, disposeReason.trim(), user?.id, user?.name);
-      toast({ title: 'На утилизацию', description: `Отправлено вещей: ${res.moved}` });
-      setSelected([]);
-      setDisposeReason('');
-      load();
-    } catch (e) {
-      toast({
-        title: 'Не удалось отправить',
-        description: e instanceof Error ? e.message : undefined,
-        variant: 'destructive',
-      });
-    } finally {
-      setActing(false);
-    }
+    void run(async () => {
+      try {
+        const res = await sendToDispose(selected, disposeReason.trim(), user?.id, user?.name);
+        toast({ title: 'На утилизацию', description: `Отправлено вещей: ${res.moved}` });
+        setSelected([]);
+        setDisposeReason('');
+        await load();
+      } catch (e) {
+        toast({
+          title: 'Не удалось отправить',
+          description: e instanceof Error ? e.message : undefined,
+          variant: 'destructive',
+        });
+      }
+    });
   };
 
-  const handleClear = async () => {
-    setActing(true);
-    try {
-      const res = await clearDisposed(selected, user?.id, user?.name);
-      toast({ title: 'Утилизация очищена', description: `Списано вещей: ${res.cleared}` });
-      setSelected([]);
-      load();
-    } catch (e) {
-      toast({
-        title: 'Не удалось очистить',
-        description: e instanceof Error ? e.message : undefined,
-        variant: 'destructive',
-      });
-    } finally {
-      setActing(false);
-    }
+  const handleClear = () => {
+    void run(async () => {
+      try {
+        const res = await clearDisposed(selected, user?.id, user?.name);
+        toast({ title: 'Утилизация очищена', description: `Списано вещей: ${res.cleared}` });
+        setSelected([]);
+        await load();
+      } catch (e) {
+        toast({
+          title: 'Не удалось очистить',
+          description: e instanceof Error ? e.message : undefined,
+          variant: 'destructive',
+        });
+      }
+    });
   };
 
   return {

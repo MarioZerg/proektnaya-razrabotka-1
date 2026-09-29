@@ -1,7 +1,7 @@
 import { roleLabels, type Role } from '@/lib/roles';
 
 export const roleOptions = Object.keys(roleLabels) as Role[];
-export const workshopOptions = ['Цех №1', 'Цех №2'];
+export const workshopOptions = ['Цех №1'];
 
 export const initials = (name: string) =>
   name
@@ -51,7 +51,7 @@ export const emptyCreateForm: CreateFormState = {
   email: '',
   role: 'sewer',
   password: '',
-  workshop: '',
+  workshop: 'Цех №1',
   avatarBase64: '',
 };
 

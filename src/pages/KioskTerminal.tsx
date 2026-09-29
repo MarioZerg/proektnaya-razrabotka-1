@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useParams, useSearchParams } from 'react-router-dom';
+import { Navigate, useParams, useSearchParams } from 'react-router-dom';
 import { useToast } from '@/hooks/use-toast';
 import { type KioskUser, type KioskShift } from '@/lib/kioskApi';
 import { type DefectCheck } from '@/lib/shiftSessionsApi';
@@ -10,6 +10,7 @@ import KioskWorkspace from '@/components/crm/kiosk/KioskWorkspace';
 import { useKioskLogin } from '@/components/crm/kiosk/useKioskLogin';
 import { useKioskShift } from '@/components/crm/kiosk/useKioskShift';
 import { useKioskPreview } from '@/components/crm/kiosk/useKioskPreview';
+import { fetchWorkshops } from '@/lib/workshopsApi';
 
 /** Терминал цеха (киоск). Полноэкранный экран для планшета в цехе: сотрудник входит
  * сканированием личного QR-кода с бейджа (формат "{id}-{смена}-{дата}"), пароль не нужен.
@@ -40,6 +41,8 @@ const KioskTerminal = () => {
   // После скана QR сотрудник сначала попадает на экран смены и только потом, нажав
   // «Войти в терминал», переходит в меню с плитками.
   const [enteredMenu, setEnteredMenu] = useState(false);
+  // Закрытые цеха (№2, тестовый) из адреса больше не открываем.
+  const [retiredKiosk, setRetiredKiosk] = useState(workshopId === '2');
 
   const { code, setCode, loading, inputRef, loginWithCode, handleLogin } = useKioskLogin({
     workshopId,
@@ -60,7 +63,18 @@ const KioskTerminal = () => {
     workshopId,
   });
 
-  // Вход по ссылке из персонального QR сотрудника: /kiosk/1?barcode=3-20-20250513
+  useEffect(() => {
+    if (!workshopId || workshopId === '1' || workshopId === '2') return;
+    fetchWorkshops()
+      .then((list) => {
+        if (!list.some((w) => String(w.id) === workshopId)) {
+          setRetiredKiosk(true);
+        }
+      })
+      .catch(() => {
+        // FRONTEND-ONLY: список цехов не дошёл — терминал не сворачиваем.
+      });
+  }, [workshopId]);
   useEffect(() => {
     const barcode = searchParams.get('barcode');
     if (barcode && !user && !loading) {
@@ -92,6 +106,11 @@ const KioskTerminal = () => {
     setScreen,
     toast,
   });
+
+  if (retiredKiosk) {
+    const q = searchParams.toString();
+    return <Navigate to={q ? `/kiosk/1?${q}` : '/kiosk/1'} replace />;
+  }
 
   // Сотрудник пришёл работать в чужой цех: списание брака здесь ему запрещено — это делает
   // штатный работник цеха, отсканировав свой штрихкод.

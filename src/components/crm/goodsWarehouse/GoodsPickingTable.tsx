@@ -31,6 +31,8 @@ interface GoodsPickingTableProps {
   /** FRONTEND-ONLY: сбой GET подбора — не писать «заказов нет». */
   error?: string | null;
   search: string;
+  /** Выбранная полка: пустой список тогда означает «на полке ничего нет». */
+  shelfFilter?: string | null;
   /** Настоящая работа кладовщика — без «лишних» вещей FBO. */
   workOrders: PickingOrder[];
   /** Отобранное поиском подмножество workOrders. */
@@ -46,6 +48,7 @@ const GoodsPickingTable = ({
   loading,
   error = null,
   search,
+  shelfFilter = null,
   workOrders,
   filtered,
   byScheme,
@@ -64,7 +67,11 @@ const GoodsPickingTable = ({
     if (error) return null;
     return (
       <p className="text-sm text-muted-foreground">
-        {search ? 'По запросу ничего не найдено' : 'Заказов к подбору нет'}
+        {shelfFilter
+          ? 'На этой полке сейчас нет товара к подбору'
+          : search
+            ? 'По запросу ничего не найдено'
+            : 'Заказов к подбору нет'}
       </p>
     );
   }
@@ -73,9 +80,11 @@ const GoodsPickingTable = ({
     <>
       <div className="flex flex-wrap items-center gap-3">
         <p className="text-sm text-muted-foreground">
-          {search
-            ? `Найдено: ${filtered.length} из ${workOrders.length}`
-            : `Заказов к подбору: ${workOrders.length}`}
+          {shelfFilter
+            ? `На полке: ${filtered.length} шт`
+            : search
+              ? `Найдено: ${filtered.length} из ${workOrders.length}`
+              : `Заказов к подбору: ${workOrders.length}`}
         </p>
         {/* Сколько работы какого вида: FBS собирают поштучно с ярлыками,
             FBO складывают коробкой. Кладовщик планирует день по этим числам. */}

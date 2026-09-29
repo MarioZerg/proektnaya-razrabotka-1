@@ -93,11 +93,9 @@ const MaterialAnalysisPage = () => {
     <CrmLayout>
       <div className="space-y-6">
         <div>
-          <h1 className="text-2xl font-bold">Анализ сырья</h1>
+          <h1 className="text-xl font-bold">Анализ сырья</h1>
           <p className="mt-1 text-sm text-muted-foreground">
             Куда девается материал: недостачи и списанный брак в одной картине.
-            Недостача считается по факту закрытия рулона — сколько метров числилось,
-            но в изделия не ушло.
           </p>
         </div>
 
@@ -109,29 +107,29 @@ const MaterialAnalysisPage = () => {
           />
         )}
 
-        <div className="flex flex-wrap items-end gap-3">
+        <div className="grid grid-cols-2 items-end gap-3 lg:flex lg:flex-wrap">
           <div className="space-y-1.5">
-            <Label>Период с</Label>
+            <Label className="text-xs">Период с</Label>
             <Input
               type="date"
               value={from}
               onChange={(e) => setFrom(e.target.value)}
-              className="w-full sm:w-40"
+              className="h-11 w-full sm:h-10 lg:w-40"
             />
           </div>
           <div className="space-y-1.5">
-            <Label>по</Label>
+            <Label className="text-xs">по</Label>
             <Input
               type="date"
               value={to}
               onChange={(e) => setTo(e.target.value)}
-              className="w-full sm:w-40"
+              className="h-11 w-full sm:h-10 lg:w-40"
             />
           </div>
-          <div className="space-y-1.5">
-            <Label>Должность</Label>
+          <div className="col-span-2 space-y-1.5 lg:col-span-1">
+            <Label className="text-xs">Должность</Label>
             <Select value={role} onValueChange={setRole}>
-              <SelectTrigger className="w-full sm:w-44">
+              <SelectTrigger className="h-11 w-full sm:h-10 lg:w-44">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -142,10 +140,10 @@ const MaterialAnalysisPage = () => {
               </SelectContent>
             </Select>
           </div>
-          <div className="space-y-1.5">
-            <Label>Цех</Label>
+          <div className="col-span-2 space-y-1.5 lg:col-span-1">
+            <Label className="text-xs">Цех</Label>
             <Select value={workshop} onValueChange={setWorkshop}>
-              <SelectTrigger className="w-full sm:w-44">
+              <SelectTrigger className="h-11 w-full sm:h-10 lg:w-44">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -158,7 +156,12 @@ const MaterialAnalysisPage = () => {
               </SelectContent>
             </Select>
           </div>
-          <Button variant="outline" onClick={load} disabled={loading}>
+          <Button
+            variant="outline"
+            onClick={load}
+            disabled={loading}
+            className="col-span-2 h-11 lg:col-span-1 lg:h-10"
+          >
             <Icon
               name={loading ? 'Loader2' : 'RefreshCw'}
               size={14}
@@ -168,37 +171,37 @@ const MaterialAnalysisPage = () => {
           </Button>
         </div>
 
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-2 sm:gap-4 lg:grid-cols-4">
           <Card>
-            <CardContent className="py-4">
-              <p className="text-sm text-muted-foreground">Недостача</p>
-              <p className="text-2xl font-bold">{num(t?.shortageQty || 0)}</p>
-              <p className="text-sm text-muted-foreground">{money(t?.shortageMoney || 0)}</p>
+            <CardContent className="p-3 sm:py-4">
+              <p className="text-xs text-muted-foreground sm:text-sm">Недостача</p>
+              <p className="text-xl font-bold sm:text-2xl">{num(t?.shortageQty || 0)}</p>
+              <p className="text-xs text-muted-foreground sm:text-sm">{money(t?.shortageMoney || 0)}</p>
             </CardContent>
           </Card>
           <Card>
-            <CardContent className="py-4">
-              <p className="text-sm text-muted-foreground">Списано в брак</p>
-              <p className="text-2xl font-bold">{num(t?.defectQty || 0)}</p>
-              <p className="text-sm text-muted-foreground">{money(t?.defectMoney || 0)}</p>
+            <CardContent className="p-3 sm:py-4">
+              <p className="text-xs text-muted-foreground sm:text-sm">Списано в брак</p>
+              <p className="text-xl font-bold sm:text-2xl">{num(t?.defectQty || 0)}</p>
+              <p className="text-xs text-muted-foreground sm:text-sm">{money(t?.defectMoney || 0)}</p>
             </CardContent>
           </Card>
           <Card>
-            <CardContent className="py-4">
-              <p className="text-sm text-muted-foreground">Всего потерь</p>
-              <p className="text-2xl font-bold">
+            <CardContent className="p-3 sm:py-4">
+              <p className="text-xs text-muted-foreground sm:text-sm">Всего потерь</p>
+              <p className="text-xl font-bold sm:text-2xl">
                 {money((t?.shortageMoney || 0) + (t?.defectMoney || 0))}
               </p>
-              <p className="text-sm text-muted-foreground">
+              <p className="text-xs text-muted-foreground sm:text-sm">
                 закрыто рулонов: {t?.rollsClosed || 0}
               </p>
             </CardContent>
           </Card>
           <Card className={t?.signalsCount ? 'border-amber-400' : undefined}>
-            <CardContent className="py-4">
-              <p className="text-sm text-muted-foreground">Требует внимания</p>
-              <p className="text-2xl font-bold">{t?.signalsCount || 0}</p>
-              <p className="text-sm text-muted-foreground">найденных отклонений</p>
+            <CardContent className="p-3 sm:py-4">
+              <p className="text-xs text-muted-foreground sm:text-sm">Требует внимания</p>
+              <p className="text-xl font-bold sm:text-2xl">{t?.signalsCount || 0}</p>
+              <p className="text-xs text-muted-foreground sm:text-sm">найденных отклонений</p>
             </CardContent>
           </Card>
         </div>
@@ -206,10 +209,14 @@ const MaterialAnalysisPage = () => {
         <MaterialSignalsCard people={data?.people || []} />
 
         <Tabs defaultValue="people">
-          <TabsList>
-            <TabsTrigger value="people">По сотрудникам</TabsTrigger>
-            <TabsTrigger value="materials">По материалам</TabsTrigger>
-            <TabsTrigger value="spikes">
+          <TabsList className="grid h-auto w-full grid-cols-3">
+            <TabsTrigger value="people" className="min-h-11 px-2 sm:min-h-9">
+              Сотрудники
+            </TabsTrigger>
+            <TabsTrigger value="materials" className="min-h-11 px-2 sm:min-h-9">
+              Материалы
+            </TabsTrigger>
+            <TabsTrigger value="spikes" className="min-h-11 px-1.5 sm:min-h-9">
               Всплески{data?.spikes.length ? ` (${data.spikes.length})` : ''}
             </TabsTrigger>
           </TabsList>
@@ -219,48 +226,78 @@ const MaterialAnalysisPage = () => {
           </TabsContent>
 
           <TabsContent value="materials" className="mt-4">
-            <div className="overflow-x-auto rounded-md border border-border">
-              <Table>
-                <TableHeader>
-                  <TableRow className="bg-primary hover:bg-primary">
-                    <TableHead className="text-primary-foreground">Материал</TableHead>
-                    <TableHead className="text-right text-primary-foreground">Рулонов</TableHead>
-                    <TableHead className="text-right text-primary-foreground">Недостача</TableHead>
-                    <TableHead className="text-right text-primary-foreground">%</TableHead>
-                    <TableHead className="text-right text-primary-foreground">Брак</TableHead>
-                    <TableHead className="text-right text-primary-foreground">Потери</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {!data?.byMaterial.length ? (
-                    <TableRow>
-                      <TableCell colSpan={6} className="py-8 text-center text-muted-foreground">
-                        {loading ? 'Загрузка…' : listError ? 'Не удалось загрузить' : 'За период данных нет'}
-                      </TableCell>
-                    </TableRow>
-                  ) : (
-                    data.byMaterial.map((m) => (
-                      <TableRow key={m.materialId}>
-                        <TableCell className="font-medium">{m.material}</TableCell>
-                        <TableCell className="text-right">{m.rollsClosed}</TableCell>
-                        <TableCell className="text-right">
+            {!data?.byMaterial.length ? (
+              <p className="py-8 text-center text-sm text-muted-foreground">
+                {loading ? 'Загрузка…' : listError ? 'Не удалось загрузить' : 'За период данных нет'}
+              </p>
+            ) : (
+              <>
+                <div className="space-y-2 lg:hidden">
+                  {data.byMaterial.map((m) => (
+                    <div
+                      key={m.materialId}
+                      className="min-w-0 overflow-hidden rounded-lg border border-border bg-card p-3"
+                    >
+                      <p className="break-words font-semibold leading-snug">{m.material}</p>
+                      <p className="mt-0.5 text-xs text-muted-foreground">
+                        {m.rollsClosed} рул.
+                      </p>
+                      <div className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 text-sm">
+                        <span className="text-muted-foreground">Недостача</span>
+                        <span className="text-right tabular-nums">
                           {num(m.shortageQty)} {m.unit}
-                        </TableCell>
-                        <TableCell className="text-right">
-                          {m.shortagePercent.toFixed(1)}%
-                        </TableCell>
-                        <TableCell className="text-right">
+                          <span className="ml-1.5 text-muted-foreground">
+                            {m.shortagePercent.toFixed(1)}%
+                          </span>
+                        </span>
+                        <span className="text-muted-foreground">Брак</span>
+                        <span className="text-right tabular-nums">
                           {m.defectQty > 0 ? `${num(m.defectQty)} ${m.unit}` : '—'}
-                        </TableCell>
-                        <TableCell className="whitespace-nowrap text-right font-medium">
+                        </span>
+                        <span className="text-muted-foreground">Потери</span>
+                        <span className="text-right font-semibold tabular-nums">
                           {money(m.shortageMoney + m.defectMoney)}
-                        </TableCell>
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                <div className="hidden overflow-x-auto rounded-md border border-border lg:block">
+                  <Table>
+                    <TableHeader>
+                      <TableRow className="bg-primary hover:bg-primary">
+                        <TableHead className="text-primary-foreground">Материал</TableHead>
+                        <TableHead className="text-right text-primary-foreground">Рулонов</TableHead>
+                        <TableHead className="text-right text-primary-foreground">Недостача</TableHead>
+                        <TableHead className="text-right text-primary-foreground">%</TableHead>
+                        <TableHead className="text-right text-primary-foreground">Брак</TableHead>
+                        <TableHead className="text-right text-primary-foreground">Потери</TableHead>
                       </TableRow>
-                    ))
-                  )}
-                </TableBody>
-              </Table>
-            </div>
+                    </TableHeader>
+                    <TableBody>
+                      {data.byMaterial.map((m) => (
+                        <TableRow key={m.materialId}>
+                          <TableCell className="font-medium">{m.material}</TableCell>
+                          <TableCell className="text-right">{m.rollsClosed}</TableCell>
+                          <TableCell className="text-right">
+                            {num(m.shortageQty)} {m.unit}
+                          </TableCell>
+                          <TableCell className="text-right">
+                            {m.shortagePercent.toFixed(1)}%
+                          </TableCell>
+                          <TableCell className="text-right">
+                            {m.defectQty > 0 ? `${num(m.defectQty)} ${m.unit}` : '—'}
+                          </TableCell>
+                          <TableCell className="whitespace-nowrap text-right font-medium">
+                            {money(m.shortageMoney + m.defectMoney)}
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+              </>
+            )}
           </TabsContent>
 
           {/* ВСПЛЕСКИ. Разовый крупный кусок сам по себе ни о чём не говорит —
@@ -272,48 +309,81 @@ const MaterialAnalysisPage = () => {
               это значит, что брак копили и оформили разом — или списали крупный
               кусок полотна.
             </p>
-            <div className="overflow-x-auto rounded-md border border-border">
-              <Table>
-                <TableHeader>
-                  <TableRow className="bg-primary hover:bg-primary">
-                    <TableHead className="text-primary-foreground">Дата</TableHead>
-                    <TableHead className="text-primary-foreground">Сотрудник</TableHead>
-                    <TableHead className="text-right text-primary-foreground">За день</TableHead>
-                    <TableHead className="text-right text-primary-foreground">Записей</TableHead>
-                    <TableHead className="text-right text-primary-foreground">
-                      Макс. кусок
-                    </TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {!data?.spikes.length ? (
-                    <TableRow>
-                      <TableCell colSpan={5} className="py-8 text-center text-muted-foreground">
-                        {loading ? 'Загрузка…' : 'Всплесков за период не было'}
-                      </TableCell>
-                    </TableRow>
-                  ) : (
-                    data.spikes.map((s, i) => (
-                      <TableRow key={`${s.userName}-${s.date}-${i}`}>
-                        <TableCell className="whitespace-nowrap">
+            {!data?.spikes.length ? (
+              <p className="py-4 text-center text-sm text-muted-foreground">
+                {loading ? 'Загрузка…' : 'Всплесков за период не было'}
+              </p>
+            ) : (
+              <>
+                <div className="space-y-2 lg:hidden">
+                  {data.spikes.map((s, i) => (
+                    <div
+                      key={`${s.userName}-${s.date}-${i}`}
+                      className="min-w-0 overflow-hidden rounded-lg border border-border bg-card p-3"
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <p className="min-w-0 break-words font-semibold leading-snug">
+                          {s.userName}
+                        </p>
+                        <span className="shrink-0 text-xs text-muted-foreground">
                           {formatDate(s.date)}
-                        </TableCell>
-                        <TableCell className="font-medium">{s.userName}</TableCell>
-                        <TableCell className="text-right font-semibold">
+                        </span>
+                      </div>
+                      <div className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 text-sm">
+                        <span className="text-muted-foreground">За день</span>
+                        <span className="text-right font-semibold tabular-nums">
                           {num(s.quantity)}
-                        </TableCell>
-                        <TableCell className="text-right">{s.count}</TableCell>
-                        <TableCell className="text-right">
-                          <span className={s.maxPiece >= 15 ? 'font-semibold text-red-700' : ''}>
-                            {num(s.maxPiece)}
-                          </span>
-                        </TableCell>
+                        </span>
+                        <span className="text-muted-foreground">Записей</span>
+                        <span className="text-right tabular-nums">{s.count}</span>
+                        <span className="text-muted-foreground">Макс. кусок</span>
+                        <span
+                          className={`text-right tabular-nums ${
+                            s.maxPiece >= 15 ? 'font-semibold text-red-700' : ''
+                          }`}
+                        >
+                          {num(s.maxPiece)}
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+                <div className="hidden overflow-x-auto rounded-md border border-border lg:block">
+                  <Table>
+                    <TableHeader>
+                      <TableRow className="bg-primary hover:bg-primary">
+                        <TableHead className="text-primary-foreground">Дата</TableHead>
+                        <TableHead className="text-primary-foreground">Сотрудник</TableHead>
+                        <TableHead className="text-right text-primary-foreground">За день</TableHead>
+                        <TableHead className="text-right text-primary-foreground">Записей</TableHead>
+                        <TableHead className="text-right text-primary-foreground">
+                          Макс. кусок
+                        </TableHead>
                       </TableRow>
-                    ))
-                  )}
-                </TableBody>
-              </Table>
-            </div>
+                    </TableHeader>
+                    <TableBody>
+                      {data.spikes.map((s, i) => (
+                        <TableRow key={`${s.userName}-${s.date}-${i}`}>
+                          <TableCell className="whitespace-nowrap">
+                            {formatDate(s.date)}
+                          </TableCell>
+                          <TableCell className="font-medium">{s.userName}</TableCell>
+                          <TableCell className="text-right font-semibold">
+                            {num(s.quantity)}
+                          </TableCell>
+                          <TableCell className="text-right">{s.count}</TableCell>
+                          <TableCell className="text-right">
+                            <span className={s.maxPiece >= 15 ? 'font-semibold text-red-700' : ''}>
+                              {num(s.maxPiece)}
+                            </span>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+              </>
+            )}
           </TabsContent>
         </Tabs>
       </div>
