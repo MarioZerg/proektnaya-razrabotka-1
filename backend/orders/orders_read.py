@@ -511,12 +511,24 @@ def handle_get(event: dict, headers: dict, dsn: str) -> dict:
                 mi_row = cur.fetchone()
                 if mi_row:
                     cur.execute(
-                        "SELECT m.id, m.name, mt.name, mim.quantity FROM marketplace_item_materials mim "
+                        # quantity — норма расхода из состава: по ней считается,
+                        # сколько тесьмы спишется, поэтому берём её здесь же.
+                        "SELECT m.id, m.name, mt.name, mim.quantity "
+                        "FROM marketplace_item_materials mim "
                         "JOIN materials m ON m.id = mim.material_id "
                         "JOIN material_types mt ON mt.id = m.type_id "
                         "WHERE mim.marketplace_item_id = %s",
                         (mi_row[0],),
                     )
+                    # ТЕСЬМУ ВЫБИРАЕМ ПО ТКАНИ, А НЕ ПЕРВОЙ СТРОКОЙ СОСТАВА.
+                    #
+                    # Раньше бралась первая запись типа «Аксессуары». Пока тесьма в
+                    # составе была одна, это работало; теперь у части тканей их две
+                    # (4 см ХБ и 6 см), и «первая строка» стала лотереей — карточка
+                    # могла показать одну тесьму, а швея списать другую.
+                    #
+                    # Собираем ВСЕ аксессуары с нормами расхода и отдаём их
+                    # pick_order_trim: правило выбора одно на карточку и на списание.
                     accessories = []
                     for mat_id, mat_name, mat_type_name, mat_qty in cur.fetchall():
                         if mat_type_name == 'Тюль' and required_fabric_material_id is None:
@@ -524,13 +536,16 @@ def handle_get(event: dict, headers: dict, dsn: str) -> dict:
                             required_fabric_material_name = mat_name
                         elif mat_type_name == 'Аксессуары':
                             accessories.append((mat_id, mat_name, mat_qty))
-                    # Вуаль без утяжелителя и оверлок — тесьма 4 см ХБ, не 6 см.
-                    trim = pick_order_trim(
-                        cur, accessories, material_name, bool(row[-2]), width_val,
+
+                    trim_id, trim_name, _trim_qty = pick_order_trim(
+                        cur,
+                        accessories,
+                        material_name,
+                        bool(row[-2]),
+                        width_val,
                     )
-                    if trim:
-                        required_trim_material_id = trim[0]
-                        required_trim_material_name = trim[1]
+                    required_trim_material_id = trim_id
+                    required_trim_material_name = trim_name
 
             detail = {
                 'id': row[0],

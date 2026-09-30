@@ -371,85 +371,6 @@ def take_cancelled_cut(cur, order_id) -> dict | None:
     }
 
 
-# Ширина тесьмы в названии материала: «Тесьма 4 см ХБ», «Тесьма 6см».
-_TAPE_CM_RE = re.compile(r'(?<!\d)([46])\s*(?:см|cm)', re.IGNORECASE)
-
-
-def fabric_uses_4cm_hb_tape(material_name, requires_overlock=False) -> bool:
-    """Вуаль без утяжелителя и вся ткань на оверлоке шьются тесьмой 4 см ХБ.
-
-    На остальных изделиях по-прежнему тесьма 6 см. Если в составе товара
-    записаны обе — для этих тканей 6 см не показываем и не списываем.
-    """
-    if requires_overlock:
-        return True
-    n = (material_name or '').lower()
-    if 'без ут' in n:
-        return True
-    return 'вуаль' in n and 'без' in n and 'утяж' in n
-
-
-def tape_width_cm(material_name) -> str | None:
-    """'4' или '6' из названия тесьмы, иначе None."""
-    m = _TAPE_CM_RE.search(material_name or '')
-    return m.group(1) if m else None
-
-
-def _prefer_hb_tape(rows):
-    hb = [
-        r for r in rows
-        if 'хб' in (r[1] or '').lower() or 'х/б' in (r[1] or '').lower()
-    ]
-    return (hb or rows)[0]
-
-
-def pick_order_trim(cur, accessories, fabric_name, requires_overlock=False, width=None):
-    """Какую тесьму показать и списать по заказу.
-
-    accessories — список (material_id, name, qty) из состава карточки.
-    Для вуали без утяжелителя и оверлока берём 4 см ХБ, строки 6 см пропускаем.
-    Если в составе 4 см нет — ищем её в справочнике, расход как у 6 см в составе
-    или ширина изделия в пог.м.
-    """
-    want_4 = fabric_uses_4cm_hb_tape(fabric_name, requires_overlock)
-    four, six, other = [], [], []
-    for row in accessories:
-        kind = tape_width_cm(row[1])
-        if kind == '4':
-            four.append(row)
-        elif kind == '6':
-            six.append(row)
-        else:
-            other.append(row)
-
-    if want_4:
-        if four:
-            return _prefer_hb_tape(four)
-        cur.execute(
-            "SELECT m.id, m.name FROM materials m "
-            "JOIN material_types mt ON mt.id = m.type_id "
-            "WHERE mt.name = 'Аксессуары' "
-            "  AND m.name ~* '(^|[^0-9])4[[:space:]]*(см|cm)' "
-            "ORDER BY CASE WHEN m.name ILIKE '%хб%' OR m.name ILIKE '%х/б%' "
-            "              THEN 0 ELSE 1 END, m.id LIMIT 1"
-        )
-        found = cur.fetchone()
-        if not found:
-            return None
-        qty = float(six[0][2]) if six and six[0][2] is not None else None
-        if qty is None and width:
-            qty = round(float(width) / 100, 3)
-        return (found[0], found[1], qty)
-
-    if six:
-        return six[0]
-    if other:
-        return other[0]
-    if four:
-        return _prefer_hb_tape(four)
-    return None
-
-
 def write_off_materials_once(cur, order_id, material, width, height, workshop_id=None):
     """Списывает материалы заказа по FIFO ОДИН раз (для случая, когда админ двигает статус
     заказа, а не проходит обычный конвейер раскроя). Если по заказу уже есть списания
@@ -619,6 +540,146 @@ def write_off_materials_once(cur, order_id, material, width, height, workshop_id
                 (int(order_id), fabric_material_id, round(repair_fabric_qty, 3)),
             )
     return None
+
+
+def fabric_uses_4cm_hb_tape(fabric_name, requires_overlock) -> bool:
+    """Шьётся ли эта вещь тесьмой 4 см ХБ вместо обычной 6 см.
+
+    ЗАЧЕМ. Тесьма 6 см держит полотно за счёт собственной жёсткости, и на плотной
+    шторе с утяжелителем это правильно. Но есть два случая, где она не годится:
+
+      * ВУАЛЬ БЕЗ УТЯЖЕЛИТЕЛЯ. Полотно легче самой тесьмы: широкая жёсткая лента
+        тянет верх вещи вниз, шторка висит волнами и на фото выглядит смятой.
+      * ЛЮБАЯ ТКАНЬ НА ОВЕРЛОК. Край обмётан, и по нему идёт дополнительный шов.
+        Под шестисантиметровой тесьмой обмётка попадает в подгибку и топорщится —
+        по узкой ХБ-тесьме строчка ложится ровно.
+
+    В обоих случаях ставится ТОЛЬКО 4 см ХБ: хлопковая лента мягкая и не тянет
+    лёгкое полотно.
+
+    ПОЧЕМУ ПРИЗНАК ВУАЛИ ИЩЕТСЯ В НАЗВАНИИ, А НЕ ФЛАГОМ В СПРАВОЧНИКЕ. Ткани
+    заводят вручную, и «Вуаль без утяжелителя» соседствует с «Вуаль (без ут)» —
+    это одна и та же ткань, записанная двумя руками. Отдельный флаг пришлось бы
+    ставить на каждую новую запись, и однажды его забудут: вещь уйдёт с 6 см, а
+    заметят это уже по возврату от покупателя.
+
+    Оверлок берём с ЗАКАЗА (requires_overlock), а не со справочника ткани:
+    признак проставляется на раскрое с учётом настройки магазина, и та же ткань
+    в соседнем магазине может шиться без обмётки.
+    """
+    if requires_overlock:
+        return True
+    name = (fabric_name or '').lower()
+    if not name:
+        return False
+    # «без ут» покрывает и «без утяжелителя», и сокращённое «(без ут)».
+    if 'без ут' in name:
+        return True
+    # Слова могут стоять в любом порядке: «вуаль без утяжелителя», реже —
+    # «без утяжелителя вуаль». Проверяем присутствие, а не соседство.
+    return 'вуаль' in name and 'без' in name and 'утяж' in name
+
+
+def tape_width_cm(name):
+    """Ширина тесьмы из названия материала: 4, 6 или None.
+
+    Ширина живёт только в названии («Тесьма 6 см», «Тесьма 4 см ХБ») — отдельного
+    поля под неё в справочнике нет. Разбираем аккуратно: (?<!\\d) не даёт поймать
+    «4» внутри «14 см», иначе четырнадцатисантиметровая лента сошла бы за
+    четырёхсантиметровую.
+    """
+    if not name:
+        return None
+    m = re.search(r'(?<!\d)([46])\s*(?:см|cm)', str(name), re.IGNORECASE)
+    return int(m.group(1)) if m else None
+
+
+def _is_hb_tape(name) -> bool:
+    """Хлопковая тесьма: в названии «ХБ» или «х/б»."""
+    low = (name or '').lower()
+    return 'хб' in low or 'х/б' in low
+
+
+def pick_order_trim(cur, accessories, fabric_name, requires_overlock, width):
+    """Какую тесьму ставить в заказ и сколько её списать.
+
+    ЗАЧЕМ ЭТА ФУНКЦИЯ ОДНА НА ДВА МЕСТА. Тесьму показывает карточка заказа и
+    списывает отправка на стикеровку. Раньше оба места просто брали ПЕРВЫЙ
+    аксессуар из состава товара — и пока в составе была одна тесьма, это
+    работало. Теперь у части тканей их две (4 см ХБ и 6 см), и «первая строка»
+    стала лотереей: карточка могла показать 4 см, а списаться 6 см. Правило
+    обязано быть одно, поэтому живёт в одном месте.
+
+    accessories — список (material_id, name, qty) по типу «Аксессуары» из состава
+    карточки товара. Возвращает (material_id, name, qty) или (None, None, None),
+    если тесьму ставить не нужно или её негде взять.
+
+    РАСХОД. Для 4 см ХБ берём норму шестисантиметровой из состава: тесьма идёт по
+    верху вещи, и её длина зависит от ширины шторы, а не от ширины ленты. Нормы
+    для ХБ в составе часто нет вовсе — тогда считаем по ширине изделия (width/100
+    пог. м), как считается расход на раскрое.
+    """
+    accessories = list(accessories or [])
+    need_4cm = fabric_uses_4cm_hb_tape(fabric_name, requires_overlock)
+
+    by_width = {}
+    others = []
+    for mat_id, name, qty in accessories:
+        w = tape_width_cm(name)
+        if w in (4, 6):
+            by_width.setdefault(w, []).append((mat_id, name, qty))
+        else:
+            others.append((mat_id, name, qty))
+
+    if not need_4cm:
+        # Обычная вещь: сначала 6 см, потом прочие аксессуары, и только в самом
+        # конце 4 см. Порядок важен — в составе может лежать и то и другое.
+        for candidate in (by_width.get(6) or []) + others + (by_width.get(4) or []):
+            return candidate
+        return (None, None, None)
+
+    # Дальше — вещь, которой нужна ТОЛЬКО 4 см ХБ.
+    #
+    # Норма расхода: берём от шестисантиметровой из состава (длина та же), иначе
+    # считаем по ширине изделия.
+    six = (by_width.get(6) or [])
+    fallback_qty = float(six[0][2]) if six and six[0][2] is not None else None
+    if fallback_qty is None:
+        fallback_qty = round(float(width or 0) / 100, 3)
+
+    four = by_width.get(4) or []
+    if four:
+        # Среди четырёхсантиметровых предпочитаем хлопковую: обычная 4 см жёсткая
+        # и лёгкое полотно тянет так же, как шестёрка.
+        four.sort(key=lambda r: 0 if _is_hb_tape(r[1]) else 1)
+        mat_id, name, qty = four[0]
+        return (mat_id, name, float(qty) if qty is not None else fallback_qty)
+
+    # В СОСТАВЕ ЧЕТЫРЁХСАНТИМЕТРОВОЙ НЕТ — ИЩЕМ В СПРАВОЧНИКЕ.
+    #
+    # Состав карточек заполнялся, когда узкой тесьмы в цехе ещё не было, и
+    # переписывать сотни карточек руками никто не станет. Поэтому ткань сама
+    # определяет, чем шить, а конкретную ленту находим в справочнике материалов.
+    cur.execute(
+        "SELECT m.id, m.name FROM materials m "
+        "JOIN material_types mt ON mt.id = m.type_id "
+        "WHERE mt.name = 'Аксессуары' "
+        "  AND m.name ~* '(^|[^0-9])4[[:space:]]*(см|cm)' "
+        "ORDER BY CASE WHEN m.name ILIKE '%хб%' OR m.name ILIKE '%х/б%' "
+        "              THEN 0 ELSE 1 END, m.id "
+        "LIMIT 1"
+    )
+    found = cur.fetchone()
+    if found:
+        return (found[0], found[1], fallback_qty)
+
+    # НА ШЕСТЬ САНТИМЕТРОВ НЕ ОТКАТЫВАЕМСЯ.
+    #
+    # Узкой тесьмы нет ни в составе, ни в справочнике — значит, её в системе не
+    # завели. Подставить здесь 6 см означало бы отшить вуаль без утяжелителя ровно
+    # тем, чем шить её нельзя. Лучше отправить вещь без тесьмы: это заметят сразу,
+    # а испорченную шторку заметит покупатель.
+    return (None, None, None)
 
 
 def can_work_as(cur, actor_id, needed_role):
