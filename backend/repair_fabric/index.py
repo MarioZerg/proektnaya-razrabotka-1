@@ -27,6 +27,17 @@ def _resp(status, body):
     }
 
 
+def _order_cancelled(status, ozon_status, ym_status, cancelled_at, sewing_status) -> bool:
+    """Заказ отменён площадкой — шить его как живую очередь нельзя."""
+    return (
+        status == 'Отменён'
+        or sewing_status == 'Отменён'
+        or cancelled_at is not None
+        or 'cancel' in (ozon_status or '').lower()
+        or 'cancel' in (ym_status or '').lower()
+    )
+
+
 # ПРИЧИНЫ ПЕРЕШИВА — ЗАЧЕМ ОНИ ВООБЩЕ НУЖНЫ.
 #
 # Раньше упаковщица отправляла вещь в перешив молча. Кусок появлялся у
@@ -191,20 +202,29 @@ def suitable_for_order(cur, event):
         return _resp(400, {'error': 'Укажите orderId'})
 
     cur.execute(
-        "SELECT material, width, height, order_number, sewing_status FROM orders WHERE id = %s",
+        "SELECT material, width, height, order_number, sewing_status, "
+        "cut_at, status, ozon_status, ym_status, cancelled_at "
+        "FROM orders WHERE id = %s",
         (int(order_id),),
     )
     row = cur.fetchone()
     if not row:
         return _resp(404, {'error': 'Заказ не найден'})
-    material, width, height, order_number, sewing_status = row
+    (material, width, height, order_number, sewing_status,
+     cut_at, o_status, ozon_status, ym_status, cancelled_at) = row
 
-    # ПОДБОР КУСКА — ТОЛЬКО ПОКА ВЕЩЬ НА РАСКРОЕ.
+    # ПОДБОР КУСКА — ТОЛЬКО НА ЖИВОМ РАСКРОЕ, ПОКА ТКАНЬ ЕЩЁ НЕ РЕЗАЛИ.
     #
-    # Дальше по конвейеру ткань уже разрезана и лежит у швеи: предлагать там
-    # отрез бессмысленно и опасно — кусок ушёл бы в резерв под вещь, которую
-    # никто не будет кроить, и пропал бы из перешива впустую.
-    if sewing_status != 'На раскрое':
+    # Дальше по конвейеру ткань уже разрезана. То же самое — вкладка
+    # «Отменённые с кроем»: вещь висит на вешалке, а sewing_status часто
+    # остаётся «На раскрое», и карточка предлагала взять кусок с перешива
+    # вместо рулона. Кроить повторно нечего — кусок ушёл бы в резерв впустую.
+    skip_pick = (
+        sewing_status != 'На раскрое'
+        or cut_at is not None
+        or _order_cancelled(o_status, ozon_status, ym_status, cancelled_at, sewing_status)
+    )
+    if skip_pick:
         return _resp(200, {
             'pieces': [],
             'order': {
@@ -436,22 +456,31 @@ def use_piece(cur, conn, event, body):
     # Повторная проверка размеров на сервере: список мог устареть, а отдать
     # заказу кусок меньше нужного нельзя ни при каких условиях.
     cur.execute(
-        "SELECT material, width, height, order_number, sewing_status FROM orders WHERE id = %s",
+        "SELECT material, width, height, order_number, sewing_status, "
+        "cut_at, status, ozon_status, ym_status, cancelled_at "
+        "FROM orders WHERE id = %s",
         (int(order_id),),
     )
     o_row = cur.fetchone()
     if not o_row:
         return _resp(404, {'error': 'Заказ не найден'})
-    o_material, o_width, o_height, order_number, o_status = o_row
+    (o_material, o_width, o_height, order_number, o_status,
+     cut_at, order_status, ozon_status, ym_status, cancelled_at) = o_row
 
-    # ВЗЯТЬ КУСОК МОЖНО ТОЛЬКО НА ЭТАПЕ РАСКРОЯ.
+    # ВЗЯТЬ КУСОК МОЖНО ТОЛЬКО НА ЖИВОМ РАСКРОЕ.
     #
-    # На «Раскроено», «В работе», «Стикеровке» и дальше вещь уже выкроена —
-    # отрез ей не нужен. Если такой заказ закрепит за собой кусок, тот уйдёт
-    # из перешива в резерв навсегда: раскроя, который его спишет, не будет.
+    # На «Раскроено» и дальше вещь уже выкроена. Отменённый заказ с кроем
+    # часто всё ещё «На раскрое» в системе — но ткань уже на вешалке, и кусок
+    # с перешива ему не нужен: иначе отрез уйдёт в резерв навсегда.
     if o_status != 'На раскрое':
         return _resp(409, {
             'error': f'Вещь в статусе «{o_status}» — кусок с перешива берут только на раскрое',
+        })
+    if cut_at is not None or _order_cancelled(
+        order_status, ozon_status, ym_status, cancelled_at, o_status
+    ):
+        return _resp(409, {
+            'error': 'Этот заказ уже с кроем или отменён — кусок с перешива брать не нужно',
         })
 
     if material != o_material:
