@@ -530,6 +530,23 @@ def handler(event: dict, context) -> dict:
     POST /  { action: 'cutter_sheet_printed', cutterId, orderIds }
         - запись в журнал о печати листа на терминале: кто, когда и на какие заказы
 
+    POST /  { action: 'intercepted_orders', workshopId?, sewerId? }
+        - перехваченный крой. Перехват — отменённый после раскроя заказ, чей крой
+          отдали новому заказу того же размера (orders.cut_from_order_id). Бирка на
+          вешалке при этом осталась от отменённого заказа, и пока лист не напечатан,
+          вещь едет по цеху с чужим номером.
+          Без sewerId (терминал): только НЕнапечатанное (cut_sheet_printed_at IS NULL)
+          и только до стикеровки — по этому списку терминал напоминает голосом.
+          С sewerId (профиль швеи): её вещи, включая «Стикеровку» и уже напечатанное —
+          лист мог потеряться. Пропадает при закрытии заказа в «Готовые»
+    POST /  { action: 'intercepted_sheet', workshopId?, sewerId?, orderIds? }
+        - позиции для печати листа по перехваченным заказам (формат как у cutter_stack,
+          лист печатается тем же кодом). Границы те же, что у intercepted_orders.
+          Без orderIds — весь подходящий перехват
+    POST /  { action: 'intercepted_sheet_printed', orderIds }
+        - лист напечатан: проставляет orders.cut_sheet_printed_at, и напоминание по этим
+          вещам замолкает. Отмечаются только те заказы, что реально попали на бумагу
+
     POST /  { action: 'find_unlabeled', sewerId?, width?, height? }
         - кладовщик ищет вещь без стикера хранения (упаковщица не наклеила / стикер потерян)
           среди отменённых заказов, ожидающих укладки на полку — по швее и/или размеру
@@ -2646,6 +2663,186 @@ def handler(event: dict, context) -> dict:
                 conn.commit()
                 return {'statusCode': 200, 'headers': headers,
                         'body': json.dumps({'success': True})}
+
+            if action == 'intercepted_orders':
+                # ПЕРЕХВАЧЕННЫЙ КРОЙ, НА КОТОРЫЙ ЕЩЁ НЕ НАПЕЧАТАН НОВЫЙ ЛИСТ.
+                #
+                # ЧТО ТАКОЕ ПЕРЕХВАТ. Покупатель отменил заказ уже после раскроя:
+                # ткань разрезана по его размеру и в рулон не вернётся. Следом
+                # пришёл новый заказ того же размера — крой отдали ему
+                # (orders.cut_from_order_id), и шить с нуля не пришлось.
+                #
+                # ПОЧЕМУ ЭТО ПРОБЛЕМА. Бирка на вешалке осталась от ОТМЕНЁННОГО
+                # заказа: перепечатать её в момент перехвата некому, заказы
+                # приходят и ночью. Швея берёт вещь с чужим номером и не понимает,
+                # что у неё в руках, а без нового листа закройщика вещь так и едет
+                # по цеху «под чужим именем».
+                #
+                # ДВА РАЗНЫХ ВОПРОСА — ДВА РЕЖИМА.
+                #
+                # ТЕРМИНАЛ (sewerId не задан) спрашивает: «о чём ещё не напомнили?».
+                # Он звучит на весь цех, поэтому берёт только НЕнапечатанное
+                # (cut_sheet_printed_at IS NULL) и только до стикеровки: дальше вещь
+                # уже отшита, и кричать поздно.
+                #
+                # ПРОФИЛЬ ШВЕИ (sewerId задан) спрашивает другое: «что у МЕНЯ на
+                # руках?». Швея могла потерять лист или прийти к вещи, которая уже
+                # на стикеровке, — ей лист нужен независимо от того, печатал ли его
+                # кто-то на терминале. Поэтому отметку о печати здесь не смотрим, а
+                # «Стикеровка» в список входит. Пропадает вещь только при закрытии
+                # в «Готовые»: там лист уже не нужен никому.
+                ws_id = body_data.get('workshopId')
+                sewer_id = body_data.get('sewerId')
+                ws_cond = f" AND o.workshop_id = {int(ws_id)}" if ws_id not in (None, '') else ''
+                if sewer_id not in (None, ''):
+                    scope_cond = (
+                        "  AND o.sewing_status IN ('Раскроено', 'В работе', 'Стикеровка') "
+                        f"  AND (o.assigned_user_id = {int(sewer_id)} "
+                        f"       OR o.sewer_user_id = {int(sewer_id)}) "
+                    )
+                else:
+                    scope_cond = (
+                        "  AND o.cut_sheet_printed_at IS NULL "
+                        "  AND o.sewing_status IN ('Раскроено', 'В работе') "
+                    )
+                cur.execute(
+                    "SELECT o.id, o.order_number, o.material, o.width, o.height, "
+                    "       c.order_number, COALESCE(u.full_name, ''), o.sewing_status "
+                    "FROM orders o "
+                    "LEFT JOIN orders c ON c.id = o.cut_from_order_id "
+                    "LEFT JOIN users u ON u.id = COALESCE(o.sewer_user_id, o.assigned_user_id) "
+                    "WHERE o.cut_from_order_id IS NOT NULL "
+                    # Своих отменённых напоминать незачем: их крой уже отдан дальше.
+                    f"  AND NOT ({CANCELLED_ORDER_SQL}) "
+                    f"{scope_cond}{ws_cond} "
+                    "ORDER BY o.id LIMIT 50"
+                )
+                items = [
+                    {
+                        'id': r[0],
+                        'orderNumber': r[1],
+                        'material': r[2],
+                        'width': r[3],
+                        'height': r[4],
+                        # Номер, который реально написан на бирке в цехе.
+                        'cutFromOrderNumber': r[5],
+                        'sewerName': r[6],
+                        'sewingStatus': r[7],
+                    }
+                    for r in cur.fetchall()
+                ]
+                return {
+                    'statusCode': 200,
+                    'headers': headers,
+                    'body': json.dumps({'orders': items}, ensure_ascii=False),
+                }
+
+            if action == 'intercepted_sheet':
+                # ПОЗИЦИИ ДЛЯ ЛИСТА ПО ПЕРЕХВАЧЕННЫМ ЗАКАЗАМ.
+                #
+                # Формат ответа тот же, что у cutter_stack: лист печатается одним и
+                # тем же кодом (printCuttingSheet), и второй формат данных здесь
+                # означал бы вторую вёрстку листа, которая однажды разойдётся с
+                # первой.
+                #
+                # orderIds — какие именно вещи печатать. Пусто — печатаем все
+                # неотмеченные перехваты цеха: так работает кнопка на терминале,
+                # где выбирать нечего.
+                #
+                # Границы те же, что в intercepted_orders: для швеи (sewerId) вещь
+                # доступна и на стикеровке, для терминала — только до неё.
+                ws_id = body_data.get('workshopId')
+                sewer_id = body_data.get('sewerId')
+                raw_ids = body_data.get('orderIds') or []
+                ids = [int(i) for i in raw_ids if str(i).isdigit()][:50]
+                ws_cond = f" AND o.workshop_id = {int(ws_id)}" if ws_id not in (None, '') else ''
+                if sewer_id not in (None, ''):
+                    scope_cond = (
+                        "  AND o.sewing_status IN ('Раскроено', 'В работе', 'Стикеровка') "
+                        f"  AND (o.assigned_user_id = {int(sewer_id)} "
+                        f"       OR o.sewer_user_id = {int(sewer_id)}) "
+                    )
+                else:
+                    scope_cond = "  AND o.sewing_status IN ('Раскроено', 'В работе') "
+                id_cond = (
+                    ' AND o.id IN (' + ','.join(str(i) for i in ids) + ') ' if ids else ' '
+                )
+                cur.execute(
+                    "SELECT o.id, o.order_number, o.order_type, o.marketplace, o.material, "
+                    "o.width, o.height, o.group_key, o.group_size, o.group_position, "
+                    # Оверлок у перехваченной вещи уже проставлен на раскрое — берём
+                    # с заказа, а не со справочника ткани: край могли обметать, и
+                    # печатать «ОВЕРЛОК» второй раз значит отправить вещь по кругу.
+                    "COALESCE(o.requires_overlock, false), "
+                    "CASE WHEN o.marketplace = 'OZON' AND o.ozon_posting_number IS NOT NULL "
+                    "     THEN regexp_replace(o.ozon_posting_number, '-[0-9]+$', '') END, "
+                    "c.order_number "
+                    "FROM orders o "
+                    "LEFT JOIN orders c ON c.id = o.cut_from_order_id "
+                    "WHERE o.cut_from_order_id IS NOT NULL "
+                    f"  AND NOT ({CANCELLED_ORDER_SQL}) "
+                    f"{scope_cond}{id_cond}{ws_cond} "
+                    "ORDER BY o.material, o.id LIMIT 50"
+                )
+                raw = cur.fetchall()
+                purchase_by_id = {r[0]: r[11] for r in raw}
+                purchase_marks = ozon_purchase_marks_kiosk(cur, purchase_by_id)
+                orders_out = []
+                for r in raw:
+                    mark = purchase_marks.get(r[0]) or {}
+                    orders_out.append({
+                        'id': r[0],
+                        'orderNumber': r[1],
+                        'orderType': r[2],
+                        'marketplace': r[3],
+                        'material': r[4],
+                        'width': r[5],
+                        'height': r[6],
+                        'groupKey': r[7],
+                        'groupSize': r[8],
+                        'groupPosition': r[9],
+                        'requiresOverlock': bool(r[10]),
+                        'purchaseKey': mark.get('purchaseKey'),
+                        'purchaseSize': mark.get('purchaseSize'),
+                        'purchasePosition': mark.get('purchasePosition'),
+                        # Старый номер с бирки — по нему вещь ищут на вешалке.
+                        'cutFromOrderNumber': r[12],
+                    })
+                return {
+                    'statusCode': 200,
+                    'headers': headers,
+                    'body': json.dumps({'orders': orders_out}, ensure_ascii=False),
+                }
+
+            if action == 'intercepted_sheet_printed':
+                # ЛИСТ НАПЕЧАТАН — НАПОМИНАНИЕ ЗАМОЛКАЕТ.
+                #
+                # Отметку ставим только на те заказы, что реально ушли на бумагу.
+                # Иначе одна печать глушила бы напоминание и по вещам, которых на
+                # листе не было: они так и поехали бы по цеху с чужой биркой.
+                raw_ids = body_data.get('orderIds') or []
+                ids = [int(i) for i in raw_ids if str(i).isdigit()][:50]
+                if not ids:
+                    return {'statusCode': 400, 'headers': headers,
+                            'body': json.dumps({'error': 'Нечего отмечать'},
+                                               ensure_ascii=False)}
+                ids_csv = ','.join(str(i) for i in ids)
+                cur.execute(
+                    "UPDATE orders SET cut_sheet_printed_at = now() "
+                    f"WHERE id IN ({ids_csv}) AND cut_sheet_printed_at IS NULL "
+                    "RETURNING order_number"
+                )
+                numbers = [r[0] for r in cur.fetchall() if r[0]]
+                log_action(
+                    cur, actor_id, actor_name, 'print_cutting_sheet', 'order', None,
+                    f'Напечатал лист закройщика на перехваченный крой '
+                    f'({len(ids)} шт.): ' + ', '.join(numbers[:30])
+                    + ('…' if len(numbers) > 30 else ''),
+                    {'orderIds': ids, 'kind': 'intercepted'},
+                )
+                conn.commit()
+                return {'statusCode': 200, 'headers': headers,
+                        'body': json.dumps({'success': True, 'marked': len(numbers)})}
 
             if action == 'defect_report':
                 # Статистика брака: кто сколько находит и по каким причинам.

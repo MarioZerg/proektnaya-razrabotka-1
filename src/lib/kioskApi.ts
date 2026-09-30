@@ -942,3 +942,100 @@ export const logKioskCutterSheet = (cutterId: number, orderIds: number[]) =>
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ action: 'cutter_sheet_printed', cutterId, orderIds }),
   }).catch(() => undefined);
+
+/**
+ * ПЕРЕХВАЧЕННЫЙ ЗАКАЗ, НА КОТОРЫЙ ЕЩЁ НЕ НАПЕЧАТАН ЛИСТ ЗАКРОЙЩИКА.
+ *
+ * Покупатель отменил заказ уже после раскроя, а следом пришёл новый заказ того же
+ * размера — крой отдали ему. Шить с нуля не пришлось, но бирка на вешалке осталась
+ * от ОТМЕНЁННОГО заказа: перепечатать её в момент перехвата некому, заказы приходят
+ * и ночью.
+ *
+ * Пока новый лист не напечатан, вещь едет по цеху с чужим номером.
+ */
+export interface KioskInterceptedOrder {
+  id: number;
+  /** Живой номер, под которым вещь уедет покупателю. */
+  orderNumber: string;
+  material: string | null;
+  width: number | null;
+  height: number | null;
+  /** Номер, который РЕАЛЬНО написан на бирке в цехе — от отменённого заказа. */
+  cutFromOrderNumber: string | null;
+  /** Швея, у которой вещь сейчас в работе. Пусто — крой ещё на вешалке. */
+  sewerName: string;
+  sewingStatus: string;
+}
+
+/**
+ * Перехваченный крой. Пустой ответ — напоминать не о чем.
+ *
+ * Без sewerId (терминал цеха): только то, на что лист ЕЩЁ НЕ печатали, и только до
+ * стикеровки — по этому списку терминал напоминает голосом.
+ *
+ * С sewerId (профиль швеи): её вещи, включая стикеровку и уже напечатанное. Лист мог
+ * порваться или потеряться, и напечатать его заново швея должна у себя, не бегая к
+ * терминалу. Вещь уходит из списка при закрытии заказа в «Готовые»: лист больше не
+ * нужен, и печатать его повторно незачем.
+ */
+export const fetchInterceptedOrders = async (
+  workshopId: number | null,
+  sewerId?: number,
+): Promise<KioskInterceptedOrder[]> => {
+  const res = await fetch(KIOSK_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'intercepted_orders', workshopId, sewerId }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Не удалось получить перехваченные заказы');
+  return data.orders || [];
+};
+
+/**
+ * Позиции для листа по перехваченным заказам.
+ *
+ * Формат тот же, что у стека закройщика: лист печатается одним и тем же кодом, и
+ * второй формат данных означал бы вторую вёрстку листа, которая однажды разойдётся.
+ */
+export const fetchInterceptedSheet = async (
+  workshopId: number | null,
+  orderIds?: number[],
+  sewerId?: number,
+): Promise<TakenOrder[]> => {
+  const res = await fetch(KIOSK_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'intercepted_sheet', workshopId, orderIds, sewerId }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Не удалось получить позиции листа');
+  return data.orders || [];
+};
+
+/**
+ * Отметить, что лист по перехвату напечатан — напоминание замолкает.
+ *
+ * Ошибку НЕ глушим, в отличие от журнала печати: пока отметка не встала, терминал
+ * продолжит звать каждые пять минут, и человек должен об этом узнать.
+ */
+export const markInterceptedSheetPrinted = async (
+  orderIds: number[],
+  actorId?: number,
+  actorName?: string,
+): Promise<void> => {
+  const res = await fetch(KIOSK_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      action: 'intercepted_sheet_printed',
+      orderIds,
+      actorId,
+      actorName,
+    }),
+  });
+  if (!res.ok) {
+    const data = await res.json().catch(() => ({}));
+    throw new Error(data.error || 'Не удалось отметить печать листа');
+  }
+};

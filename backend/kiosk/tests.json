@@ -160,6 +160,36 @@
       "method": "GET",
       "path": "/?orderNumber=%27%20OR%201%3D1--",
       "expectedStatus": 404
+    },
+    {
+      "name": "Перехваченный крой цеха отдаётся списком",
+      "method": "POST",
+      "path": "/",
+      "body": {
+        "action": "intercepted_orders",
+        "workshopId": 1
+      },
+      "expectedStatus": 200
+    },
+    {
+      "name": "Позиции листа по перехвату отдаются",
+      "method": "POST",
+      "path": "/",
+      "body": {
+        "action": "intercepted_sheet",
+        "workshopId": 1
+      },
+      "expectedStatus": 200
+    },
+    {
+      "name": "Отметка печати листа перехвата без заказов не проходит",
+      "method": "POST",
+      "path": "/",
+      "body": {
+        "action": "intercepted_sheet_printed",
+        "orderIds": []
+      },
+      "expectedStatus": 400
     }
   ]
 }

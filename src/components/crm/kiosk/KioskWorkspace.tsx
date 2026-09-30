@@ -5,6 +5,8 @@ import KioskDefectCheckDialog from '@/components/crm/kiosk/KioskDefectCheckDialo
 import KioskWorkspaceAlerts from '@/components/crm/kiosk/KioskWorkspaceAlerts';
 import KioskWorkspaceHeader from '@/components/crm/kiosk/KioskWorkspaceHeader';
 import KioskScreenRouter from '@/components/crm/kiosk/KioskScreenRouter';
+import KioskInterceptedBanner from '@/components/crm/kiosk/KioskInterceptedBanner';
+import { useKioskIntercepted } from '@/components/crm/kiosk/useKioskIntercepted';
 import { fetchRepackCount, type KioskUser, type KioskShift } from '@/lib/kioskApi';
 import type { DefectCheck } from '@/lib/shiftSessionsApi';
 
@@ -86,6 +88,16 @@ const KioskWorkspace = ({
     };
   }, [screen, repackWorkshop]);
 
+  // ПЕРЕХВАЧЕННЫЙ КРОЙ БЕЗ НАПЕЧАТАННОГО ЛИСТА.
+  //
+  // Опрос идёт НА ЛЮБОМ экране терминала, а не только в меню: швея за смену почти
+  // не подходит к экрану, и напоминание не должно зависеть от того, куда нажали
+  // последним. В режиме проверки молчим — админ смотрит терминал, а не работает.
+  const { orders: intercepted, reload: reloadIntercepted } = useKioskIntercepted({
+    workshopId: repackWorkshop,
+    active: !isPreview && Boolean(shift?.isOpen),
+  });
+
   return (
     <div className="kiosk-root min-h-screen bg-background">
       {/* Автовыход из профиля при бездействии: предупреждение через минуту, отсчёт 30 сек.
@@ -125,6 +137,17 @@ const KioskWorkspace = ({
         screen={screen}
         setScreen={setScreen}
         onLogout={onLogout}
+      />
+
+      {/* Плашка перехвата стоит НАД содержимым и видна на любом экране: напечатать
+          лист может любой, кто подошёл к терминалу, — ждать швею значит держать
+          вещь с чужой биркой до вечера. */}
+      <KioskInterceptedBanner
+        orders={intercepted}
+        workshopId={repackWorkshop}
+        actorId={user.id}
+        actorName={user.name}
+        onPrinted={reloadIntercepted}
       />
 
       <KioskScreenRouter

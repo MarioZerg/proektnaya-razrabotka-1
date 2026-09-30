@@ -13,6 +13,7 @@ import SewingItemsHeaderControls from '@/components/crm/sewingItems/SewingItemsH
 import SewingItemsQueuePanel from '@/components/crm/sewingItems/SewingItemsQueuePanel';
 import SewingItemsTabsSection from '@/components/crm/sewingItems/SewingItemsTabsSection';
 import SewingItemsResults from '@/components/crm/sewingItems/SewingItemsResults';
+import InterceptedCutCard from '@/components/crm/sewingItems/InterceptedCutCard';
 
 const SewingItems = () => {
   const {
@@ -208,6 +209,16 @@ const SewingItems = () => {
             onChange={() => setPage(1)}
           />
         )}
+
+        {/* Перехваченный крой: на вешалке бирка от отменённого заказа. Карточка
+            стоит над кнопками очереди — швея видит её раньше, чем возьмёт
+            следующую вещь, и печатает лист, не отходя от рабочего места. */}
+        <InterceptedCutCard
+          sewerId={user?.id}
+          sewerName={user?.name}
+          workshopId={effectiveWorkshopId}
+          visible={isSewer}
+        />
 
         <SewingItemsQueuePanel
           isCutter={isCutter}

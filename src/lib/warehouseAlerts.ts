@@ -22,7 +22,11 @@
 /** Минимальный промежуток между двумя сигналами ОДНОГО вида. */
 const COOLDOWN_MS = 60000;
 
-export type WarehouseAlert = 'cancelledToShelf' | 'newPicking' | 'taskDone';
+export type WarehouseAlert =
+  | 'cancelledToShelf'
+  | 'newPicking'
+  | 'taskDone'
+  | 'cutIntercepted';
 
 const SOURCES: Record<WarehouseAlert, string> = {
   /** Отменённый заказ из цеха: упаковщица наклеила складской стикер, вещь едет на полку. */
@@ -31,6 +35,14 @@ const SOURCES: Record<WarehouseAlert, string> = {
   newPicking: '/sounds/new-picking.mp3',
   /** Задание смены выполнено — короткая отбивка при появлении галочки. */
   taskDone: '/sounds/task-done.mp3',
+  /**
+   * Перехваченный заказ: крой отменённого отдали новому заказу, и на вещь нужен
+   * НОВЫЙ лист закройщика — бирка на вешалке осталась от отменённого.
+   *
+   * Звучит на терминале цеха: швея за смену почти не подходит к экрану, и
+   * увидеть сообщение ей негде.
+   */
+  cutIntercepted: '/sounds/cut-intercepted.mp3',
 };
 
 /**
