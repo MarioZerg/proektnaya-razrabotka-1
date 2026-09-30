@@ -2243,7 +2243,7 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                 "SELECT material, width, height, workshop_id, sewing_status, assigned_user_id, taken_at, "
                 "COALESCE(sew_stagger_index, 0), "
                 # Оверлок решает, какой тесьмой шить: по обмётанному краю шестёрка
-                # топорщится в подгибке, нужна узкая ХБ (см. pick_order_trim).
+                # топорщится в подгибке, нужна узкая 4 см (см. pick_order_trim).
                 "COALESCE(requires_overlock, false) "
                 "FROM orders WHERE id = %s",
                 (int(item_id),),
@@ -2370,11 +2370,11 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
             # КАКУЮ ТЕСЬМУ СПИСАТЬ — РЕШАЕТ ТКАНЬ, А НЕ ПОРЯДОК СТРОК В СОСТАВЕ.
             #
             # Раньше здесь брался ПЕРВЫЙ аксессуар состава. Пока тесьма была одна,
-            # это работало; теперь у части тканей в составе две (4 см ХБ и 6 см), и
+            # это работало; теперь у части тканей в составе две (4 см и 6 см), и
             # первая строка стала лотереей: карточка показывала швее одну тесьму, а
             # списывалась другая. Вуаль без утяжелителя и вещи на оверлок шьются
-            # ТОЛЬКО узкой ХБ — правило живёт в pick_order_trim, одно на карточку и
-            # на это списание.
+            # ТОЛЬКО тесьмой 4 см — правило живёт в pick_order_trim, одно на карточку
+            # и на это списание.
             cur.execute(
                 "SELECT m.id, m.name, mim.quantity "
                 "FROM marketplace_item_materials mim "

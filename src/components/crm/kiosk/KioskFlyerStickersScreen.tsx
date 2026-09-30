@@ -25,7 +25,7 @@ interface KioskFlyerStickersScreenProps {
  * заканчивались в самый неподходящий момент, а редкие лежали мёртвым запасом.
  *
  * Здесь упаковщица нажимает нужную тюль — и принтер выдаёт ленту из 20 одинаковых
- * наклеек. Тесьму система подставляет сама: 4 см ХБ на вуали без утяжелителя и
+ * наклеек. Тесьму система подставляет сама: 4 см на вуали без утяжелителя и
  * на тканях с оверлоком, 6 см на остальных. Цвет и производитель одни на всю
  * продукцию — их на экране не спрашиваем, чтобы в конце смены не ошибиться.
  */
@@ -96,7 +96,7 @@ const KioskFlyerStickersScreen = ({ onBack }: KioskFlyerStickersScreenProps) => 
       <div className="rounded-lg border bg-muted/40 p-4">
         <p className="text-sm font-medium">На каждой наклейке:</p>
         <p className="mt-1 text-sm text-muted-foreground">
-          Тюль <span className="font-semibold text-foreground">[материал]</span> · тесьма 4см ХБ
+          Тюль <span className="font-semibold text-foreground">[материал]</span> · тесьма 4см
           (вуаль без утяжелителя и оверлок) или 6см · Цвет: Белый · Производитель МегаТюль
         </p>
       </div>

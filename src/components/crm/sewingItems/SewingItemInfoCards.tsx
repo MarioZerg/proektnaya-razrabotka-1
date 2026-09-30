@@ -10,7 +10,7 @@ import type { Order, OrderDetail } from '@/lib/ordersApi';
 import OrderStagesDiagram from '@/components/crm/sewingItems/OrderStagesDiagram';
 import { formatQuantity } from '@/lib/formatQuantity';
 import { orderHangerLabel } from '@/lib/hangersApi';
-import { fabricUses4cmHbTape, is6cmTapeName } from '@/lib/tapeForFabric';
+import { fabricUses4cmTape, is6cmTapeName } from '@/lib/tapeForFabric';
 
 interface SewingItemInfoCardsProps {
   selectedOrder: Order;
@@ -23,7 +23,7 @@ const SewingItemInfoCards = ({
   orderDetail,
   detailLoading,
 }: SewingItemInfoCardsProps) => {
-  const hide6cmTape = fabricUses4cmHbTape(
+  const hide6cmTape = fabricUses4cmTape(
     selectedOrder.material,
     selectedOrder.requiresOverlock,
   );
