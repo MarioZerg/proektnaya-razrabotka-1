@@ -563,17 +563,50 @@ export interface SewingWaits {
   inWork: number;
   /** Предел заказов на руках — настройка цеха. По нему кнопка показывает замочек. */
   maxOrders: number;
+  /**
+   * ТАЙМЕРЫ ОБМЁТКИ — ОТДЕЛЬНО ОТ ТАЙМЕРОВ ПОШИВА.
+   *
+   * Обмётка и прямострочка — два разных этапа одной вещи, и отсчёт у каждого свой:
+   * пошив идёт от взятия в работу, обмётка — от того, когда швея села за оверлок.
+   */
+  overlockWaits: Record<string, SewingWait>;
+  /** Сколько вещей у этой швеи сейчас на оверлоке (взяты, край не обметан). */
+  overlockInWork: number;
+  /** Предел вещей на оверлоке — настройка цеха. */
+  maxOverlockOrders: number;
+  /**
+   * Оверлок занят ДРУГОЙ швеёй — её имя. null, если машина свободна.
+   *
+   * Оверлок в цехе один: пока за ним работает человек, очередь обмётки для
+   * остальных закрыта. Показываем это на экране заранее, а не отказом после
+   * нажатия, — швея сразу видит причину и берёт обычный заказ.
+   */
+  overlockBusyBy: string | null;
 }
 
 export const fetchSewingWaits = async (userId: number): Promise<SewingWaits> => {
+  const empty: SewingWaits = {
+    waits: {},
+    shiftOpen: true,
+    inWork: 0,
+    maxOrders: 0,
+    overlockWaits: {},
+    overlockInWork: 0,
+    maxOverlockOrders: 0,
+    overlockBusyBy: null,
+  };
   const res = await fetch(`${ORDERS_URL}?sewingWaits=1&userId=${userId}`);
-  if (!res.ok) return { waits: {}, shiftOpen: true, inWork: 0, maxOrders: 0 };
+  if (!res.ok) return empty;
   const data = await res.json();
   return {
     waits: data.waits || {},
     shiftOpen: data.shiftOpen !== false,
     inWork: Number(data.inWork) || 0,
     maxOrders: Number(data.maxOrders) || 0,
+    overlockWaits: data.overlockWaits || {},
+    overlockInWork: Number(data.overlockInWork) || 0,
+    maxOverlockOrders: Number(data.maxOverlockOrders) || 0,
+    overlockBusyBy: data.overlockBusyBy || null,
   };
 };
 

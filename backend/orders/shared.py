@@ -910,6 +910,100 @@ def sewing_wait_for_order(cur, workshop_id, width, taken_at, stagger_index=0):
     return wait_sec, next_at.isoformat()
 
 
+def overlock_wait_for_order(cur, workshop_id, width, taken_at, stagger_index=0):
+    """Сколько секунд ещё обмётывать ЭТУ вещь, прежде чем сдать её с оверлока.
+
+    ЗАЧЕМ ОТДЕЛЬНЫЙ ТАЙМЕР, А НЕ ТОТ ЖЕ, ЧТО У ПОШИВА. Обмётка и прямострочка —
+    два разных этапа ОДНОЙ вещи, и вещь проходит их по очереди. Таймер пошива
+    считается от taken_at (когда швея взяла вещь шить), таймер обмётки — от
+    overlock_taken_at (когда села за оверлок). Складывать их в одно поле нельзя:
+    второй этап обнулил бы отсчёт первого.
+
+    ПОЧЕМУ ВРЕМЯ ОДИНАКОВОЕ НА ВСЕ ШИРИНЫ. Машина идёт по краю с постоянной
+    скоростью, и широкое полотно обмётывается почти столько же, сколько узкое, —
+    поэтому по умолчанию везде 3 минуты. Разбивка по ширинам всё равно оставлена
+    в настройках: если практика покажет разницу, цифры правятся в карточке цеха
+    без правки кода.
+
+    СДВИГ ВТОРОЙ ВЕЩИ. Оверлочница держит на руках две вещи и берёт их почти
+    подряд, а время у них одинаковое — значит, оба таймера кончились бы в одну
+    секунду. Второй вещи добавляем overlock_stagger_minutes (3 минуты): первая
+    открывается к сдаче через 3 минуты, вторая — через 6. Так обмётка уходит
+    дальше ровным потоком, а не пачкой.
+
+    Возвращает (wait_sec, next_at_iso), как sewing_wait_for_order.
+    """
+    if not taken_at:
+        return 0, None
+    bucket = nearest_timeout_width(width)
+    if not bucket:
+        return 0, None
+    minutes = get_setting_int(cur, workshop_id, f'overlock_timeout_{bucket}', 0)
+    if minutes <= 0:
+        return 0, None
+    if stagger_index and stagger_index > 0:
+        minutes += stagger_index * get_setting_int(
+            cur, workshop_id, 'overlock_stagger_minutes', 0
+        )
+
+    cur.execute("SELECT EXTRACT(EPOCH FROM (now() - %s))::float", (taken_at,))
+    elapsed = float(cur.fetchone()[0] or 0)
+    wait_sec = int(round(minutes * 60 - elapsed))
+    if wait_sec <= 0:
+        return 0, None
+    next_at = datetime.now(timezone.utc) + timedelta(seconds=wait_sec)
+    return wait_sec, next_at.isoformat()
+
+
+def overlock_holder(cur, workshop_id, exclude_user_id=None):
+    """Кто сейчас занимает оверлок в этом цехе и сколько вещей у него на руках.
+
+    ОВЕРЛОК В ЦЕХЕ ОДИН. Это не настройка, а физика: машина стоит одна, и сесть
+    за неё может один человек. Раньше очередь этого не знала — вещи под обмётку
+    брал кто угодно и сколько угодно. Если за оверлок «сели» три швеи, две стоят
+    рядом и ждут, а их вещи уже числятся в работе и другим не достанутся. Цех
+    простаивает, хотя прямострочку можно шить прямо сейчас.
+
+    Поэтому очередь обмётки закреплена за ОДНОЙ швеёй, пока она не сдаст свои
+    вещи. Здесь мы отвечаем на вопрос «занят ли оверлок и кем».
+
+    Вещь считается «на руках», пока overlock_user_id проставлен, а overlocked_at
+    пуст: взяли, но край ещё не обметан.
+
+    exclude_user_id — не считать саму спрашивающую швею: ей нужно знать, свободен
+    ли оверлок для ДРУГИХ, а свои вещи она видит и так.
+
+    Возвращает (user_id, user_name, count) или (None, None, 0), если оверлок свободен.
+    """
+    params = [int(workshop_id)] if workshop_id else []
+    ws_cond = "AND (o.workshop_id = %s OR o.workshop_id IS NULL) " if workshop_id else ""
+    exclude_cond = ""
+    if exclude_user_id:
+        exclude_cond = "AND o.overlock_user_id <> %s "
+        params.append(int(exclude_user_id))
+    cur.execute(
+        "SELECT o.overlock_user_id, COALESCE(u.full_name, ''), COUNT(*) "
+        "FROM orders o LEFT JOIN users u ON u.id = o.overlock_user_id "
+        "WHERE o.overlock_user_id IS NOT NULL "
+        "  AND o.overlocked_at IS NULL "
+        "  AND o.requires_overlock = true "
+        # Вещь ещё в цехе: отменённую или ушедшую дальше по конвейеру не считаем —
+        # иначе оверлок остался бы «занят» навсегда из-за брошенной вещи.
+        "  AND o.sewing_status = 'Раскроено' "
+        f"  {ws_cond}{exclude_cond}"
+        "GROUP BY o.overlock_user_id, u.full_name "
+        # Если из-за старых данных оверлок держат двое, берём того, у кого больше
+        # вещей: он и есть фактический владелец машины.
+        "ORDER BY COUNT(*) DESC, o.overlock_user_id "
+        "LIMIT 1",
+        tuple(params),
+    )
+    row = cur.fetchone()
+    if not row:
+        return None, None, 0
+    return row[0], row[1], int(row[2])
+
+
 def format_wait(wait_sec):
     """Человеческая запись остатка ожидания: до минуты — в секундах, дальше — мин. сек."""
     if wait_sec < 60:

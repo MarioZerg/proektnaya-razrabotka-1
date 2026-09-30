@@ -32,6 +32,8 @@ from shared import (
     ozon_cutoff_passed,
     ozon_purchase_marks,
     ozon_split_purchase_sql,
+    overlock_holder,
+    overlock_wait_for_order,
     pick_order_trim,
     sewing_wait_for_order,
     write_off_materials_once,
@@ -2625,8 +2627,80 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                             {'error': 'Заказ уже взят другой швеёй'}, ensure_ascii=False
                         ),
                     }
+
+                # ОВЕРЛОК ЗАНИМАЕТ ОДНА ШВЕЯ, И НЕ БОЛЬШЕ ДВУХ ВЕЩЕЙ ЗА РАЗ.
+                #
+                # Машина в цехе одна — это физика, а не настройка. Пока очередь этого
+                # не знала, вещи под обмётку разбирали все подряд: за оверлок «садились»
+                # три швеи, две стояли рядом и ждали, а их вещи уже числились в работе
+                # и другим не достались. Цех простаивал на ровном месте.
+                #
+                # Теперь пока одна швея не сдала свои вещи, очередь обмётки для
+                # остальных закрыта — они берут обычную работу. Сдала — слот свободен,
+                # следующие две вещи берёт кто угодно.
+                #
+                # Цех берём у заказа, а если он не проставлен — из смены швеи: иначе
+                # вещи без цеха считались бы «общими» для всех цехов сразу.
+                ov_queue_workshop = ov_workshop
+                if not ov_queue_workshop:
+                    cur.execute(
+                        "SELECT workshop_id FROM shift_sessions "
+                        "WHERE user_id = %s AND closed_at IS NULL "
+                        "ORDER BY opened_at DESC LIMIT 1",
+                        (int(actor_id),) if actor_id else (0,),
+                    )
+                    ws_row = cur.fetchone()
+                    ov_queue_workshop = ws_row[0] if ws_row else None
+
+                holder_id, holder_name, _holder_count = overlock_holder(
+                    cur, ov_queue_workshop, exclude_user_id=actor_id
+                )
+                if holder_id:
+                    return {
+                        'statusCode': 409,
+                        'headers': headers,
+                        'body': json.dumps({
+                            'error': f'За оверлоком сейчас работает {holder_name or "другая швея"} — '
+                                     f'оверлок в цехе один. Возьмите обычный заказ, '
+                                     f'а обмётка освободится, когда она сдаст свои вещи',
+                            'overlockBusy': True,
+                            'holderName': holder_name,
+                        }, ensure_ascii=False),
+                    }
+
+                # Свой лимит вещей на руках: обмётанная пара уходит дальше, и только
+                # потом берётся следующая. Считаем ТОЛЬКО необмётанные — сданные вещи
+                # руки не занимают.
+                max_ov = get_setting_int(
+                    cur, ov_queue_workshop, 'max_overlock_orders_to_seamstress', 2
+                )
                 cur.execute(
-                    f"UPDATE orders SET overlock_user_id = {int(actor_id)} WHERE id = {int(item_id)}"
+                    "SELECT COUNT(*) FROM orders "
+                    "WHERE overlock_user_id = %s AND overlocked_at IS NULL "
+                    "  AND requires_overlock = true AND sewing_status = 'Раскроено' "
+                    "  AND id <> %s",
+                    (int(actor_id), int(item_id)),
+                )
+                ov_in_work = int(cur.fetchone()[0])
+                if max_ov > 0 and ov_in_work >= max_ov:
+                    return {
+                        'statusCode': 409,
+                        'headers': headers,
+                        'body': json.dumps({
+                            'error': f'У вас уже {ov_in_work} вещей на оверлоке (лимит {max_ov}) — '
+                                     f'обметайте и передайте их дальше',
+                            'overlockInWork': ov_in_work,
+                            'maxOverlockOrders': max_ov,
+                        }, ensure_ascii=False),
+                    }
+
+                # Номер вещи на руках фиксируем при взятии: по нему считается сдвиг
+                # таймера, и он не должен прыгать, когда первую вещь уже сдали.
+                cur.execute(
+                    "UPDATE orders SET overlock_user_id = %s, "
+                    "  overlock_taken_at = now(), overlock_stagger_index = %s "
+                    "WHERE id = %s",
+                    (int(actor_id), ov_in_work, int(item_id)),
                 )
                 log_action(
                     cur, actor_id, actor_name, 'take_overlock', 'order', item_id,
@@ -2652,6 +2726,48 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                         {'error': f'Обметать можно только раскроенную вещь, сейчас «{ov_status}»'},
                         ensure_ascii=False,
                     ),
+                }
+
+            # ВЕЩЬ НЕЛЬЗЯ СДАТЬ РАНЬШЕ, ЧЕМ ЕЁ РЕАЛЬНО МОЖНО ОБМЕТАТЬ.
+            #
+            # Время на обмётку задано настройками цеха (overlock_timeout_200…800,
+            # по умолчанию 3 минуты), второй вещи на руках добавляется сдвиг
+            # overlock_stagger_minutes. Без этой проверки смысл лимита пропадал бы:
+            # швея за секунду «сдавала» бы обе вещи, освобождала слот и разбирала
+            # всю очередь обмётки, а оверлок при этом простаивал.
+            #
+            # Проверку делает СЕРВЕР: кнопку на экране можно обойти старой вкладкой.
+            ov_wait_ws = ov_workshop
+            if not ov_wait_ws:
+                cur.execute(
+                    "SELECT workshop_id FROM shift_sessions "
+                    "WHERE user_id = %s AND closed_at IS NULL "
+                    "ORDER BY opened_at DESC LIMIT 1",
+                    (int(actor_id),) if actor_id else (0,),
+                )
+                ws_row = cur.fetchone()
+                ov_wait_ws = ws_row[0] if ws_row else None
+
+            cur.execute(
+                "SELECT overlock_taken_at, COALESCE(overlock_stagger_index, 0) "
+                "FROM orders WHERE id = %s",
+                (int(item_id),),
+            )
+            ov_t_row = cur.fetchone()
+            ov_taken_at = ov_t_row[0] if ov_t_row else None
+            ov_stagger = ov_t_row[1] if ov_t_row else 0
+
+            ov_wait, _ov_next = overlock_wait_for_order(
+                cur, ov_wait_ws, ov_width, ov_taken_at, ov_stagger
+            )
+            if ov_wait > 0:
+                return {
+                    'statusCode': 409,
+                    'headers': headers,
+                    'body': json.dumps({
+                        'error': f'Ещё рано: вещь можно сдать через {format_wait(ov_wait)}',
+                        'waitSeconds': ov_wait,
+                    }, ensure_ascii=False),
                 }
 
             # Оплата оверлочнице: за пог.м. ширины по тарифу цеха (role='overlock').

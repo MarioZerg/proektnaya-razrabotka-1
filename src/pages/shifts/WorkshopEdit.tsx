@@ -82,6 +82,22 @@ const SETTING_GROUPS: { title: string; keys: string[] }[] = [
     ],
   },
   {
+    // Оверлок отдельной группой: в цехе он один, и правила у него свои — не как
+    // у прямострочки, где машин много и работать может вся смена.
+    title: 'Оверлок',
+    keys: [
+      'max_overlock_orders_to_seamstress',
+      'overlock_timeout_200',
+      'overlock_timeout_300',
+      'overlock_timeout_400',
+      'overlock_timeout_500',
+      'overlock_timeout_600',
+      'overlock_timeout_700',
+      'overlock_timeout_800',
+      'overlock_stagger_minutes',
+    ],
+  },
+  {
     title: 'Терминал',
     keys: [
       'print_qr_cutting',

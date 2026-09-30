@@ -102,6 +102,18 @@ export const useSewingItemsQueueActions = ({
    */
   const [inWork, setInWork] = useState(0);
   const [maxOrders, setMaxOrders] = useState(0);
+  /**
+   * ОВЕРЛОК — ОДНА МАШИНА НА ЦЕХ.
+   *
+   * overlockWaits — свой таймер обмётки по каждой вещи (этап отдельный от пошива).
+   * overlockBusyBy — имя швеи, которая сейчас сидит за оверлоком; пока она не сдала
+   * свои вещи, очередь обмётки для остальных закрыта, и они берут обычную работу.
+   */
+  const [overlockWaits, setOverlockWaits] = useState<Record<number, number>>({});
+  const [overlockUntil, setOverlockUntil] = useState<Record<number, number>>({});
+  const [overlockInWork, setOverlockInWork] = useState(0);
+  const [maxOverlockOrders, setMaxOverlockOrders] = useState(0);
+  const [overlockBusyBy, setOverlockBusyBy] = useState<string | null>(null);
 
   /** Забрать с сервера актуальные остатки. Дёргаем редко: при открытии страницы,
    * после взятия заказа и когда очередной отсчёт добежал до нуля. Между этими точками
@@ -119,6 +131,20 @@ export const useSewingItemsQueueActions = ({
       setSewWaits(left);
       setInWork(res.inWork);
       setMaxOrders(res.maxOrders);
+
+      // Таймеры обмётки держим отдельным набором: это другой этап той же вещи,
+      // и подставить сюда таймер пошива значило бы показать чужой отсчёт.
+      const ovUntil: Record<number, number> = {};
+      const ovLeft: Record<number, number> = {};
+      Object.entries(res.overlockWaits).forEach(([id, w]) => {
+        ovUntil[Number(id)] = Date.now() + w.waitSeconds * 1000;
+        ovLeft[Number(id)] = w.waitSeconds;
+      });
+      setOverlockUntil(ovUntil);
+      setOverlockWaits(ovLeft);
+      setOverlockInWork(res.overlockInWork);
+      setMaxOverlockOrders(res.maxOverlockOrders);
+      setOverlockBusyBy(res.overlockBusyBy);
     } catch {
       // Сеть моргнула — не запираем кнопки: настоящую проверку всё равно делает
       // сервер при отправке, и швея не должна стоять из-за вспомогательного запроса.
@@ -126,6 +152,11 @@ export const useSewingItemsQueueActions = ({
       setSewWaits({});
       setInWork(0);
       setMaxOrders(0);
+      setOverlockUntil({});
+      setOverlockWaits({});
+      setOverlockInWork(0);
+      setMaxOverlockOrders(0);
+      setOverlockBusyBy(null);
     }
   };
 
@@ -159,6 +190,27 @@ export const useSewingItemsQueueActions = ({
     return () => clearInterval(id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sewUntil, userId]);
+
+  // Такой же секундный тик по вещам на оверлоке — отдельным набором.
+  useEffect(() => {
+    if (Object.keys(overlockUntil).length === 0) return;
+    const tick = () => {
+      const now = Date.now();
+      const left: Record<number, number> = {};
+      let finished = false;
+      Object.entries(overlockUntil).forEach(([id, until]) => {
+        const sec = Math.ceil((until - now) / 1000);
+        if (sec > 0) left[Number(id)] = sec;
+        else finished = true;
+      });
+      setOverlockWaits(left);
+      if (finished && userId) refreshSewWaits(userId);
+    };
+    tick();
+    const id = setInterval(tick, 1000);
+    return () => clearInterval(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [overlockUntil, userId]);
 
   // Подхватываем сохранённый стек, когда стал известен сотрудник.
   //
@@ -296,6 +348,13 @@ export const useSewingItemsQueueActions = ({
     takeLocked: maxOrders > 0 && inWork >= maxOrders,
     inWork,
     maxOrders,
+    /** Сколько ещё обмётывать каждую вещь на оверлоке: id заказа → секунды. */
+    overlockWaits,
+    /** Вещей на оверлоке у этой швеи и предел цеха — для замочка на кнопке. */
+    overlockInWork,
+    maxOverlockOrders,
+    /** Оверлок занят другой швеёй (её имя) — очередь обмётки закрыта. */
+    overlockBusyBy,
     /** Перечитать таймеры — вызывается после отправки вещи на стикеровку. */
     refreshSewWaits,
     lastTakenStack,

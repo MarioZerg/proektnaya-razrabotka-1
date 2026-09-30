@@ -132,6 +132,10 @@ const SewingItems = () => {
     takingOrder,
     takeOrderCooldown,
     sewWaits,
+    overlockWaits,
+    overlockInWork,
+    maxOverlockOrders,
+    overlockBusyBy,
     takeLocked,
     inWork,
     maxOrders,
@@ -292,6 +296,10 @@ const SewingItems = () => {
             if (user?.id) refreshSewWaits(user.id);
           }}
           sewWaitSec={selectedOrder ? sewWaits[selectedOrder.id] || 0 : 0}
+          overlockWaitSec={selectedOrder ? overlockWaits[selectedOrder.id] || 0 : 0}
+          overlockBusyBy={overlockBusyBy}
+          overlockInWork={overlockInWork}
+          maxOverlockOrders={maxOverlockOrders}
           onCancelOrder={handleCancelOrder}
           cancelOrderPenalty={cancelOrderPenalty}
           isPackerView={isPacker}

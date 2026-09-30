@@ -61,6 +61,16 @@ interface SewingItemDetailDialogProps {
   onSendToStickering?: (rollId?: number) => void;
   /** Сколько ещё шить эту вещь — по нему блокируется отправка на стикеровку. */
   sewWaitSec?: number;
+  /**
+   * ОВЕРЛОК — СВОЙ ЭТАП СО СВОИМИ ПРАВИЛАМИ.
+   *
+   * Машина в цехе одна: пока за ней работает одна швея, очередь обмётки для
+   * остальных закрыта. Таймер обмётки тоже свой, отдельный от таймера пошива.
+   */
+  overlockWaitSec?: number;
+  overlockBusyBy?: string | null;
+  overlockInWork?: number;
+  maxOverlockOrders?: number;
   onCancelOrder?: () => void;
   cancelling?: boolean;
   /** Штраф за отмену заказа из настроек цеха — показывается в окне подтверждения. */
@@ -96,6 +106,10 @@ const SewingItemDetailDialog = ({
   availableRolls = [],
   onSendToStickering,
   sewWaitSec = 0,
+  overlockWaitSec = 0,
+  overlockBusyBy = null,
+  overlockInWork = 0,
+  maxOverlockOrders = 0,
   onCancelOrder,
   cancelling = false,
   cancelOrderPenalty = 0,
@@ -300,6 +314,10 @@ const SewingItemDetailDialog = ({
                 <OverlockActionsCard
                   order={selectedOrder}
                   actorId={user?.id}
+                  overlockWaitSec={overlockWaitSec}
+                  overlockBusyBy={overlockBusyBy}
+                  overlockInWork={overlockInWork}
+                  maxOverlockOrders={maxOverlockOrders}
                   onDone={() => {
                     setDialogOpen(false);
                     onOrderUpdated?.();

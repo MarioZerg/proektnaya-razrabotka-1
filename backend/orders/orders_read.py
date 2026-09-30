@@ -16,6 +16,8 @@ from shared import (
     _fit_orders_body,
     cut_queue_order_sql,
     get_setting_int,
+    overlock_holder,
+    overlock_wait_for_order,
     pick_order_trim,
     sewing_wait_for_order,
 )
@@ -300,6 +302,41 @@ def handle_get(event: dict, headers: dict, dsn: str) -> dict:
             max_orders = get_setting_int(
                 cur, session_ws, 'max_quantity_orders_to_seamstress', 0
             )
+
+            # ТАЙМЕРЫ ОБМЁТКИ — ОТДЕЛЬНО ОТ ТАЙМЕРОВ ПОШИВА.
+            #
+            # Это разные этапы одной вещи, у каждого свой отсчёт: пошив идёт от
+            # taken_at, обмётка — от overlock_taken_at. Кладём их в отдельный
+            # словарь, иначе на экране оверлока показывался бы таймер пошива.
+            cur.execute(
+                "SELECT id, width, workshop_id, overlock_taken_at, "
+                "       COALESCE(overlock_stagger_index, 0) "
+                "FROM orders "
+                "WHERE overlock_user_id = %s AND overlocked_at IS NULL "
+                "  AND requires_overlock = true AND sewing_status = 'Раскроено'",
+                (waits_user_id,),
+            )
+            overlock_waits = {}
+            overlock_in_work = 0
+            for o_id, o_width, o_ws, o_taken, o_stagger in cur.fetchall():
+                overlock_in_work += 1
+                o_sec, o_next = overlock_wait_for_order(
+                    cur, o_ws or session_ws, o_width, o_taken, o_stagger
+                )
+                if o_sec > 0:
+                    overlock_waits[str(o_id)] = {'waitSeconds': o_sec, 'nextAt': o_next}
+
+            # ЗАНЯТ ЛИ ОВЕРЛОК ДРУГОЙ ШВЕЁЙ. Машина в цехе одна, и пока за ней
+            # работает человек, очередь обмётки для остальных закрыта. Отдаём это
+            # фронту, чтобы он объяснил причину НА ЭКРАНЕ, а не отказом после
+            # нажатия: швея должна сразу видеть, что обмётка занята, и спокойно
+            # взять обычный заказ.
+            holder_id, holder_name, _hc = overlock_holder(
+                cur, session_ws, exclude_user_id=waits_user_id
+            )
+            max_overlock = get_setting_int(
+                cur, session_ws, 'max_overlock_orders_to_seamstress', 2
+            )
             return {
                 'statusCode': 200,
                 'headers': headers,
@@ -308,7 +345,11 @@ def handle_get(event: dict, headers: dict, dsn: str) -> dict:
                     'shiftOpen': ws_row is not None,
                     'inWork': in_work_count,
                     'maxOrders': max_orders,
-                }),
+                    'overlockWaits': overlock_waits,
+                    'overlockInWork': overlock_in_work,
+                    'maxOverlockOrders': max_overlock,
+                    'overlockBusyBy': holder_name if holder_id else None,
+                }, ensure_ascii=False),
             }
 
         # Предпросмотр очереди для закройщика: что лежит следующим для его цеха.
