@@ -32,6 +32,7 @@ from shared import (
     ozon_cutoff_passed,
     ozon_purchase_marks,
     ozon_split_purchase_sql,
+    pick_order_trim,
     sewing_wait_for_order,
     write_off_materials_once,
 )
@@ -2240,7 +2241,10 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
 
             cur.execute(
                 "SELECT material, width, height, workshop_id, sewing_status, assigned_user_id, taken_at, "
-                "COALESCE(sew_stagger_index, 0) "
+                "COALESCE(sew_stagger_index, 0), "
+                # Оверлок решает, какой тесьмой шить: по обмётанному краю шестёрка
+                # топорщится в подгибке, нужна узкая ХБ (см. pick_order_trim).
+                "COALESCE(requires_overlock, false) "
                 "FROM orders WHERE id = %s",
                 (int(item_id),),
             )
@@ -2248,7 +2252,8 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
             if not order_row:
                 return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': 'Заказ не найден'})}
             (material, width, height, order_workshop_id, current_status,
-             order_assigned_user_id, order_taken_at, order_stagger_index) = order_row
+             order_assigned_user_id, order_taken_at, order_stagger_index,
+             order_requires_overlock) = order_row
             if current_status == 'Стикеровка':
                 return {
                     'statusCode': 409,
@@ -2362,26 +2367,29 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                 }
             marketplace_item_id = item_row[0]
 
-            cur.execute("SELECT id FROM material_types WHERE name = 'Аксессуары'")
-            acc_type_row = cur.fetchone()
-            acc_type_id = acc_type_row[0] if acc_type_row else None
-
+            # КАКУЮ ТЕСЬМУ СПИСАТЬ — РЕШАЕТ ТКАНЬ, А НЕ ПОРЯДОК СТРОК В СОСТАВЕ.
+            #
+            # Раньше здесь брался ПЕРВЫЙ аксессуар состава. Пока тесьма была одна,
+            # это работало; теперь у части тканей в составе две (4 см ХБ и 6 см), и
+            # первая строка стала лотереей: карточка показывала швее одну тесьму, а
+            # списывалась другая. Вуаль без утяжелителя и вещи на оверлок шьются
+            # ТОЛЬКО узкой ХБ — правило живёт в pick_order_trim, одно на карточку и
+            # на это списание.
             cur.execute(
-                "SELECT material_id, quantity FROM marketplace_item_materials WHERE marketplace_item_id = %s",
+                "SELECT m.id, m.name, mim.quantity "
+                "FROM marketplace_item_materials mim "
+                "JOIN materials m ON m.id = mim.material_id "
+                "JOIN material_types mt ON mt.id = m.type_id "
+                "WHERE mim.marketplace_item_id = %s AND mt.name = 'Аксессуары'",
                 (marketplace_item_id,),
             )
-            needed = cur.fetchall()
+            accessories = cur.fetchall()
 
-            trim_material_id = None
-            trim_qty_needed = None
-            if acc_type_id:
-                for material_id, qty in needed:
-                    cur.execute("SELECT type_id FROM materials WHERE id = %s", (material_id,))
-                    mt_row = cur.fetchone()
-                    if mt_row and mt_row[0] == acc_type_id:
-                        trim_material_id = material_id
-                        trim_qty_needed = float(qty)
-                        break
+            trim_material_id, _trim_name, trim_qty_needed = pick_order_trim(
+                cur, accessories, material, bool(order_requires_overlock), width
+            )
+            if trim_qty_needed is not None:
+                trim_qty_needed = float(trim_qty_needed)
 
             if not trim_material_id:
                 # sewer_user_id фиксирует, КТО именно отшил заказ — отдельно от
