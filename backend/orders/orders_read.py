@@ -16,6 +16,7 @@ from shared import (
     _fit_orders_body,
     cut_queue_order_sql,
     get_setting_int,
+    pick_order_trim,
     sewing_wait_for_order,
 )
 
@@ -510,19 +511,26 @@ def handle_get(event: dict, headers: dict, dsn: str) -> dict:
                 mi_row = cur.fetchone()
                 if mi_row:
                     cur.execute(
-                        "SELECT m.id, m.name, mt.name FROM marketplace_item_materials mim "
+                        "SELECT m.id, m.name, mt.name, mim.quantity FROM marketplace_item_materials mim "
                         "JOIN materials m ON m.id = mim.material_id "
                         "JOIN material_types mt ON mt.id = m.type_id "
                         "WHERE mim.marketplace_item_id = %s",
                         (mi_row[0],),
                     )
-                    for mat_id, mat_name, mat_type_name in cur.fetchall():
+                    accessories = []
+                    for mat_id, mat_name, mat_type_name, mat_qty in cur.fetchall():
                         if mat_type_name == 'Тюль' and required_fabric_material_id is None:
                             required_fabric_material_id = mat_id
                             required_fabric_material_name = mat_name
-                        elif mat_type_name == 'Аксессуары' and required_trim_material_id is None:
-                            required_trim_material_id = mat_id
-                            required_trim_material_name = mat_name
+                        elif mat_type_name == 'Аксессуары':
+                            accessories.append((mat_id, mat_name, mat_qty))
+                    # Вуаль без утяжелителя и оверлок — тесьма 4 см ХБ, не 6 см.
+                    trim = pick_order_trim(
+                        cur, accessories, material_name, bool(row[-2]), width_val,
+                    )
+                    if trim:
+                        required_trim_material_id = trim[0]
+                        required_trim_material_name = trim[1]
 
             detail = {
                 'id': row[0],

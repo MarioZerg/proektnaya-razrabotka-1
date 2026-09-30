@@ -32,6 +32,7 @@ from shared import (
     ozon_cutoff_passed,
     ozon_purchase_marks,
     ozon_split_purchase_sql,
+    pick_order_trim,
     sewing_wait_for_order,
     write_off_materials_once,
 )
@@ -2240,7 +2241,7 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
 
             cur.execute(
                 "SELECT material, width, height, workshop_id, sewing_status, assigned_user_id, taken_at, "
-                "COALESCE(sew_stagger_index, 0) "
+                "COALESCE(sew_stagger_index, 0), COALESCE(requires_overlock, false) "
                 "FROM orders WHERE id = %s",
                 (int(item_id),),
             )
@@ -2248,7 +2249,8 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
             if not order_row:
                 return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': 'Заказ не найден'})}
             (material, width, height, order_workshop_id, current_status,
-             order_assigned_user_id, order_taken_at, order_stagger_index) = order_row
+             order_assigned_user_id, order_taken_at, order_stagger_index,
+             order_requires_overlock) = order_row
             if current_status == 'Стикеровка':
                 return {
                     'statusCode': 409,
@@ -2374,14 +2376,19 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
 
             trim_material_id = None
             trim_qty_needed = None
+            accessories = []
             if acc_type_id:
                 for material_id, qty in needed:
-                    cur.execute("SELECT type_id FROM materials WHERE id = %s", (material_id,))
+                    cur.execute("SELECT type_id, name FROM materials WHERE id = %s", (material_id,))
                     mt_row = cur.fetchone()
                     if mt_row and mt_row[0] == acc_type_id:
-                        trim_material_id = material_id
-                        trim_qty_needed = float(qty)
-                        break
+                        accessories.append((material_id, mt_row[1], qty))
+            trim = pick_order_trim(
+                cur, accessories, material, bool(order_requires_overlock), width,
+            )
+            if trim:
+                trim_material_id = trim[0]
+                trim_qty_needed = float(trim[2]) if trim[2] is not None else None
 
             if not trim_material_id:
                 # sewer_user_id фиксирует, КТО именно отшил заказ — отдельно от

@@ -10,6 +10,7 @@ import type { Order, OrderDetail } from '@/lib/ordersApi';
 import OrderStagesDiagram from '@/components/crm/sewingItems/OrderStagesDiagram';
 import { formatQuantity } from '@/lib/formatQuantity';
 import { orderHangerLabel } from '@/lib/hangersApi';
+import { fabricUses4cmHbTape, is6cmTapeName } from '@/lib/tapeForFabric';
 
 interface SewingItemInfoCardsProps {
   selectedOrder: Order;
@@ -22,6 +23,14 @@ const SewingItemInfoCards = ({
   orderDetail,
   detailLoading,
 }: SewingItemInfoCardsProps) => {
+  const hide6cmTape = fabricUses4cmHbTape(
+    selectedOrder.material,
+    selectedOrder.requiresOverlock,
+  );
+  const materialUsage = (orderDetail?.materialUsage || []).filter(
+    (mu) => !(hide6cmTape && is6cmTapeName(mu.materialName)),
+  );
+
   return (
     <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
       <Card className="border-border shadow-none">
@@ -108,36 +117,43 @@ const SewingItemInfoCards = ({
               <Icon name="Loader2" size={14} className="animate-spin" />
               Загрузка...
             </div>
-          ) : orderDetail && orderDetail.materialUsage.length > 0 ? (
-            orderDetail.materialUsage.map((mu) => (
-              <div key={mu.id} className="rounded border border-border p-2">
-                <div className="mb-1 flex items-center justify-between">
-                  <span className="font-semibold">{mu.materialName}</span>
-                  <span className="text-sm text-muted-foreground">
-                    {formatQuantity(mu.quantity)} {mu.unit}
-                  </span>
-                </div>
-                {/* Расход без рулона бывает ровно в одном случае — ткань взята
-                    с перешива. Раньше такая строка выглядела как недоработка:
-                    материал есть, рулона нет, и непонятно, баг это или нет. */}
-                {mu.rollBarcode ? (
-                  <div className="text-xs text-muted-foreground">
-                    Рулон #{mu.rollBarcode}
-                  </div>
-                ) : (
-                  <div className="text-xs font-medium text-violet-700">
-                    С перешива — рулон не расходовался
-                    {orderDetail?.repairPiece?.barcode
-                      ? ` (${orderDetail.repairPiece.barcode})`
-                      : ''}
-                  </div>
-                )}
-              </div>
-            ))
           ) : (
-            <p className="text-sm text-muted-foreground">
-              Материалы ещё не списаны — выполните раскрой
-            </p>
+            <>
+              {orderDetail?.requiredTrimMaterialName && (
+                <div className="rounded border border-fuchsia-200 bg-fuchsia-50/60 p-2">
+                  <div className="text-xs text-muted-foreground">Тесьма</div>
+                  <div className="font-semibold">{orderDetail.requiredTrimMaterialName}</div>
+                </div>
+              )}
+              {materialUsage.length > 0
+                ? materialUsage.map((mu) => (
+                    <div key={mu.id} className="rounded border border-border p-2">
+                      <div className="mb-1 flex items-center justify-between">
+                        <span className="font-semibold">{mu.materialName}</span>
+                        <span className="text-sm text-muted-foreground">
+                          {formatQuantity(mu.quantity)} {mu.unit}
+                        </span>
+                      </div>
+                      {mu.rollBarcode ? (
+                        <div className="text-xs text-muted-foreground">
+                          Рулон #{mu.rollBarcode}
+                        </div>
+                      ) : (
+                        <div className="text-xs font-medium text-violet-700">
+                          С перешива — рулон не расходовался
+                          {orderDetail?.repairPiece?.barcode
+                            ? ` (${orderDetail.repairPiece.barcode})`
+                            : ''}
+                        </div>
+                      )}
+                    </div>
+                  ))
+                : (
+                    <p className="text-sm text-muted-foreground">
+                      Материалы ещё не списаны — выполните раскрой
+                    </p>
+                  )}
+            </>
           )}
         </CardContent>
       </Card>

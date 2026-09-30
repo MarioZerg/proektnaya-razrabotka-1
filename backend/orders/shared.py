@@ -7,6 +7,7 @@
 
 import json
 import random
+import re
 from datetime import datetime, timedelta, timezone
 
 # Сколько ЗАКРЫТЫХ заказов («Готовые», «Со склада») отдаём в общий список конвейера.
@@ -368,6 +369,85 @@ def take_cancelled_cut(cur, order_id) -> dict | None:
         'hangerNumber': hanger,
         'orderType': order_type,
     }
+
+
+# Ширина тесьмы в названии материала: «Тесьма 4 см ХБ», «Тесьма 6см».
+_TAPE_CM_RE = re.compile(r'(?<!\d)([46])\s*(?:см|cm)', re.IGNORECASE)
+
+
+def fabric_uses_4cm_hb_tape(material_name, requires_overlock=False) -> bool:
+    """Вуаль без утяжелителя и вся ткань на оверлоке шьются тесьмой 4 см ХБ.
+
+    На остальных изделиях по-прежнему тесьма 6 см. Если в составе товара
+    записаны обе — для этих тканей 6 см не показываем и не списываем.
+    """
+    if requires_overlock:
+        return True
+    n = (material_name or '').lower()
+    if 'без ут' in n:
+        return True
+    return 'вуаль' in n and 'без' in n and 'утяж' in n
+
+
+def tape_width_cm(material_name) -> str | None:
+    """'4' или '6' из названия тесьмы, иначе None."""
+    m = _TAPE_CM_RE.search(material_name or '')
+    return m.group(1) if m else None
+
+
+def _prefer_hb_tape(rows):
+    hb = [
+        r for r in rows
+        if 'хб' in (r[1] or '').lower() or 'х/б' in (r[1] or '').lower()
+    ]
+    return (hb or rows)[0]
+
+
+def pick_order_trim(cur, accessories, fabric_name, requires_overlock=False, width=None):
+    """Какую тесьму показать и списать по заказу.
+
+    accessories — список (material_id, name, qty) из состава карточки.
+    Для вуали без утяжелителя и оверлока берём 4 см ХБ, строки 6 см пропускаем.
+    Если в составе 4 см нет — ищем её в справочнике, расход как у 6 см в составе
+    или ширина изделия в пог.м.
+    """
+    want_4 = fabric_uses_4cm_hb_tape(fabric_name, requires_overlock)
+    four, six, other = [], [], []
+    for row in accessories:
+        kind = tape_width_cm(row[1])
+        if kind == '4':
+            four.append(row)
+        elif kind == '6':
+            six.append(row)
+        else:
+            other.append(row)
+
+    if want_4:
+        if four:
+            return _prefer_hb_tape(four)
+        cur.execute(
+            "SELECT m.id, m.name FROM materials m "
+            "JOIN material_types mt ON mt.id = m.type_id "
+            "WHERE mt.name = 'Аксессуары' "
+            "  AND m.name ~* '(^|[^0-9])4[[:space:]]*(см|cm)' "
+            "ORDER BY CASE WHEN m.name ILIKE '%хб%' OR m.name ILIKE '%х/б%' "
+            "              THEN 0 ELSE 1 END, m.id LIMIT 1"
+        )
+        found = cur.fetchone()
+        if not found:
+            return None
+        qty = float(six[0][2]) if six and six[0][2] is not None else None
+        if qty is None and width:
+            qty = round(float(width) / 100, 3)
+        return (found[0], found[1], qty)
+
+    if six:
+        return six[0]
+    if other:
+        return other[0]
+    if four:
+        return _prefer_hb_tape(four)
+    return None
 
 
 def write_off_materials_once(cur, order_id, material, width, height, workshop_id=None):

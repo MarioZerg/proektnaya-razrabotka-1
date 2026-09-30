@@ -4,6 +4,7 @@ import Icon from '@/components/ui/icon';
 import { useToast } from '@/hooks/use-toast';
 import { fetchMaterialsData, type Material } from '@/lib/materialsApi';
 import { printFlyerSticker } from '@/lib/printFlyerSticker';
+import { flyerTapeLabel, materialGoesThroughOverlock } from '@/lib/tapeForFabric';
 import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
 
 /** Тип материала «Тюль» — только из него шьют изделия, состав которых идёт на листовку. */
@@ -24,9 +25,9 @@ interface KioskFlyerStickersScreenProps {
  * заканчивались в самый неподходящий момент, а редкие лежали мёртвым запасом.
  *
  * Здесь упаковщица нажимает нужную тюль — и принтер выдаёт ленту из 20 одинаковых
- * наклеек. Больше ничего вводить не нужно: тесьма 6 см, белый цвет и производитель
- * одинаковы для всей продукции, а лишние поля на сенсорном экране — только повод
- * для ошибки в конце смены.
+ * наклеек. Тесьму система подставляет сама: 4 см ХБ на вуали без утяжелителя и
+ * на тканях с оверлоком, 6 см на остальных. Цвет и производитель одни на всю
+ * продукцию — их на экране не спрашиваем, чтобы в конце смены не ошибиться.
  */
 const KioskFlyerStickersScreen = ({ onBack }: KioskFlyerStickersScreenProps) => {
   const { toast } = useToast();
@@ -64,7 +65,8 @@ const KioskFlyerStickersScreen = ({ onBack }: KioskFlyerStickersScreenProps) => 
   );
 
   const print = (m: Material) => {
-    printFlyerSticker({ materialName: m.name, count: STICKERS_IN_TAPE });
+    const tape = flyerTapeLabel(m.name, materialGoesThroughOverlock(m));
+    printFlyerSticker({ materialName: m.name, tape, count: STICKERS_IN_TAPE });
     // Подсвечиваем нажатую плитку: на терминале печать уходит молча, и упаковщица
     // не понимала, сработало касание или нет, — жала кнопку повторно.
     setPrinted(m.id);
@@ -94,8 +96,8 @@ const KioskFlyerStickersScreen = ({ onBack }: KioskFlyerStickersScreenProps) => 
       <div className="rounded-lg border bg-muted/40 p-4">
         <p className="text-sm font-medium">На каждой наклейке:</p>
         <p className="mt-1 text-sm text-muted-foreground">
-          Тюль <span className="font-semibold text-foreground">[материал]</span> · Тесьма 6см ·
-          Цвет: Белый · Производитель МегаТюль
+          Тюль <span className="font-semibold text-foreground">[материал]</span> · тесьма 4см ХБ
+          (вуаль без утяжелителя и оверлок) или 6см · Цвет: Белый · Производитель МегаТюль
         </p>
       </div>
 
@@ -131,6 +133,9 @@ const KioskFlyerStickersScreen = ({ onBack }: KioskFlyerStickersScreenProps) => 
               className={printed === m.id ? 'text-emerald-600' : 'text-primary'}
             />
             <span className="text-lg font-bold leading-tight">Тюль {m.name}</span>
+            <span className="text-xs text-muted-foreground">
+              {flyerTapeLabel(m.name, materialGoesThroughOverlock(m))}
+            </span>
             <span className="text-xs text-muted-foreground">
               {printed === m.id ? 'Отправлено на печать' : `${STICKERS_IN_TAPE} шт.`}
             </span>
