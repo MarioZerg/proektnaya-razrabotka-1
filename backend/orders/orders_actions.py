@@ -2389,7 +2389,12 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                 cur, accessories, material, bool(order_requires_overlock), width
             )
             if trim_qty_needed is not None:
-                trim_qty_needed = float(trim_qty_needed)
+                try:
+                    trim_qty_needed = float(trim_qty_needed)
+                except (TypeError, ValueError):
+                    trim_qty_needed = None
+                if trim_qty_needed is not None and trim_qty_needed <= 0:
+                    trim_qty_needed = None
 
             if not trim_material_id:
                 # sewer_user_id фиксирует, КТО именно отшил заказ — отдельно от
@@ -2413,6 +2418,20 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                 )
                 conn.commit()
                 return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True})}
+
+            # Тесьма выбрана, а сколько метров списать — неизвестно: в составе нет
+            # нормы, у заказа нет ширины. Раньше сюда попадал None и падало
+            # remaining - None. Не списываем «ноль метров» — это искажает остаток.
+            if trim_qty_needed is None:
+                return {
+                    'statusCode': 409,
+                    'headers': headers,
+                    'body': json.dumps({
+                        'error': 'Нельзя списать тесьму: у заказа не указана ширина, '
+                                 'а в составе товара нет нормы расхода. Укажите размер '
+                                 'или норму тесьмы и повторите'
+                    }, ensure_ascii=False),
+                }
 
             # Тесьма для этого товара нужна — рулон обязателен.
             if not roll_id_chosen:

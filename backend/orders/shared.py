@@ -600,6 +600,32 @@ def _is_hb_tape(name) -> bool:
     return 'хб' in low or 'х/б' in low
 
 
+def _tape_qty_meters(*sources, width=None):
+    """Сколько тесьмы списать, в пог. м. Никогда не возвращает 0 и не падает на None.
+
+    Источники по очереди: норма из состава, норма соседней (6 см) тесьмы, ширина
+    изделия / 100. Пустое, ноль и мусор пропускаем. Если ничего положительного
+    нет — None: вызывающий не должен считать remaining - None.
+    """
+    for src in sources:
+        if src is None or src == '':
+            continue
+        try:
+            n = float(src)
+        except (TypeError, ValueError):
+            continue
+        if n > 0:
+            return round(n, 3)
+    if width not in (None, ''):
+        try:
+            n = round(float(width) / 100, 3)
+        except (TypeError, ValueError):
+            n = 0
+        if n > 0:
+            return n
+    return None
+
+
 def pick_order_trim(cur, accessories, fabric_name, requires_overlock, width):
     """Какую тесьму ставить в заказ и сколько её списать.
 
@@ -634,18 +660,17 @@ def pick_order_trim(cur, accessories, fabric_name, requires_overlock, width):
     if not need_4cm:
         # Обычная вещь: сначала 6 см, потом прочие аксессуары, и только в самом
         # конце 4 см. Порядок важен — в составе может лежать и то и другое.
-        for candidate in (by_width.get(6) or []) + others + (by_width.get(4) or []):
-            return candidate
+        for mat_id, name, qty in (by_width.get(6) or []) + others + (by_width.get(4) or []):
+            return (mat_id, name, _tape_qty_meters(qty, width=width))
         return (None, None, None)
 
     # Дальше — вещь, которой нужна ТОЛЬКО 4 см ХБ.
     #
     # Норма расхода: берём от шестисантиметровой из состава (длина та же), иначе
-    # считаем по ширине изделия.
-    six = (by_width.get(6) or [])
-    fallback_qty = float(six[0][2]) if six and six[0][2] is not None else None
-    if fallback_qty is None:
-        fallback_qty = round(float(width or 0) / 100, 3)
+    # считаем по ширине изделия. Раньше при пустой норме и пустой ширине сюда
+    # уходил None — и списание на стикеровке падало на remaining - None.
+    six = by_width.get(6) or []
+    six_qty = six[0][2] if six else None
 
     four = by_width.get(4) or []
     if four:
@@ -653,7 +678,7 @@ def pick_order_trim(cur, accessories, fabric_name, requires_overlock, width):
         # и лёгкое полотно тянет так же, как шестёрка.
         four.sort(key=lambda r: 0 if _is_hb_tape(r[1]) else 1)
         mat_id, name, qty = four[0]
-        return (mat_id, name, float(qty) if qty is not None else fallback_qty)
+        return (mat_id, name, _tape_qty_meters(qty, six_qty, width=width))
 
     # В СОСТАВЕ ЧЕТЫРЁХСАНТИМЕТРОВОЙ НЕТ — ИЩЕМ В СПРАВОЧНИКЕ.
     #
@@ -671,7 +696,7 @@ def pick_order_trim(cur, accessories, fabric_name, requires_overlock, width):
     )
     found = cur.fetchone()
     if found:
-        return (found[0], found[1], fallback_qty)
+        return (found[0], found[1], _tape_qty_meters(six_qty, width=width))
 
     # НА ШЕСТЬ САНТИМЕТРОВ НЕ ОТКАТЫВАЕМСЯ.
     #
