@@ -162,8 +162,8 @@ const CrmLayout = ({ children }: { children: ReactNode }) => {
     navigate('/crm');
   };
 
-  const handleSwitchRole = (role: (typeof user.availableRoles)[number]) => {
-    switchRole(role);
+  const handleSwitchRole = async (role: (typeof user.availableRoles)[number]) => {
+    await switchRole(role);
     navigate('/crm');
   };
 

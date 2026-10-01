@@ -1,6 +1,6 @@
 import { createContext, useContext, useEffect, useState, ReactNode } from 'react';
 import type { Role } from '@/lib/roles';
-import { checkAccess } from '@/lib/authApi';
+import { checkAccess, switchRoleOnServer } from '@/lib/authApi';
 import {
   setAuthToken,
   clearAuthToken,
@@ -34,7 +34,7 @@ interface AuthContextValue {
   /** Второй аргумент — ключ сессии, по нему сервер проверяет права. */
   login: (user: User, token?: string) => void;
   logout: () => void;
-  switchRole: (role: Role) => void;
+  switchRole: (role: Role) => Promise<void>;
   setActiveShift: (workshopId: number | null, shiftNumber: number | null) => void;
   /** Войти в аккаунт сотрудника, запомнив свой. */
   impersonate: (target: User, token?: string) => void;
@@ -97,7 +97,19 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     setUser(admin);
   };
 
-  const switchRole = (role: Role) => {
+  const switchRole = async (role: Role) => {
+    // Демо-аккаунтам серверная сессия не нужна. Остальным получаем новый ключ
+    // с выбранной ролью: иначе сервер продолжит считать человека прежней ролью
+    // и отвечать «доступно только администратору».
+    if (!user?.isDemo) {
+      try {
+        const res = await switchRoleOnServer(role);
+        if (res.token) setAuthToken(res.token);
+      } catch (e) {
+        window.alert((e as Error).message || 'Не удалось сменить должность');
+        return;
+      }
+    }
     setUser((prev) => {
       if (!prev) return prev;
       const next = { ...prev, role };
@@ -116,6 +128,21 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       return next;
     });
   };
+
+  // Роль на экране и роль сессии на сервере должны совпадать. Раньше смена
+  // должности меняла только экран, и у тех, кто уже переключался, сессия
+  // осталась со старой ролью. Один раз при запуске выравниваем.
+  useEffect(() => {
+    if (!user || user.isDemo) return;
+    switchRoleOnServer(user.role)
+      .then((res) => {
+        if (res.token) setAuthToken(res.token);
+      })
+      .catch(() => {
+        // Нет связи или роль снята — проверка доступа ниже разберётся сама.
+      });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id]);
 
   /**
    * Сверка доступа с сервером.

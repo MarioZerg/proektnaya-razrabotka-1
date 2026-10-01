@@ -216,6 +216,13 @@ export interface EnterRoleResult {
 export const enterRole = (userId: number, role: Role): Promise<EnterRoleResult> =>
   postAuthAction({ action: 'enter_role', userId, role });
 
+/**
+ * Смена должности внутри уже открытой сессии. Сервер выдаёт новый ключ с
+ * выбранной ролью — без этого права оставались от прежней роли.
+ */
+export const switchRoleOnServer = (role: Role): Promise<{ role: Role; token: string }> =>
+  postAuthAction({ action: 'switch_role', role });
+
 export interface ImpersonateResult extends EnterRoleResult {
   availableRoles: Role[];
 }

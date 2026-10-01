@@ -571,6 +571,44 @@ def handler(event: dict, context) -> dict:
                                ensure_ascii=False),
         }
 
+    if action == 'switch_role':
+        # Смена должности из меню профиля. Раньше роль менялась только в браузере,
+        # а сессия на сервере оставалась со старой ролью: админ, вошедший швеёй и
+        # переключившийся на «Администратор», получал отказ «доступно только…».
+        # Теперь выдаём новый токен с выбранной ролью — после проверки, что она утверждена.
+        from authz import current_user
+        role = (body_data.get('role') or '').strip()
+        if role not in ROLES:
+            return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Некорректная роль'})}
+
+        conn = psycopg2.connect(dsn)
+        try:
+            cur = conn.cursor()
+            user = current_user(cur, event)
+            if not user:
+                return {'statusCode': 401, 'headers': headers, 'body': json.dumps(
+                    {'error': 'Войдите в систему заново — сессия не найдена или истекла'}, ensure_ascii=False)}
+            cur.execute(
+                "SELECT 1 FROM user_roles WHERE user_id = %s AND role = %s AND is_approved = true",
+                (user['id'], role),
+            )
+            if not cur.fetchone():
+                return {'statusCode': 403, 'headers': headers, 'body': json.dumps(
+                    {'error': 'Эта должность не утверждена'}, ensure_ascii=False)}
+            if user['role'] == role:
+                # Сессия уже в этой роли — новый ключ не нужен.
+                conn.commit()
+                return {'statusCode': 200, 'headers': headers,
+                        'body': json.dumps({'role': role, 'token': None})}
+            real_id = user['realUserId'] if user['realUserId'] != user['id'] else None
+            token = issue_session(cur, user['id'], role, real_user_id=real_id)
+            conn.commit()
+        finally:
+            conn.close()
+
+        return {'statusCode': 200, 'headers': headers,
+                'body': json.dumps({'role': role, 'token': token})}
+
     if action == 'enter_role':
         user_id = body_data.get('userId')
         role = (body_data.get('role') or '').strip()

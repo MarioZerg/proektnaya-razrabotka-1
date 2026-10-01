@@ -411,8 +411,11 @@ def handle_import_composition(cur, conn, client_id, api_key, body_data):
     else:
         cur.execute(
             "INSERT INTO marketplace_supplies (marketplace, type, status, ozon_delivery_method, "
-            "ozon_status, ozon_supply_order_id, supply_number, ozon_application_number, cluster, supply_date, created_by) "
-            "VALUES ('OZON', 'FBO', 'Открытая', 'direct', 'Заполнение данных', %s, %s, %s, %s, %s, %s) RETURNING id",
+            "ozon_status, ozon_supply_order_id, supply_number, ozon_application_number, cluster, supply_date, created_by, shop_id) "
+            "VALUES ('OZON', 'FBO', 'Открытая', 'direct', 'Заполнение данных', %s, %s, %s, %s, %s, %s, "
+            # Магазин обязателен. Берём тот же, чьими ключами читали заявку (см. get_ozon_credentials).
+            "COALESCE((SELECT shop_id FROM marketplace_integrations WHERE marketplace_code = 'ozon' "
+            "ORDER BY is_enabled DESC, (credentials::text <> '{}') DESC, shop_id LIMIT 1), 1)) RETURNING id",
             (
                 int(order_id),
                 str(order_number) if order_number else None,
