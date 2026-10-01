@@ -71,6 +71,10 @@ export const roleLabels: Record<Role, string> = {
   accountant: 'Бухгалтер',
 };
 
+/** МЕГАБУХ — чат по учёту и программам, только у бухгалтера. */
+export const isMegabuhRole = (role?: Role | null): boolean =>
+  role === 'accountant';
+
 /**
  * Раздел «Инструкции» — как что делать на производстве.
  *
@@ -371,12 +375,17 @@ const accountantNav: NavItem[] = [
     icon: 'Calculator',
     path: '/crm/analytics/product-cost',
   },
+  {
+    label: 'МЕГАБУХ',
+    icon: 'MessageCircle',
+    path: '/crm/chat',
+  },
 ];
 
 const adminNav: NavItem[] = [
   { label: 'Главная', icon: 'LayoutDashboard', path: '/crm' },
-  // Помощник по системе живёт кнопкой в правом нижнем углу (AiAssistantWidget),
-  // поверх любой страницы — отдельный пункт меню ему не нужен.
+  // Производственный ИИ-помощник у админа выключен. МЕГАБУХ — только у бухгалтера,
+  // пункт меню админу не ставим.
   // У админа полный раздел: витрина (посмотреть глазами сотрудника) и управление
   // подарками. Сотрудникам открыта только витрина.
   {

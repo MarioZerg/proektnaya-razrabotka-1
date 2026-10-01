@@ -21,7 +21,6 @@ import ErrorBoundary from '@/components/ErrorBoundary';
 import ShiftQrDialog from '@/components/crm/ShiftQrDialog';
 import HeaderSalaryWidget from '@/components/crm/HeaderSalaryWidget';
 import StorekeeperTasksWidget from '@/components/crm/StorekeeperTasksWidget';
-import AiAssistantWidget from '@/components/crm/AiAssistantWidget';
 import { useAuth } from '@/context/AuthContext';
 import { navByRole, roleLabels, isStorekeeperRole } from '@/lib/roles';
 import { fetchTestAccounts, type TestAccount } from '@/lib/authApi';
@@ -34,6 +33,7 @@ import CloseSidebarOnNavigate from '@/components/crm/CloseSidebarOnNavigate';
 import SidebarNav from '@/components/crm/SidebarNav';
 import { fetchStartupInfo, resetStartupInfoCache, impersonateUser } from '@/lib/authApi';
 import { useToast } from '@/hooks/use-toast';
+import { useMegabuhDigest } from '@/hooks/useMegabuhDigest';
 import type { Role } from '@/lib/roles';
 
 /** Порядок в меню «переключить аккаунт»: бухгалтер рядом с админом, не в хвосте. */
@@ -52,6 +52,7 @@ const ACCOUNT_SWITCH_ORDER: Role[] = [
 const CrmLayout = ({ children }: { children: ReactNode }) => {
   const { user, login, logout, switchRole, impersonate } = useAuth();
   const { toast } = useToast();
+  useMegabuhDigest();
 
   // Загрузка с маркетплейсов ПОЛНОСТЬЮ передана внешнему планировщику: и заказы, и заявки
   // на возврат приезжают по расписанию — круглосуточно, а не только когда кто-то открыл
@@ -372,10 +373,21 @@ const CrmLayout = ({ children }: { children: ReactNode }) => {
 
       {/* min-w-0 обязателен: без него широкая таблица внутри распирает всю страницу,
           и на телефоне появляется горизонтальная прокрутка всего экрана вместо
-          аккуратной прокрутки самой таблицы. */}
-      <main className="w-full min-w-0 flex-1 overflow-x-hidden">
+          аккуратной прокрутки самой таблицы.
+          На чате МЕГАБУХ высоту режем по окну: лента крутится своим бегунком,
+          страница не растёт портянкой. */}
+      <main
+        className={
+          location.pathname === '/crm/chat'
+            ? 'flex h-svh max-h-svh w-full min-w-0 flex-1 flex-col overflow-hidden'
+            : 'w-full min-w-0 flex-1 overflow-x-hidden'
+        }
+      >
         {/* Шапка липкая и выше виджета заданий: меню и баланс всегда нажимаются. */}
-        <div ref={headerRef} className="sticky top-0 z-50 bg-background">
+        <div
+          ref={headerRef}
+          className={`sticky top-0 z-50 bg-background${location.pathname === '/crm/chat' ? ' shrink-0' : ''}`}
+        >
         <DocsCountdownBanner />
         {/* min-w-0 на шапке: без него виджеты с крупным балансом раздвигали
             строку и правый край уезжал за экран телефона. */}
@@ -400,15 +412,18 @@ const CrmLayout = ({ children }: { children: ReactNode }) => {
             открытой смене. */}
         <StorekeeperTasksWidget topOffset={headerOffset} />
         {/* Сбой внутри страницы не должен гасить меню и весь экран. */}
-        <div className="p-3 sm:p-6">
+        <div
+          className={
+            location.pathname === '/crm/chat'
+              ? 'flex min-h-0 flex-1 flex-col overflow-hidden p-3 sm:p-6'
+              : 'p-3 sm:p-6'
+          }
+        >
           {/* key по адресу: при переходе на другую страницу защита пересоздаётся,
               иначе экран ошибки «залипал» бы и на исправных разделах. Роль в ключе —
               чтобы после переключения должности страница отрисовалась заново. */}
           <ErrorBoundary key={`${location.pathname}-${user.role}`}>{children}</ErrorBoundary>
         </div>
-        {/* Помощник — кнопка в правом нижнем углу поверх любой страницы.
-            Сам решает, показываться ли: только администратору. */}
-        <AiAssistantWidget />
       </main>
     </SidebarProvider>
   );

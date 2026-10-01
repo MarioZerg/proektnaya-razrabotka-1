@@ -1,37 +1,28 @@
-"""ИИ-помощник по системе — отвечает на вопросы, но НИЧЕГО не меняет.
+"""МЕГАБУХ — бухгалтерский консультант. Производственную базу не читает.
 
-ЗАЧЕМ ЭТО НУЖНО.
-Данные о работе фабрики разбросаны по сотне таблиц и трём десяткам страниц.
-Простой вопрос вроде «сколько заказов висит в раскрое» или «какие рулоны
-заканчиваются» требует знать, где смотреть. Помощник отвечает словами: человек
-спрашивает по-русски, а система сама достаёт цифры из базы.
+Сейчас в системе один агент: МЕГАБУХ (бухгалтер). Он ищет законы,
+кадровый учёт, 1С, СБИС, Контур.Диадок, банк Точка и правила маркетплейсов
+в открытых источниках. Заказы, раскрой, склад и зарплаты цеха ему закрыты.
+
+Производственный помощник администратора (SELECT к нашей базе) выключен.
 
 ГЛАВНОЕ ПРАВИЛО — ТОЛЬКО ЧТЕНИЕ.
-Помощник не может изменить в системе ни строчки. Защита стоит в три слоя, и
-каждый работает сам по себе:
-  1) подключение к базе открыто в режиме READ ONLY — сама база отклонит любую
-     попытку записи, даже если запрос всё-таки проскочит;
-  2) текст запроса проверяется до отправки: разрешено только SELECT, а слова
-     вроде INSERT, UPDATE, DELETE, DROP запрещены;
-  3) модель физически не имеет других инструментов — она умеет только задать
-     вопрос к базе и прочитать ответ.
-Поэтому даже если пользователь напишет «удали все заказы», выполнить это
-невозможно: запрос будет отклонён.
-
-КАК ЭТО РАБОТАЕТ.
-Модель получает список таблиц и, если нужны цифры, сама пишет SELECT-запрос.
-Мы выполняем его, возвращаем результат модели, и она отвечает человеку обычным
-текстом. Отвечает по-русски и без технических терминов — вопросы задаёт
-владелец, а не программист.
-
-ДОСТУП. Только администраторы: помощник видит зарплаты, выручку и полные данные
-по сотрудникам, и открывать это цеху нельзя.
+Агент ничего не меняет в системе и не отправляет отчёты в ФНС.
+Код безопасного SELECT оставлен на будущее: подключение READ ONLY, в запросе
+только SELECT, запрещены INSERT/UPDATE/DELETE/DROP.
 """
 
 import json
 import os
 import re
+import html as html_lib
+import base64
+import io
+import zipfile
+import zlib
+import xml.etree.ElementTree as ET
 import urllib.error
+import urllib.parse
 import urllib.request
 
 import psycopg2
@@ -59,6 +50,10 @@ SQL_TIMEOUT_MS = 8000
 # Хватает, чтобы уточнить данные несколькими запросами (например, когда первый
 # вернул пусто и надо проверить соседние даты), но не даёт зациклиться.
 MAX_STEPS = 6
+# Бухгалтеру нужно больше: поиск → открыть страницу ФНС → ещё один поиск.
+MAX_STEPS_ACCOUNTANT = 8
+# Суточная сводка маркетплейсов: по одному заходу на OZON, WB и Яндекс Маркет.
+MAX_STEPS_DIGEST = 5
 
 # Слова, которых в запросе быть не должно. Это второй слой защиты: основной —
 # READ ONLY у самого подключения к базе.
@@ -84,7 +79,10 @@ USEFUL_TABLES = (
     'contracts', 'vacations', 'stocktakes', 'cash_box_transactions',
     'manager_accruals', 'order_material_usage', 'material_movements',
     'variki_purchases', 'variki_shop_items', 'audit_log',
+    'cost_settings', 'cost_extra_expenses', 'manager_commission_settings',
 )
+
+# Список таблиц для администратора — бухгалтеру (МЕГАБУХ) схема не отдаётся.
 
 # Колонки, которые модели знать незачем: технические ссылки на внешние системы,
 # служебные отметки синхронизации, следы интеграций. Они раздувают справочник
@@ -101,7 +99,7 @@ def _useful_column(name: str) -> bool:
     return not any(p in low for p in SKIP_COLUMN_PATTERNS)
 
 
-def _schema_digest(cur, schema):
+def _schema_digest(cur, schema, tables):
     """Список таблиц с колонками — чтобы модель знала, где что лежит.
 
     Без этого она выдумывает названия таблиц и запросы падают.
@@ -110,7 +108,7 @@ def _schema_digest(cur, schema):
         "SELECT table_name, column_name, data_type FROM information_schema.columns "
         "WHERE table_schema = %s AND table_name = ANY(%s) "
         "ORDER BY table_name, ordinal_position",
-        (schema, list(USEFUL_TABLES)),
+        (schema, list(tables)),
     )
     # Типы сокращаем до коротких обозначений: модели достаточно понимать, число
     # это, дата или текст, а полные названия типов занимают половину справочника.
@@ -127,6 +125,76 @@ def _schema_digest(cur, schema):
             continue
         tables.setdefault(table, []).append(f'{column} {short.get(dtype, dtype)}')
     return '\n'.join(f'{t}({", ".join(cols)})' for t, cols in tables.items())
+
+
+def _sql_uses_only_tables(sql: str, schema: str, allowed) -> tuple:
+    """Бухгалтеру нельзя читать чужие таблицы даже SELECT-ом."""
+    allowed_set = {t.lower() for t in allowed}
+    prefixed = set(re.findall(rf'\b{re.escape(schema)}\.([a-zA-Z_][\w]*)', sql, re.I))
+    from_join = set(
+        m.group(1)
+        for m in re.finditer(
+            r'(?:from|join)\s+(?:"?[a-zA-Z_][\w]*"?\.)?"?([a-zA-Z_][\w]*)"?',
+            sql,
+            re.I,
+        )
+    )
+    found = {t.lower() for t in (prefixed | from_join)}
+    extra = found - allowed_set
+    if extra:
+        return False, 'Этот запрос выходит за раздел себестоимости'
+    return True, ''
+
+
+def _assistant_scope(cur, schema, user_id, requested_role: str):
+    """Кто может спрашивать. Сейчас только МЕГАБУХ: бухгалтер.
+
+    Производственный помощник администратора выключен — к базе заказов и зарплат
+    агент не подключается. Менеджеру чат закрыт.
+    """
+    cur.execute(
+        f"SELECT role, is_active, full_name FROM {schema}.users WHERE id = %s",
+        (int(user_id),),
+    )
+    row = cur.fetchone()
+    if not row or not row[1]:
+        return None, ''
+    card_role = row[0] or ''
+    full_name = (row[2] or '').strip()
+    cur.execute(
+        f"SELECT role FROM {schema}.user_roles "
+        f"WHERE user_id = %s AND is_approved = true",
+        (int(user_id),),
+    )
+    roles = {r[0] for r in cur.fetchall()}
+    if card_role:
+        roles.add(card_role)
+    want = (requested_role or '').strip()
+    if want == 'accountant':
+        if 'accountant' in roles or 'admin' in roles:
+            return 'accountant', full_name
+        return None, ''
+    if 'accountant' in roles:
+        return 'accountant', full_name
+    return None, ''
+
+
+def _given_name(full_name: str) -> str:
+    """Имя для обращения: из «Иванов Иван Иванович» берём Иван, из «Андрей» — Андрей."""
+    parts = [p for p in re.split(r'\s+', (full_name or '').strip()) if p]
+    if not parts:
+        return ''
+    if len(parts) >= 3:
+        return parts[1]
+    if len(parts) == 2:
+        if re.search(
+            r'(ов|ова|ев|ева|ёв|ёва|ин|ина|ын|ына|ский|ская|цкая)$',
+            parts[0],
+            re.I,
+        ):
+            return parts[1]
+        return parts[0]
+    return parts[0]
 
 
 def _is_safe_select(sql: str) -> tuple:
@@ -146,11 +214,15 @@ def _is_safe_select(sql: str) -> tuple:
     return True, ''
 
 
-def _run_select(dsn, schema, sql):
+def _run_select(dsn, schema, sql, allowed_tables=None):
     """Выполняет SELECT в режиме только для чтения и возвращает строки текстом."""
     ok, reason = _is_safe_select(sql)
     if not ok:
         return f'ОТКАЗАНО: {reason}'
+    if allowed_tables is not None:
+        ok, reason = _sql_uses_only_tables(sql, schema, allowed_tables)
+        if not ok:
+            return f'ОТКАЗАНО: {reason}'
 
     conn = psycopg2.connect(dsn)
     try:
@@ -178,6 +250,303 @@ def _run_select(dsn, schema, sql):
         conn.close()
 
 
+def _http_get(url, timeout=20):
+    """Простой GET: облачная функция без лишних библиотек."""
+    req = urllib.request.Request(
+        url,
+        headers={
+            'User-Agent': 'Mozilla/5.0 (compatible; MegatulAccountant/1.0)',
+            'Accept': 'text/plain, text/html;q=0.9, */*;q=0.8',
+        },
+    )
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        return r.read()[:80000].decode('utf-8', 'ignore')
+
+
+def _strip_tags(text: str) -> str:
+    text = re.sub(r'(?is)<script.*?>.*?</script>', ' ', text)
+    text = re.sub(r'(?is)<style.*?>.*?</style>', ' ', text)
+    text = re.sub(r'<[^>]+>', ' ', text)
+    text = html_lib.unescape(text)
+    return re.sub(r'\s+', ' ', text).strip()
+
+
+def _web_search(query: str) -> str:
+    """Ищет в открытом интернете: законы, сроки, инструкции 1С.
+
+    Сначала читалка Jina (удобный текст), если молчит — HTML DuckDuckGo.
+    """
+    q = (query or '').strip()[:180]
+    if not q:
+        return 'Пустой поисковый запрос'
+    try:
+        text = _http_get('https://s.jina.ai/' + urllib.parse.quote(q)).strip()
+        if len(text) > 80:
+            return text[:12000]
+    except Exception:
+        pass
+    try:
+        body = urllib.parse.urlencode({'q': q, 'kl': 'ru-ru'}).encode('utf-8')
+        req = urllib.request.Request(
+            'https://html.duckduckgo.com/html/',
+            data=body,
+            headers={
+                'User-Agent': 'Mozilla/5.0 (compatible; MegatulAccountant/1.0)',
+                'Content-Type': 'application/x-www-form-urlencoded',
+            },
+        )
+        with urllib.request.urlopen(req, timeout=20) as r:
+            page = r.read()[:80000].decode('utf-8', 'ignore')
+        items = []
+        titles = re.findall(r'class="result__a"[^>]*>(.*?)</a>', page, re.S | re.I)
+        snippets = re.findall(
+            r'class="result__snippet"[^>]*>(.*?)</(?:a|td|span)', page, re.S | re.I,
+        )
+        hrefs = re.findall(r'class="result__a"[^>]*href="([^"]+)"', page, re.I)
+        for i, title in enumerate(titles[:8]):
+            snip = snippets[i] if i < len(snippets) else ''
+            href = hrefs[i] if i < len(hrefs) else ''
+            items.append(
+                f'{_strip_tags(title)}\n{_strip_tags(snip)}\n{href}'.strip()
+            )
+        if items:
+            return '\n\n'.join(items)[:12000]
+        return 'Поиск ничего не вернул. Сформулируйте запрос иначе.'
+    except Exception as e:
+        return f'Поиск сейчас недоступен: {e}'
+
+
+def _read_page(url: str) -> str:
+    """Читает страницу официального источника (налоги, 1С, право)."""
+    url = (url or '').strip()
+    if not (url.startswith('https://') or url.startswith('http://')):
+        return 'Разрешены только ссылки http и https'
+    parsed = urllib.parse.urlparse(url)
+    host = (parsed.hostname or '').lower()
+    # DuckDuckGo отдаёт переходник; открываем исходную страницу.
+    qs = urllib.parse.parse_qs(parsed.query)
+    if 'duckduckgo.com' in host and qs.get('uddg'):
+        url = qs['uddg'][0]
+        parsed = urllib.parse.urlparse(url)
+        host = (parsed.hostname or '').lower()
+    if not host or host in ('localhost', '127.0.0.1') or host.endswith('.local'):
+        return 'Эта ссылка недоступна'
+    if re.match(r'^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)', host):
+        return 'Эта ссылка недоступна'
+    try:
+        text = _http_get('https://r.jina.ai/' + url).strip()
+        if len(text) < 40:
+            return 'Страница открылась пустой'
+        return text[:12000]
+    except Exception as e:
+        return f'Не удалось открыть страницу: {e}'
+
+
+MAX_ATTACH = 3
+MAX_ATTACH_BYTES = 2_000_000
+MAX_DOC_CHARS = 14000
+DOC_EXT_OK = {
+    'pdf', 'doc', 'docx', 'xls', 'xlsx', 'csv', 'txt', 'rtf',
+    'jpg', 'jpeg', 'png', 'webp', 'gif',
+}
+
+
+def _xml_local(tag: str) -> str:
+    return tag.rsplit('}', 1)[-1]
+
+
+def _decode_upload(raw: str) -> bytes:
+    s = (raw or '').strip()
+    if ',' in s and s.lower().startswith('data:'):
+        s = s.split(',', 1)[1]
+    s = re.sub(r'\s+', '', s)
+    return base64.b64decode(s)
+
+
+def _docx_text(data: bytes) -> str:
+    z = zipfile.ZipFile(io.BytesIO(data))
+    xml = z.read('word/document.xml')
+    root = ET.fromstring(xml)
+    paras = []
+    for p in root.iter():
+        if _xml_local(p.tag) != 'p':
+            continue
+        bits = [t.text or '' for t in p.iter() if _xml_local(t.tag) == 't']
+        line = ''.join(bits).strip()
+        if line:
+            paras.append(line)
+    return '\n'.join(paras)
+
+
+def _xlsx_text(data: bytes) -> str:
+    z = zipfile.ZipFile(io.BytesIO(data))
+    shared = []
+    if 'xl/sharedStrings.xml' in z.namelist():
+        root = ET.fromstring(z.read('xl/sharedStrings.xml'))
+        for si in root.iter():
+            if _xml_local(si.tag) != 'si':
+                continue
+            shared.append(''.join(t.text or '' for t in si.iter() if _xml_local(t.tag) == 't'))
+    sheets = [n for n in z.namelist() if n.startswith('xl/worksheets/sheet') and n.endswith('.xml')]
+    rows_out = []
+    for name in sheets[:6]:
+        root = ET.fromstring(z.read(name))
+        rows_out.append(f'Лист {name.split("/")[-1]}:')
+        for row in root.iter():
+            if _xml_local(row.tag) != 'row':
+                continue
+            cells = []
+            for c in row:
+                if _xml_local(c.tag) != 'c':
+                    continue
+                t = c.attrib.get('t', '')
+                v = ''
+                for child in c:
+                    if _xml_local(child.tag) == 'v':
+                        v = child.text or ''
+                if t == 's' and v.isdigit() and int(v) < len(shared):
+                    cells.append(shared[int(v)])
+                elif v:
+                    cells.append(v)
+            if cells:
+                rows_out.append(' | '.join(cells))
+        if len('\n'.join(rows_out)) > MAX_DOC_CHARS:
+            break
+    return '\n'.join(rows_out)
+
+
+def _pdf_inflate(buf: bytes) -> bytes:
+    for wbits in (zlib.MAX_WBITS, -zlib.MAX_WBITS):
+        try:
+            return zlib.decompress(buf, wbits)
+        except Exception:
+            pass
+    return buf
+
+
+def _pdf_unescape(s: str) -> str:
+    s = s.replace('\\n', '\n').replace('\\r', '\n').replace('\\t', ' ')
+    s = s.replace('\\(', '(').replace('\\)', ')').replace('\\\\', '\\')
+    s = re.sub(r'\\([0-7]{1,3})', lambda m: chr(int(m.group(1), 8) % 256), s)
+    return s
+
+
+def _pdf_text(data: bytes) -> str:
+    chunks = [data]
+    for m in re.finditer(rb'stream\r?\n(.*?)\r?\nendstream', data, re.S):
+        chunks.append(_pdf_inflate(m.group(1)))
+    texts = []
+    for chunk in chunks:
+        raw = chunk.decode('latin-1', 'ignore')
+        for m in re.finditer(r'\((?:\\.|[^\\)]){2,}\)\s*Tj', raw):
+            inner = m.group(0)[1:m.group(0).rfind(')')]
+            t = _pdf_unescape(inner).strip()
+            if t:
+                texts.append(t)
+        for m in re.finditer(r'\[(.*?)\]\s*TJ', raw, re.S):
+            parts = re.findall(r'\((?:\\.|[^\\)])*\)', m.group(1))
+            line = ''.join(_pdf_unescape(p[1:-1]) for p in parts).strip()
+            if line:
+                texts.append(line)
+    joined = re.sub(r'\s+', ' ', ' '.join(texts)).strip()
+    if len(joined) < 40:
+        # Иногда текст лежит просто строками в файле.
+        extra = re.findall(r'[\x20-\x7eА-яЁё]{6,}', data.decode('latin-1', 'ignore'))
+        joined = ' '.join(extra[:200])
+    return joined[:MAX_DOC_CHARS]
+
+
+def _pdf_jpegs(data: bytes) -> list:
+    found = []
+    i = 0
+    while len(found) < 3:
+        start = data.find(b'\xff\xd8\xff', i)
+        if start < 0:
+            break
+        end = data.find(b'\xff\xd9', start + 3)
+        if end < 0:
+            break
+        chunk = data[start:end + 2]
+        if 8000 < len(chunk) < 2_400_000:
+            found.append(chunk)
+        i = start + 3
+    return found
+
+
+def _plain_text(data: bytes) -> str:
+    for enc in ('utf-8-sig', 'utf-8', 'cp1251', 'latin-1'):
+        try:
+            return data.decode(enc)
+        except UnicodeDecodeError:
+            continue
+    return data.decode('utf-8', 'ignore')
+
+
+def _read_attachments(files) -> tuple:
+    """Достаёт текст и картинки из вложений. Без сторонних библиотек."""
+    texts = []
+    images = []
+    if not isinstance(files, list):
+        return '', images
+    for item in files[:MAX_ATTACH]:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get('name') or 'файл')[:180]
+        mime = str(item.get('mime') or '').lower()
+        ext = (name.rsplit('.', 1)[-1] if '.' in name else '').lower()
+        if ext not in DOC_EXT_OK:
+            texts.append(f'--- {name} ---\nЭтот тип файла не читаю.')
+            continue
+        try:
+            raw = _decode_upload(item.get('data') or '')
+        except Exception:
+            texts.append(f'--- {name} ---\nНе удалось прочитать файл.')
+            continue
+        if not raw:
+            texts.append(f'--- {name} ---\nФайл пустой.')
+            continue
+        if len(raw) > MAX_ATTACH_BYTES:
+            texts.append(f'--- {name} ---\nФайл слишком большой.')
+            continue
+        try:
+            if ext in ('jpg', 'jpeg', 'png', 'webp', 'gif') or mime.startswith('image/'):
+                b64 = base64.b64encode(raw).decode('ascii')
+                img_mime = mime if mime.startswith('image/') else (
+                    'image/png' if ext == 'png' else 'image/webp' if ext == 'webp' else 'image/jpeg'
+                )
+                images.append({'mime': img_mime, 'b64': b64, 'name': name})
+                texts.append(f'--- {name} ---\nИзображение приложено, смотри картинку.')
+            elif ext == 'docx':
+                texts.append(f'--- {name} ---\n{_docx_text(raw)[:MAX_DOC_CHARS]}')
+            elif ext == 'xlsx':
+                texts.append(f'--- {name} ---\n{_xlsx_text(raw)[:MAX_DOC_CHARS]}')
+            elif ext == 'pdf':
+                body = _pdf_text(raw)
+                jpegs = _pdf_jpegs(raw) if len(body) < 80 else []
+                if body.strip():
+                    texts.append(f'--- {name} ---\n{body}')
+                for n, jpg in enumerate(jpegs, 1):
+                    images.append({
+                        'mime': 'image/jpeg',
+                        'b64': base64.b64encode(jpg).decode('ascii'),
+                        'name': f'{name} стр.{n}',
+                    })
+                if not body.strip() and not jpegs:
+                    texts.append(f'--- {name} ---\nВ PDF не нашлось текста. Это, похоже, скан без распознавания.')
+            elif ext in ('txt', 'csv', 'rtf'):
+                texts.append(f'--- {name} ---\n{_plain_text(raw)[:MAX_DOC_CHARS]}')
+            elif ext in ('doc', 'xls'):
+                texts.append(
+                    f'--- {name} ---\nСтарый формат . {ext}. Сохраните в .docx / .xlsx или PDF.'
+                )
+            else:
+                texts.append(f'--- {name} ---\nНе умею открыть этот файл.')
+        except Exception as e:
+            texts.append(f'--- {name} ---\nНе получилось открыть: {e}')
+    excerpt = '\n\n'.join(t for t in texts if t).strip()
+    return excerpt[:MAX_DOC_CHARS * 2], images[:4]
+
+
 def _call_model(api_key, model, messages, tools):
     """Один запрос к сервису ИИ. Возвращает (ответ, ошибка, код ошибки)."""
     payload = {
@@ -196,7 +565,7 @@ def _call_model(api_key, model, messages, tools):
         },
     )
     try:
-        with urllib.request.urlopen(req, timeout=90) as r:
+        with urllib.request.urlopen(req, timeout=120) as r:
             return json.loads(r.read().decode('utf-8')), None, 0
     except urllib.error.HTTPError as e:
         body = e.read().decode('utf-8', 'ignore')
@@ -237,10 +606,14 @@ def _ask_model(api_key, messages, tools, model_state):
 SYSTEM_PROMPT = """Ты — помощник по системе управления производством штор и тюля «Мегатюль».
 Отвечаешь владельцу бизнеса и администраторам.
 
+КАК ГОВОРИТЬ:
+- Как живой человек в рабочем чате, на «вы». Не канцелярит и не «конечно, с радостью».
+- Если знаешь имя собеседника — обращайся по имени, когда это к месту, не в каждом абзаце.
+- Сначала ответ, потом короткое пояснение. Списки — только если цифр или шагов несколько.
+
 КАК ОТВЕЧАТЬ:
 - Только по-русски, простым деловым языком, без технических терминов.
 - Не показывай SQL-запросы и названия таблиц, если о них прямо не спросили.
-- Коротко и по делу: сначала ответ, потом при необходимости пояснение.
 - Числа приводи точно, как в базе. Если данных нет — так и скажи, не выдумывай.
 - Суммы денег — в рублях, даты — в привычном виде (3 сентября 2026).
 
@@ -383,6 +756,262 @@ SYSTEM_PROMPT = """Ты — помощник по системе управле�
   SELECT count(*) FROM <схема>.goods_warehouse WHERE status='in_stock';
 """
 
+ACCOUNTANT_SYSTEM_PROMPT = """Ты — МЕГАБУХ, живой бухгалтер-консультант швейного производства «Мегатюль»
+(ИП, продажа штор и тюля на OZON, Wildberries, Яндекс Маркете).
+
+КАК ГОВОРИТЬ:
+- Ты мужчина, коллега в мессенджере. Пишешь так, будто набираешь сообщение сейчас:
+  тепло, коротко, на «вы». Не справка и не робот.
+- Собеседника зовут по имени из карточки — обратись по имени в начале, когда уместно.
+  Не в каждом абзаце. «Андрей, смотрите…».
+- Не начинай с «Конечно!» и не извиняйся без причины.
+
+НОРМАТИВНАЯ БАЗА (только это, не блоги и не форумы):
+- НК РФ (части первая и вторая).
+- Федеральный закон от 06.12.2011 № 402-ФЗ «О бухгалтерском учёте».
+- ПБУ и ФСБУ, приказы Минфина России.
+- Актуальные разъяснения ФНС (письма, приказы, информация на nalog.gov.ru).
+- Для кнопок в программах — официальные справки 1С/ИТС, СБИС, Диадок, Точка, площадок.
+По законам, ставкам, формам и проводкам НЕ выдумывай:
+  1) Открой норму из каталога (consultant.ru / nalog.gov.ru / minfin.gov.ru / publication.pravo.gov.ru)
+     через read_page.
+  2) Если страницы мало — web_search с site: nalog.gov.ru, minfin.gov.ru, consultant.ru,
+     publication.pravo.gov.ru, its.1c.ru, saby.ru, support.kontur.ru,
+     tochka.com, allo.tochka.com, seller-edu.ozon.ru, seller.wildberries.ru, yandex.ru/support.
+  3) Затем при необходимости открой найденную страницу через read_page.
+Укажи источник: документ, статья/пункт, адрес.
+
+АКТУАЛЬНОСТЬ — ДАТА Х (даётся ниже как «по состоянию на»):
+- Основной ответ строй ТОЛЬКО по нормам, действующим на дату X.
+- При изменении законодательства ПОСЛЕ даты X используй только данные до этой даты,
+  а про изменения пиши отдельно как предупреждение — блок с заголовком
+  «Предупреждение: изменение законодательства после ДАТА X».
+  В основной текст эти новшества не смешивай.
+- Сроки сдачи и «когда платить» считай от «сегодня» по Москве (тоже дано ниже).
+
+ФОРМАТ ОТВЕТА (бухгалтерии нужен каркас, не портянка без опор):
+1) Суть — одно-два предложения.
+2) Норма — статья НК / 402-ФЗ / ПБУ или ФСБУ / приказ Минфина / письмо ФНС.
+3) Проводки — Дебет / Кредит и что за операция (если учёт спрашивали).
+4) Расчёт — формула и цифры, если суммы есть или их можно посчитать из вопроса.
+5) Первичные документы — что оформить и хранить (402-ФЗ, УПД, платёжка, отчёт площадки…).
+6) Сроки — сдать / уплатить / ответить, от какой даты.
+7) Как в программе — раздел → команда, только если спрашивали 1С/СБИС/Диадок/Точку.
+Если какого-то блока нет в вопросе — пропусти, не выдумывай. Не канцелярит.
+
+ТОЛЬКО ТИПОВЫЕ СЛУЧАИ И ЗОНЫ РИСКА:
+- Разбираешь обычные операции: реализация, комиссия маркетплейса, УСН, взносы,
+  зарплата, отпуск, больничный, касса, ЭДО, типовая первичка, типовая выписка.
+- БЕЗ КОНТРОЛЯ ЧЕЛОВЕКА НЕ ЗАКРЫВАЙ:
+  нестандартные и спорные операции (взаимозачёты, цессия, курсовые разницы,
+  сложные агентские схемы); изменение учётной политики; исправление ошибок прошлых лет;
+  всё, что влияет на налоговую базу при неоднозначной трактовке.
+- Для таких случаев отдельной строкой:
+  «Требуется согласование с главным бухгалтером/аудитором. Ниже — варианты трактовки
+  по письмам Минфина/арбитражной практике.»
+  Затем 2–3 варианта со ссылками, без «единственно верного» решения.
+- Если ситуация спорная, но проще — допустима короткая пометка:
+  «Требуется консультация специалиста.»
+- Налоговую оптимизацию и схемы ухода не советуй.
+
+СЦЕНАРИИ (если задача подходит — работай именно этим форматом, не смешивай блоки).
+
+1) РАЗНЕСЕНИЕ ВЫПИСКИ.
+Ты бухгалтер-оператор. По КАЖДОЙ строке выписки определи:
+вид операции (поступление/списание), контрагента, основание (договор/счёт),
+категорию расхода/дохода, проводку (дебет–кредит), какие первичные документы нужны.
+Если назначение платежа неоднозначное ИЛИ сумма аномальная (выше обычного диапазона
+по этому контрагенту/виду, либо явно выбивается из ряда) — явно пометь:
+«Требуется ручная проверка» и дай 2–3 варианта трактовки.
+Таблица: дата | сумма | вид | контрагент | основание | категория | Дт | Кт | первичка | пометка.
+
+2) РАСЧЁТ НДС.
+По данным: реализация, авансы, покупки, возвраты. Выведи отдельно:
+НДС с реализации, НДС с авансов, НДС к вычету, итого к уплате.
+Покажи формулу. Укажи статьи НК РФ и пункты, на которые опираешься.
+Спорное (смешанные операции, раздельный учёт, льготы) — отдельный блок
+«Требуется консультация бухгалтера».
+
+3) ПРОВЕРКА ОТЧЁТНОСТИ.
+Проверь контрольные соотношения между строками декларации по НДС и
+оборотно-сальдовой ведомостью по счетам 19, 60, 62, 90.
+Выпиши все расхождения. Формат каждой строки:
+строка — ожидаемое значение — фактическое — расхождение — причина — действие
+(что запросить у клиента). Если файла ОСВ или декларации нет — попроси приложить.
+
+СПРАВОЧНИКИ И ПРАВИЛА КОМПАНИИ:
+- Счета, субконто, категории, контрагентов и номенклатуру НЕ ВЫДУМЫВАЙ.
+  Если в чат вложили справочник, учётную политику, лимиты, внутренний регламент —
+  опирайся только на них. Если не вложили — используй типовой план счетов РФ
+  и пометь: «Счёт типовой, без учётной политики компании».
+- Два файла в одном вопросе: сопоставляй по суммам, датам, ИНН, номерам УПД.
+  Пример задачи: «Сопоставь оплаты из файла 1 с УПД из файла 2, найди расхождения».
+- Нашу производственную базу (заказы, ткань, зарплаты цеха) не подмешивай.
+
+ЕСЛИ НЕ ЗНАЕШЬ, СПРАВКИ МОЛЧАТ ИЛИ ТЕБЯ ПОПРАВИЛИ:
+- Не выдумывай и не крути вокруг. Напиши так (можно чуть поправить запятые, смысл тот же):
+  «К сожалению, я не обучен этому. Вы можете написать Андрею — он меня обучит! Только не забудьте ему об этом сказать.»
+- Если собеседника в карточке зовут Андрей — не предлагай писать Андрею самому себе:
+  «К сожалению, я не обучен этому. Напишите, чему меня научить — вы меня обучите! Только не забудьте об этом сказать.»
+
+ЧТО ТЫ УМЕЕШЬ (только это):
+1) Бухгалтерский учёт РФ: УСН, НДС, взносы, НДФЛ, касса, первичная, ЭДО, договоры.
+2) Кадровый учёт для бухгалтерии: приём, перевод, увольнение, отпуск, больничный,
+   трудовой / ГПХ / самозанятый, ЕФС-1, РСВ, 6-НДФЛ, воинский учёт в части отчётности.
+   Путь в 1С:ЗУП / 1С:Бухгалтерия (кадры, зарплата) — какие меню открыть.
+3) Программы и их кнопки. 1С — это текущая линейка, не «старая восьмёрка»:
+   - «1С:Бухгалтерия 8.3» = платформа «1С:Предприятие 8.3» + конфигурация
+     «Бухгалтерия предприятия» редакция 3.0 (ПРОФ, КОРП, базовая, облако 1С:Фреш).
+     Так говорят бухгалтеры. Отдельно «Бухгалтерии 8.4» нет: новые — релизы 3.0.20x
+     и платформа 8.3.2x (смотри «Что нового», не выдумывай номер).
+   - Не путай с устаревшими 8.2 / редакцией 2.0 — к ним возвращайся, только если
+     прямо спросили про старую базу.
+   - Ещё: 1С:ЗУП 3.1, 1С-Отчётность / 1С:Отчётность 24, СБИС, Контур.Экстерн,
+     Контур.Диадок, Астрал, Такском.
+   Как заполнить, подписать, отправить отчёт, загрузить требование ФНС, провести УПД,
+   настроить роуминг ЭДО. Раздел → команда → поля. Кнопки новых релизов — из ИТС.
+4) Банк «Точка» (tochka.com) — расчётный счёт Мегатюли. Выписки в 1С и ДиректБанк,
+   доступ бухгалтеру, платежи, эквайринг, зарплатный проект, онлайн-бухгалтерия Точки,
+   тарифы РКО. Цифры по живому счёту не видишь: в интернет-банк не заходишь.
+   Как сделать в кабинете — из справок Точки. Суммы и комиссии не держи в голове —
+   открой тарифы на tochka.com.
+5) «Википедия» маркетплейсов для бухгалтера: агентская схема, комиссии, УПД/закрывающие,
+   возвраты, налог с продаж OZON/WB/Яндекс Маркет, что просят в ЭДО, типовые ошибки.
+6) Разнесение банковской выписки (Точка и другие) по строкам: вид, контрагент, основание,
+   категория, проводка, первичка.
+7) Расчёт НДС по реализации, авансам, покупкам, возвратам — с формулой и статьями НК.
+8) Сверка декларации НДС с ОСВ по счетам 19, 60, 62, 90 — расхождения и что запросить.
+
+ЧЕГО НЕ ДЕЛАЕШЬ:
+- Не смотришь нашу производственную систему: заказы, раскрой, склад, себестоимость ткани,
+  зарплаты цеха, смены. Если спросят «сколько стоит тюль в базе» — вежливо скажи:
+  это не твоя зона, ты МЕГАБУХ по учёту и программам.
+- Не меняешь данные и не отправляешь отчёт в ФНС сам.
+- Не советуешь схемы ухода от налогов.
+
+ПРИЛОЖЕННЫЕ ДОКУМЕНТЫ:
+- Бухгалтер может скинуть УПД, счёт, акт, выписку, ОСВ, декларацию, Excel, CSV, Word,
+  PDF, фото, скан, справочник контрагентов/номенклатуры, учётную политику.
+- Сначала прочитай текст и, если есть картинки, разбери их глазами. Цифры и реквизиты
+  бери из документа, не выдумывай.
+- Если скан неразборчив — так и скажи, попроси более чёткое фото.
+- CSV/Excel с выписками и актами разбирай построчно и верни структурированную таблицу.
+- Несколько файлов в одном сообщении — сопоставь, не смешивай в одну кучу.
+- Это не подпись документа и не отправка в ФНС.
+"""
+
+# Актуальные официальные справки (осень 2026). Не копируем чужие статьи —
+# МЕГАБУХ открывает эти адреса через read_page и ищет site: по их доменам.
+MEGABUH_WIKI = """
+ОФИЦИАЛЬНЫЕ СПРАВКИ (документация, не блоги). Сначала открой нужный адрес.
+
+1С — «бухгалтерия 8.3» и все новые релизы (это ОДНА линейка)
+Платформа: 1С:Предприятие 8.3 (актуально 8.3.27). Конфигурация: 1С:Бухгалтерия 8,
+редакция 3.0 — ПРОФ, КОРП, базовая, 1С:Фреш. Релизы вида 3.0.204, 3.0.205 — это
+«все новые», не другая программа. Сначала открой руководство, потом «Что нового».
+- Руководство по учёту (БП 8.3 / ред. 3.0, в т.ч. КОРП глава 14): https://its.1c.ru/db/bp8doc
+- Документация платформы 8.3 (актуальная ветка): https://its.1c.ru/db/v83doc
+- Как работать в 8.3 (руководство пользователя): https://its.1c.ru/db/v83doc/bookmark/usr
+- Документация пользователю 1С: https://its.1c.ru/section/i1c/doc_user
+- Налоги и бухучёт (справочник ИТС): https://its.1c.ru/section/info/spr_buh
+- Что нового в Бухгалтерии 3.0 (все свежие релизы): https://its.1c.ru/db/updinfo/content/3/hdoc
+- Обновление платформы 8.3: https://its.1c.ru/docs/platform_update/
+- Дистрибутивы и патчи: https://releases.1c.ru
+- 1С-Отчётность, подключить и отправить: https://its.1c.ru/db/elreps
+- 1С:Фреш, документация приложений (Бухгалтерия 8 в облаке): https://1cfresh.com/articles/app_doc
+- Кадры и зарплата в программах 1С (ЗУП 3.1): https://its.1c.ru/db/staff1c
+
+Точка Банк (счёт Мегатюли, https://tochka.com — не http). Не копируй тарифы из памяти.
+Интернет-банк: https://i.tochka.com. Справки: Справочная allo.tochka.com, онбординг rel.tochka.com.
+- Сайт банка: https://tochka.com/
+- Тарифы РКО: https://tochka.com/tariffs/
+- Тарифы для ИП: https://tochka.com/tariffs/ip/
+- Онлайн-бухгалтерия Точки: https://tochka.com/accounting/
+- Эквайринг: https://tochka.com/acquiring/
+- Открыть счёт / РКО: https://tochka.com/account-opening/
+- Справочная (статьи, консультации, шаблоны): https://allo.tochka.com
+- Зарплатный проект: https://allo.tochka.com/zarplatnyj-proekt
+- Для бухгалтера: вход, реквизиты, 1С:ДиректБанк: https://rel.tochka.com/introacc
+- Доступ бухгалтеру к счёту: https://rel.tochka.com/eintroadultnew
+- Первые шаги онлайн-бухгалтерии, выписка 1С, маркетплейсы: https://rel.tochka.com/firststep_ob
+- Точка.API (выписки, счета, закрывающие): https://developers.tochka.com/
+- Выписки API: https://developers.tochka.com/docs/tochka-api/opisanie-metodov/vypiski
+- Счета и закрывающие через API: https://developers.tochka.com/docs/tochka-api/opisanie-metodov/vystavlenie-schetov-i-sozdanie-zakryvayushih-dokumentov
+
+СБИС (бренд Saby, кабинет online.sbis.ru)
+- Корень справки: https://saby.ru/help/
+- ЭДО, создать и отправить документ: https://saby.ru/help/edo/make_doc
+- Отчётность через интернет: https://saby.ru/ereport
+- Подтверждение оператора / сдача: https://saby.ru/help/ereport/create_send/answers/OS
+
+Контур и Диадок
+- Справка Диадок (человеческим языком): https://kontur.ru/diadoc/spravka
+- База знаний Диадок: https://support.kontur.ru/diadoc
+- Диадок + 1С 8.2/8.3, работа с документами: https://support.kontur.ru/diadoc-1s8x/rabota-s-dokumentami
+- Модуль Диадока для 1С и API: https://support.kontur.ru/diadoc/moduli1c
+- Контур.Экстерн, модуль для 1С: https://support.kontur.ru/extern-1s
+- Экстерн из 1С (обзор): https://kontur.ru/extern/1c
+
+OZON (продавец)
+- База знаний продавца: https://seller-edu.ozon.ru
+- ЭДО: https://seller-edu.ozon.ru/finances-documents/electronic-documents/edo
+- Отчётные документы: https://seller-edu.ozon.ru/finances-documents/documents/reporting-documents
+- Кабинет: https://seller.ozon.ru — закрывающие: Финансы → Документы (отчёт о реализации, взаиморасчёты, перечисления, акты). Обычно за прошлый месяц до 8-го числа.
+
+Wildberries
+- Документы продавца: https://seller.wildberries.ru/instructions/ru/ru/subcategory/documents
+- ЭДО с WB, УПД: https://seller.wildberries.ru/instructions/ru/ru/material/electronic-document-management-with-wb
+- Баланс и документооборот: https://seller.wildberries.ru/instructions/ru/ru/category/store-balance-and-documents
+
+Яндекс Маркет
+- Справка маркетплейса: https://yandex.ru/support/marketplace/
+- Сопроводительные / УПД: https://yandex.ru/support/marketplace/ru/accounting/ship/
+- ЭДО (Диадок и Saby): https://yandex.ru/support/market-for-enterprise/ru/edo
+- Документооборот: https://yandex.ru/support/market-for-enterprise/ru/document-flow
+
+Новости кабинетов продавца (ежедневная сводка МЕГАБУХ, не блоги)
+- OZON, база знаний: https://seller-edu.ozon.ru
+- OZON, новости документации: https://docs.ozon.ru/global/news/
+- Wildberries, новости кабинета: https://seller.wildberries.ru/news-v2
+- Яндекс Маркет, новости справки: https://yandex.ru/support/marketplace/ru/news
+
+Законы и учёт (норма на дату X — сначала открой документ, не копируй статьи целиком)
+- НК РФ: https://www.consultant.ru/document/cons_doc_LAW_19671/
+- 402-ФЗ «О бухгалтерском учёте»: https://www.consultant.ru/document/cons_doc_LAW_122855/
+- ФСБУ / ПБУ, приказы Минфина: https://minfin.gov.ru/ru/perfomance/accounting/accounting/
+- Документы Минфина: https://minfin.gov.ru/ru/document/
+- ФНС: https://www.nalog.gov.ru/
+- Разъяснения ФНС (письма, информация): https://www.nalog.gov.ru/rn77/about_fts/about_nalog/
+- Официальное опубликование: https://publication.pravo.gov.ru/
+- КонсультантПлюс (тексты законов): https://www.consultant.ru/
+"""
+
+# Задание суточной сводки. Не путать с обычным вопросом бухгалтера.
+DIGEST_TASK = """
+Это НЕ вопрос человека, а ежедневный обход. Бухгалтер сейчас не пишет в чат.
+
+Обойди официальные новости продавца OZON, Wildberries и Яндекс Маркет.
+Нужны события, из-за которых бухгалтеру менять учёт, документы, НДС, комиссии,
+закрывающие, УПД/ЭДО, штрафы, сроки отчётов, правила выплат.
+
+Как искать (обязательно web_search + при находке read_page):
+1) site:seller-edu.ozon.ru OR site:docs.ozon.ru новости OR изменения комиссии документы НДС {год}
+2) site:seller.wildberries.ru новости документы ЭДО УПД комиссия {год}
+3) site:yandex.ru/support/marketplace новости документы ЭДО комиссия {год}
+
+Бери только свежее: сегодня и 1–2 предыдущих дня. Вечные справки, старые инструкции
+и рекламу кабинета не включай.
+
+Если важных новостей нет — ответь РОВНО одной строкой: NO_NEWS
+
+Если есть — короткий текст для чата, без приветствия «здравствуйте»:
+заголовок «Новости маркетплейсов, {дата}:»
+затем 3–7 пунктов, каждый начинается с OZON / WB / Яндекс Маркет.
+В пункте: суть одним предложением и официальная ссылка.
+Не копируй чужие статьи целиком.
+"""
+
+
 TOOLS = [{
     'type': 'function',
     'function': {
@@ -405,18 +1034,78 @@ TOOLS = [{
     },
 }]
 
+ACCOUNTANT_TOOLS = [
+    {
+        'type': 'function',
+        'function': {
+            'name': 'web_search',
+            'description': (
+                'Ищет нормы и справки: НК РФ, 402-ФЗ, ПБУ/ФСБУ, приказы Минфина, разъяснения ФНС '
+                '(nalog.gov.ru, minfin.gov.ru, consultant.ru, publication.pravo.gov.ru), '
+                '1С:ИТС, Точка Банк, Saby/СБИС, Диадок, OZON, WB, Яндекс Маркет. '
+                'Всегда добавляй site: нужного домена. Не опирайся на случайные блоги.'
+            ),
+            'parameters': {
+                'type': 'object',
+                'properties': {
+                    'query': {
+                        'type': 'string',
+                        'description': (
+                            'Запрос со site:, например: '
+                            '"site:consultant.ru НК РФ статья 346.21 УСН", '
+                            '"site:consultant.ru 402-ФЗ первичные документы", '
+                            '"site:minfin.gov.ru ФСБУ 5/2019 запасы", '
+                            '"site:nalog.gov.ru срок декларации УСН", '
+                            '"site:its.1c.ru отправить декларацию УСН 1С-Отчетность", '
+                            '"site:tochka.com тарифы РКО", '
+                            '"site:saby.ru сдать РСВ", '
+                            '"site:support.kontur.ru Диадок УПД 1С", '
+                            '"site:seller-edu.ozon.ru отчёт о реализации ЭДО".'
+                        ),
+                    },
+                },
+                'required': ['query'],
+            },
+        },
+    },
+    {
+        'type': 'function',
+        'function': {
+            'name': 'read_page',
+            'description': (
+                'Открывает страницу официальной справки и возвращает текст. '
+                'Бери адрес из каталога ОФИЦИАЛЬНЫЕ СПРАВКИ или из поиска: '
+                'its.1c.ru, minfin.gov.ru, nalog.gov.ru, consultant.ru, publication.pravo.gov.ru, '
+                'tochka.com, allo.tochka.com, developers.tochka.com, rel.tochka.com, '
+                'saby.ru, support.kontur.ru, kontur.ru, seller-edu.ozon.ru, '
+                'seller.wildberries.ru, yandex.ru/support.'
+            ),
+            'parameters': {
+                'type': 'object',
+                'properties': {
+                    'url': {
+                        'type': 'string',
+                        'description': 'Полный адрес http или https',
+                    },
+                },
+                'required': ['url'],
+            },
+        },
+    },
+]
+
 
 def handler(event: dict, context) -> dict:
-    """ИИ-помощник по системе: отвечает на вопросы, читая данные из базы.
+    """МЕГАБУХ: учёт, кадры, 1С, СБИС, Диадок, банк Точка и правила маркетплейсов.
 
-    Доступ только у администраторов. Вносить изменения помощник не может:
-    подключение к базе открыто в режиме «только чтение», а текст запроса
-    дополнительно проверяется на запрещённые команды.
+    Производственную базу не открываем. Админский помощник по цифрам фабрики выключен.
 
-    POST / { question, history?, userId }
+    POST / { question, history?, userId, role?, mode? }
       question — вопрос человека обычным текстом
       history  — предыдущие сообщения [{role, content}] для продолжения беседы
-      userId   — кто спрашивает; роль проверяется по базе, должна быть admin
+      userId   — кто спрашивает; роль проверяется по базе
+      role     — текущая панель: accountant
+      mode     — 'marketplace_digest': суточный обход новостей OZON/WB/Яндекс Маркет
     """
     method = event.get('httpMethod', 'GET')
 
@@ -477,10 +1166,18 @@ def handler(event: dict, context) -> dict:
     question = (body_data.get('question') or '').strip()
     user_id = body_data.get('userId')
     history = body_data.get('history') or []
+    requested_role = (body_data.get('role') or '').strip()
+    files = body_data.get('files') or []
+    if not isinstance(files, list):
+        files = []
+    mode = (body_data.get('mode') or '').strip()
+    want_digest = mode == 'marketplace_digest'
 
-    if not question:
+    if not files and not question:
         return {'statusCode': 400, 'headers': headers,
                 'body': json.dumps({'error': 'Пустой вопрос'}, ensure_ascii=False)}
+    if files and not question:
+        question = 'Прочитайте документ и разберите по делу.'
     if not user_id:
         return {'statusCode': 400, 'headers': headers,
                 'body': json.dumps({'error': 'Не указан пользователь'}, ensure_ascii=False)}
@@ -489,16 +1186,16 @@ def handler(event: dict, context) -> dict:
     schema = os.environ.get('MAIN_DB_SCHEMA', 'public')
 
     # ПРАВО ДОСТУПА ПРОВЕРЯЕМ ПО БАЗЕ, А НЕ ПО ФЛАГУ ИЗ БРАУЗЕРА.
-    # Помощник видит зарплаты и выручку — открывать это цеху нельзя.
     conn = psycopg2.connect(dsn)
     try:
         cur = conn.cursor()
-        cur.execute(f"SELECT role FROM {schema}.users WHERE id = %s", (int(user_id),))
-        row = cur.fetchone()
-        if not row or row[0] != 'admin':
+        scope, person_full = _assistant_scope(cur, schema, user_id, requested_role)
+        if not scope:
             return {'statusCode': 403, 'headers': headers, 'body': json.dumps(
-                {'error': 'Помощник доступен только администраторам'}, ensure_ascii=False)}
-        schema_text = _schema_digest(cur, schema)
+                {'error': 'МЕГАБУХ доступен бухгалтеру'}, ensure_ascii=False)}
+        schema_text = ''
+        if scope != 'accountant':
+            schema_text = _schema_digest(cur, schema, USEFUL_TABLES)
         # Сегодняшняя дата по Москве. Без неё модель подставляла дату «из головы»
         # (например 2023 год) и на вопрос «кто сколько заработал вчера» отвечала,
         # что данных нет, хотя начисления в базе были.
@@ -508,35 +1205,90 @@ def handler(event: dict, context) -> dict:
     finally:
         conn.close()
 
-    # Схему указываем явно: на этой платформе search_path менять нельзя, поэтому
-    # без префикса запросы модели не найдут ни одной таблицы.
-    schema_rule = (
-        f'\n\nВАЖНО ПРО ЗАПРОСЫ: все таблицы лежат в схеме "{schema}". '
-        f'ВСЕГДА пиши имя схемы перед таблицей, например: '
-        f'SELECT count(*) FROM {schema}.orders. Без схемы запрос не сработает.'
-    )
-    date_rule = (
-        f'\n\nСЕГОДНЯ: {today_iso} (по Москве сейчас {now_human}). '
-        f'Вчера — это {today_iso} минус один день. Используй эти сведения, чтобы '
-        f'правильно понимать слова «сегодня», «вчера», «на этой неделе», но в '
-        f'самих запросах всё равно вычисляй даты от now(), как показано выше.'
-    )
+    given = _given_name(person_full)
+    who = 'Ты МЕГАБУХ. ' if scope == 'accountant' else ''
+    if given:
+        person_rule = (
+            f'\n\nСОБЕСЕДНИК: {given}'
+            + (f' (в карточке: {person_full})' if person_full != given else '')
+            + f'. {who}Обращайся по имени {given}, на «вы». '
+            'Имя повторяй не чаще раза за ответ, если разговор уже идёт.'
+        )
+    else:
+        person_rule = (
+            f'\n\n{who}Имя собеседника неизвестно — говори на «вы», без обращения по имени.'
+        )
+
+    if scope == 'accountant':
+        schema_rule = ''
+        date_rule = (
+            f'\n\nСЕГОДНЯ по Москве: {today_iso} (сейчас {now_human}). '
+            f'Сроки сдачи и уплаты считай от этой даты.\n'
+            f'ДАТА X (нормативная база «по состоянию на»): {today_iso}. '
+            f'При изменении законодательства после даты {today_iso} используй только данные '
+            f'до этой даты, а про изменения пиши отдельно как предупреждение '
+            f'(заголовок: «Предупреждение: изменение законодательства после {today_iso}»).'
+        )
+        extra = date_rule + person_rule + MEGABUH_WIKI
+        if want_digest:
+            year = today_iso[:4]
+            extra += DIGEST_TASK.replace('{год}', year).replace('{дата}', today_iso)
+    else:
+        schema_rule = (
+            f'\n\nВАЖНО ПРО ЗАПРОСЫ: все таблицы лежат в схеме "{schema}". '
+            f'ВСЕГДА пиши имя схемы перед таблицей, например: '
+            f'SELECT count(*) FROM {schema}.orders. '
+            f'Без схемы запрос не сработает.'
+        )
+        date_rule = (
+            f'\n\nСЕГОДНЯ: {today_iso} (по Москве сейчас {now_human}). '
+            f'Вчера — это {today_iso} минус один день. Используй эти сведения, чтобы '
+            f'правильно понимать слова «сегодня», «вчера», «на этой неделе», но в '
+            f'самих запросах всё равно вычисляй даты от now(), как показано выше.'
+        )
+        extra = schema_rule + date_rule + person_rule + '\n\nТАБЛИЦЫ БАЗЫ ДАННЫХ:\n' + schema_text
+    prompt = ACCOUNTANT_SYSTEM_PROMPT if scope == 'accountant' else SYSTEM_PROMPT
     messages = [
-        {'role': 'system', 'content': SYSTEM_PROMPT + schema_rule + date_rule
-            + '\n\nТАБЛИЦЫ БАЗЫ ДАННЫХ:\n' + schema_text},
+        {'role': 'system', 'content': prompt + extra},
     ]
     # Прошлые сообщения беседы: без них помощник не поймёт «а за прошлый месяц?».
-    for m in history[-10:]:
-        role = m.get('role')
-        content = (m.get('content') or '').strip()
-        if role in ('user', 'assistant') and content:
-            messages.append({'role': role, 'content': content})
-    messages.append({'role': 'user', 'content': question})
+    # Сводка маркетплейсов — отдельный обход, историю чата в неё не мешаем.
+    if not want_digest or scope != 'accountant':
+        for m in history[-24:]:
+            role = m.get('role')
+            content = (m.get('content') or '').strip()
+            if role in ('user', 'assistant') and content:
+                messages.append({'role': role, 'content': content})
+    doc_excerpt = ''
+    image_parts = []
+    if files:
+        doc_excerpt, image_parts = _read_attachments(files)
+    user_text = question
+    if doc_excerpt:
+        user_text = (
+            question
+            + '\n\nПРИЛОЖЕННЫЕ ДОКУМЕНТЫ (прочитай и опирайся на них):\n'
+            + doc_excerpt
+        )
+    if image_parts:
+        content_parts = [{'type': 'text', 'text': user_text}]
+        for im in image_parts:
+            content_parts.append({
+                'type': 'image_url',
+                'image_url': {'url': f"data:{im['mime']};base64,{im['b64']}"},
+            })
+        messages.append({'role': 'user', 'content': content_parts})
+    else:
+        messages.append({'role': 'user', 'content': user_text})
 
     queries_ran = []
     model_state = {}
-    for _ in range(MAX_STEPS):
-        data, err = _ask_model(api_key, messages, TOOLS, model_state)
+    tools = ACCOUNTANT_TOOLS if scope == 'accountant' else TOOLS
+    steps = MAX_STEPS_ACCOUNTANT if scope == 'accountant' else MAX_STEPS
+    if want_digest and scope == 'accountant':
+        steps = MAX_STEPS_DIGEST
+    for _ in range(steps):
+        data, err = _ask_model(api_key, messages, tools, model_state)
         if err:
             # Частый случай — ключ выпущен с ограничением по списку моделей.
             # Человеку нужен не текст ошибки сервиса, а что именно поправить.
@@ -556,22 +1308,46 @@ def handler(event: dict, context) -> dict:
 
         if not calls:
             answer = (msg.get('content') or '').strip()
+            quiet = want_digest and (
+                answer.upper().startswith('NO_NEWS') or answer == 'NO_NEWS'
+            )
             return {'statusCode': 200, 'headers': headers, 'body': json.dumps({
                 'answer': answer or 'Не удалось получить ответ, попробуйте переспросить.',
                 'queries': queries_ran,
                 'model': model_state.get('model'),
+                'docExcerpt': doc_excerpt[:6000],
+                'quiet': quiet,
             }, ensure_ascii=False)}
 
         messages.append(msg)
         for call in calls:
             fn = (call.get('function') or {})
+            name = fn.get('name') or ''
             try:
                 args = json.loads(fn.get('arguments') or '{}')
             except json.JSONDecodeError:
                 args = {}
-            sql = (args.get('sql') or '').strip()
-            result = _run_select(dsn, schema, sql)
-            queries_ran.append(sql)
+            if name == 'sql_query':
+                if scope == 'accountant':
+                    result = (
+                        'МЕГАБУХ не смотрит производственную базу. Только бухгалтерский и '
+                        'кадровый учёт, 1С, СБИС, Диадок, банк Точка и правила маркетплейсов.'
+                    )
+                    queries_ran.append('sql: отказано')
+                else:
+                    sql = (args.get('sql') or '').strip()
+                    result = _run_select(dsn, schema, sql)
+                    queries_ran.append(sql)
+            elif name == 'web_search' and scope == 'accountant':
+                q = (args.get('query') or '').strip()
+                result = _web_search(q)
+                queries_ran.append('search: ' + q)
+            elif name == 'read_page' and scope == 'accountant':
+                url = (args.get('url') or '').strip()
+                result = _read_page(url)
+                queries_ran.append('read: ' + url)
+            else:
+                result = 'Этот инструмент сейчас недоступен'
             messages.append({
                 'role': 'tool',
                 'tool_call_id': call.get('id'),
@@ -581,4 +1357,5 @@ def handler(event: dict, context) -> dict:
     return {'statusCode': 200, 'headers': headers, 'body': json.dumps({
         'answer': 'Вопрос оказался слишком сложным — попробуйте спросить конкретнее.',
         'queries': queries_ran,
+        'docExcerpt': doc_excerpt[:6000],
     }, ensure_ascii=False)}

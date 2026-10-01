@@ -172,6 +172,11 @@ export default {
 						backgroundColor: 'hsl(var(--destructive) / 0.12)',
 						boxShadow: '0 0 0 4px hsl(var(--destructive) / 0.12)'
 					}
+				},
+				// Приглашение раскрыть свёрнутое приветствие МЕГАБУХ: пузырь чуть всплывает.
+				'megabuh-bob': {
+					'0%, 100%': { transform: 'translateY(0)' },
+					'50%': { transform: 'translateY(-6px)' }
 				}
 			},
 			animation: {
@@ -192,7 +197,8 @@ export default {
 				'tile-sheen': 'tile-sheen 3.5s ease-in-out infinite',
 				// Пульсация заметно быстрее перелива — разница читается сразу,
 				// даже боковым зрением, без сравнивания плиток между собой.
-				'tile-alert': 'tile-alert 1.4s ease-in-out infinite'
+				'tile-alert': 'tile-alert 1.4s ease-in-out infinite',
+				'megabuh-bob': 'megabuh-bob 2.4s ease-in-out infinite'
 			}
 		}
 	},
