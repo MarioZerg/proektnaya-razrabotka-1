@@ -152,7 +152,12 @@ export const useSewingItemsFilters = ({
       return da - db;
     });
 
-  const filteredOrders = ordersInTab.filter((o) => {
+  // ПОЛЬЗОВАТЕЛЬСКИЕ ФИЛЬТРЫ (поиск, тип, сотрудник, ткань, размер, площадка) отделены
+  // от правил владения и цеха. По разнице считаем, сколько заказов вкладки спрятано
+  // именно фильтрами, и говорим об этом на экране. Иначе швея, зашедшая с плитки
+  // «Срочные FBS» (?type=FBS), видела одну вещь из двух, а кнопка «В работе 2 из 2»
+  // уверяла, что их две, — заказ будто «пропадал».
+  const passesUserFilters = (o: Order) => {
     if (searchQuery.trim() && !o.orderNumber.toLowerCase().includes(searchQuery.trim().toLowerCase())) return false;
     // «Юр. лицо» — не тип заказа, а признак покупателя: такие заказы бывают
     // и FBS, и FBO, поэтому проверяем отдельным условием.
@@ -162,6 +167,22 @@ export const useSewingItemsFilters = ({
     if (materialFilter !== 'all' && o.material !== materials.find((m) => String(m.id) === materialFilter)?.name) return false;
     if (widthFilter !== 'all' && String(o.width) !== widthFilter) return false;
     if (heightFilter !== 'all' && String(o.height) !== heightFilter) return false;
+    if (marketplaceFilter !== 'all' && o.marketplace !== marketplaceFilter) return false;
+    return true;
+  };
+  const resetUserFilters = () => {
+    setSearchQuery('');
+    setTypeFilter('all');
+    setEmployeeFilter('all');
+    setMaterialFilter('all');
+    setWidthFilter('all');
+    setHeightFilter('all');
+    setMarketplaceFilter('all');
+    setPage(1);
+  };
+
+  // Правила владения и цеха — то, что человек видит на вкладке вообще.
+  const visibleInTab = ordersInTab.filter((o) => {
     if (workshopFilter !== 'all' && String(o.workshopId) !== workshopFilter) return false;
     // Жёсткая привязка к цеху смены: упаковщица, швея и закройщик видят ТОЛЬКО заказы того
     // цеха, где сейчас открыта их смена. Раньше упаковщица, зайдя в другой цех, продолжала
@@ -174,7 +195,6 @@ export const useSewingItemsFilters = ({
     ) {
       return false;
     }
-    if (marketplaceFilter !== 'all' && o.marketplace !== marketplaceFilter) return false;
     // Период считаем по СВОЕЙ дате: закройщик — по дате раскроя, швея — по дате пошива.
     // Иначе в отчёт попадали бы вещи, которые человек сделал в другой день: заказ мог
     // пролежать в очереди неделю между раскроем и пошивом.
@@ -211,6 +231,10 @@ export const useSewingItemsFilters = ({
     if (activeTab === 'Раскроено' && isCutter && o.cutterUserId !== userId) return false;
     return true;
   });
+
+  const filteredOrders = visibleInTab.filter(passesUserFilters);
+  // Сколько заказов вкладки сейчас скрыто выбранными фильтрами.
+  const hiddenByFilters = visibleInTab.length - filteredOrders.length;
 
   // «Готовые» — это архив выработки: у швеи там сотня-другая своих заказов, и по
   // десять штук на страницу их пришлось бы листать пятнадцать раз. Остальные вкладки —
@@ -384,5 +408,7 @@ export const useSewingItemsFilters = ({
     myUnfinishedOrders,
     myInWorkCount,
     myGroups,
+    hiddenByFilters,
+    resetUserFilters,
   };
 };

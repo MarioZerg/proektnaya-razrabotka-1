@@ -85,6 +85,8 @@ const SewingItems = () => {
     myUnfinishedOrders,
     myInWorkCount,
     myGroups,
+    hiddenByFilters,
+    resetUserFilters,
   } = useSewingItemsFilters({
     orders,
     materials,
@@ -268,6 +270,8 @@ const SewingItems = () => {
           totalPages={totalPages}
           totalCount={filteredOrders.length}
           canPrintSticker={isStorekeeperRole(user?.role) || user?.role === 'admin'}
+          hiddenByFilters={hiddenByFilters}
+          onResetFilters={resetUserFilters}
         />
 
         <SewingItemDetailDialog
