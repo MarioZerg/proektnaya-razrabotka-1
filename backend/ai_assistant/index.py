@@ -10,6 +10,10 @@
 Агент ничего не меняет в системе и не отправляет отчёты в ФНС.
 Код безопасного SELECT оставлен на будущее: подключение READ ONLY, в запросе
 только SELECT, запрещены INSERT/UPDATE/DELETE/DROP.
+
+Приватная память дела (только агент, в кабинете файла нет):
+backend/ai_assistant/business_memory.jsonl — факты и практики Мегатюли.
+Живая частота вопросов приходит с клиента в поле practice.
 """
 
 import json
@@ -349,6 +353,79 @@ DOC_EXT_OK = {
     'pdf', 'doc', 'docx', 'xls', 'xlsx', 'csv', 'txt', 'rtf',
     'jpg', 'jpeg', 'png', 'webp', 'gif',
 }
+IMAGE_MIME_BY_EXT = {
+    'png': 'image/png',
+    'webp': 'image/webp',
+    'gif': 'image/gif',
+    'jpg': 'image/jpeg',
+    'jpeg': 'image/jpeg',
+}
+
+# Приватный корпус на git: читает только эта функция, в CRM не отдаём.
+MEMORY_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'business_memory.jsonl')
+MAX_MEMORY_CHARS = 8000
+
+
+def _parse_memory_lines(lines) -> str:
+    facts = []
+    for ln in lines[-120:]:
+        try:
+            row = json.loads(ln)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(row, dict):
+            continue
+        kind = (row.get('kind') or 'note').strip()
+        topic = (row.get('topic') or '').strip()
+        text = (row.get('text') or '').strip()
+        if not text:
+            continue
+        facts.append(f'- [{kind}] {topic}: {text}' if topic else f'- [{kind}] {text}')
+    return '\n'.join(facts)[:MAX_MEMORY_CHARS]
+
+
+def _load_business_memory() -> str:
+    """Строки из business_memory.jsonl — закреплённые факты и практики дела."""
+    try:
+        with open(MEMORY_PATH, encoding='utf-8') as f:
+            blob = _parse_memory_lines([ln.strip() for ln in f if ln.strip()])
+            if blob:
+                return blob
+    except OSError:
+        pass
+    return ''
+
+
+def _format_practice_digest(raw) -> str:
+    """Короткий срез частоты вопросов с рабочего места (не сырой журнал)."""
+    if not isinstance(raw, dict):
+        return ''
+    try:
+        total = int(raw.get('total') or 0)
+    except (TypeError, ValueError):
+        total = 0
+    top = raw.get('top') or []
+    recent = raw.get('recent') or []
+    lines = []
+    if total:
+        lines.append(f'Всего зафиксированных вопросов на этом рабочем месте: {total}.')
+    if isinstance(top, list) and top:
+        lines.append('Чаще всего спрашивали:')
+        for item in top[:12]:
+            if not isinstance(item, dict):
+                continue
+            q = (item.get('q') or '').strip()[:160]
+            try:
+                n = int(item.get('n') or 0)
+            except (TypeError, ValueError):
+                n = 0
+            if q:
+                lines.append(f'- ({n}) {q}')
+    if isinstance(recent, list) and recent:
+        rec = [str(x).strip()[:160] for x in recent[:8] if str(x).strip()]
+        if rec:
+            lines.append('Недавно: ' + '; '.join(rec))
+    return '\n'.join(lines)
 
 
 def _xml_local(tag: str) -> str:
@@ -511,9 +588,7 @@ def _read_attachments(files) -> tuple:
         try:
             if ext in ('jpg', 'jpeg', 'png', 'webp', 'gif') or mime.startswith('image/'):
                 b64 = base64.b64encode(raw).decode('ascii')
-                img_mime = mime if mime.startswith('image/') else (
-                    'image/png' if ext == 'png' else 'image/webp' if ext == 'webp' else 'image/jpeg'
-                )
+                img_mime = mime if mime.startswith('image/') else IMAGE_MIME_BY_EXT.get(ext, 'image/jpeg')
                 images.append({'mime': img_mime, 'b64': b64, 'name': name})
                 texts.append(f'--- {name} ---\nИзображение приложено, смотри картинку.')
             elif ext == 'docx':
@@ -759,6 +834,44 @@ SYSTEM_PROMPT = """Ты — помощник по системе управле�
 ACCOUNTANT_SYSTEM_PROMPT = """Ты — МЕГАБУХ, живой бухгалтер-консультант швейного производства «Мегатюль»
 (ИП, продажа штор и тюля на OZON, Wildberries, Яндекс Маркете).
 
+НАША ОРГАНИЗАЦИЯ (реквизиты, с которыми работаем; номера публичные):
+- Наименование: ИП Левкин Андрей Станиславович, бренд «Мегатюль».
+- Руководитель / ИП: Левкин Андрей Станиславович.
+- ИНН: 760218194200 (12 знаков — ИП).
+- ОГРНИП (в разговоре могут сказать «ОГРН» / «ОРГН»): 322774600341432.
+- Адрес регистрации: г. Москва, ул. Каспийская, д. 26, к. 1, кв. 30.
+- Если говорят «наш ИНН», «наш ОГРН», «мы», «Мегатюль», «наш ИП» — бери эти данные.
+- ОКВЭД, МСП, долги, дату регистрации не выдумывай: открой egrul.nalog.ru,
+  pb.nalog.ru, rmsp.nalog.ru по ИНН 760218194200 или ОГРНИП 322774600341432.
+  Если выписка ФНС расходится с карточкой выше — скажи оба варианта.
+- Чужой ИНН/ОГРН в документе на наши не подменяй.
+
+КОНТЕКСТ — СНАЧАЛА СОБЕРИ, ПОТОМ ОТВЕЧАЙ:
+Не отвечай «вообще по бухгалтерии», пока не сопоставил всё, что уже есть в этом ходе.
+1) Наша карточка выше (ИНН, ОГРНИП, ФИО, адрес) — если вопрос про «нас».
+2) Имя собеседника и «сегодня / дата X» из хвоста системного сообщения.
+3) История чата: прошлые суммы, ИНН контрагентов, выводы, что уже приложили.
+   Документ из прошлого сообщения (текст в истории) тоже контекст, не теряй.
+4) Файлы этого хода — цифры и реквизиты из них важнее учебника.
+5) Каталог официальных ссылок ниже — открой нужную страницу, не цитируй по памяти.
+6) Если в истории, вложении и карточке разные цифры или ИНН — явно напиши расхождение,
+   не усредняй и не выбирай молча.
+7) «Наш» и «контрагент» не смешивай: наш ИНН только 760218194200.
+8) Пока контекста мало (нет файла, нет нормы) — скажи, чего не хватает, а не заполняй пробелы.
+9) Приватная память дела и журнал запросов из хвоста — чем чаще занимаемся.
+
+ПРИВАТНАЯ ПАМЯТЬ ДЕЛА (только тебе; человеку файл и сырой журнал не отдавай):
+- В хвосте будет «ПАМЯТЬ ДЕЛА» из git-файла business_memory.jsonl и «ЖУРНАЛ ЗАПРОСОВ»
+  (частота вопросов с этого компьютера). Это внутренняя база ведения бизнеса, не норма НК.
+- Учись по ним, чем чаще занимается бухгалтерия Мегатюли. Не цитируй файл целиком
+  и не говори «я прочитал jsonl».
+- Новый бухгалтер спросит «что было важно до меня», «чем чаще всего занимаемся»,
+  «что делать в первую очередь» — собери ответ из памяти + журнала + карточки:
+  приоритеты, типовые задачи, чего не хватает. Сырой список вопросов не выгружай.
+- Журнал — живая частота, память в git — проверенные факты. Если расходятся —
+  скажи оба, git-факт пометь как закреплённый.
+- Пароли, ключи, личные данные из журнала в ответ не копируй.
+
 КАК ГОВОРИТЬ:
 - Ты мужчина, коллега в мессенджере. Пишешь так, будто набираешь сообщение сейчас:
   тепло, коротко, на «вы». Не справка и не робот.
@@ -775,7 +888,8 @@ ACCOUNTANT_SYSTEM_PROMPT = """Ты — МЕГАБУХ, живой бухгалт
 По законам, ставкам, формам и проводкам НЕ выдумывай:
   1) Открой норму из каталога (consultant.ru / nalog.gov.ru / minfin.gov.ru / publication.pravo.gov.ru)
      через read_page.
-  2) Если страницы мало — web_search с site: nalog.gov.ru, minfin.gov.ru, consultant.ru,
+  2) Если страницы мало — web_search с site: nalog.gov.ru, pb.nalog.ru, egrul.nalog.ru,
+     rmsp.nalog.ru, fias.nalog.ru, service.nalog.ru, minfin.gov.ru, consultant.ru,
      publication.pravo.gov.ru, its.1c.ru, saby.ru, support.kontur.ru,
      tochka.com, allo.tochka.com, seller-edu.ozon.ru, seller.wildberries.ru, yandex.ru/support.
   3) Затем при необходимости открой найденную страницу через read_page.
@@ -881,6 +995,16 @@ ACCOUNTANT_SYSTEM_PROMPT = """Ты — МЕГАБУХ, живой бухгалт
    категория, проводка, первичка.
 7) Расчёт НДС по реализации, авансам, покупкам, возвратам — с формулой и статьями НК.
 8) Сверка декларации НДС с ОСВ по счетам 19, 60, 62, 90 — расхождения и что запросить.
+9) Дополнительно: сервисы ФНС для проверки контрагента и уплаты (каталог ниже).
+   Это не замена НК, письмам ФНС и consultant.ru. Норму по-прежнему бери из законов.
+   Сам в кабинет налогоплательщика не входишь и ничего не оплачиваешь. По ИНН/ОГРН
+   подскажи, какой сервис открыть, и при возможности прочитай публичную страницу.
+   Наш ИНН 760218194200, ОГРНИП 322774600341432, ИП Левкин Андрей Станиславович.
+   «Наши реквизиты» / «кто мы в ЕГРИП» — сначала карточка выше, сверка в
+   egrul.nalog.ru / pb.nalog.ru / rmsp.nalog.ru.
+10) Онбординг нового бухгалтера: «что было важнее всего», «чем чаще занимаемся»,
+    «что делать в первую очередь» — из приватной памяти дела и журнала запросов.
+    Сырой журнал и файл git человеку не выгружай, перескажи по делу.
 
 ЧЕГО НЕ ДЕЛАЕШЬ:
 - Не смотришь нашу производственную систему: заказы, раскрой, склад, себестоимость ткани,
@@ -894,6 +1018,8 @@ ACCOUNTANT_SYSTEM_PROMPT = """Ты — МЕГАБУХ, живой бухгалт
   PDF, фото, скан, справочник контрагентов/номенклатуры, учётную политику.
 - Сначала прочитай текст и, если есть картинки, разбери их глазами. Цифры и реквизиты
   бери из документа, не выдумывай.
+- Текст документов из прошлых сообщений (блок в истории) — такой же контекст, как файл
+  только что: сравнивай с новым вложением, не начинай сверку с нуля.
 - Если скан неразборчив — так и скажи, попроси более чёткое фото.
 - CSV/Excel с выписками и актами разбирай построчно и верни структурированную таблицу.
 - Несколько файлов в одном сообщении — сопоставь, не смешивай в одну кучу.
@@ -988,6 +1114,25 @@ Wildberries
 - Разъяснения ФНС (письма, информация): https://www.nalog.gov.ru/rn77/about_fts/about_nalog/
 - Официальное опубликование: https://publication.pravo.gov.ru/
 - КонсультантПлюс (тексты законов): https://www.consultant.ru/
+
+Дополнительно — сервисы ФНС (налоги и проверка контрагентов). Это не замена нормам
+и письмам выше: ставки, статьи и сроки по-прежнему из НК / consultant / nalog.gov.ru.
+Сервисы — куда зайти проверить ИНН или оплатить. Сам в кабинет не входи и не плати.
+- Наши реквизиты (Мегатюль): ИНН 760218194200, ОГРНИП 322774600341432,
+  ИП Левкин Андрей Станиславович, адрес регистрации: г. Москва, ул. Каспийская,
+  д. 26, к. 1, кв. 30. Публичные сведения сверяй на egrul.nalog.ru, pb.nalog.ru,
+  rmsp.nalog.ru. Чужому контрагенту эти номера не подставляй.
+- Все сервисы ФНС: https://www.nalog.gov.ru/
+- Прозрачный бизнес (pb.nalog.ru) — долги, дисквалифицированные лица, массовые адреса,
+  налоговая нагрузка: https://pb.nalog.ru/
+- ЕГРЮЛ/ЕГРИП (egrul.nalog.ru) — бесплатная выписка с электронной подписью ФНС,
+  юридически значимый документ: https://egrul.nalog.ru/
+- Реестр МСП (rmsp.nalog.ru) — статус малого/среднего предприятия (льготы, закупки,
+  кредиты): https://rmsp.nalog.ru/
+- Уплата налогов, пеней, штрафов онлайн: https://service.nalog.ru/payment/
+- ФИАС (fias.nalog.ru) — единый государственный адресный реестр, актуальные адреса:
+  https://fias.nalog.ru/
+По публичным страницам (выписка, прозрачный бизнес, МСП, ФИАС) можно read_page.
 """
 
 # Задание суточной сводки. Не путать с обычным вопросом бухгалтера.
@@ -1047,7 +1192,8 @@ ACCOUNTANT_TOOLS = [
             'name': 'web_search',
             'description': (
                 'Ищет нормы и справки: НК РФ, 402-ФЗ, ПБУ/ФСБУ, приказы Минфина, разъяснения ФНС '
-                '(nalog.gov.ru, minfin.gov.ru, consultant.ru, publication.pravo.gov.ru), '
+                '(nalog.gov.ru, pb.nalog.ru, egrul.nalog.ru, rmsp.nalog.ru, fias.nalog.ru, '
+                'service.nalog.ru, minfin.gov.ru, consultant.ru, publication.pravo.gov.ru), '
                 '1С:ИТС, Точка Банк, Saby/СБИС, Диадок, OZON, WB, Яндекс Маркет. '
                 'Всегда добавляй site: нужного домена. Не опирайся на случайные блоги.'
             ),
@@ -1062,6 +1208,9 @@ ACCOUNTANT_TOOLS = [
                             '"site:consultant.ru 402-ФЗ первичные документы", '
                             '"site:minfin.gov.ru ФСБУ 5/2019 запасы", '
                             '"site:nalog.gov.ru срок декларации УСН", '
+                            '"site:pb.nalog.ru проверка контрагента", '
+                            '"site:egrul.nalog.ru выписка ЕГРЮЛ", '
+                            '"site:rmsp.nalog.ru реестр МСП", '
                             '"site:its.1c.ru отправить декларацию УСН 1С-Отчетность", '
                             '"site:tochka.com тарифы РКО", '
                             '"site:saby.ru сдать РСВ", '
@@ -1081,7 +1230,8 @@ ACCOUNTANT_TOOLS = [
             'description': (
                 'Открывает страницу официальной справки и возвращает текст. '
                 'Бери адрес из каталога ОФИЦИАЛЬНЫЕ СПРАВКИ или из поиска: '
-                'its.1c.ru, minfin.gov.ru, nalog.gov.ru, consultant.ru, publication.pravo.gov.ru, '
+                'its.1c.ru, minfin.gov.ru, nalog.gov.ru, pb.nalog.ru, egrul.nalog.ru, '
+                'rmsp.nalog.ru, fias.nalog.ru, service.nalog.ru, consultant.ru, publication.pravo.gov.ru, '
                 'tochka.com, allo.tochka.com, developers.tochka.com, rel.tochka.com, '
                 'saby.ru, support.kontur.ru, kontur.ru, seller-edu.ozon.ru, '
                 'seller.wildberries.ru, yandex.ru/support.'
@@ -1233,12 +1383,27 @@ def handler(event: dict, context) -> dict:
             f'ДАТА X (нормативная база «по состоянию на»): {today_iso}. '
             f'При изменении законодательства после даты {today_iso} используй только данные '
             f'до этой даты, а про изменения пиши отдельно как предупреждение '
-            f'(заголовок: «Предупреждение: изменение законодательства после {today_iso}»).'
+            f'(заголовок: «Предупреждение: изменение законодательства после {today_iso}»).\n'
+            f'Этот ход — продолжение переписки, не новый разговор. Сначала сверь карточку '
+            f'организации, историю, вложения и дату {today_iso}, потом норму и ответ.'
         )
         extra = date_rule + person_rule + MEGABUH_WIKI
         if want_digest:
             year = today_iso[:4]
             extra += DIGEST_TASK.replace('{год}', year).replace('{дата}', today_iso)
+        else:
+            mem = _load_business_memory()
+            if mem:
+                extra += (
+                    '\n\nПАМЯТЬ ДЕЛА (приватный git, только тебе; человеку файл не отдавай):\n'
+                    + mem
+                )
+            practice_txt = _format_practice_digest(body_data.get('practice'))
+            if practice_txt:
+                extra += (
+                    '\n\nЖУРНАЛ ЗАПРОСОВ (частота с этого рабочего места, не закон):\n'
+                    + practice_txt
+                )
     else:
         schema_rule = (
             f'\n\nВАЖНО ПРО ЗАПРОСЫ: все таблицы лежат в схеме "{schema}". '
@@ -1259,8 +1424,10 @@ def handler(event: dict, context) -> dict:
     ]
     # Прошлые сообщения беседы: без них помощник не поймёт «а за прошлый месяц?».
     # Сводка маркетплейсов — отдельный обход, историю чата в неё не мешаем.
+    # Бухгалтеру отдаём длиннее хвост: сверка выписки и контрагента опирается на прошлые файлы.
+    hist_n = 40 if scope == 'accountant' else 24
     if not want_digest or scope != 'accountant':
-        for m in history[-24:]:
+        for m in history[-hist_n:]:
             role = m.get('role')
             content = (m.get('content') or '').strip()
             if role in ('user', 'assistant') and content:

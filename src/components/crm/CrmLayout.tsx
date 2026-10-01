@@ -402,9 +402,11 @@ const CrmLayout = ({ children }: { children: ReactNode }) => {
           >
             <Icon name="QrCode" size={20} />
           </button>
-          <div className="ml-auto min-w-0">
-            <HeaderSalaryWidget />
-          </div>
+          {user?.role !== 'accountant' ? (
+            <div className="ml-auto min-w-0">
+              <HeaderSalaryWidget />
+            </div>
+          ) : null}
         </div>
         </div>
         {/* Задания смены кладовщика — полупрозрачный список под балансом.

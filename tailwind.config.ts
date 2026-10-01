@@ -177,6 +177,11 @@ export default {
 				'megabuh-bob': {
 					'0%, 100%': { transform: 'translateY(0)' },
 					'50%': { transform: 'translateY(-6px)' }
+				},
+				// Шапка чата: аватар МЕГАБУХа раз в 10 секунд переворачивается кругом.
+				'megabuh-flip': {
+					'0%, 92%': { transform: 'rotateY(0deg)' },
+					'100%': { transform: 'rotateY(360deg)' }
 				}
 			},
 			animation: {
@@ -198,7 +203,8 @@ export default {
 				// Пульсация заметно быстрее перелива — разница читается сразу,
 				// даже боковым зрением, без сравнивания плиток между собой.
 				'tile-alert': 'tile-alert 1.4s ease-in-out infinite',
-				'megabuh-bob': 'megabuh-bob 2.4s ease-in-out infinite'
+				'megabuh-bob': 'megabuh-bob 2.4s ease-in-out infinite',
+				'megabuh-flip': 'megabuh-flip 10s ease-in-out infinite'
 			}
 		}
 	},

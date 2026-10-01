@@ -1,4 +1,5 @@
 import type { Role } from '@/lib/roles';
+import type { PracticeDigest } from '@/lib/megabuhBusinessLog';
 
 const AI_ASSISTANT_URL = 'https://functions.poehali.dev/c6f2fe80-681d-438f-85c6-f30503927ede';
 
@@ -186,6 +187,7 @@ export const askAiAssistant = async (
   history: AiMessage[] = [],
   role?: Role,
   files: AiUpload[] = [],
+  practice?: PracticeDigest,
 ): Promise<AiAnswer> => {
   const res = await fetch(AI_ASSISTANT_URL, {
     method: 'POST',
@@ -202,6 +204,7 @@ export const askAiAssistant = async (
       })),
       role,
       files: files.map(({ name, mime, data }) => ({ name, mime, data })),
+      practice,
     }),
   });
   const data = await res.json();

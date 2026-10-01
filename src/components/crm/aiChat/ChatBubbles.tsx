@@ -162,7 +162,7 @@ export const Thinking = ({ stages, isAccountant }: { stages: string[]; isAccount
         <div className="mb-2 flex items-center gap-2">
           <Icon name="Loader2" size={14} className="shrink-0 animate-spin text-teal-700" />
           <span className="text-[13px] font-medium text-foreground">{current}</span>
-          <span className="inline-flex items-center gap-0.5">
+          <span className="inline-flex items-center gap-1.5">
             <span className="h-1.5 w-1.5 rounded-full bg-teal-600 animate-bounce [animation-delay:-0.3s]" />
             <span className="h-1.5 w-1.5 rounded-full bg-teal-600 animate-bounce [animation-delay:-0.15s]" />
             <span className="h-1.5 w-1.5 rounded-full bg-teal-600 animate-bounce" />

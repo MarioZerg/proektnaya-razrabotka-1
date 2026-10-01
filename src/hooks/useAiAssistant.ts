@@ -2,6 +2,7 @@ import { createContext, createElement, useContext, useEffect, useRef, useState, 
 import { useAuth } from '@/context/AuthContext';
 import { isMegabuhRole } from '@/lib/roles';
 import { askAiAssistant, givenName, prepareChatUploads, type AiMessage, type AiNote, type AiUpload } from '@/lib/aiAssistantApi';
+import { megabuhPracticeDigest, recordMegabuhPractice } from '@/lib/megabuhBusinessLog';
 import { playMegabuhReplySound, primeMegabuhSound } from '@/lib/megabuhSound';
 import {
   alreadyHasDigest,
@@ -285,7 +286,7 @@ export const AiAssistantProvider = ({ children }: { children: ReactNode }) => {
     setMessages([...history, userMsg]);
     setLoading(true);
     try {
-      const r = await askAiAssistant(q, user.id, history, role, uploads);
+      const r = await askAiAssistant(q, user.id, history, role, uploads, megabuhPracticeDigest(user.id));
       if (r.docExcerpt) {
         setMessages((prev) =>
           prev.map((m) =>
@@ -296,6 +297,7 @@ export const AiAssistantProvider = ({ children }: { children: ReactNode }) => {
       setLoading(false);
       setStages([]);
       await typeOut(r.answer);
+      recordMegabuhPractice(user.id, q);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Помощник не ответил');
       setLoading(false);
