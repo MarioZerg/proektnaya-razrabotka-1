@@ -1,8 +1,9 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import CrmLayout from '@/components/crm/CrmLayout';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import Icon from '@/components/ui/icon';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/context/AuthContext';
@@ -28,6 +29,31 @@ const statusInfo: Record<Contract['status'], { label: string; variant: 'default'
   cancelled: { label: 'Отозван', variant: 'outline' },
 };
 
+/** Вкладки списка: подписанные и отозванные не должны лежать в одной куче. */
+const CONTRACT_TABS: { value: Contract['status']; label: string }[] = [
+  { value: 'pending', label: 'На подписи' },
+  { value: 'signed', label: 'Подписанные' },
+  { value: 'cancelled', label: 'Отозванные' },
+];
+
+const emptyByTab: Record<Contract['status'], { title: string; admin: string; employee: string }> = {
+  pending: {
+    title: 'Нет документов на подписи',
+    admin: 'Направьте сотруднику документ — он появится в этой вкладке',
+    employee: 'Когда администратор направит документ, он появится здесь',
+  },
+  signed: {
+    title: 'Подписанных документов нет',
+    admin: 'После подписи договор перейдёт сюда из вкладки «На подписи»',
+    employee: 'Подписанные договоры хранятся здесь',
+  },
+  cancelled: {
+    title: 'Отозванных документов нет',
+    admin: 'Ошибочно направленный договор после отзыва попадёт сюда',
+    employee: 'Отозванные администратором документы появятся здесь',
+  },
+};
+
 /** Договоры: сотрудник видит свои документы и подписывает их кодом из MAX,
  * администратор — документы всех и направляет новые на подпись. */
 const Contracts = () => {
@@ -40,6 +66,14 @@ const Contracts = () => {
   const [listError, setListError] = useState<string | null>(null);
   const [signing, setSigning] = useState<Contract | null>(null);
   const [uploadOpen, setUploadOpen] = useState(false);
+  const [tab, setTab] = useState<Contract['status']>('pending');
+
+  const byStatus = useMemo(() => ({
+    pending: items.filter((c) => c.status === 'pending'),
+    signed: items.filter((c) => c.status === 'signed'),
+    cancelled: items.filter((c) => c.status === 'cancelled'),
+  }), [items]);
+  const visible = byStatus[tab];
 
   const load = () => {
     if (!user) return;
@@ -157,7 +191,29 @@ const Contracts = () => {
           )
         ) : (
           <div className="space-y-3">
-            {items.map((c) => (
+            {/* Подписанные и отозванные в одном списке путали: действующий договор
+                терялся среди отозванных черновиков. Вкладки разделяют их, а
+                «На подписи» остаётся первой — это то, что нужно сделать сейчас. */}
+            <Tabs value={tab} onValueChange={(v) => setTab(v as Contract['status'])}>
+              <TabsList>
+                {CONTRACT_TABS.map((t) => (
+                  <TabsTrigger key={t.value} value={t.value}>
+                    {t.label} ({byStatus[t.value].length})
+                  </TabsTrigger>
+                ))}
+              </TabsList>
+            </Tabs>
+
+            {visible.length === 0 ? (
+              <div className="rounded-md border border-dashed border-border p-10 text-center">
+                <Icon name="FileText" size={40} className="mx-auto text-muted-foreground" />
+                <p className="mt-3 font-semibold">{emptyByTab[tab].title}</p>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  {isAdmin ? emptyByTab[tab].admin : emptyByTab[tab].employee}
+                </p>
+              </div>
+            ) : (
+              visible.map((c) => (
               <div key={c.id} className="rounded-md border border-border p-4">
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div className="min-w-0">
@@ -214,7 +270,8 @@ const Contracts = () => {
                   )}
                 </div>
               </div>
-            ))}
+              ))
+            )}
           </div>
         )}
 

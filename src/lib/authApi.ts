@@ -104,7 +104,17 @@ export const fetchTestAccounts = async (): Promise<TestAccount[]> => {
     body: JSON.stringify({ action: 'test_accounts' }),
   });
   const data = await res.json();
-  return data.accounts || [];
+  const accounts: TestAccount[] = data.accounts || [];
+  // Бухгалтера в базе может не быть как отдельного сотрудника: тогда меню
+  // переключения ролей его пропускает. Берём администратора и открываем
+  // ту же учётку в должности бухгалтера — так админ видит его панель.
+  if (!accounts.some((a) => a.role === 'accountant')) {
+    const admin = accounts.find((a) => a.role === 'admin');
+    if (admin) {
+      return [...accounts, { ...admin, role: 'accountant' }];
+    }
+  }
+  return accounts;
 };
 
 /** Публичная ссылка на бота MAX для кнопки «Войти через MAX». */

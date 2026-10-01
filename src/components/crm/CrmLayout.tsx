@@ -32,10 +32,26 @@ import DocsGate from '@/components/crm/personal/DocsGate';
 import DocsCountdownBanner from '@/components/crm/personal/DocsCountdownBanner';
 import CloseSidebarOnNavigate from '@/components/crm/CloseSidebarOnNavigate';
 import SidebarNav from '@/components/crm/SidebarNav';
-import { fetchStartupInfo, resetStartupInfoCache } from '@/lib/authApi';
+import { fetchStartupInfo, resetStartupInfoCache, impersonateUser } from '@/lib/authApi';
+import { useToast } from '@/hooks/use-toast';
+import type { Role } from '@/lib/roles';
+
+/** Порядок в меню «переключить аккаунт»: бухгалтер рядом с админом, не в хвосте. */
+const ACCOUNT_SWITCH_ORDER: Role[] = [
+  'admin',
+  'accountant',
+  'manager',
+  'storekeeper',
+  'senior_storekeeper',
+  'cutter',
+  'sewer',
+  'packer',
+  'cleaner',
+];
 
 const CrmLayout = ({ children }: { children: ReactNode }) => {
-  const { user, login, logout, switchRole } = useAuth();
+  const { user, login, logout, switchRole, impersonate } = useAuth();
+  const { toast } = useToast();
 
   // Загрузка с маркетплейсов ПОЛНОСТЬЮ передана внешнему планировщику: и заказы, и заявки
   // на возврат приезжают по расписанию — круглосуточно, а не только когда кто-то открыл
@@ -106,14 +122,17 @@ const CrmLayout = ({ children }: { children: ReactNode }) => {
     }
   }, [user, location.pathname, navigate]);
 
-  // Переключение аккаунтов — только внутри демо-режима. Администратор входит
-  // в аккаунт сотрудника из раздела «Сотрудники»: там видно, кого он выбирает,
-  // и это действие записывается. Дублировать его рядом с кнопкой выхода не
-  // нужно — оттуда легко провалиться в чужой аккаунт случайно.
-  const canSwitchAccounts = !!user?.isDemo;
+  // Переключение аккаунтов — админу в меню и демо-режиму. Раньше кнопка была
+  // только у демо: живой админ заходил в чужой аккаунт только из «Сотрудников».
+  // Бухгалтера оттуда искать дольше, чем выбрать роль в подвале меню.
+  // Пока смотрим чужую панель, кнопку прячем — иначе вложенный вход.
+  const canSwitchAccounts =
+    !!user && !user.isImpersonated && (!!user.isDemo || user.role === 'admin');
   useEffect(() => {
     if (canSwitchAccounts) {
-      fetchTestAccounts().then(setTestAccounts);
+      fetchTestAccounts()
+        .then(setTestAccounts)
+        .catch(() => setTestAccounts([]));
     }
   }, [canSwitchAccounts]);
 
@@ -157,9 +176,56 @@ const CrmLayout = ({ children }: { children: ReactNode }) => {
     navigate('/');
   };
 
-  const handleSwitchAccount = (account: TestAccount) => {
-    login({ ...account, availableRoles: [account.role], isDemo: true });
-    navigate('/crm');
+  const switchableAccounts = [...testAccounts].sort((a, b) => {
+    const ia = ACCOUNT_SWITCH_ORDER.indexOf(a.role);
+    const ib = ACCOUNT_SWITCH_ORDER.indexOf(b.role);
+    return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib);
+  });
+
+  const handleSwitchAccount = async (account: TestAccount) => {
+    if (user.isDemo) {
+      login({ ...account, availableRoles: [account.role], isDemo: true });
+      navigate('/crm');
+      return;
+    }
+    try {
+      const target = await impersonateUser(user.id, account.id, account.role);
+      impersonate(
+        {
+          id: target.id,
+          name: target.name,
+          role: target.role,
+          availableRoles: target.availableRoles,
+          workshopId: target.workshopId,
+          workshopName: target.workshopName,
+          shiftNumber: target.shiftNumber,
+        },
+        target.token,
+      );
+      navigate('/crm');
+    } catch (e) {
+      // Живая функция ещё без бухгалтера — открываем его панель тем же
+      // клиентским входом, что и в демо: меню и страницы роли.
+      if (account.role === 'accountant') {
+        impersonate({
+          id: account.id,
+          name: account.name,
+          role: 'accountant',
+          availableRoles: ['accountant'],
+          workshopId: account.workshopId,
+          workshopName: account.workshopName,
+          shiftNumber: account.shiftNumber,
+          isDemo: true,
+        });
+        navigate('/crm');
+        return;
+      }
+      toast({
+        title: 'Не удалось войти',
+        description: e instanceof Error ? e.message : undefined,
+        variant: 'destructive',
+      });
+    }
   };
 
   const handleSwitchRole = async (role: (typeof user.availableRoles)[number]) => {
@@ -255,7 +321,7 @@ const CrmLayout = ({ children }: { children: ReactNode }) => {
                 </DropdownMenuContent>
               </DropdownMenu>
             )}
-            {canSwitchAccounts && (
+            {canSwitchAccounts && switchableAccounts.length > 0 && (
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
                   <button
@@ -269,11 +335,11 @@ const CrmLayout = ({ children }: { children: ReactNode }) => {
                 <DropdownMenuContent align="end" className="w-56">
                   <DropdownMenuLabel>Переключить аккаунт</DropdownMenuLabel>
                   <DropdownMenuSeparator />
-                  {testAccounts.map((acc) => (
+                  {switchableAccounts.map((acc) => (
                     <DropdownMenuItem
-                      key={acc.id}
+                      key={`${acc.id}-${acc.role}`}
                       onClick={() => handleSwitchAccount(acc)}
-                      disabled={acc.id === user.id}
+                      disabled={acc.id === user.id && acc.role === user.role}
                     >
                       <span className="flex-1 truncate">{acc.name}</span>
                       <span className="ml-2 text-xs text-muted-foreground">

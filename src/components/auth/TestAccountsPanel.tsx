@@ -46,7 +46,7 @@ const TestAccountsPanel = ({ onSelect, disabled }: TestAccountsPanelProps) => {
       <div className="grid grid-cols-2 gap-2">
         {accounts.map((acc) => (
           <button
-            key={acc.id}
+            key={`${acc.id}-${acc.role}`}
             type="button"
             disabled={disabled}
             onClick={() => onSelect(acc)}

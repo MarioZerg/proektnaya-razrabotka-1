@@ -327,18 +327,35 @@ def handler(event: dict, context) -> dict:
                 # галочка-допуск в карточке швеи. Нужен такой режим — админ
                 # ставит допуск живой швее и входит в её аккаунт из раздела
                 # «Сотрудники».
-                "SELECT DISTINCT ON (u.role) u.id, u.full_name, u.role, u.workshop, "
-                "  u.shift_number, w.id, COALESCE(u.can_overlock, false) "
-                "FROM users u "
-                "LEFT JOIN workshops w ON w.name = CASE "
-                "WHEN u.workshop IN ('Цех №2', 'Тестовый цех (QA)') THEN 'Цех №1' ELSE u.workshop END "
-                "WHERE u.is_active = true AND u.role <> '' "
-                # Расторгнувших договор в списке для входа не показываем: их
-                # доступ закрыт, и предлагать им кнопку входа незачем.
-                "  AND u.contract_terminated_at IS NULL "
-                # Демо-записи в список входов не берём: это служебные аккаунты.
-                "  AND COALESCE(u.is_demo, false) = false "
-                "ORDER BY u.role, u.id"
+                #
+                # Бухгалтера берём и из основной должности, и из утверждённых
+                # user_roles: иначе он пропадает из меню, если в карточке
+                # стоит другая роль, а бухгалтер — вторая должность.
+                "SELECT DISTINCT ON (role) id, full_name, role, workshop, shift_number, "
+                "  workshop_id, can_overlock FROM ("
+                "  SELECT u.id, u.full_name, u.role, u.workshop, u.shift_number, "
+                "    w.id AS workshop_id, COALESCE(u.can_overlock, false) AS can_overlock "
+                "  FROM users u "
+                "  LEFT JOIN workshops w ON w.name = CASE "
+                "    WHEN u.workshop IN ('Цех №2', 'Тестовый цех (QA)') THEN 'Цех №1' "
+                "    ELSE u.workshop END "
+                "  WHERE u.is_active = true AND u.role <> '' "
+                "    AND u.contract_terminated_at IS NULL "
+                "    AND COALESCE(u.is_demo, false) = false "
+                "  UNION ALL "
+                "  SELECT u.id, u.full_name, ur.role, u.workshop, u.shift_number, "
+                "    w.id AS workshop_id, COALESCE(u.can_overlock, false) AS can_overlock "
+                "  FROM users u "
+                "  JOIN user_roles ur ON ur.user_id = u.id AND ur.is_approved = true "
+                "    AND ur.role = 'accountant' "
+                "  LEFT JOIN workshops w ON w.name = CASE "
+                "    WHEN u.workshop IN ('Цех №2', 'Тестовый цех (QA)') THEN 'Цех №1' "
+                "    ELSE u.workshop END "
+                "  WHERE u.is_active = true "
+                "    AND u.contract_terminated_at IS NULL "
+                "    AND COALESCE(u.is_demo, false) = false "
+                ") x "
+                "ORDER BY role, id"
             )
             rows = cur.fetchall()
         finally:
@@ -358,6 +375,12 @@ def handler(event: dict, context) -> dict:
             }
             for r in rows
         ]
+        # Живого бухгалтера может не быть. Тогда в меню всё равно кладём
+        # администратора в этой должности — иначе пункт «Бухгалтер» пропадает.
+        if not any(a['role'] == 'accountant' for a in accounts):
+            admin = next((a for a in accounts if a['role'] == 'admin'), None)
+            if admin:
+                accounts.append({**admin, 'role': 'accountant'})
         return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'accounts': accounts})}
 
     if action == 'max_verify_code':
@@ -550,7 +573,10 @@ def handler(event: dict, context) -> dict:
             )
             roles = [r[0] for r in cur.fetchall()]
             if role and role not in roles:
-                return _resp_access(False, 'Должность больше не подтверждена администратором')
+                # Админ смотрит панель бухгалтера — должность может быть только
+                # в меню переключения, без отдельной записи в карточке.
+                if not (role == 'accountant' and 'admin' in roles):
+                    return _resp_access(False, 'Должность больше не подтверждена администратором')
 
             return {
                 'statusCode': 200,
@@ -725,8 +751,13 @@ def handler(event: dict, context) -> dict:
                 return {'statusCode': 403, 'headers': headers,
                         'body': json.dumps({'error': 'У сотрудника нет утверждённых должностей'})}
             if role and role not in roles:
-                return {'statusCode': 403, 'headers': headers,
-                        'body': json.dumps({'error': 'Эта должность у сотрудника не утверждена'})}
+                # Бухгалтера как отдельной должности у человека может не быть:
+                # админ всё равно открывает эту панель из меню переключения ролей.
+                if role == 'accountant' and 'admin' in roles:
+                    roles = list(roles) + ['accountant']
+                else:
+                    return {'statusCode': 403, 'headers': headers,
+                            'body': json.dumps({'error': 'Эта должность у сотрудника не утверждена'})}
 
             # Токен на время просмотра чужой панели. Права в нём — сотрудника
             # (админ и должен видеть ровно то, что видит он), но real_user_id
