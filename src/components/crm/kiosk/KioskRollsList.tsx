@@ -173,9 +173,14 @@ const KioskRollsList = ({
                 )
               )}
             </div>
-            <Badge variant="secondary" className="shrink-0 px-3 py-1.5 text-xl">
-              {formatQuantity(r.remainingQuantity)} {r.unit}
-            </Badge>
+            <div className="flex shrink-0 flex-col items-end gap-1">
+              <Badge variant="secondary" className="px-3 py-1.5 text-xl">
+                {formatQuantity(r.remainingQuantity)} {r.unit}
+              </Badge>
+              <span className="text-base text-muted-foreground">
+                из {formatQuantity(r.initialQuantity)} {r.unit}
+              </span>
+            </div>
           </button>
         );
       })}

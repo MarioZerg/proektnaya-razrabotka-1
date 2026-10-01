@@ -42,11 +42,30 @@ const KioskRollCloseCard = ({
         </p>
       </div>
 
-      <div className="rounded-md border-2 border-border bg-muted/40 p-3 text-center">
-        <p className="text-lg text-muted-foreground">По системе на рулоне осталось</p>
-        <p className="font-mono-tech text-5xl font-bold">
-          {formatQuantity(selected.remainingQuantity)} {selected.unit}
-        </p>
+      {/* Изначальный метраж — для рулонов без стикера или закрываемых в чужую смену:
+          сотрудник сверяет, сколько было на рулоне и сколько из него уже ушло. */}
+      <div className="grid grid-cols-3 gap-2">
+        <div className="rounded-md border-2 border-border p-3 text-center">
+          <p className="text-lg text-muted-foreground">Было на рулоне</p>
+          <p className="font-mono-tech text-3xl font-bold">
+            {formatQuantity(selected.initialQuantity)} {selected.unit}
+          </p>
+        </div>
+        <div className="rounded-md border-2 border-border p-3 text-center">
+          <p className="text-lg text-muted-foreground">Израсходовано</p>
+          <p className="font-mono-tech text-3xl font-bold">
+            {formatQuantity(
+              Math.max(0, selected.initialQuantity - selected.remainingQuantity)
+            )}{' '}
+            {selected.unit}
+          </p>
+        </div>
+        <div className="rounded-md border-2 border-primary/40 bg-muted/40 p-3 text-center">
+          <p className="text-lg text-muted-foreground">Осталось по системе</p>
+          <p className="font-mono-tech text-3xl font-bold">
+            {formatQuantity(selected.remainingQuantity)} {selected.unit}
+          </p>
+        </div>
       </div>
 
       <Button
@@ -86,6 +105,9 @@ const KioskRollCloseCard = ({
         open={defectOpen}
         onOpenChange={setDefectOpen}
         barcode={selected.barcode}
+        initialQuantity={selected.initialQuantity}
+        remainingQuantity={selected.remainingQuantity}
+        unit={selected.unit}
         defectReason={defectReason}
         setDefectReason={setDefectReason}
         saving={saving}
