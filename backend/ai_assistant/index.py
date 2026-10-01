@@ -970,6 +970,10 @@ Wildberries
 - Документооборот: https://yandex.ru/support/market-for-enterprise/ru/document-flow
 
 Новости кабинетов продавца (ежедневная сводка МЕГАБУХ, не блоги)
+- OZON, новости продавцам (главный источник): https://seller.ozon.ru/media/news/?category=sellers&main=true
+  Страница закрыта антиботом — read_page её не откроет. Ищи через web_search
+  «site:seller.ozon.ru/media/news …»: в выдаче есть заголовок, дата из описания и ссылка
+  на конкретную новость вида https://seller.ozon.ru/media/news/<адрес>/.
 - OZON, база знаний: https://seller-edu.ozon.ru
 - OZON, новости документации: https://docs.ozon.ru/global/news/
 - Wildberries, новости кабинета: https://seller.wildberries.ru/news-v2
@@ -995,7 +999,9 @@ DIGEST_TASK = """
 закрывающие, УПД/ЭДО, штрафы, сроки отчётов, правила выплат.
 
 Как искать (обязательно web_search + при находке read_page):
-1) site:seller-edu.ozon.ru OR site:docs.ozon.ru новости OR изменения комиссии документы НДС {год}
+1) site:seller.ozon.ru/media/news тарифы договор комиссия документы {год}
+   (это лента «Новости продавцам» OZON; read_page её не откроет — бери заголовок, дату
+   и ссылку прямо из выдачи поиска, ссылка вида https://seller.ozon.ru/media/news/<адрес>/)
 2) site:seller.wildberries.ru новости документы ЭДО УПД комиссия {год}
 3) site:yandex.ru/support/marketplace новости документы ЭДО комиссия {год}
 
