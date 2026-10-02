@@ -106,9 +106,11 @@ def _given_name(full_name):
 # ---------------------------------------------------------------- база (только чтение)
 
 def _ro_conn(dsn):
-    conn = psycopg2.connect(dsn)
-    # ГЛАВНАЯ ЗАЩИТА: соединение только для чтения — запись отклонит сама база.
-    conn.set_session(readonly=True, autocommit=True)
+    conn = psycopg2.connect(dsn, connect_timeout=5)
+    # ГЛАВНАЯ ЗАЩИТА: транзакция только для чтения — запись отклонит сама база.
+    # Через set_session(readonly) прокси базы зависал, поэтому команда идёт первой
+    # в транзакции. Коммита нет: соединение закрывается после чтения.
+    conn.cursor().execute("SET TRANSACTION READ ONLY")
     return conn
 
 
@@ -788,7 +790,9 @@ def handler(event: dict, context) -> dict:
     if not user_id:
         return _resp(400, {'error': 'Не указан пользователь'}, headers)
 
-    api_key = os.environ.get('AITUNNEL_API_KEY', '').strip()
+    # Отдельный ключ агента менеджера; если его нет — общий ключ ИИ проекта.
+    api_key = (os.environ.get('API_KEY_MEGAMAG', '').strip()
+               or os.environ.get('AITUNNEL_API_KEY', '').strip())
     if not api_key:
         return _resp(500, {'error': 'Не настроен ключ доступа к сервису ИИ'}, headers)
 
