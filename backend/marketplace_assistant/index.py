@@ -27,7 +27,11 @@ import urllib.request
 import psycopg2
 
 AITUNNEL_URL = 'https://api.aitunnel.ru/v1/chat/completions'
+AITUNNEL_KEY_URL = 'https://api.aitunnel.ru/v1/aitunnel/key'
+# Имя из кабинета AITUNNEL — то, что ключ реально пускает по API.
+DEFAULT_MODEL = 'openai/gpt-6-luna-pro'
 MODEL_CANDIDATES = [
+    DEFAULT_MODEL,
     'gpt-4o-mini',
     'gpt-4.1-mini',
     'gpt-5-mini',
@@ -661,8 +665,60 @@ def _read_page(url):
 
 # ---------------------------------------------------------------- модель
 
+def _key_allowed_models(api_key):
+    """Белый список моделей ключа AITUNNEL. None — ограничений нет или ключ не ответил."""
+    req = urllib.request.Request(
+        AITUNNEL_KEY_URL,
+        headers={'Authorization': f'Bearer {api_key}'},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=8) as r:
+            data = json.loads(r.read().decode('utf-8'))
+    except Exception:
+        return None
+    allowed = data.get('allowed_models')
+    if not isinstance(allowed, list) or not allowed:
+        return None
+    out = []
+    for item in allowed:
+        name = str(item or '').strip()
+        if name and name not in out:
+            out.append(name)
+    return out or None
+
+
+def _model_candidates(api_key, state):
+    if state.get('candidates'):
+        return state['candidates']
+    preferred = os.environ.get('AITUNNEL_MODEL', '').strip() or DEFAULT_MODEL
+    allowed = _key_allowed_models(api_key)
+    state['allowed_models'] = allowed
+    ordered = []
+    if preferred:
+        if not allowed or preferred in allowed:
+            ordered.append(preferred)
+    if allowed:
+        for model in MODEL_CANDIDATES:
+            if model in allowed and model not in ordered:
+                ordered.append(model)
+        for model in allowed:
+            if model not in ordered:
+                ordered.append(model)
+    else:
+        for model in MODEL_CANDIDATES:
+            if model not in ordered:
+                ordered.append(model)
+    state['candidates'] = ordered[:8]
+    return state['candidates']
+
+
 def _call_model(api_key, model, messages, tools):
-    payload = {'model': model, 'messages': messages, 'temperature': 0.2}
+    payload = {
+        'model': model,
+        'messages': messages,
+        'temperature': 0.2,
+        'max_tokens': 2000,
+    }
     if tools:
         payload['tools'] = tools
     req = urllib.request.Request(
@@ -683,17 +739,29 @@ def _call_model(api_key, model, messages, tools):
 def _ask_model(api_key, messages, tools, state):
     if state.get('model'):
         return _call_model(api_key, state['model'], messages, tools)[:2]
-    preferred = os.environ.get('AITUNNEL_MODEL', '').strip()
-    candidates = ([preferred] if preferred else []) + [m for m in MODEL_CANDIDATES if m != preferred]
     last_err = 'Не удалось подобрать доступную модель'
-    for model in candidates:
+    for model in _model_candidates(api_key, state):
         data, err, code = _call_model(api_key, model, messages, tools)
         if data is not None:
             state['model'] = model
             return data, None
         last_err = err
-        if code != 403:
+        if code not in (400, 403, 404):
             break
+    allowed = state.get('allowed_models') or []
+    if allowed and last_err:
+        last_err = (
+            last_err
+            + ' Ключ AITUNNEL разрешает только: '
+            + ', '.join(allowed[:8])
+            + '. МЕГАМАГ должен звать одно из этих имён один в один.'
+        )
+    elif last_err and ('не разрешена' in last_err or '403' in last_err):
+        last_err = (
+            'Ключ AITUNNEL ограничен другой моделью. В aitunnel.ru → Ключи '
+            'либо очистите список моделей (тогда доступны все), либо оставьте '
+            'ту, что выбрали, и в Поехали задайте AITUNNEL_MODEL тем же именем.'
+        )
     return None, last_err
 
 

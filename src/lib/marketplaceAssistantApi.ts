@@ -15,6 +15,9 @@ export interface ShopAiAnswer {
   model?: string;
 }
 
+const TIMEOUT_HINT =
+  'МЕГАМАГ оборвался по таймауту. В Поехали у функции marketplace_assistant поставьте таймаут 90 секунд — как у МЕГАБУХа.';
+
 export const askMarketplaceAssistant = async (
   question: string,
   userId: number,
@@ -36,7 +39,25 @@ export const askMarketplaceAssistant = async (
       role,
     }),
   });
-  const data = await res.json();
-  if (!res.ok) throw new Error(data.error || 'МЕГАМАГ не ответил');
-  return data;
+  const raw = await res.text();
+  let data: Record<string, unknown> = {};
+  try {
+    data = raw ? (JSON.parse(raw) as Record<string, unknown>) : {};
+  } catch {
+    throw new Error(
+      res.status === 504
+        ? TIMEOUT_HINT
+        : `МЕГАМАГ не ответил (${res.status})`,
+    );
+  }
+  if (!res.ok) {
+    const msg = [data.error, data.errorMessage].find(
+      (v): v is string => typeof v === 'string' && v.length > 0,
+    );
+    if (res.status === 504 || (msg && /timeout/i.test(msg))) {
+      throw new Error(TIMEOUT_HINT);
+    }
+    throw new Error(msg || `МЕГАМАГ не ответил (${res.status})`);
+  }
+  return data as unknown as ShopAiAnswer;
 };
