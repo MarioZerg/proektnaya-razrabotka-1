@@ -68,6 +68,8 @@ const CrmLayout = ({ children }: { children: ReactNode }) => {
 
   const navigate = useNavigate();
   const location = useLocation();
+  const isAgentChat =
+    location.pathname === '/crm/chat' || location.pathname === '/crm/shop-chat';
   const [testAccounts, setTestAccounts] = useState<TestAccount[]>([]);
   const [qrOpen, setQrOpen] = useState(false);
   const [kioskPreviewOpen, setKioskPreviewOpen] = useState(false);
@@ -378,7 +380,7 @@ const CrmLayout = ({ children }: { children: ReactNode }) => {
           страница не растёт портянкой. */}
       <main
         className={
-          location.pathname === '/crm/chat'
+          isAgentChat
             ? 'flex h-svh max-h-svh w-full min-w-0 flex-1 flex-col overflow-hidden'
             : 'w-full min-w-0 flex-1 overflow-x-hidden'
         }
@@ -386,7 +388,7 @@ const CrmLayout = ({ children }: { children: ReactNode }) => {
         {/* Шапка липкая и выше виджета заданий: меню и баланс всегда нажимаются. */}
         <div
           ref={headerRef}
-          className={`sticky top-0 z-50 bg-background${location.pathname === '/crm/chat' ? ' shrink-0' : ''}`}
+          className={`sticky top-0 z-50 bg-background${isAgentChat ? ' shrink-0' : ''}`}
         >
         <DocsCountdownBanner />
         {/* min-w-0 на шапке: без него виджеты с крупным балансом раздвигали
@@ -416,7 +418,7 @@ const CrmLayout = ({ children }: { children: ReactNode }) => {
         {/* Сбой внутри страницы не должен гасить меню и весь экран. */}
         <div
           className={
-            location.pathname === '/crm/chat'
+            isAgentChat
               ? 'flex min-h-0 flex-1 flex-col overflow-hidden p-3 sm:p-6'
               : 'p-3 sm:p-6'
           }

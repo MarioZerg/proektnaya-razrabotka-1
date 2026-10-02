@@ -80,6 +80,7 @@ const ProsecutorCase = lazy(() => import("./pages/legal/ProsecutorCase"));
 const MaterialAnalysis = lazy(() => import("./pages/analytics/MaterialAnalysis"));
 const ReturnsAnalysis = lazy(() => import("./pages/analytics/ReturnsAnalysis"));
 const AssistantChat = lazy(() => import("./pages/AssistantChat"));
+const ShopAssistant = lazy(() => import("./pages/ShopAssistant"));
 const ProductCost = lazy(() => import("./pages/analytics/ProductCost"));
 const UnitEconomics = lazy(() => import("./pages/analytics/UnitEconomics"));
 const Promotion = lazy(() => import("./pages/analytics/Promotion"));
@@ -121,6 +122,7 @@ const App = () => (
             <Route path="/kiosk/:workshopId" element={<KioskTerminal />} />
             <Route path="/crm" element={<Crm />} />
             <Route path="/crm/chat" element={<AssistantChat />} />
+            <Route path="/crm/shop-chat" element={<ShopAssistant />} />
             <Route path="/crm/inventory/warehouse-materials" element={<WarehouseMaterials />} />
             <Route path="/crm/analytics/material" element={<MaterialAnalysis />} />
             {/* Старые адреса ведут на объединённую страницу: на них есть ссылки

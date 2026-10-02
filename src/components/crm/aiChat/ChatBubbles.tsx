@@ -1,5 +1,6 @@
 import Icon from '@/components/ui/icon';
 import MegabuhAvatar from '@/components/crm/MegabuhAvatar';
+import MegamagAvatar from '@/components/crm/MegamagAvatar';
 import type { AiMessage, AiMessageFile } from '@/lib/aiAssistantApi';
 
 export const formatNoteDate = (at: number) =>
@@ -55,10 +56,19 @@ const formatContent = (text: string) => {
   });
 };
 
-export const AgentFace = ({ isAccountant, size }: { isAccountant: boolean; size: number }) =>
-  isAccountant ? (
-    <MegabuhAvatar size={size} />
-  ) : (
+export const AgentFace = ({
+  isAccountant,
+  kind,
+  size,
+}: {
+  isAccountant?: boolean;
+  kind?: 'accountant' | 'shop';
+  size: number;
+}) => {
+  const mode = kind || (isAccountant ? 'accountant' : 'generic');
+  if (mode === 'accountant') return <MegabuhAvatar size={size} />;
+  if (mode === 'shop') return <MegamagAvatar size={size} />;
+  return (
     <div
       className="grid shrink-0 place-items-center rounded-full bg-gradient-to-br from-teal-600 to-slate-800 text-white shadow-sm"
       style={{ width: size, height: size }}
@@ -66,12 +76,14 @@ export const AgentFace = ({ isAccountant, size }: { isAccountant: boolean; size:
       <Icon name="Sparkles" size={Math.round(size * 0.44)} />
     </div>
   );
+};
 
 export const Bubble = ({
   m,
   youName,
   agentName,
   isAccountant,
+  kind,
   live,
   canSave,
   saved,
@@ -81,6 +93,7 @@ export const Bubble = ({
   youName: string;
   agentName: string;
   isAccountant: boolean;
+  kind?: 'accountant' | 'shop';
   live?: boolean;
   canSave?: boolean;
   saved?: boolean;
@@ -88,10 +101,11 @@ export const Bubble = ({
 }) => {
   const mine = m.role === 'user';
   const initial = (youName || '?').slice(0, 1).toUpperCase();
+  const face = kind || (isAccountant ? 'accountant' : undefined);
 
   return (
     <div className={`flex w-full items-start gap-2 ${mine ? 'justify-end' : 'justify-start'}`}>
-      {!mine && <div className="mt-4"><AgentFace isAccountant={isAccountant} size={32} /></div>}
+      {!mine && <div className="mt-4"><AgentFace isAccountant={isAccountant} kind={face} size={32} /></div>}
       <div className="flex min-w-0 max-w-[78%] flex-col gap-0.5">
         <div className={`flex items-baseline gap-1.5 px-0.5 ${mine ? 'justify-end' : 'justify-start'}`}>
           <span className="text-[11px] font-medium text-muted-foreground">
@@ -153,19 +167,30 @@ export const Bubble = ({
   );
 };
 
-export const Thinking = ({ stages, isAccountant }: { stages: string[]; isAccountant: boolean }) => {
+export const Thinking = ({
+  stages,
+  isAccountant,
+  kind,
+}: {
+  stages: string[];
+  isAccountant: boolean;
+  kind?: 'accountant' | 'shop';
+}) => {
   const current = stages[stages.length - 1] || 'Думаю...';
+  const face = kind || (isAccountant ? 'accountant' : undefined);
+  const spin = kind === 'shop' ? 'text-amber-700' : 'text-teal-700';
+  const dot = kind === 'shop' ? 'bg-amber-600' : 'bg-teal-600';
   return (
     <div className="flex gap-2 animate-in fade-in duration-200">
-      <AgentFace isAccountant={isAccountant} size={32} />
+      <AgentFace isAccountant={isAccountant} kind={face} size={32} />
       <div className="min-w-0 max-w-[86%] rounded-2xl rounded-bl-md border border-border bg-background px-3 py-2.5 shadow-sm">
         <div className="mb-2 flex items-center gap-2">
-          <Icon name="Loader2" size={14} className="shrink-0 animate-spin text-teal-700" />
+          <Icon name="Loader2" size={14} className={`shrink-0 animate-spin ${spin}`} />
           <span className="text-[13px] font-medium text-foreground">{current}</span>
           <span className="inline-flex items-center gap-1.5">
-            <span className="h-1.5 w-1.5 rounded-full bg-teal-600 animate-bounce [animation-delay:-0.3s]" />
-            <span className="h-1.5 w-1.5 rounded-full bg-teal-600 animate-bounce [animation-delay:-0.15s]" />
-            <span className="h-1.5 w-1.5 rounded-full bg-teal-600 animate-bounce" />
+            <span className={`h-1.5 w-1.5 rounded-full ${dot} animate-bounce [animation-delay:-0.3s]`} />
+            <span className={`h-1.5 w-1.5 rounded-full ${dot} animate-bounce [animation-delay:-0.15s]`} />
+            <span className={`h-1.5 w-1.5 rounded-full ${dot} animate-bounce`} />
           </span>
         </div>
         <ul className="space-y-1">
@@ -177,9 +202,9 @@ export const Thinking = ({ stages, isAccountant }: { stages: string[]; isAccount
                 className={`flex items-center gap-2 text-[12px] ${last ? 'text-foreground' : 'text-muted-foreground'}`}
               >
                 {last ? (
-                  <Icon name="Loader2" size={12} className="shrink-0 animate-spin text-teal-700" />
+                  <Icon name="Loader2" size={12} className={`shrink-0 animate-spin ${spin}`} />
                 ) : (
-                  <Icon name="Check" size={12} className="shrink-0 text-teal-700" />
+                  <Icon name="Check" size={12} className={`shrink-0 ${spin}`} />
                 )}
                 {s}
               </li>

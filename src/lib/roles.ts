@@ -75,6 +75,10 @@ export const roleLabels: Record<Role, string> = {
 export const isMegabuhRole = (role?: Role | null): boolean =>
   role === 'accountant';
 
+/** МЕГАМАГ — чат по кабинетам маркетплейсов, только у менеджера. */
+export const isMegamagRole = (role?: Role | null): boolean =>
+  role === 'manager';
+
 /**
  * Раздел «Инструкции» — как что делать на производстве.
  *
@@ -313,6 +317,11 @@ const cleanerNav: NavItem[] = [
 // Менеджер: работа с заказами и поставками маркетплейса (в т.ч. заявки OZON FBO).
 const managerNav: NavItem[] = [
   { label: 'Главная', icon: 'LayoutDashboard', path: '/crm' },
+  {
+    label: 'МЕГАМАГ',
+    icon: 'Store',
+    path: '/crm/shop-chat',
+  },
   {
     label: 'Отгрузки',
     icon: 'Truck',
