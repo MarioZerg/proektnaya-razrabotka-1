@@ -26,8 +26,12 @@ import urllib.request
 
 import psycopg2
 
-AITUNNEL_URL = 'https://api.aitunnel.ru/v1/chat/completions'
-AITUNNEL_KEY_URL = 'https://api.aitunnel.ru/v1/aitunnel/key'
+# Основной API и зеркало: у части провайдеров блокируют api.aitunnel.ru —
+# тогда тот же ключ и пути работают на ru-api.
+AITUNNEL_BASES = (
+    'https://api.aitunnel.ru/v1',
+    'https://ru-api.aitunnel.ru/v1',
+)
 # Запас, если ключ без белого списка и auto не ответил.
 DEFAULT_MODEL = 'openai/gpt-6-luna-pro'
 MODEL_CANDIDATES = [
@@ -40,9 +44,9 @@ MODEL_CANDIDATES = [
     'gpt-5.4-mini',
     'gpt-4.1-nano',
 ]
-MAX_STEPS = 8
-MAX_TOOL_CHARS = 12000
-MP_TIMEOUT = 15
+MAX_STEPS = 10
+MAX_TOOL_CHARS = 16000
+MP_TIMEOUT = 20
 
 OZON_API = 'https://api-seller.ozon.ru'
 WB_CONTENT_API = 'https://content-api.wildberries.ru'
@@ -230,6 +234,22 @@ def _listings(cur, schema, shop, mps):
     out = []
     cols = _table_columns(cur, schema, 'marketplace_items')
     sid = shop and shop['id']
+    ym_col = ", i.ym_sku" if 'ym_sku' in cols else ''
+    # Сначала живые привязанные карточки из нашего справочника — без них агент
+    # не может разобрать SEO и витрину по артикулу.
+    cur.execute(
+        f"SELECT i.id, s.name AS shop, i.sku, i.name, i.width, i.height, i.material, "
+        f"  i.ozon_sku, i.wb_nm_id, i.wb_sku{ym_col}, i.barcode "
+        f"FROM {schema}.marketplace_items i LEFT JOIN {schema}.shops s ON s.id = i.shop_id "
+        f"WHERE (%s::int IS NULL OR i.shop_id = %s::int) "
+        f"  AND (COALESCE(i.ozon_sku,'') <> '' OR i.wb_nm_id IS NOT NULL "
+        f"       OR COALESCE(i.wb_sku,'') <> ''"
+        + (" OR COALESCE(i.ym_sku,'') <> ''" if 'ym_sku' in cols else '')
+        + ") "
+        f"ORDER BY i.updated_at DESC NULLS LAST, i.id DESC",
+        (sid, sid),
+    )
+    out.append(_rows_text(cur, 'КАРТОЧКИ В СПРАВОЧНИКЕ (привязаны к площадкам)', 60))
     conds = []
     if 'ozon' in mps:
         conds.append("COALESCE(i.ozon_sku,'') = ''")
@@ -237,7 +257,6 @@ def _listings(cur, schema, shop, mps):
         conds.append("(i.wb_nm_id IS NULL AND COALESCE(i.wb_sku,'') = '')")
     if 'yandex_market' in mps and 'ym_sku' in cols:
         conds.append("COALESCE(i.ym_sku,'') = ''")
-    ym_col = ", i.ym_sku" if 'ym_sku' in cols else ''
     if conds:
         cur.execute(
             f"SELECT i.id, s.name AS shop, i.sku, i.name, i.ozon_sku, i.wb_nm_id{ym_col} "
@@ -254,6 +273,22 @@ def _listings(cur, schema, shop, mps):
         (mps,),
     )
     out.append(_rows_text(cur, 'НА СКЛАДАХ ПЛОЩАДКИ НОЛЬ (карточка выпадает из выдачи)', 50))
+    price_cols = _table_columns(cur, schema, 'marketplace_prices')
+    if price_cols and 'marketplace_item_id' in price_cols:
+        cur.execute(
+            f"SELECT p.marketplace_code, i.sku, i.name, p.price, p.price_before_discount, p.synced_at "
+            f"FROM {schema}.marketplace_prices p "
+            f"JOIN {schema}.marketplace_items i ON i.id = p.marketplace_item_id "
+            f"WHERE p.marketplace_code = ANY(%s) "
+            f"  AND (%s::int IS NULL OR i.shop_id = %s::int) "
+            f"ORDER BY p.synced_at DESC NULLS LAST",
+            (mps, sid, sid),
+        )
+        out.append(_rows_text(cur, 'ЦЕНЫ НА ПЛОЩАДКАХ (срез)', 40))
+    out.append(
+        'Чтобы разобрать конкретную карточку на площадке — what=card и query=артикул '
+        '(sku / offer_id / nmID / часть названия).'
+    )
     return '\n\n'.join(out)
 
 
@@ -411,6 +446,42 @@ def _live_ozon(creds):
                     for e in (it.get('errors') or [])[:3]
                 )
                 lines.append(f"  {it.get('offer_id')} | {(it.get('name') or '')[:80]} | {errs}")
+    # Выборка видимых карточек — SEO-срез, чтобы агент мог говорить про витрину без query.
+    st, data = _mp_call('POST', OZON_API + '/v3/product/list', h,
+                        {'filter': {'visibility': 'VISIBLE'}, 'limit': 40, 'last_id': ''})
+    vis_ids = []
+    if st == 200 and isinstance(data, dict):
+        vis_ids = [it.get('product_id') for it in (data.get('result') or {}).get('items') or []
+                   if it.get('product_id')]
+    if vis_ids:
+        st, info = _mp_call('POST', OZON_API + '/v3/product/info/list', h, {'product_id': vis_ids[:40]})
+        if st == 200 and isinstance(info, dict):
+            weak = []
+            for it in (info.get('items') or []):
+                name = (it.get('name') or '').strip()
+                images = it.get('images') or []
+                if isinstance(images, str):
+                    images = [images] if images else []
+                img_n = len(images) if isinstance(images, list) else 0
+                barcodes = it.get('barcodes') or ([] if not it.get('barcode') else [it.get('barcode')])
+                score = 0
+                reasons = []
+                if len(name) < 40:
+                    score += 2
+                    reasons.append(f'короткий title {len(name)}')
+                if img_n < 3:
+                    score += 2
+                    reasons.append(f'фото {img_n}')
+                if not barcodes:
+                    score += 1
+                    reasons.append('нет штрихкода')
+                if score:
+                    weak.append((score, it.get('offer_id'), name[:70], ', '.join(reasons)))
+            weak.sort(key=lambda x: -x[0])
+            lines.append(f'SEO-срез видимых (проверено {len(info.get("items") or [])}): '
+                         f'слабых по заголовку/фото/штрихкоду — {len(weak)}')
+            for _, offer, name, why in weak[:12]:
+                lines.append(f'  {offer} | {name} | {why}')
     return '\n'.join(lines)
 
 
@@ -535,9 +606,434 @@ def _live(cur, schema, shop, mps):
     return '\n\n'.join(out)
 
 
+def _find_items(cur, schema, shop, query):
+    """Ищет карточки в нашем справочнике по sku / ozon / wb / ym / названию."""
+    q = (query or '').strip()
+    if not q:
+        return []
+    cols = _table_columns(cur, schema, 'marketplace_items')
+    sid = shop and shop['id']
+    ym_select = "i.ym_sku" if 'ym_sku' in cols else "NULL::text AS ym_sku"
+    like = f'%{q}%'
+    nm = None
+    if q.isdigit():
+        try:
+            nm = int(q)
+        except ValueError:
+            nm = None
+    where = [
+        "(%s::int IS NULL OR i.shop_id = %s::int)",
+        "(i.sku ILIKE %s OR i.name ILIKE %s OR COALESCE(i.ozon_sku,'') ILIKE %s "
+        "OR COALESCE(i.wb_sku,'') ILIKE %s OR COALESCE(i.barcode,'') ILIKE %s",
+    ]
+    params = [sid, sid, like, like, like, like, like]
+    if 'ym_sku' in cols:
+        where[1] += " OR COALESCE(i.ym_sku,'') ILIKE %s"
+        params.append(like)
+    if nm is not None:
+        where[1] += " OR i.wb_nm_id = %s"
+        params.append(nm)
+    where[1] += ")"
+    params.extend([q, q, q])
+    cur.execute(
+        f"SELECT i.id, s.name AS shop, i.shop_id, i.sku, i.name, i.width, i.height, i.material, "
+        f"  i.ozon_sku, i.wb_nm_id, i.wb_sku, {ym_select}, i.barcode "
+        f"FROM {schema}.marketplace_items i LEFT JOIN {schema}.shops s ON s.id = i.shop_id "
+        f"WHERE {' AND '.join(where)} "
+        f"ORDER BY "
+        f"  CASE WHEN i.sku = %s THEN 0 WHEN i.ozon_sku = %s THEN 1 "
+        f"       WHEN CAST(i.wb_nm_id AS text) = %s THEN 2 ELSE 3 END, i.id DESC "
+        f"LIMIT 12",
+        params,
+    )
+    cols_out = [d[0] for d in cur.description]
+    return [dict(zip(cols_out, r)) for r in cur.fetchall()]
+
+
+def _ozon_card_lines(item):
+    """Разбор одной карточки OZON из product/info — SEO и модерация."""
+    name = (item.get('name') or '').strip()
+    offer = (item.get('offer_id') or '').strip()
+    sku = item.get('sku') or item.get('fbo_sku') or item.get('fbs_sku') or ''
+    barcodes = item.get('barcodes') or ([] if not item.get('barcode') else [item.get('barcode')])
+    images = item.get('images') or item.get('primary_image') or []
+    if isinstance(images, str):
+        images = [images] if images else []
+    img_n = len(images) if isinstance(images, list) else (1 if images else 0)
+    descr = (item.get('description') or item.get('rich_content_json') or '')
+    if isinstance(descr, dict):
+        descr = json.dumps(descr, ensure_ascii=False)
+    descr = str(descr or '')
+    attrs = item.get('attributes') or []
+    errs = item.get('errors') or []
+    status = item.get('statuses') or item.get('status') or {}
+    issues = []
+    if len(name) < 40:
+        issues.append(f'короткий заголовок ({len(name)} симв., лучше ≥60)')
+    if len(name) > 150:
+        issues.append(f'очень длинный заголовок ({len(name)} симв.)')
+    if img_n < 3:
+        issues.append(f'мало фото ({img_n}, желательно ≥5)')
+    if not barcodes:
+        issues.append('нет штрихкода')
+    if len(descr) < 200 and descr:
+        issues.append(f'короткое описание ({len(descr)} симв.)')
+    if not descr:
+        issues.append('описание пустое или не пришло в ответе API')
+    if isinstance(attrs, list) and len(attrs) < 5:
+        issues.append(f'мало характеристик ({len(attrs)})')
+    if errs:
+        issues.append('ошибки модерации/контента: ' + '; '.join(
+            ((e.get('texts') or {}).get('short_description') or e.get('code') or str(e))[:120]
+            for e in errs[:4]
+        ))
+    lines = [
+        f"OZON live: offer_id={offer} | sku={sku} | название ({len(name)}): {name[:160]}",
+        f"  фото≈{img_n}, штрихкодов={len(barcodes) if isinstance(barcodes, list) else 0}, "
+        f"атрибутов={len(attrs) if isinstance(attrs, list) else '?'}, "
+        f"описание≈{len(descr)} симв.",
+    ]
+    if status:
+        lines.append(f"  статус: {json.dumps(status, ensure_ascii=False)[:240]}")
+    if issues:
+        lines.append('  SEO/качество: ' + '; '.join(issues))
+    else:
+        lines.append('  SEO/качество: явных дыр в ответе API не видно')
+    return lines
+
+
+def _card_live_ozon(creds, item_row, query):
+    client_id = str(creds.get('clientId') or '').strip()
+    api_key = str(creds.get('apiKey') or '').strip()
+    if not client_id or not api_key:
+        return ['OZON: в CRM нет Client-Id или Api-Key']
+    h = {'Client-Id': client_id, 'Api-Key': api_key}
+    offer_ids = []
+    skus = []
+    if item_row:
+        if item_row.get('sku'):
+            offer_ids.append(str(item_row['sku']))
+        if item_row.get('ozon_sku'):
+            skus.append(str(item_row['ozon_sku']))
+    q = (query or '').strip()
+    if q:
+        offer_ids.append(q)
+        if q.isdigit():
+            skus.append(q)
+    offer_ids = list(dict.fromkeys([x for x in offer_ids if x]))[:20]
+    skus = list(dict.fromkeys([x for x in skus if x]))[:20]
+    lines = []
+    payload = {}
+    if offer_ids:
+        payload = {'offer_id': offer_ids}
+    elif skus:
+        payload = {'sku': [int(x) for x in skus if str(x).isdigit()][:20]}
+    if not payload:
+        return ['OZON: нечего искать — нужен артикул (offer_id) или sku']
+    st, info = _mp_call('POST', OZON_API + '/v3/product/info/list', h, payload)
+    items = []
+    if st == 200 and isinstance(info, dict):
+        items = info.get('items') or (info.get('result') or {}).get('items') or []
+    if not items and skus and 'offer_id' in payload:
+        payload2 = {'sku': [int(x) for x in skus if str(x).isdigit()][:20]}
+        if payload2['sku']:
+            st, info = _mp_call('POST', OZON_API + '/v3/product/info/list', h, payload2)
+            if st == 200 and isinstance(info, dict):
+                items = info.get('items') or (info.get('result') or {}).get('items') or []
+    if not items:
+        return [f'OZON: карточка не найдена в кабинете (код {st}). Проверьте артикул и магазин.']
+    for it in items[:5]:
+        lines.extend(_ozon_card_lines(it))
+    # Контент-рейтинг по sku, если есть.
+    rating_skus = []
+    for it in items[:10]:
+        s = it.get('sku') or it.get('fbo_sku') or it.get('fbs_sku')
+        if s:
+            try:
+                rating_skus.append(int(s))
+            except (TypeError, ValueError):
+                pass
+    if rating_skus:
+        st, rating = _mp_call(
+            'POST', OZON_API + '/v1/product/rating-by-sku', h, {'skus': rating_skus[:20]},
+        )
+        if st == 200 and isinstance(rating, dict):
+            for g in (rating.get('products') or rating.get('result') or [])[:10]:
+                lines.append(
+                    f"  рейтинг контента OZON sku={g.get('sku')}: {g.get('rating')} "
+                    f"(группы: {json.dumps(g.get('groups') or g.get('conditions') or [], ensure_ascii=False)[:300]})"
+                )
+        else:
+            lines.append(f'  рейтинг контента: не получен (код {st})')
+    return lines
+
+
+def _card_live_wb(creds, item_row, query):
+    api_key = str(creds.get('apiKey') or '').strip()
+    if not api_key:
+        return ['Wildberries: в CRM нет токена']
+    if creds.get('useSandbox'):
+        return ['Wildberries: в CRM включена песочница — живой кабинет не читаем']
+    h = {'Authorization': api_key}
+    search = (query or '').strip()
+    if item_row and item_row.get('sku'):
+        search = str(item_row['sku'])
+    nm = item_row.get('wb_nm_id') if item_row else None
+    lines = []
+    payload = {
+        'settings': {
+            'cursor': {'limit': 100},
+            'filter': {'withPhoto': -1},
+        },
+    }
+    if search:
+        payload['settings']['filter']['textSearch'] = search
+    st, data = _mp_call('POST', WB_CONTENT_API + '/content/v2/get/cards/list', h, payload)
+    cards = []
+    if st == 200 and isinstance(data, dict):
+        cards = data.get('cards') or []
+    if nm and cards:
+        cards = [c for c in cards if c.get('nmID') == nm] or cards
+    elif nm and not cards:
+        # Повтор без textSearch — ищем nmID в первой сотне (редко, но лучше чем пусто).
+        st2, data2 = _mp_call(
+            'POST', WB_CONTENT_API + '/content/v2/get/cards/list', h,
+            {'settings': {'cursor': {'limit': 100}, 'filter': {'withPhoto': -1}}},
+        )
+        if st2 == 200 and isinstance(data2, dict):
+            cards = [c for c in (data2.get('cards') or []) if c.get('nmID') == nm]
+    if not cards:
+        return [f'Wildberries: карточка не найдена (код {st}). Проверьте vendorCode / nmID.']
+    for c in cards[:5]:
+        title = (c.get('title') or '').strip()
+        descr = (c.get('description') or '').strip()
+        photos = c.get('photos') or []
+        chars = c.get('characteristics') or []
+        sizes = c.get('sizes') or []
+        issues = []
+        if len(title) < 40:
+            issues.append(f'короткий заголовок ({len(title)})')
+        if len(descr) < 300:
+            issues.append(f'короткое описание ({len(descr)})')
+        if not photos:
+            issues.append('нет фото')
+        elif len(photos) < 3:
+            issues.append(f'мало фото ({len(photos)})')
+        if len(chars) < 5:
+            issues.append(f'мало характеристик ({len(chars)})')
+        lines.append(
+            f"WB live: vendorCode={c.get('vendorCode')} | nmID={c.get('nmID')} | "
+            f"название ({len(title)}): {title[:160]}"
+        )
+        lines.append(
+            f"  фото={len(photos)}, описание={len(descr)} симв., "
+            f"характеристик={len(chars)}, размеров={len(sizes)}"
+        )
+        if issues:
+            lines.append('  SEO/качество: ' + '; '.join(issues))
+        else:
+            lines.append('  SEO/качество: явных дыр в ответе API не видно')
+        # Короткий срез характеристик — менеджеру видно, что заполнено.
+        for ch in chars[:8]:
+            lines.append(f"  · {(ch.get('name') or '')}: {', '.join(ch.get('value') or [])}"[:180])
+    return lines
+
+
+def _card_live_ym(creds, item_row, query):
+    api_key = str(creds.get('apiKey') or '').strip()
+    campaign_id = str(creds.get('campaignId') or '').strip()
+    if not api_key or not campaign_id.isdigit():
+        return ['Яндекс Маркет: в CRM нет Api-Key или номера кампании']
+    h = {'Api-Key': api_key}
+    st, camp = _mp_call('GET', f'{YM_API}/campaigns/{campaign_id}', h)
+    if st != 200 or not isinstance(camp, dict):
+        return [f'Яндекс Маркет: кампания не прочиталась (код {st})']
+    business_id = ((camp.get('campaign') or {}).get('business') or {}).get('id')
+    if not business_id:
+        return ['Яндекс Маркет: business id не определён']
+    offer_ids = []
+    if item_row and item_row.get('sku'):
+        offer_ids.append(str(item_row['sku']))
+    if item_row and item_row.get('ym_sku'):
+        offer_ids.append(str(item_row['ym_sku']))
+    q = (query or '').strip()
+    if q:
+        offer_ids.append(q)
+    offer_ids = list(dict.fromkeys([x for x in offer_ids if x]))[:20]
+    payload = {'offerIds': offer_ids} if offer_ids else {}
+    lines = []
+    st, data = _mp_call(
+        'POST', f'{YM_API}/businesses/{int(business_id)}/offer-mappings?limit=20', h, payload,
+    )
+    maps = []
+    if st == 200 and isinstance(data, dict):
+        maps = (data.get('result') or {}).get('offerMappings') or []
+    if not maps:
+        lines.append(f'Яндекс Маркет: offer-mappings пусто (код {st})')
+    for m in maps[:5]:
+        o = m.get('offer') or {}
+        lines.append(
+            f"YM live: offerId={o.get('offerId')} | {(o.get('name') or '')[:120]} | "
+            f"mapping={'есть' if m.get('mapping') else 'нет'} | "
+            f"модерация={'ждёт' if m.get('awaitingModerationMapping') else 'нет'} | "
+            f"reject={'да' if m.get('rejectedMapping') else 'нет'}"
+        )
+    st, data = _mp_call(
+        'POST', f'{YM_API}/businesses/{int(business_id)}/offer-cards?limit=20', h,
+        {'offerIds': offer_ids} if offer_ids else {},
+    )
+    if st == 200 and isinstance(data, dict):
+        for c in ((data.get('result') or {}).get('offerCards') or [])[:5]:
+            errs = c.get('errors') or []
+            lines.append(
+                f"  карточка offerId={c.get('offerId')} | contentRating={c.get('contentRating')} | "
+                f"ошибок={len(errs)}"
+            )
+            for e in errs[:3]:
+                lines.append(f"    ! {json.dumps(e, ensure_ascii=False)[:200]}")
+    else:
+        lines.append(f'  качество карточек YM: не получено (код {st})')
+    return lines or ['Яндекс Маркет: карточка не найдена']
+
+
+def _card_context(cur, schema, item_row, mps):
+    """Остатки, цены, реклама, отзывы по найденной карточке из нашей базы."""
+    if not item_row:
+        return []
+    lines = []
+    sku = str(item_row.get('sku') or '')
+    ozon = str(item_row.get('ozon_sku') or '')
+    nm = item_row.get('wb_nm_id')
+    lines.append(
+        f"Из CRM: id={item_row.get('id')} | магазин={item_row.get('shop')} | "
+        f"sku={sku} | {item_row.get('name')} | "
+        f"{item_row.get('width')}×{item_row.get('height')} | материал={item_row.get('material')}"
+    )
+    lines.append(
+        f"  привязки: ozon_sku={ozon or '—'} | wb_nm_id={nm or '—'} | "
+        f"wb_sku={item_row.get('wb_sku') or '—'} | ym_sku={item_row.get('ym_sku') or '—'} | "
+        f"barcode={item_row.get('barcode') or '—'}"
+    )
+    keys = [k for k in (sku, ozon, str(nm) if nm else '') if k]
+    if keys:
+        cur.execute(
+            f"SELECT marketplace_code, sku, offer_id, product_name, free_amount, reserved_amount, synced_at "
+            f"FROM {schema}.marketplace_stocks "
+            f"WHERE marketplace_code = ANY(%s) AND (sku = ANY(%s) OR offer_id = ANY(%s)) "
+            f"ORDER BY synced_at DESC NULLS LAST LIMIT 20",
+            (mps, keys, keys),
+        )
+        lines.append(_rows_text(cur, 'ОСТАТКИ НА ПЛОЩАДКЕ', 20))
+        if _table_columns(cur, schema, 'marketplace_prices'):
+            cur.execute(
+                f"SELECT p.marketplace_code, p.price, p.price_before_discount, "
+                f"  p.price_with_marketplace_discount, p.synced_at "
+                f"FROM {schema}.marketplace_prices p "
+                f"WHERE p.marketplace_item_id = %s AND p.marketplace_code = ANY(%s) "
+                f"ORDER BY p.synced_at DESC NULLS LAST LIMIT 20",
+                (item_row.get('id'), mps),
+            )
+            lines.append(_rows_text(cur, 'ЦЕНЫ', 20))
+        cur.execute(
+            f"SELECT a.marketplace_code, a.ad_spend, a.revenue, a.ad_percent AS drr, a.period_days "
+            f"FROM {schema}.marketplace_ad_spend a "
+            f"WHERE a.marketplace_item_id = %s",
+            (item_row.get('id'),),
+        )
+        lines.append(_rows_text(cur, 'РЕКЛАМА ПО ЭТОЙ КАРТОЧКЕ', 10))
+        rv_codes = []
+        if 'ozon' in mps:
+            rv_codes.append('OZON')
+        if 'wildberries' in mps:
+            rv_codes.append('WB')
+        if rv_codes:
+            cur.execute(
+                f"SELECT marketplace, rating, product_sku, left(text, 180) AS text, review_date "
+                f"FROM {schema}.reviews "
+                f"WHERE marketplace = ANY(%s) AND ("
+                f"  product_sku = ANY(%s) OR product_sku = %s OR product_sku = %s"
+                f") ORDER BY review_date DESC LIMIT 15",
+                (rv_codes, keys, sku, ozon),
+            )
+            lines.append(_rows_text(cur, 'ОТЗЫВЫ ПО КАРТОЧКЕ', 15))
+    return lines
+
+
+def _card_analyze(dsn, schema, shop, mps, query):
+    """Разбор конкретной карточки: справочник CRM + живой кабинет площадки."""
+    q = (query or '').strip()
+    if not q:
+        return (
+            'Укажите query: артикул (sku), offer_id OZON, nmID WB, ym offerId '
+            'или часть названия товара.'
+        )
+    conn = _ro_conn(dsn)
+    try:
+        cur = conn.cursor()
+        cur.execute("SET statement_timeout = 8000")
+        items = _find_items(cur, schema, shop, q)
+        out = [f'ЗАПРОС КАРТОЧКИ: «{q}»']
+        if not items:
+            out.append('В справочнике CRM точного совпадения нет — ищу только в живых кабинетах.')
+        else:
+            out.append(f'Найдено в CRM: {len(items)}')
+        # Берём до 3 совпадений, для каждого — live по нужным площадкам.
+        targets = items[:3] if items else [None]
+        shops = [shop] if shop else _shops(cur, schema)
+        for item_row in targets:
+            if item_row:
+                out.extend(_card_context(cur, schema, item_row, mps))
+                shop_id = item_row.get('shop_id')
+                shop_loop = [s for s in shops if s['id'] == shop_id] or shops
+            else:
+                shop_loop = shops
+            for s in shop_loop:
+                out.append(f"--- Живой кабинет: {s['name']} (shop_id {s['id']}) ---")
+                for mp in mps:
+                    creds, enabled = _load_creds(cur, schema, mp, s['id'])
+                    if not creds or not enabled:
+                        out.append(f'{MP_TITLES[mp]}: нет ключей или выключено')
+                        continue
+                    try:
+                        if mp == 'ozon':
+                            lines = _card_live_ozon(creds, item_row, q)
+                        elif mp == 'wildberries':
+                            lines = _card_live_wb(creds, item_row, q)
+                        else:
+                            lines = _card_live_ym(creds, item_row, q)
+                    except Exception as e:
+                        lines = [f'{MP_TITLES[mp]}: ошибка ({str(e)[:150]})']
+                    secrets = [str(v) for v in creds.values() if isinstance(v, (str, int))]
+                    out.append(_scrub('\n'.join(lines), secrets))
+                if item_row:
+                    break  # для строки CRM достаточно её магазина
+        out.append(
+            'Формат ответа менеджеру: 1) что с карточкой сейчас, 2) SEO/контент по пунктам, '
+            '3) остатки/цена/реклама/отзывы если есть, 4) что поправить руками в кабинете, '
+            '5) ссылка на официальную справку площадки.'
+        )
+        return '\n'.join(out)
+    except Exception as e:
+        return f'Не удалось разобрать карточку: {str(e)[:300]}'
+    finally:
+        conn.close()
+
+
 def _cabinet_read(dsn, schema, args):
     what = (args.get('what') or 'overview').strip().lower()
     mps = _mp_list(args.get('marketplace'))
+    query = (args.get('query') or args.get('sku') or args.get('offer_id') or '').strip()
+    if what == 'card':
+        shop = None
+        conn = _ro_conn(dsn)
+        try:
+            cur = conn.cursor()
+            shop = _resolve_shop(cur, schema, args.get('shop_id'))
+        finally:
+            conn.close()
+        if shop == 'unknown':
+            return 'Магазин не найден. Возьмите shop_id из what=overview.'
+        return _card_analyze(dsn, schema, shop, mps, query)
     conn = _ro_conn(dsn)
     try:
         cur = conn.cursor()
@@ -555,7 +1051,9 @@ def _cabinet_read(dsn, schema, args):
             return _attention(cur, schema, shop, mps)
         if what == 'live':
             return _live(cur, schema, shop, mps)
-        return 'Неизвестный what. Допустимо: overview | listings | ads | attention | live'
+        return (
+            'Неизвестный what. Допустимо: overview | listings | ads | attention | live | card'
+        )
     except Exception as e:
         return f'Не удалось прочитать данные: {str(e)[:300]}'
     finally:
@@ -667,16 +1165,53 @@ def _read_page(url):
 
 # ---------------------------------------------------------------- модель
 
+def _aitunnel_bases():
+    """Базы AITUNNEL: сначала основная, при блоке сети — зеркало ru-api."""
+    preferred = (os.environ.get('AITUNNEL_BASE_URL', '') or '').strip().rstrip('/')
+    bases = []
+    if preferred:
+        bases.append(preferred)
+    for b in AITUNNEL_BASES:
+        if b not in bases:
+            bases.append(b)
+    return bases
+
+
+def _aitunnel_open(path, api_key, payload=None, timeout=30):
+    """GET или POST к AITUNNEL. При сетевом сбое пробует зеркало ru-api.
+
+    HTTP-ответ от сервера (4xx/5xx) — это уже AITUNNEL, зеркало не меняет смысл.
+    Переключаемся только когда до сервера не достучались.
+    """
+    body = None
+    method = 'GET'
+    if payload is not None:
+        method = 'POST'
+        body = json.dumps(payload, ensure_ascii=False).encode('utf-8')
+    headers = {
+        'Authorization': f'Bearer {api_key}',
+        'Content-Type': 'application/json',
+    }
+    last_err = None
+    for base in _aitunnel_bases():
+        url = base.rstrip('/') + '/' + path.lstrip('/')
+        req = urllib.request.Request(url, data=body, method=method, headers=headers)
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as r:
+                return json.loads(r.read().decode('utf-8')), None, 0
+        except urllib.error.HTTPError as e:
+            raw = e.read().decode('utf-8', 'ignore')
+            return None, f'Сервис ИИ ответил ошибкой {e.code}: {raw[:300]}', e.code
+        except Exception as e:
+            last_err = e
+            continue
+    return None, f'Не удалось связаться с сервисом ИИ: {last_err}', 0
+
+
 def _key_allowed_models(api_key):
     """Белый список моделей ключа AITUNNEL. None — ограничений нет или ключ не ответил."""
-    req = urllib.request.Request(
-        AITUNNEL_KEY_URL,
-        headers={'Authorization': f'Bearer {api_key}'},
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=8) as r:
-            data = json.loads(r.read().decode('utf-8'))
-    except Exception:
+    data, err, _code = _aitunnel_open('aitunnel/key', api_key, None, timeout=8)
+    if data is None:
         return None
     allowed = data.get('allowed_models')
     if not isinstance(allowed, list) or not allowed:
@@ -750,19 +1285,7 @@ def _call_model(api_key, model, messages, tools):
     }
     if tools:
         payload['tools'] = tools
-    req = urllib.request.Request(
-        AITUNNEL_URL,
-        data=json.dumps(payload, ensure_ascii=False).encode('utf-8'),
-        headers={'Authorization': f'Bearer {api_key}', 'Content-Type': 'application/json'},
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=120) as r:
-            return json.loads(r.read().decode('utf-8')), None, 0
-    except urllib.error.HTTPError as e:
-        body = e.read().decode('utf-8', 'ignore')
-        return None, f'Сервис ИИ ответил ошибкой {e.code}: {body[:300]}', e.code
-    except Exception as e:
-        return None, f'Не удалось связаться с сервисом ИИ: {e}', 0
+    return _aitunnel_open('chat/completions', api_key, payload, timeout=120)
 
 
 def _ask_model(api_key, messages, tools, state):
@@ -798,7 +1321,8 @@ SYSTEM_PROMPT = """Ты — МЕГАМАГ, помощник менеджера 
 штор и тюля. Магазины: МЕГАТЮЛЬ и ДЮНА. Площадки: OZON, Wildberries, Яндекс Маркет.
 
 ТВОЯ ЗОНА: витрина и кабинет продавца — карточки и их качество, SEO (заголовки, описания,
-характеристики, фото), реклама и ДРР, отзывы, остатки на складах площадки, что требует внимания.
+характеристики, фото, штрихкоды), рейтинг контента, реклама и ДРР, отзывы, остатки на
+складах площадки, цены, что требует внимания.
 НЕ ТВОЯ ЗОНА: бухгалтерия, 1С, налоги, зарплаты, раскрой, склад цеха. На такие вопросы вежливо
 скажи, что это к МЕГАБУХу или к администратору, и не отвечай по существу.
 
@@ -807,28 +1331,66 @@ SYSTEM_PROMPT = """Ты — МЕГАМАГ, помощник менеджера 
 где и как менеджер сделает это сам в кабинете (по шагам), со ссылкой на официальную справку.
 
 ИНСТРУМЕНТЫ:
-- cabinet_read: what = overview (магазины и подключения), listings (карточки без привязки,
-  нулевые остатки), ads (реклама, ДРР), attention (что горит), live (живой обход кабинета
-  площадки). marketplace = ozon | wildberries | yandex_market | all. shop_id — из overview.
-  Начинай с overview, если не знаешь shop_id. Для свежей картины кабинета — live.
+- cabinet_read:
+  what=overview — магазины и подключения ключей.
+  what=listings — справочник карточек, дыры в привязках, нулевые остатки, цены.
+  what=ads — реклама и ДРР.
+  what=attention — что горит (отзывы 1–3★, дорогая реклама, нули, кабинеты без ключей).
+  what=live — живой обход кабинета площадки (счётчики и проблемные выборки).
+  what=card — РАЗБОР КОНКРЕТНОЙ КАРТОЧКИ. Обязателен query: артикул sku / offer_id OZON /
+    nmID WB / offerId Яндекса / часть названия. Читает CRM + живой кабинет: заголовок,
+    описание, фото, характеристики, ошибки модерации, рейтинг контента, остатки, цену,
+    рекламу, отзывы.
+  marketplace = ozon | wildberries | yandex_market | all. shop_id — из overview.
+  Если спрашивают про карточку, SEO, «проверь артикул», «разбери товар» — сразу what=card.
+  Если магазин неизвестен — сначала overview, потом card/live с shop_id.
+
 - web_search: только официальные справки, запрос ВСЕГДА с site: — seller-edu.ozon.ru,
   docs.ozon.ru, seller.wildberries.ru, dev.wildberries.ru, yandex.ru/support.
 - read_page: открыть страницу этих же доменов.
 
+КАК РАЗБИРАТЬ КАРТОЧКУ (развёрнутый ответ):
+1) Что это за товар в CRM (магазин, sku, размер, материал, привязки к площадкам).
+2) Что видит кабинет площадки прямо сейчас (название, длина, фото, описание, атрибуты,
+   ошибки, рейтинг контента).
+3) Коммерция: остаток, цена, реклама/ДРР, свежие отзывы.
+4) Вердикт SEO: что мешает продажам (конкретно), что уже нормально.
+5) План правок руками в кабинете — по приоритету, без воды.
+6) Если правило площадки спорное — подтверди официальной справкой (web_search/read_page).
+
 ПРАВИЛА ОТВЕТА:
-- Опирайся на цифры из инструментов; не выдумывай. Нет данных — так и скажи.
+- Опирайся на цифры из инструментов; не выдумывай. Нет данных — так и скажи и что проверить.
 - Никогда не показывай ключи, токены, Client-Id, пароли.
-- Отвечай по-русски, коротко и по делу: сначала вывод, потом список действий по приоритету.
-- Правила площадок подтверждай ссылкой на официальную справку."""
+- Отвечай по-русски, развёрнуто по делу: сначала вывод, потом блоки выше. Не односложный ответ.
+- Не отказывайся «я не вижу карточку», пока не вызвал what=card (и при необходимости live)."""
 
 TOOLS = [
     {'type': 'function', 'function': {
         'name': 'cabinet_read',
-        'description': 'Читает данные кабинетов маркетплейсов (только чтение).',
+        'description': (
+            'Читает данные кабинетов маркетплейсов (только чтение). '
+            'Для разбора одной карточки: what=card и query=артикул/название.'
+        ),
         'parameters': {'type': 'object', 'properties': {
-            'what': {'type': 'string', 'enum': ['overview', 'listings', 'ads', 'attention', 'live']},
-            'marketplace': {'type': 'string', 'enum': ['ozon', 'wildberries', 'yandex_market', 'all']},
-            'shop_id': {'type': 'string', 'description': 'id магазина из overview (МЕГАТЮЛЬ / ДЮНА); пусто — все'},
+            'what': {
+                'type': 'string',
+                'enum': ['overview', 'listings', 'ads', 'attention', 'live', 'card'],
+            },
+            'marketplace': {
+                'type': 'string',
+                'enum': ['ozon', 'wildberries', 'yandex_market', 'all'],
+            },
+            'shop_id': {
+                'type': 'string',
+                'description': 'id магазина из overview (МЕГАТЮЛЬ / ДЮНА); пусто — все',
+            },
+            'query': {
+                'type': 'string',
+                'description': (
+                    'Для what=card: sku, offer_id OZON, nmID WB, offerId Яндекса '
+                    'или часть названия товара'
+                ),
+            },
         }, 'required': ['what']},
     }},
     {'type': 'function', 'function': {
@@ -953,6 +1515,7 @@ def handler(event: dict, context) -> dict:
                 queries_ran.append(
                     f"cabinet: {args.get('what') or 'overview'} / {args.get('marketplace') or 'all'}"
                     + (f" / shop {args.get('shop_id')}" if args.get('shop_id') else '')
+                    + (f" / q {args.get('query')}" if args.get('query') else '')
                 )
             elif name == 'web_search':
                 q = (args.get('query') or '').strip()

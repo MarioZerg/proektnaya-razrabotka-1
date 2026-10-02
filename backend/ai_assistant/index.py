@@ -31,8 +31,12 @@ import urllib.request
 
 import psycopg2
 
-AITUNNEL_URL = 'https://api.aitunnel.ru/v1/chat/completions'
-AITUNNEL_KEY_URL = 'https://api.aitunnel.ru/v1/aitunnel/key'
+# Основной API и зеркало: у части провайдеров блокируют api.aitunnel.ru —
+# тогда тот же ключ и пути работают на ru-api.
+AITUNNEL_BASES = (
+    'https://api.aitunnel.ru/v1',
+    'https://ru-api.aitunnel.ru/v1',
+)
 
 # Если ключ без белого списка — auto подберёт модель из каталога AITUNNEL.
 # Список ниже: запас, когда auto или заказанная модель ключу недоступны.
@@ -624,6 +628,49 @@ def _read_attachments(files) -> tuple:
     return excerpt[:MAX_DOC_CHARS * 2], images[:4]
 
 
+def _aitunnel_bases():
+    """Базы AITUNNEL: сначала основная, при блоке сети — зеркало ru-api."""
+    preferred = (os.environ.get('AITUNNEL_BASE_URL', '') or '').strip().rstrip('/')
+    bases = []
+    if preferred:
+        bases.append(preferred)
+    for b in AITUNNEL_BASES:
+        if b not in bases:
+            bases.append(b)
+    return bases
+
+
+def _aitunnel_open(path, api_key, payload=None, timeout=30):
+    """GET или POST к AITUNNEL. При сетевом сбое пробует зеркало ru-api.
+
+    HTTP-ответ от сервера (4xx/5xx) — это уже AITUNNEL, зеркало не меняет смысл.
+    Переключаемся только когда до сервера не достучались.
+    """
+    body = None
+    method = 'GET'
+    if payload is not None:
+        method = 'POST'
+        body = json.dumps(payload, ensure_ascii=False).encode('utf-8')
+    headers = {
+        'Authorization': f'Bearer {api_key}',
+        'Content-Type': 'application/json',
+    }
+    last_err = None
+    for base in _aitunnel_bases():
+        url = base.rstrip('/') + '/' + path.lstrip('/')
+        req = urllib.request.Request(url, data=body, method=method, headers=headers)
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as r:
+                return json.loads(r.read().decode('utf-8')), None, 0
+        except urllib.error.HTTPError as e:
+            raw = e.read().decode('utf-8', 'ignore')
+            return None, f'Сервис ИИ ответил ошибкой {e.code}: {raw[:300]}', e.code
+        except Exception as e:
+            last_err = e
+            continue
+    return None, f'Не удалось связаться с сервисом ИИ: {last_err}', 0
+
+
 def _call_model(api_key, model, messages, tools):
     """Один запрос к сервису ИИ. Возвращает (ответ, ошибка, код ошибки)."""
     payload = {
@@ -634,34 +681,13 @@ def _call_model(api_key, model, messages, tools):
     }
     if tools:
         payload['tools'] = tools
-    req = urllib.request.Request(
-        AITUNNEL_URL,
-        data=json.dumps(payload, ensure_ascii=False).encode('utf-8'),
-        headers={
-            'Authorization': f'Bearer {api_key}',
-            'Content-Type': 'application/json',
-        },
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=120) as r:
-            return json.loads(r.read().decode('utf-8')), None, 0
-    except urllib.error.HTTPError as e:
-        body = e.read().decode('utf-8', 'ignore')
-        return None, f'Сервис ИИ ответил ошибкой {e.code}: {body[:300]}', e.code
-    except Exception as e:
-        return None, f'Не удалось связаться с сервисом ИИ: {e}', 0
+    return _aitunnel_open('chat/completions', api_key, payload, timeout=120)
 
 
 def _key_allowed_models(api_key):
     """Белый список моделей ключа AITUNNEL. None — ограничений нет или ключ не ответил."""
-    req = urllib.request.Request(
-        AITUNNEL_KEY_URL,
-        headers={'Authorization': f'Bearer {api_key}'},
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=8) as r:
-            data = json.loads(r.read().decode('utf-8'))
-    except Exception:
+    data, err, _code = _aitunnel_open('aitunnel/key', api_key, None, timeout=8)
+    if data is None:
         return None
     allowed = data.get('allowed_models')
     if not isinstance(allowed, list) or not allowed:
@@ -1370,17 +1396,12 @@ def handler(event: dict, context) -> dict:
             return {'statusCode': 200, 'headers': headers,
                     'body': json.dumps(checked, ensure_ascii=False)}
 
-        req = urllib.request.Request(
-            'https://api.aitunnel.ru/v1/models',
-            headers={'Authorization': f'Bearer {api_key}'},
-        )
-        try:
-            with urllib.request.urlopen(req, timeout=30) as r:
-                data = json.loads(r.read().decode())
-            ids = [m.get('id') for m in data.get('data', [])]
-        except Exception as e:
+        data, err, _code = _aitunnel_open('models', api_key, None, timeout=30)
+        if data is None:
             return {'statusCode': 502, 'headers': headers,
-                    'body': json.dumps({'error': str(e)}, ensure_ascii=False)}
+                    'body': json.dumps({'error': err or 'Не удалось получить список моделей'},
+                                       ensure_ascii=False)}
+        ids = [m.get('id') for m in data.get('data', [])]
         return {'statusCode': 200, 'headers': headers,
                 'body': json.dumps({
                     'total': len(ids),
