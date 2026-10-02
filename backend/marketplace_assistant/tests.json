@@ -1,0 +1,30 @@
+{
+  "tests": [
+    {
+      "name": "OPTIONS preflight",
+      "method": "OPTIONS",
+      "path": "/",
+      "expectedStatus": 200
+    },
+    {
+      "name": "GET not allowed",
+      "method": "GET",
+      "path": "/",
+      "expectedStatus": 405
+    },
+    {
+      "name": "Empty question rejected",
+      "method": "POST",
+      "path": "/",
+      "body": { "question": "" },
+      "expectedStatus": 400
+    },
+    {
+      "name": "Question without userId rejected",
+      "method": "POST",
+      "path": "/",
+      "body": { "question": "что требует внимания" },
+      "expectedStatus": 400
+    }
+  ]
+}
