@@ -28,10 +28,12 @@ import psycopg2
 
 AITUNNEL_URL = 'https://api.aitunnel.ru/v1/chat/completions'
 AITUNNEL_KEY_URL = 'https://api.aitunnel.ru/v1/aitunnel/key'
-# Имя из кабинета AITUNNEL — то, что ключ реально пускает по API.
+# Запас, если ключ без белого списка и auto не ответил.
 DEFAULT_MODEL = 'openai/gpt-6-luna-pro'
 MODEL_CANDIDATES = [
     DEFAULT_MODEL,
+    'gpt-6-luna-pro',
+    'gpt-6.1-sol-pro',
     'gpt-4o-mini',
     'gpt-4.1-mini',
     'gpt-5-mini',
@@ -687,27 +689,54 @@ def _key_allowed_models(api_key):
     return out or None
 
 
+def _model_aliases(name):
+    """В каталоге одно и то же часто лежит как gpt-6-luna-pro и openai/gpt-6-luna-pro."""
+    n = (name or '').strip()
+    if not n or n == 'auto':
+        return [n] if n else []
+    out = [n]
+    if n.startswith('openai/'):
+        out.append(n.split('/', 1)[1])
+    elif '/' not in n:
+        out.append('openai/' + n)
+    seen = []
+    for item in out:
+        if item and item not in seen:
+            seen.append(item)
+    return seen
+
+
+def _add_models(ordered, name):
+    for alias in _model_aliases(name):
+        if alias not in ordered:
+            ordered.append(alias)
+
+
 def _model_candidates(api_key, state):
+    """Модель берём с ключа: если он ограничен — только его список, иначе auto."""
     if state.get('candidates'):
         return state['candidates']
-    preferred = os.environ.get('AITUNNEL_MODEL', '').strip() or DEFAULT_MODEL
+    preferred = os.environ.get('AITUNNEL_MODEL', '').strip()
     allowed = _key_allowed_models(api_key)
     state['allowed_models'] = allowed
     ordered = []
-    if preferred:
-        if not allowed or preferred in allowed:
-            ordered.append(preferred)
     if allowed:
-        for model in MODEL_CANDIDATES:
-            if model in allowed and model not in ordered:
-                ordered.append(model)
-        for model in allowed:
-            if model not in ordered:
-                ordered.append(model)
-    else:
-        for model in MODEL_CANDIDATES:
-            if model not in ordered:
-                ordered.append(model)
+        if preferred:
+            pref_set = set(_model_aliases(preferred))
+            for name in allowed:
+                if pref_set & set(_model_aliases(name)):
+                    _add_models(ordered, name)
+                    break
+        for name in allowed:
+            _add_models(ordered, name)
+        state['candidates'] = ordered[:8]
+        return state['candidates']
+    if preferred:
+        _add_models(ordered, preferred)
+    _add_models(ordered, 'auto')
+    _add_models(ordered, DEFAULT_MODEL)
+    for name in MODEL_CANDIDATES:
+        _add_models(ordered, name)
     state['candidates'] = ordered[:8]
     return state['candidates']
 
@@ -758,9 +787,9 @@ def _ask_model(api_key, messages, tools, state):
         )
     elif last_err and ('не разрешена' in last_err or '403' in last_err):
         last_err = (
-            'Ключ AITUNNEL ограничен другой моделью. В aitunnel.ru → Ключи '
-            'либо очистите список моделей (тогда доступны все), либо оставьте '
-            'ту, что выбрали, и в Поехали задайте AITUNNEL_MODEL тем же именем.'
+            'Ключ AITUNNEL ограничен моделями, которых МЕГАМАГ не смог вызвать. '
+            'Имена должны совпасть с каталогом один в один (gpt-6-luna-pro и '
+            'openai/gpt-6-luna-pro — разные записи).'
         )
     return None, last_err
 

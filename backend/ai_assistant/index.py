@@ -32,13 +32,15 @@ import urllib.request
 import psycopg2
 
 AITUNNEL_URL = 'https://api.aitunnel.ru/v1/chat/completions'
+AITUNNEL_KEY_URL = 'https://api.aitunnel.ru/v1/aitunnel/key'
 
-# Модель берётся из настроек, а если её там нет — первая рабочая из списка.
-# Список нужен потому, что ключи в aitunnel открывают разный набор моделей:
-# заказанная может оказаться недоступна, и вместо ответа человек получил бы
-# ошибку. Все варианты — недорогие и быстрые, разница для наших вопросов
-# незаметна.
+# Если ключ без белого списка — auto подберёт модель из каталога AITUNNEL.
+# Список ниже: запас, когда auto или заказанная модель ключу недоступны.
 MODEL_CANDIDATES = [
+    'auto',
+    'openai/gpt-6-luna-pro',
+    'gpt-6-luna-pro',
+    'gpt-6.1-sol-pro',
     'gpt-4o-mini',
     'gpt-4.1-mini',
     'gpt-5-mini',
@@ -628,6 +630,7 @@ def _call_model(api_key, model, messages, tools):
         'model': model,
         'messages': messages,
         'temperature': 0.2,
+        'max_tokens': 2000,
     }
     if tools:
         payload['tools'] = tools
@@ -649,32 +652,103 @@ def _call_model(api_key, model, messages, tools):
         return None, f'Не удалось связаться с сервисом ИИ: {e}', 0
 
 
+def _key_allowed_models(api_key):
+    """Белый список моделей ключа AITUNNEL. None — ограничений нет или ключ не ответил."""
+    req = urllib.request.Request(
+        AITUNNEL_KEY_URL,
+        headers={'Authorization': f'Bearer {api_key}'},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=8) as r:
+            data = json.loads(r.read().decode('utf-8'))
+    except Exception:
+        return None
+    allowed = data.get('allowed_models')
+    if not isinstance(allowed, list) or not allowed:
+        return None
+    out = []
+    for item in allowed:
+        name = str(item or '').strip()
+        if name and name not in out:
+            out.append(name)
+    return out or None
+
+
+def _model_aliases(name):
+    """В каталоге одно и то же часто лежит как gpt-6-luna-pro и openai/gpt-6-luna-pro."""
+    n = (name or '').strip()
+    if not n or n == 'auto':
+        return [n] if n else []
+    out = [n]
+    if n.startswith('openai/'):
+        out.append(n.split('/', 1)[1])
+    elif '/' not in n:
+        out.append('openai/' + n)
+    seen = []
+    for item in out:
+        if item and item not in seen:
+            seen.append(item)
+    return seen
+
+
+def _add_models(ordered, name):
+    for alias in _model_aliases(name):
+        if alias not in ordered:
+            ordered.append(alias)
+
+
+def _model_candidates(api_key, state):
+    """Ключ с белым списком — зовём только его модели. Иначе auto из каталога."""
+    if state.get('candidates'):
+        return state['candidates']
+    preferred = os.environ.get('AITUNNEL_MODEL', '').strip()
+    allowed = _key_allowed_models(api_key)
+    state['allowed_models'] = allowed
+    ordered = []
+    if allowed:
+        if preferred:
+            pref_set = set(_model_aliases(preferred))
+            for name in allowed:
+                if pref_set & set(_model_aliases(name)):
+                    _add_models(ordered, name)
+                    break
+        for name in allowed:
+            _add_models(ordered, name)
+        state['candidates'] = ordered[:8]
+        return state['candidates']
+    if preferred:
+        _add_models(ordered, preferred)
+    for name in MODEL_CANDIDATES:
+        _add_models(ordered, name)
+    state['candidates'] = ordered[:8]
+    return state['candidates']
+
+
 def _ask_model(api_key, messages, tools, model_state):
     """Отправляет диалог модели и возвращает её ответ.
 
-    Если выбранная модель ключу недоступна (сервис отвечает 403), молча
-    переключаемся на следующую из списка: для человека это должно выглядеть
-    как обычный ответ, а не как ошибка настройки.
+    Модель подбирается по ключу AITUNNEL: если в кабинете ключ ограничен
+    одной моделью — зовём её. Если список пустой — auto, затем запасные.
     """
     if model_state.get('model'):
         return _call_model(api_key, model_state['model'], messages, tools)[:2]
-
-    preferred = os.environ.get('AITUNNEL_MODEL', '').strip()
-    candidates = ([preferred] if preferred else []) + [
-        m for m in MODEL_CANDIDATES if m != preferred
-    ]
     last_err = 'Не удалось подобрать доступную модель'
-    for model in candidates:
+    for model in _model_candidates(api_key, model_state):
         data, err, code = _call_model(api_key, model, messages, tools)
         if data is not None:
-            # Запомнили рабочую модель — дальше в этом же вопросе не перебираем.
             model_state['model'] = model
             return data, None
         last_err = err
-        # 403 — модель ключу не разрешена, пробуем следующую. Остальные ошибки
-        # (сеть, лимиты) перебором не лечатся.
-        if code != 403:
+        if code not in (400, 403, 404):
             break
+    allowed = model_state.get('allowed_models') or []
+    if allowed and last_err:
+        last_err = (
+            last_err
+            + ' Ключ AITUNNEL разрешает только: '
+            + ', '.join(allowed[:8])
+            + '.'
+        )
     return None, last_err
 
 
@@ -1308,7 +1382,11 @@ def handler(event: dict, context) -> dict:
             return {'statusCode': 502, 'headers': headers,
                     'body': json.dumps({'error': str(e)}, ensure_ascii=False)}
         return {'statusCode': 200, 'headers': headers,
-                'body': json.dumps({'total': len(ids), 'models': ids}, ensure_ascii=False)}
+                'body': json.dumps({
+                    'total': len(ids),
+                    'models': ids,
+                    'allowed_models': _key_allowed_models(api_key),
+                }, ensure_ascii=False)}
 
     if method != 'POST':
         return {'statusCode': 405, 'headers': headers,
@@ -1466,12 +1544,19 @@ def handler(event: dict, context) -> dict:
             # Частый случай — ключ выпущен с ограничением по списку моделей.
             # Человеку нужен не текст ошибки сервиса, а что именно поправить.
             if 'не разрешена для этого API-ключа' in err:
-                err = (
-                    'Ключ доступа к ИИ выдан без прав на модели. Зайдите в личный '
-                    'кабинет aitunnel.ru → раздел с ключами → откройте ключ и '
-                    'разрешите ему модель (например gpt-4o-mini) либо создайте '
-                    'новый ключ без ограничений по моделям.'
-                )
+                allowed = model_state.get('allowed_models') or []
+                if allowed:
+                    err = (
+                        'Ключ AITUNNEL пускает только: '
+                        + ', '.join(allowed[:8])
+                        + '. Агент подставляет эти имена сам — опубликуйте функцию.'
+                    )
+                else:
+                    err = (
+                        'Ключ доступа к ИИ выдан без прав на модели. В aitunnel.ru '
+                        'у ключа либо очистите список моделей, либо оставьте ту, '
+                        'что выбрали — агент возьмёт её с ключа автоматически.'
+                    )
             return {'statusCode': 502, 'headers': headers,
                     'body': json.dumps({'error': err}, ensure_ascii=False)}
 
