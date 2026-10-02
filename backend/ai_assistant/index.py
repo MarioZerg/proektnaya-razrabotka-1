@@ -18,6 +18,9 @@ backend/ai_assistant/business_memory.jsonl — факты и практики М
 
 import json
 import os
+import socket
+import threading
+import time
 import re
 import html as html_lib
 import base64
@@ -628,6 +631,27 @@ def _read_attachments(files) -> tuple:
     return excerpt[:MAX_DOC_CHARS * 2], images[:4]
 
 
+# Лимит функции на Поехали — 90 с. Держим запас, чтобы успеть вернуть ответ самим.
+REQUEST_BUDGET = 82
+_DEADLINE = [0.0]
+
+
+def _start_budget():
+    _DEADLINE[0] = time.monotonic() + REQUEST_BUDGET
+
+
+def _time_left():
+    if not _DEADLINE[0]:
+        return float(REQUEST_BUDGET)
+    return _DEADLINE[0] - time.monotonic()
+
+
+# База, до которой уже достучались (живёт, пока жив тёплый контейнер).
+_GOOD_BASE = ['']
+_DEAD_BASES = {}
+_DEAD_TTL = 300
+
+
 def _aitunnel_bases():
     """Базы AITUNNEL: сначала основная, при блоке сети — зеркало ru-api."""
     preferred = (os.environ.get('AITUNNEL_BASE_URL', '') or '').strip().rstrip('/')
@@ -637,7 +661,27 @@ def _aitunnel_bases():
     for b in AITUNNEL_BASES:
         if b not in bases:
             bases.append(b)
-    return bases
+    now = time.monotonic()
+    alive = [b for b in bases if now - _DEAD_BASES.get(b, -1e9) > _DEAD_TTL]
+    dead = [b for b in bases if b not in alive]
+    good = _GOOD_BASE[0]
+    if good in alive:
+        alive.remove(good)
+        alive.insert(0, good)
+    return alive + dead
+
+
+def _base_reachable(base, timeout=4):
+    """Быстрая проверка TCP+TLS: блок/зависание видно за секунды, а не за минуту."""
+    try:
+        host = urllib.parse.urlparse(base).hostname
+        import ssl
+        ctx = ssl.create_default_context()
+        with socket.create_connection((host, 443), timeout=timeout) as sock:
+            with ctx.wrap_socket(sock, server_hostname=host):
+                return True
+    except Exception:
+        return False
 
 
 def _aitunnel_open(path, api_key, payload=None, timeout=30):
@@ -658,15 +702,34 @@ def _aitunnel_open(path, api_key, payload=None, timeout=30):
     last_err = None
     for base in _aitunnel_bases():
         url = base.rstrip('/') + '/' + path.lstrip('/')
+        left = _time_left() - 2
+        if left < 3:
+            last_err = last_err or 'не хватило времени на запрос'
+            break
+        if base != _GOOD_BASE[0] and not _base_reachable(base, timeout=min(8, left)):
+            _DEAD_BASES[base] = time.monotonic()
+            last_err = 'нет соединения с ' + (urllib.parse.urlparse(base).hostname or base)
+            print(f'[aitunnel] {base} недоступен, пробую зеркало', flush=True)
+            continue
         req = urllib.request.Request(url, data=body, method=method, headers=headers)
+        t_req = time.monotonic()
         try:
-            with urllib.request.urlopen(req, timeout=timeout) as r:
-                return json.loads(r.read().decode('utf-8')), None, 0
+            with urllib.request.urlopen(req, timeout=min(timeout, left)) as r:
+                out = json.loads(r.read().decode('utf-8'))
+            print(f'[aitunnel] {path} via {urllib.parse.urlparse(base).hostname} {time.monotonic() - t_req:.1f}s', flush=True)
+            _GOOD_BASE[0] = base
+            _DEAD_BASES.pop(base, None)
+            return out, None, 0
         except urllib.error.HTTPError as e:
+            _GOOD_BASE[0] = base
             raw = e.read().decode('utf-8', 'ignore')
             return None, f'Сервис ИИ ответил ошибкой {e.code}: {raw[:300]}', e.code
         except Exception as e:
             last_err = e
+            _DEAD_BASES[base] = time.monotonic()
+            if _GOOD_BASE[0] == base:
+                _GOOD_BASE[0] = ''
+            print(f'[aitunnel] {path} {base} сбой сети через {time.monotonic() - t_req:.1f}s: {type(e).__name__}', flush=True)
             continue
     return None, f'Не удалось связаться с сервисом ИИ: {last_err}', 0
 
@@ -681,14 +744,36 @@ def _call_model(api_key, model, messages, tools):
     }
     if tools:
         payload['tools'] = tools
-    return _aitunnel_open('chat/completions', api_key, payload, timeout=120)
+    return _aitunnel_open('chat/completions', api_key, payload, timeout=75)
+
+
+_KEY_CACHE = {}
+_KEY_TTL = 600
 
 
 def _key_allowed_models(api_key):
     """Белый список моделей ключа AITUNNEL. None — ограничений нет или ключ не ответил."""
+    cached = _KEY_CACHE.get(api_key)
+    if cached and time.monotonic() - cached[0] < _KEY_TTL:
+        return cached[1]
     data, err, _code = _aitunnel_open('aitunnel/key', api_key, None, timeout=8)
     if data is None:
         return None
+    result = _parse_allowed(data)
+    _KEY_CACHE[api_key] = (time.monotonic(), result)
+    return result
+
+
+def _warm_key(api_key):
+    """Список моделей ключа тянем в фоне, пока читаем базу — экономим 8–12 с."""
+    if api_key in _KEY_CACHE:
+        return None
+    t = threading.Thread(target=_key_allowed_models, args=(api_key,), daemon=True)
+    t.start()
+    return t
+
+
+def _parse_allowed(data):
     allowed = data.get('allowed_models')
     if not isinstance(allowed, list) or not allowed:
         return None
@@ -1363,6 +1448,7 @@ def handler(event: dict, context) -> dict:
       role     — текущая панель: accountant
       mode     — 'marketplace_digest': суточный обход новостей OZON/WB/Яндекс Маркет
     """
+    _start_budget()
     method = event.get('httpMethod', 'GET')
 
     if method == 'OPTIONS':
@@ -1439,6 +1525,7 @@ def handler(event: dict, context) -> dict:
 
     dsn = os.environ['DATABASE_URL']
     schema = os.environ.get('MAIN_DB_SCHEMA', 'public')
+    _warm_key(api_key)
 
     # ПРАВО ДОСТУПА ПРОВЕРЯЕМ ПО БАЗЕ, А НЕ ПО ФЛАГУ ИЗ БРАУЗЕРА.
     conn = psycopg2.connect(dsn)

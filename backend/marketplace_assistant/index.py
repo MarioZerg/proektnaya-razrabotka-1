@@ -17,6 +17,9 @@ POST { question, history?, userId, role? }
 
 import json
 import os
+import socket
+import threading
+import time
 import re
 import html as html_lib
 import ipaddress
@@ -398,7 +401,7 @@ def _mp_call(method, url, headers, payload=None):
         req.add_header(k, v)
     req.add_header('Content-Type', 'application/json')
     try:
-        with urllib.request.urlopen(req, timeout=MP_TIMEOUT) as r:
+        with urllib.request.urlopen(req, timeout=max(4, min(MP_TIMEOUT, _time_left() - 30))) as r:
             raw = r.read().decode('utf-8', 'replace')
             return r.status, (json.loads(raw) if raw else {})
     except urllib.error.HTTPError as e:
@@ -1090,7 +1093,7 @@ def _url_allowed(url):
     return False
 
 
-def _http_get(url, timeout=20):
+def _http_get(url, timeout=12):
     req = urllib.request.Request(url, headers={
         'User-Agent': 'Mozilla/5.0 (compatible; MegatulMarketplace/1.0)',
         'Accept': 'text/plain, text/html;q=0.9, */*;q=0.8',
@@ -1165,6 +1168,27 @@ def _read_page(url):
 
 # ---------------------------------------------------------------- модель
 
+# Лимит функции на Поехали — 90 с. Держим запас, чтобы успеть вернуть ответ самим.
+REQUEST_BUDGET = 82
+_DEADLINE = [0.0]
+
+
+def _start_budget():
+    _DEADLINE[0] = time.monotonic() + REQUEST_BUDGET
+
+
+def _time_left():
+    if not _DEADLINE[0]:
+        return float(REQUEST_BUDGET)
+    return _DEADLINE[0] - time.monotonic()
+
+
+# База, до которой уже достучались (живёт, пока жив тёплый контейнер).
+_GOOD_BASE = ['']
+_DEAD_BASES = {}
+_DEAD_TTL = 300
+
+
 def _aitunnel_bases():
     """Базы AITUNNEL: сначала основная, при блоке сети — зеркало ru-api."""
     preferred = (os.environ.get('AITUNNEL_BASE_URL', '') or '').strip().rstrip('/')
@@ -1174,7 +1198,27 @@ def _aitunnel_bases():
     for b in AITUNNEL_BASES:
         if b not in bases:
             bases.append(b)
-    return bases
+    now = time.monotonic()
+    alive = [b for b in bases if now - _DEAD_BASES.get(b, -1e9) > _DEAD_TTL]
+    dead = [b for b in bases if b not in alive]
+    good = _GOOD_BASE[0]
+    if good in alive:
+        alive.remove(good)
+        alive.insert(0, good)
+    return alive + dead
+
+
+def _base_reachable(base, timeout=4):
+    """Быстрая проверка TCP+TLS: блок/зависание видно за секунды, а не за минуту."""
+    try:
+        host = urllib.parse.urlparse(base).hostname
+        import ssl
+        ctx = ssl.create_default_context()
+        with socket.create_connection((host, 443), timeout=timeout) as sock:
+            with ctx.wrap_socket(sock, server_hostname=host):
+                return True
+    except Exception:
+        return False
 
 
 def _aitunnel_open(path, api_key, payload=None, timeout=30):
@@ -1195,24 +1239,65 @@ def _aitunnel_open(path, api_key, payload=None, timeout=30):
     last_err = None
     for base in _aitunnel_bases():
         url = base.rstrip('/') + '/' + path.lstrip('/')
+        left = _time_left() - 2
+        if left < 3:
+            last_err = last_err or 'не хватило времени на запрос'
+            break
+        if base != _GOOD_BASE[0] and not _base_reachable(base, timeout=min(8, left)):
+            _DEAD_BASES[base] = time.monotonic()
+            last_err = 'нет соединения с ' + (urllib.parse.urlparse(base).hostname or base)
+            print(f'[aitunnel] {base} недоступен, пробую зеркало', flush=True)
+            continue
         req = urllib.request.Request(url, data=body, method=method, headers=headers)
+        t_req = time.monotonic()
         try:
-            with urllib.request.urlopen(req, timeout=timeout) as r:
-                return json.loads(r.read().decode('utf-8')), None, 0
+            with urllib.request.urlopen(req, timeout=min(timeout, left)) as r:
+                out = json.loads(r.read().decode('utf-8'))
+            print(f'[aitunnel] {path} via {urllib.parse.urlparse(base).hostname} {time.monotonic() - t_req:.1f}s', flush=True)
+            _GOOD_BASE[0] = base
+            _DEAD_BASES.pop(base, None)
+            return out, None, 0
         except urllib.error.HTTPError as e:
+            _GOOD_BASE[0] = base
             raw = e.read().decode('utf-8', 'ignore')
             return None, f'Сервис ИИ ответил ошибкой {e.code}: {raw[:300]}', e.code
         except Exception as e:
             last_err = e
+            _DEAD_BASES[base] = time.monotonic()
+            if _GOOD_BASE[0] == base:
+                _GOOD_BASE[0] = ''
+            print(f'[aitunnel] {path} {base} сбой сети через {time.monotonic() - t_req:.1f}s: {type(e).__name__}', flush=True)
             continue
     return None, f'Не удалось связаться с сервисом ИИ: {last_err}', 0
 
 
+_KEY_CACHE = {}
+_KEY_TTL = 600
+
+
 def _key_allowed_models(api_key):
     """Белый список моделей ключа AITUNNEL. None — ограничений нет или ключ не ответил."""
+    cached = _KEY_CACHE.get(api_key)
+    if cached and time.monotonic() - cached[0] < _KEY_TTL:
+        return cached[1]
     data, err, _code = _aitunnel_open('aitunnel/key', api_key, None, timeout=8)
     if data is None:
         return None
+    result = _parse_allowed(data)
+    _KEY_CACHE[api_key] = (time.monotonic(), result)
+    return result
+
+
+def _warm_key(api_key):
+    """Список моделей ключа тянем в фоне, пока читаем базу — экономим 8–12 с."""
+    if api_key in _KEY_CACHE:
+        return None
+    t = threading.Thread(target=_key_allowed_models, args=(api_key,), daemon=True)
+    t.start()
+    return t
+
+
+def _parse_allowed(data):
     allowed = data.get('allowed_models')
     if not isinstance(allowed, list) or not allowed:
         return None
@@ -1252,7 +1337,9 @@ def _model_candidates(api_key, state):
     if state.get('candidates'):
         return state['candidates']
     preferred = os.environ.get('AITUNNEL_MODEL', '').strip()
+    t0 = time.monotonic()
     allowed = _key_allowed_models(api_key)
+    print(f'[megamag] key models={allowed} {time.monotonic() - t0:.1f}s', flush=True)
     state['allowed_models'] = allowed
     ordered = []
     if allowed:
@@ -1285,7 +1372,7 @@ def _call_model(api_key, model, messages, tools):
     }
     if tools:
         payload['tools'] = tools
-    return _aitunnel_open('chat/completions', api_key, payload, timeout=120)
+    return _aitunnel_open('chat/completions', api_key, payload, timeout=75)
 
 
 def _ask_model(api_key, messages, tools, state):
@@ -1415,11 +1502,35 @@ def _resp(code, body, headers):
     return {'statusCode': code, 'headers': headers, 'body': json.dumps(body, ensure_ascii=False)}
 
 
+_CARD_INTENT = re.compile(r'карточк|артикул|\bsku\b|\bseo\b|\bсео\b|nmid|offer_?id|разбер|провер', re.I)
+_ART_TOKEN = re.compile(r'\b(?=[A-Za-z0-9_\-./]*\d)[A-Za-z0-9][A-Za-z0-9_\-./]{3,}\b')
+
+
+def _card_prefetch(question):
+    """Вопрос про конкретную карточку с артикулом — сразу готовим аргументы what=card."""
+    q = question or ''
+    if not _CARD_INTENT.search(q):
+        return None
+    m = _ART_TOKEN.search(q)
+    if not m:
+        return None
+    low = q.lower()
+    mp = 'all'
+    if 'ozon' in low or 'озон' in low:
+        mp = 'ozon'
+    elif 'wildberries' in low or re.search(r'\bwb\b|вб|вайлдб', low):
+        mp = 'wildberries'
+    elif 'яндекс' in low or 'маркет' in low or 'yandex' in low or re.search(r'\bym\b', low):
+        mp = 'yandex_market'
+    return {'what': 'card', 'marketplace': mp, 'query': m.group(0).strip('.-/')}
+
+
 def handler(event: dict, context) -> dict:
     """МЕГАМАГ: помощник менеджера по кабинетам OZON / WB / Яндекс Маркета. Только чтение.
 
     POST / { question, history?, userId, role? }
     """
+    _start_budget()
     method = event.get('httpMethod', 'GET')
     if method == 'OPTIONS':
         return {
@@ -1457,6 +1568,7 @@ def handler(event: dict, context) -> dict:
 
     dsn = os.environ['DATABASE_URL']
     schema = os.environ.get('MAIN_DB_SCHEMA', 'public')
+    key_thread = _warm_key(api_key)
 
     conn = _ro_conn(dsn)
     try:
@@ -1489,14 +1601,67 @@ def handler(event: dict, context) -> dict:
 
     queries_ran = []
     state = {}
-    for _ in range(MAX_STEPS):
-        data, err = _ask_model(api_key, messages, TOOLS, state)
+    t_start = time.monotonic()
+    pre = _card_prefetch(question)
+    if pre:
+        # Экономим один круг модели: шлюз Поехали рвёт долгие запросы.
+        t1 = time.monotonic()
+        pre_result = _cabinet_read(dsn, schema, pre)
+        print(f'[megamag] prefetch card {pre} {time.monotonic() - t1:.1f}s {len(pre_result or "")} chars', flush=True)
+        queries_ran.append(f"cabinet: card / {pre['marketplace']} / q {pre['query']}")
+        messages.append({
+            'role': 'assistant',
+            'content': None,
+            'tool_calls': [{
+                'id': 'prefetch_card',
+                'type': 'function',
+                'function': {'name': 'cabinet_read', 'arguments': json.dumps(pre, ensure_ascii=False)},
+            }],
+        })
+        messages.append({
+            'role': 'tool',
+            'tool_call_id': 'prefetch_card',
+            'content': (pre_result or '')[:MAX_TOOL_CHARS],
+        })
+    if key_thread:
+        key_thread.join(timeout=max(1, _time_left() - 60))
+    for step in range(MAX_STEPS):
+        # Время на исходе или последний шаг — просим ответить по уже собранным данным.
+        # Шлюз Поехали фактически рвёт ответ раньше 90 с — после ~30 с сворачиваемся.
+        final = _time_left() < 52 or step == MAX_STEPS - 1
+        if step == 0 and pre:
+            # Карточка уже прочитана — отвечаем за один круг, без похода в справку.
+            data, err = _ask_model(api_key, messages + [{
+                'role': 'user',
+                'content': 'Данные карточки выше. Дай развёрнутый разбор по схеме из инструкции '
+                           '(CRM, живой кабинет, остатки/цена/реклама/отзывы, вердикт SEO, что поправить руками). '
+                           'Инструменты сейчас не вызываются — не пиши «сейчас сверю», отвечай сразу.',
+            }], None, state)
+            print(f'[megamag] card one-shot {time.monotonic() - t_start:.1f}s err={bool(err)}', flush=True)
+            if not err:
+                msg = ((data.get('choices') or [{}])[0]).get('message') or {}
+                answer = (msg.get('content') or '').strip()
+                if answer:
+                    if api_key in answer:
+                        answer = answer.replace(api_key, '***')
+                    return _resp(200, {'answer': answer, 'queries': queries_ran, 'model': state.get('model')}, headers)
+        if final and step > 0:
+            messages.append({
+                'role': 'user',
+                'content': 'Время на ответ заканчивается. Больше инструменты не вызывай — '
+                           'дай развёрнутый ответ по уже полученным данным.',
+            })
+        t0 = time.monotonic()
+        data, err = _ask_model(api_key, messages, None if (final and step > 0) else TOOLS, state)
+        print(f'[megamag] step {step} model={state.get("model")} {time.monotonic() - t0:.1f}s left={_time_left():.0f}s err={bool(err)}', flush=True)
         if err:
             return _resp(502, {'error': err}, headers)
         msg = ((data.get('choices') or [{}])[0]).get('message') or {}
         calls = msg.get('tool_calls') or []
         if not calls:
             answer = (msg.get('content') or '').strip()
+            if api_key and api_key in answer:
+                answer = answer.replace(api_key, '***')
             return _resp(200, {
                 'answer': answer or 'Не удалось получить ответ, попробуйте переспросить.',
                 'queries': queries_ran,
@@ -1511,7 +1676,9 @@ def handler(event: dict, context) -> dict:
             except json.JSONDecodeError:
                 args = {}
             if name == 'cabinet_read':
+                t1 = time.monotonic()
                 result = _cabinet_read(dsn, schema, args)
+                print(f'[megamag] cabinet {args.get("what")} {time.monotonic() - t1:.1f}s', flush=True)
                 queries_ran.append(
                     f"cabinet: {args.get('what') or 'overview'} / {args.get('marketplace') or 'all'}"
                     + (f" / shop {args.get('shop_id')}" if args.get('shop_id') else '')
@@ -1527,6 +1694,7 @@ def handler(event: dict, context) -> dict:
                 queries_ran.append('read: ' + url)
             else:
                 result = 'Этот инструмент недоступен'
+            print(f'[megamag] tool {name} {json.dumps(args, ensure_ascii=False)[:200]} -> {len(result or "")} chars', flush=True)
             messages.append({
                 'role': 'tool',
                 'tool_call_id': call.get('id'),
