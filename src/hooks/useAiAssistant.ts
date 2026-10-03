@@ -1,7 +1,7 @@
 import { createContext, createElement, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
 import { useAuth } from '@/context/AuthContext';
 import { isMegabuhRole } from '@/lib/roles';
-import { askAiAssistant, givenName, prepareChatUploads, type AiMessage, type AiNote, type AiUpload } from '@/lib/aiAssistantApi';
+import { askAiAssistant, chatDisplayName, givenName, prepareChatUploads, type AiMessage, type AiNote, type AiUpload } from '@/lib/aiAssistantApi';
 import { megabuhPracticeDigest, recordMegabuhPractice } from '@/lib/megabuhBusinessLog';
 import { playMegabuhReplySound, primeMegabuhSound } from '@/lib/megabuhSound';
 import {
@@ -135,11 +135,12 @@ export const AiAssistantProvider = ({ children }: { children: ReactNode }) => {
   const role = user?.role;
   const isAccountant = isMegabuhRole(role);
   const canAsk = isMegabuhRole(role);
-  const youName = givenName(user?.name);
+  const youName = chatDisplayName(user?.name);
   const agentName = 'МЕГАБУХ';
   const placeholder = 'Спросить...';
-  const greeting = youName
-    ? `${youName}, это МЕГАБУХ — я на связи`
+  const firstName = givenName(user?.name);
+  const greeting = firstName
+    ? `${firstName}, это МЕГАБУХ — я на связи`
     : 'Это МЕГАБУХ — я на связи';
 
   const busy = loading || typing !== null;

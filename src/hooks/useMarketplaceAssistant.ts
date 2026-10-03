@@ -2,7 +2,7 @@ import { createContext, createElement, useContext, useEffect, useRef, useState, 
 import { useAuth } from '@/context/AuthContext';
 import { isMegamagRole } from '@/lib/roles';
 import {
-  givenName,
+  chatDisplayName,
   prepareChatUploads,
   type AiMessage,
   type AiNote,
@@ -148,7 +148,7 @@ export const MarketplaceAssistantProvider = ({ children }: { children: ReactNode
 
   const role = user?.role;
   const canAsk = isMegamagRole(role);
-  const youName = givenName(user?.name);
+  const youName = chatDisplayName(user?.name);
   const agentName = 'МЕГАМАГ';
   const placeholder = 'Спросить...';
   const busy = loading || typing !== null;

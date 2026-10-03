@@ -187,6 +187,9 @@ def _assistant_scope(cur, schema, user_id, requested_role: str):
         if 'accountant' in roles or 'admin' in roles:
             return 'accountant', full_name
         return None, ''
+    # Админ из раздела «Агенты» заходит как admin — открываем МЕГАБУХа.
+    if 'admin' in roles and want in ('', 'admin'):
+        return 'accountant', full_name
     if 'accountant' in roles:
         return 'accountant', full_name
     return None, ''
@@ -207,6 +210,24 @@ def _given_name(full_name: str) -> str:
         ):
             return parts[1]
         return parts[0]
+    return parts[0]
+
+
+def _chat_display_name(full_name: str) -> str:
+    """Имя и фамилия для подписи собеседника."""
+    parts = [p for p in re.split(r'\s+', (full_name or '').strip()) if p]
+    if not parts:
+        return ''
+    if len(parts) >= 3:
+        return f'{parts[1]} {parts[0]}'
+    if len(parts) == 2:
+        if re.search(
+            r'(ов|ова|ев|ева|ёв|ёва|ин|ина|ын|ына|ский|ская|цкая)$',
+            parts[0],
+            re.I,
+        ):
+            return f'{parts[1]} {parts[0]}'
+        return f'{parts[0]} {parts[1]}'
     return parts[0]
 
 
@@ -1548,11 +1569,12 @@ def handler(event: dict, context) -> dict:
         conn.close()
 
     given = _given_name(person_full)
+    display = _chat_display_name(person_full)
     who = 'Ты МЕГАБУХ. ' if scope == 'accountant' else ''
     if given:
         person_rule = (
-            f'\n\nСОБЕСЕДНИК: {given}'
-            + (f' (в карточке: {person_full})' if person_full != given else '')
+            f'\n\nСОБЕСЕДНИК: {display or given}'
+            + (f' (в карточке: {person_full})' if person_full and person_full != display else '')
             + f'. {who}Обращайся по имени {given}, на «вы». '
             'Имя повторяй не чаще раза за ответ, если разговор уже идёт.'
         )

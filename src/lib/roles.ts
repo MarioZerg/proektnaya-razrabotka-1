@@ -71,13 +71,13 @@ export const roleLabels: Record<Role, string> = {
   accountant: 'Бухгалтер',
 };
 
-/** МЕГАБУХ — чат по учёту и программам, только у бухгалтера. */
+/** МЕГАБУХ — бухгалтер; админ смотрит из раздела «Агенты». */
 export const isMegabuhRole = (role?: Role | null): boolean =>
-  role === 'accountant';
+  role === 'accountant' || role === 'admin';
 
-/** МЕГАМАГ — чат по кабинетам маркетплейсов, только у менеджера. */
+/** МЕГАМАГ — менеджер; админ смотрит из раздела «Агенты». */
 export const isMegamagRole = (role?: Role | null): boolean =>
-  role === 'manager';
+  role === 'manager' || role === 'admin';
 
 /**
  * Раздел «Инструкции» — как что делать на производстве.
@@ -393,8 +393,14 @@ const accountantNav: NavItem[] = [
 
 const adminNav: NavItem[] = [
   { label: 'Главная', icon: 'LayoutDashboard', path: '/crm' },
-  // Производственный ИИ-помощник у админа выключен. МЕГАБУХ — только у бухгалтера,
-  // пункт меню админу не ставим.
+  {
+    label: 'Агенты',
+    icon: 'Sparkles',
+    children: [
+      { label: 'МЕГАБУХ', path: '/crm/chat' },
+      { label: 'МЕГАМАГ', path: '/crm/shop-chat' },
+    ],
+  },
   // У админа полный раздел: витрина (посмотреть глазами сотрудника) и управление
   // подарками. Сотрудникам открыта только витрина.
   {

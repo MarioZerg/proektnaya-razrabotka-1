@@ -385,7 +385,8 @@ def _access(cur, schema, user_id, requested_role):
     want = (requested_role or '').strip()
     if 'manager' in roles and want in ('', 'manager'):
         return True, full_name
-    if 'admin' in roles and want == 'manager':
+    # Админ из раздела «Агенты» — полный доступ к МЕГАМАГу.
+    if 'admin' in roles and want in ('', 'manager', 'admin'):
         return True, full_name
     return False, ''
 
@@ -400,6 +401,22 @@ def _given_name(full_name):
         r'(ов|ова|ев|ева|ёв|ёва|ин|ина|ын|ына|ский|ская|цкая)$', parts[0], re.I,
     ):
         return parts[1]
+    return parts[0]
+
+
+def _chat_display_name(full_name):
+    """Имя и фамилия для подписи собеседника."""
+    parts = [p for p in re.split(r'\s+', (full_name or '').strip()) if p]
+    if not parts:
+        return ''
+    if len(parts) >= 3:
+        return f'{parts[1]} {parts[0]}'
+    if len(parts) == 2 and re.search(
+        r'(ов|ова|ев|ева|ёв|ёва|ин|ина|ын|ына|ский|ская|цкая)$', parts[0], re.I,
+    ):
+        return f'{parts[1]} {parts[0]}'
+    if len(parts) == 2:
+        return f'{parts[0]} {parts[1]}'
     return parts[0]
 
 
@@ -2607,9 +2624,13 @@ def handler(event: dict, context) -> dict:
         conn.close()
 
     given = _given_name(full_name)
+    display = _chat_display_name(full_name)
     extra = f'\n\nСЕЙЧАС по Москве: {now_human}.'
     if given:
-        extra += f'\nСОБЕСЕДНИК: {given}. Обращайся по имени, на «вы», не чаще раза за ответ.'
+        extra += (
+            f'\nСОБЕСЕДНИК: {display or given}. Обращайся по имени {given}, на «вы», '
+            'не чаще раза за ответ.'
+        )
     else:
         extra += '\nИмя собеседника неизвестно — говори на «вы».'
 

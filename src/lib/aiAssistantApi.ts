@@ -64,6 +64,23 @@ export const givenName = (full?: string): string => {
   return parts[0];
 };
 
+/**
+ * Подпись пользователя в чате агента: Имя и Фамилия.
+ * «Иванов Иван Иванович» → «Иван Иванов», «Иван Иванов» → «Иван Иванов».
+ */
+export const chatDisplayName = (full?: string): string => {
+  const parts = (full || '').trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return '';
+  if (parts.length >= 3) return `${parts[1]} ${parts[0]}`;
+  if (parts.length === 2) {
+    if (/(ов|ова|ев|ева|ёв|ёва|ин|ина|ын|ына|ский|ская|цкая)$/i.test(parts[0])) {
+      return `${parts[1]} ${parts[0]}`;
+    }
+    return `${parts[0]} ${parts[1]}`;
+  }
+  return parts[0];
+};
+
 export const CHAT_FILE_MAX_BYTES = 2_000_000;
 export const CHAT_FILE_MAX_COUNT = 3;
 export const CHAT_FILE_ACCEPT =
