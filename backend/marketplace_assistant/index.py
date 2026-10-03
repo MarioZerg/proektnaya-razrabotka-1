@@ -43,7 +43,30 @@ MODEL_CANDIDATES = [
 ]
 MAX_STEPS = 6
 MAX_TOOL_CHARS = 14000
-MP_TIMEOUT = 12
+MP_TIMEOUT = 8
+# Живое чтение кабинета (prefetch) должно уложиться сюда — остальное время модели.
+LIVE_BUDGET = 14
+
+
+def _parallel(jobs, budget):
+    """Запускает [(key, fn, args)] параллельно; что не успело за budget секунд — None."""
+    from concurrent.futures import ThreadPoolExecutor, wait
+    if not jobs:
+        return {}
+    ex = ThreadPoolExecutor(max_workers=min(8, len(jobs)))
+    futs = {ex.submit(fn, *args): key for key, fn, args in jobs}
+    done, _ = wait(futs, timeout=max(1, budget))
+    out = {}
+    for f, key in futs.items():
+        if f in done:
+            try:
+                out[key] = f.result()
+            except Exception as e:
+                out[key] = e
+        else:
+            out[key] = None
+    ex.shutdown(wait=False, cancel_futures=True)
+    return out
 
 OZON_API = 'https://api-seller.ozon.ru'
 WB_CONTENT_API = 'https://content-api.wildberries.ru'
@@ -395,7 +418,7 @@ def _mp_call(method, url, headers, payload=None):
         req.add_header(k, v)
     req.add_header('Content-Type', 'application/json')
     try:
-        with urllib.request.urlopen(req, timeout=max(4, min(MP_TIMEOUT, _time_left() - 30))) as r:
+        with urllib.request.urlopen(req, timeout=max(3, min(MP_TIMEOUT, _time_left() - 40))) as r:
             raw = r.read().decode('utf-8', 'replace')
             return r.status, (json.loads(raw) if raw else {})
     except urllib.error.HTTPError as e:
@@ -405,6 +428,47 @@ def _mp_call(method, url, headers, payload=None):
         return 0, str(e)[:300]
 
 
+def _ozon_photo_count(it):
+    images = it.get('images') or []
+    if isinstance(images, str):
+        images = [images] if images else []
+    n = len(images) if isinstance(images, list) else 0
+    prim = it.get('primary_image')
+    if prim and (prim if isinstance(prim, str) else (prim[0] if isinstance(prim, list) and prim else None)) not in images:
+        n += 1
+    return n
+
+
+def _ozon_weak_reasons(it):
+    """Чеклист OZON по ответу product/info: заголовок, фото, штрихкод, статус."""
+    name = (it.get('name') or '').strip()
+    img_n = _ozon_photo_count(it)
+    barcodes = it.get('barcodes') or ([] if not it.get('barcode') else [it.get('barcode')])
+    score = 0
+    reasons = []
+    if len(name) < 50:
+        score += 2
+        reasons.append(f'короткий title {len(name)} симв. (цель 60–120)')
+    if len(name) > 200:
+        score += 1
+        reasons.append(f'title {len(name)} симв. — переспам')
+    if name and name.upper() == name and any(ch.isalpha() for ch in name):
+        score += 1
+        reasons.append('title капсом')
+    if img_n < 4:
+        score += 2
+        reasons.append(f'фото {img_n} (цель ≥5)')
+    if not barcodes:
+        score += 1
+        reasons.append('нет штрихкода')
+    if it.get('errors'):
+        score += 3
+        reasons.append('ошибки: ' + '; '.join(
+            ((e.get('texts') or {}).get('short_description') or e.get('code') or '')[:80]
+            for e in (it.get('errors') or [])[:2]))
+    return score, name, reasons
+
+
 def _live_ozon(creds):
     client_id = str(creds.get('clientId') or '').strip()
     api_key = str(creds.get('apiKey') or '').strip()
@@ -412,78 +476,90 @@ def _live_ozon(creds):
         return 'OZON: в CRM нет Client-Id или Api-Key'
     h = {'Client-Id': client_id, 'Api-Key': api_key}
     lines = ['OZON (живые данные кабинета):']
-    # Короткий набор фильтров — укладываемся в таймаут шлюза Поехали.
-    for vis, title in (
-        ('ALL', 'всего карточек'),
-        ('VISIBLE', 'видны покупателю'),
-        ('EMPTY_STOCK', 'нет в наличии'),
-        ('STATE_FAILED', 'ошибка создания/модерации'),
-    ):
-        if _time_left() < 45:
-            lines.append(f'- {title}: пропуск (мало времени на ответ)')
-            continue
-        st, data = _mp_call('POST', OZON_API + '/v3/product/list', h,
-                            {'filter': {'visibility': vis}, 'limit': 1, 'last_id': ''})
-        if st == 200 and isinstance(data, dict):
-            total = (data.get('result') or {}).get('total')
-            lines.append(f'- {title}: {total}')
-        else:
-            lines.append(f'- {title}: не получено (код {st})')
-    st, data = _mp_call('POST', OZON_API + '/v3/product/list', h,
-                        {'filter': {'visibility': 'STATE_FAILED'}, 'limit': 10, 'last_id': ''})
-    ids = []
-    if st == 200 and isinstance(data, dict):
-        ids = [it.get('product_id') for it in (data.get('result') or {}).get('items') or []
-               if it.get('product_id')]
-    if ids and _time_left() >= 42:
-        st, info = _mp_call('POST', OZON_API + '/v3/product/info/list', h, {'product_id': ids[:10]})
-        if st == 200 and isinstance(info, dict):
-            lines.append('Карточки с ошибкой (offer_id | название | ошибки):')
-            for it in (info.get('items') or [])[:10]:
-                errs = '; '.join(
-                    (e.get('texts') or {}).get('short_description') or e.get('code') or ''
-                    for e in (it.get('errors') or [])[:3]
-                )
-                lines.append(f"  {it.get('offer_id')} | {(it.get('name') or '')[:80]} | {errs}")
-    # SEO-срез видимых — до 20 карточек, чтобы успеть до обрыва шлюза.
-    if _time_left() < 40:
-        lines.append('SEO-срез видимых: пропуск (мало времени на ответ)')
-        return '\n'.join(lines)
-    st, data = _mp_call('POST', OZON_API + '/v3/product/list', h,
-                        {'filter': {'visibility': 'VISIBLE'}, 'limit': 20, 'last_id': ''})
-    vis_ids = []
-    if st == 200 and isinstance(data, dict):
-        vis_ids = [it.get('product_id') for it in (data.get('result') or {}).get('items') or []
-                   if it.get('product_id')]
+    url = OZON_API + '/v3/product/list'
+    # Первый круг — всё параллельно: счётчики + id ошибочных + id видимых.
+    jobs = [
+        (vis, _mp_call, ('POST', url, h, {'filter': {'visibility': vis}, 'limit': 1, 'last_id': ''}))
+        for vis in ('ALL', 'VISIBLE', 'EMPTY_STOCK')
+    ]
+    jobs.append(('FAILED', _mp_call, ('POST', url, h,
+                 {'filter': {'visibility': 'STATE_FAILED'}, 'limit': 10, 'last_id': ''})))
+    jobs.append(('VIS_LIST', _mp_call, ('POST', url, h,
+                 {'filter': {'visibility': 'VISIBLE'}, 'limit': 50, 'last_id': ''})))
+    r1 = _parallel(jobs, min(LIVE_BUDGET * 0.5, _time_left() - 45))
+
+    def _total(res):
+        if isinstance(res, tuple) and res[0] == 200 and isinstance(res[1], dict):
+            return (res[1].get('result') or {}).get('total')
+        return None
+
+    def _ids(res):
+        if isinstance(res, tuple) and res[0] == 200 and isinstance(res[1], dict):
+            return [it.get('product_id') for it in (res[1].get('result') or {}).get('items') or []
+                    if it.get('product_id')]
+        return []
+
+    # Повтор для тех, кому OZON отказал (429 при параллельных запросах).
+    retry = [(k, f, a) for k, f, a in jobs
+             if not (isinstance(r1.get(k), tuple) and r1[k][0] == 200) and _time_left() > 50]
+    if retry:
+        time.sleep(0.5)
+        r1.update({k: v for k, v in _parallel(retry, 4).items() if v is not None})
+    for key, title in (('ALL', 'всего карточек'), ('VISIBLE', 'видны покупателю'),
+                       ('EMPTY_STOCK', 'нет в наличии'), ('FAILED', 'ошибка создания/модерации')):
+        t = _total(r1.get(key))
+        code = r1.get(key)[0] if isinstance(r1.get(key), tuple) else 'таймаут'
+        lines.append(f'- {title}: {t if t is not None else f"не получено (код {code})"}')
+    failed_ids = _ids(r1.get('FAILED'))
+    vis_ids = _ids(r1.get('VIS_LIST'))
+    # Второй круг — info по ошибочным и видимым параллельно.
+    info_url = OZON_API + '/v3/product/info/list'
+    jobs2 = []
+    if failed_ids:
+        jobs2.append(('F', _mp_call, ('POST', info_url, h, {'product_id': failed_ids[:10]})))
     if vis_ids:
-        st, info = _mp_call('POST', OZON_API + '/v3/product/info/list', h, {'product_id': vis_ids[:20]})
-        if st == 200 and isinstance(info, dict):
-            weak = []
-            for it in (info.get('items') or []):
-                name = (it.get('name') or '').strip()
-                images = it.get('images') or []
-                if isinstance(images, str):
-                    images = [images] if images else []
-                img_n = len(images) if isinstance(images, list) else 0
-                barcodes = it.get('barcodes') or ([] if not it.get('barcode') else [it.get('barcode')])
-                score = 0
-                reasons = []
-                if len(name) < 50:
-                    score += 2
-                    reasons.append(f'короткий title {len(name)}')
-                if img_n < 4:
-                    score += 2
-                    reasons.append(f'фото {img_n}')
-                if not barcodes:
-                    score += 1
-                    reasons.append('нет штрихкода')
-                if score:
-                    weak.append((score, it.get('offer_id'), name[:70], ', '.join(reasons)))
-            weak.sort(key=lambda x: -x[0])
-            lines.append(f'SEO-срез видимых (проверено {len(info.get("items") or [])}): '
-                         f'слабых по заголовку/фото/штрихкоду — {len(weak)}')
-            for _, offer, name, why in weak[:10]:
-                lines.append(f'  {offer} | {name} | {why}')
+        jobs2.append(('V', _mp_call, ('POST', info_url, h, {'product_id': vis_ids[:50]})))
+    r2 = _parallel(jobs2, min(LIVE_BUDGET * 0.5, _time_left() - 42)) if _time_left() > 45 else {}
+    res = r2.get('F')
+    if isinstance(res, tuple) and res[0] == 200 and isinstance(res[1], dict):
+        lines.append('Карточки с ошибкой модерации (offer_id | название | ошибки):')
+        for it in (res[1].get('items') or [])[:10]:
+            errs = '; '.join(
+                (e.get('texts') or {}).get('short_description') or e.get('code') or ''
+                for e in (it.get('errors') or [])[:3]
+            )
+            lines.append(f"  {it.get('offer_id')} | {(it.get('name') or '')[:80]} | {errs}")
+    res = r2.get('V')
+    if isinstance(res, tuple) and res[0] == 200 and isinstance(res[1], dict):
+        items = res[1].get('items') or []
+        weak = []
+        for it in items:
+            score, name, reasons = _ozon_weak_reasons(it)
+            if score:
+                weak.append((score, it.get('offer_id'), it.get('sku'), name[:200], ', '.join(reasons)))
+        weak.sort(key=lambda x: -x[0])
+        name_lens = sorted(len((it.get('name') or '')) for it in items) or [0]
+        photo_ns = sorted(_ozon_photo_count(it) for it in items) or [0]
+        lines.append(f'SEO-срез видимых (проверено {len(items)} из первых): '
+                     f'слабых по чеклисту OZON — {len(weak)}')
+        lines.append(f'  длина названия: мин {name_lens[0]}, медиана {name_lens[len(name_lens)//2]}, '
+                     f'макс {name_lens[-1]}; фото: мин {photo_ns[0]}, медиана {photo_ns[len(photo_ns)//2]}, '
+                     f'макс {photo_ns[-1]}')
+        if weak:
+            lines.append('Слабые карточки (offer_id | sku | название | что не так):')
+            for _, offer, sku, name, why in weak[:15]:
+                lines.append(f'  {offer} | {sku} | {name} | {why}')
+        else:
+            # Явных дыр нет — даём самые «бедные» по контенту, чтобы было что улучшать.
+            poorest = sorted(items, key=lambda it: (_ozon_photo_count(it), len(it.get('name') or '')))[:8]
+            lines.append('Явных провалов нет. Наименее наполненные (offer_id | sku | фото | длина назв. | название):')
+            for it in poorest:
+                lines.append(f"  {it.get('offer_id')} | {it.get('sku')} | {_ozon_photo_count(it)} | "
+                             f"{len(it.get('name') or '')} | {(it.get('name') or '')[:200]}")
+        lines.append('  (рейтинг контента, описание и атрибуты в этом срезе не читаются — '
+                     'для них разберите конкретную карточку)')
+    elif vis_ids:
+        lines.append('SEO-срез видимых: OZON не ответил вовремя — повторите вопрос.')
     return '\n'.join(lines)
 
 
@@ -495,8 +571,13 @@ def _live_wb(creds):
         return 'Wildberries: в CRM включена песочница — живой кабинет не читаем'
     h = {'Authorization': api_key}
     lines = ['Wildberries (живые данные кабинета):']
-    st, data = _mp_call('POST', WB_CONTENT_API + '/content/v2/get/cards/list', h,
-                        {'settings': {'cursor': {'limit': 100}, 'filter': {'withPhoto': -1}}})
+    r = _parallel([
+        ('cards', _mp_call, ('POST', WB_CONTENT_API + '/content/v2/get/cards/list', h,
+                             {'settings': {'cursor': {'limit': 100}, 'filter': {'withPhoto': -1}}})),
+        ('errs', _mp_call, ('GET', WB_CONTENT_API + '/content/v2/cards/error/list', h)),
+        ('adv', _mp_call, ('GET', WB_ADVERT_API + '/adv/v1/promotion/count', h)),
+    ], LIVE_BUDGET - 1)
+    st, data = r.get('cards') if isinstance(r.get('cards'), tuple) else (0, 'нет ответа')
     if st == 200 and isinstance(data, dict):
         cards = data.get('cards') or []
         total = (data.get('cursor') or {}).get('total')
@@ -511,7 +592,7 @@ def _live_wb(creds):
             lines.append(f"  {c.get('vendorCode')} | nmID {c.get('nmID')} | {(c.get('title') or '')[:70]}")
     else:
         lines.append(f'- карточки: не получено (код {st})')
-    st, data = _mp_call('GET', WB_CONTENT_API + '/content/v2/cards/error/list', h)
+    st, data = r.get('errs') if isinstance(r.get('errs'), tuple) else (0, 'нет ответа')
     if st == 200 and isinstance(data, dict):
         errs = data.get('data') or []
         lines.append(f'- несозданные карточки с ошибками: {len(errs)}')
@@ -519,7 +600,7 @@ def _live_wb(creds):
             lines.append(f"  {e.get('vendorCode')} | {'; '.join((e.get('errors') or [])[:2])[:160]}")
     else:
         lines.append(f'- ошибки карточек: не получено (код {st})')
-    st, data = _mp_call('GET', WB_ADVERT_API + '/adv/v1/promotion/count', h)
+    st, data = r.get('adv') if isinstance(r.get('adv'), tuple) else (0, 'нет ответа')
     status_names = {4: 'готова к запуску', 7: 'завершена', 8: 'отказ', 9: 'идёт показ', 11: 'на паузе', -1: 'удаляется'}
     if st == 200 and isinstance(data, dict):
         lines.append(f"- рекламных кампаний всего: {data.get('all')}")
@@ -547,7 +628,12 @@ def _live_ym(creds):
         return f'Яндекс Маркет: кампания не прочиталась (код {st})'
     if not business_id:
         return '\n'.join(lines + ['- кабинет (business) не определён'])
-    st, data = _mp_call('POST', f'{YM_API}/businesses/{int(business_id)}/offer-mappings?limit=100', h, {})
+    bid = int(business_id)
+    r = _parallel([
+        ('maps', _mp_call, ('POST', f'{YM_API}/businesses/{bid}/offer-mappings?limit=100', h, {})),
+        ('cards', _mp_call, ('POST', f'{YM_API}/businesses/{bid}/offer-cards?limit=100', h, {})),
+    ], LIVE_BUDGET - 4)
+    st, data = r.get('maps') if isinstance(r.get('maps'), tuple) else (0, 'нет ответа')
     if st == 200 and isinstance(data, dict):
         maps = (data.get('result') or {}).get('offerMappings') or []
         rejected = [m for m in maps if m.get('rejectedMapping')]
@@ -560,7 +646,7 @@ def _live_ym(creds):
             lines.append(f"  {o.get('offerId')} | {(o.get('name') or '')[:80]}")
     else:
         lines.append(f'- каталог: не получено (код {st})')
-    st, data = _mp_call('POST', f'{YM_API}/businesses/{int(business_id)}/offer-cards?limit=100', h, {})
+    st, data = r.get('cards') if isinstance(r.get('cards'), tuple) else (0, 'нет ответа')
     if st == 200 and isinstance(data, dict):
         cards = (data.get('result') or {}).get('offerCards') or []
         weak = sorted(
@@ -586,25 +672,39 @@ def _scrub(text, secrets):
 
 
 def _live(cur, schema, shop, mps):
-    out = []
+    """Обход кабинетов: все магазины × площадки параллельно, общий бюджет LIVE_BUDGET."""
     shops = [shop] if shop else _shops(cur, schema)
+    fns = {'ozon': _live_ozon, 'wildberries': _live_wb, 'yandex_market': _live_ym}
+    slots = []
+    jobs = []
     for s in shops:
-        out.append(f"=== Магазин {s['name']} (shop_id {s['id']}) ===")
         for mp in mps:
             creds, enabled = _load_creds(cur, schema, mp, s['id'])
-            if creds is None or not creds:
-                out.append(f'{MP_TITLES[mp]}: кабинет не подключён в CRM')
-                continue
-            if not enabled:
-                out.append(f'{MP_TITLES[mp]}: интеграция выключена в CRM — не читаем')
-                continue
-            fn = {'ozon': _live_ozon, 'wildberries': _live_wb, 'yandex_market': _live_ym}[mp]
-            try:
-                txt = fn(creds)
-            except Exception as e:
-                txt = f'{MP_TITLES[mp]}: ошибка чтения ({str(e)[:150]})'
-            secrets = [str(v) for v in creds.values() if isinstance(v, (str, int))]
-            out.append(_scrub(txt, secrets))
+            key = (s['id'], mp)
+            if not creds:
+                slots.append((s, mp, f'{MP_TITLES[mp]}: кабинет не подключён в CRM', None))
+            elif not enabled:
+                slots.append((s, mp, f'{MP_TITLES[mp]}: интеграция выключена в CRM — не читаем', None))
+            else:
+                slots.append((s, mp, None, creds))
+                jobs.append((key, fns[mp], (creds,)))
+    res = _parallel(jobs, min(LIVE_BUDGET, _time_left() - 40))
+    out = []
+    cur_shop = None
+    for s, mp, text, creds in slots:
+        if cur_shop != s['id']:
+            out.append(f"=== Магазин {s['name']} (shop_id {s['id']}) ===")
+            cur_shop = s['id']
+        if creds is None:
+            out.append(text)
+            continue
+        txt = res.get((s['id'], mp))
+        if txt is None:
+            txt = f'{MP_TITLES[mp]}: кабинет не ответил за {LIVE_BUDGET} с — повторите вопрос'
+        elif isinstance(txt, Exception):
+            txt = f'{MP_TITLES[mp]}: ошибка чтения ({str(txt)[:150]})'
+        secrets = [str(v) for v in creds.values() if isinstance(v, (str, int))]
+        out.append(_scrub(txt, secrets))
     return '\n\n'.join(out)
 
 
@@ -678,11 +778,11 @@ def _ozon_card_lines(item):
         issues.append(f'мало фото ({img_n}, желательно ≥5)')
     if not barcodes:
         issues.append('нет штрихкода')
-    if len(descr) < 200 and descr:
+    has_descr = 'description' in item or 'rich_content_json' in item
+    has_attrs = 'attributes' in item
+    if has_descr and len(descr) < 200:
         issues.append(f'короткое описание ({len(descr)} симв.)')
-    if not descr:
-        issues.append('описание пустое или не пришло в ответе API')
-    if isinstance(attrs, list) and len(attrs) < 5:
+    if has_attrs and isinstance(attrs, list) and len(attrs) < 5:
         issues.append(f'мало характеристик ({len(attrs)})')
     if errs:
         issues.append('ошибки модерации/контента: ' + '; '.join(
@@ -692,8 +792,9 @@ def _ozon_card_lines(item):
     lines = [
         f"OZON live: offer_id={offer} | sku={sku} | название ({len(name)}): {name[:160]}",
         f"  фото≈{img_n}, штрихкодов={len(barcodes) if isinstance(barcodes, list) else 0}, "
-        f"атрибутов={len(attrs) if isinstance(attrs, list) else '?'}, "
-        f"описание≈{len(descr)} симв.",
+        f"атрибуты: {len(attrs) if has_attrs else 'НЕ ЧИТАЮТСЯ этим методом API (не значит, что пусто)'}, "
+        f"описание: {str(len(descr)) + ' симв.' if has_descr else 'НЕ ЧИТАЕТСЯ этим методом API (не значит, что пусто)'}; "
+        f"заполненность характеристик/описания смотри по группам рейтинга контента ниже",
     ]
     if status:
         lines.append(f"  статус: {json.dumps(status, ensure_ascii=False)[:240]}")
@@ -702,6 +803,19 @@ def _ozon_card_lines(item):
     else:
         lines.append('  SEO/качество: явных дыр в ответе API не видно')
     return lines
+
+
+def _rating_groups_text(g):
+    """Компактно: группа рейтинг/вес и невыполненные условия — это и есть чеклист OZON."""
+    parts = []
+    for grp in (g.get('groups') or [])[:6]:
+        miss = [c.get('description') for c in (grp.get('conditions') or [])
+                if not c.get('fulfilled') and c.get('description')]
+        txt = f"{grp.get('name')} {grp.get('rating')}/100 (вес {grp.get('weight')}%)"
+        if miss:
+            txt += ' — не выполнено: ' + '; '.join(m[:70] for m in miss[:4])
+        parts.append(txt)
+    return ' | '.join(parts) or json.dumps(g, ensure_ascii=False)[:300]
 
 
 def _card_live_ozon(creds, item_row, query):
@@ -725,23 +839,29 @@ def _card_live_ozon(creds, item_row, query):
     offer_ids = list(dict.fromkeys([x for x in offer_ids if x]))[:20]
     skus = list(dict.fromkeys([x for x in skus if x]))[:20]
     lines = []
-    payload = {}
-    if offer_ids:
-        payload = {'offer_id': offer_ids}
-    elif skus:
-        payload = {'sku': [int(x) for x in skus if str(x).isdigit()][:20]}
-    if not payload:
+    if not offer_ids and not skus:
         return ['OZON: нечего искать — нужен артикул (offer_id) или sku']
-    st, info = _mp_call('POST', OZON_API + '/v3/product/info/list', h, payload)
+    info_url = OZON_API + '/v3/product/info/list'
+    jobs = []
+    if offer_ids:
+        jobs.append(('offer', _mp_call, ('POST', info_url, h, {'offer_id': offer_ids})))
+    sku_int = [int(x) for x in skus if str(x).isdigit()][:20]
+    if sku_int:
+        jobs.append(('sku', _mp_call, ('POST', info_url, h, {'sku': sku_int})))
+    r = _parallel(jobs, min(LIVE_BUDGET * 0.6, _time_left() - 42))
     items = []
-    if st == 200 and isinstance(info, dict):
-        items = info.get('items') or (info.get('result') or {}).get('items') or []
-    if not items and skus and 'offer_id' in payload:
-        payload2 = {'sku': [int(x) for x in skus if str(x).isdigit()][:20]}
-        if payload2['sku']:
-            st, info = _mp_call('POST', OZON_API + '/v3/product/info/list', h, payload2)
-            if st == 200 and isinstance(info, dict):
-                items = info.get('items') or (info.get('result') or {}).get('items') or []
+    st = 0
+    seen = set()
+    for key in ('offer', 'sku'):
+        res = r.get(key)
+        if isinstance(res, tuple):
+            st = res[0] if not items else st
+            if res[0] == 200 and isinstance(res[1], dict):
+                for it in res[1].get('items') or (res[1].get('result') or {}).get('items') or []:
+                    pid = it.get('id') or it.get('product_id') or it.get('offer_id')
+                    if pid not in seen:
+                        seen.add(pid)
+                        items.append(it)
     if not items:
         return [f'OZON: карточка не найдена в кабинете (код {st}). Проверьте артикул и магазин.']
     for it in items[:5]:
@@ -755,7 +875,7 @@ def _card_live_ozon(creds, item_row, query):
                 rating_skus.append(int(s))
             except (TypeError, ValueError):
                 pass
-    if rating_skus and _time_left() >= 48:
+    if rating_skus and _time_left() >= 45:
         st, rating = _mp_call(
             'POST', OZON_API + '/v1/product/rating-by-sku', h, {'skus': rating_skus[:10]},
         )
@@ -763,7 +883,7 @@ def _card_live_ozon(creds, item_row, query):
             for g in (rating.get('products') or rating.get('result') or [])[:5]:
                 lines.append(
                     f"  рейтинг контента OZON sku={g.get('sku')}: {g.get('rating')} "
-                    f"(группы: {json.dumps(g.get('groups') or g.get('conditions') or [], ensure_ascii=False)[:300]})"
+                    f"(группы: {_rating_groups_text(g)})"
                 )
         else:
             lines.append(f'  рейтинг контента: не получен (код {st})')
@@ -866,9 +986,12 @@ def _card_live_ym(creds, item_row, query):
     offer_ids = list(dict.fromkeys([x for x in offer_ids if x]))[:20]
     payload = {'offerIds': offer_ids} if offer_ids else {}
     lines = []
-    st, data = _mp_call(
-        'POST', f'{YM_API}/businesses/{int(business_id)}/offer-mappings?limit=20', h, payload,
-    )
+    bid = int(business_id)
+    r = _parallel([
+        ('maps', _mp_call, ('POST', f'{YM_API}/businesses/{bid}/offer-mappings?limit=20', h, payload)),
+        ('cards', _mp_call, ('POST', f'{YM_API}/businesses/{bid}/offer-cards?limit=20', h, payload)),
+    ], LIVE_BUDGET - 4)
+    st, data = r.get('maps') if isinstance(r.get('maps'), tuple) else (0, 'нет ответа')
     maps = []
     if st == 200 and isinstance(data, dict):
         maps = (data.get('result') or {}).get('offerMappings') or []
@@ -882,10 +1005,7 @@ def _card_live_ym(creds, item_row, query):
             f"модерация={'ждёт' if m.get('awaitingModerationMapping') else 'нет'} | "
             f"reject={'да' if m.get('rejectedMapping') else 'нет'}"
         )
-    st, data = _mp_call(
-        'POST', f'{YM_API}/businesses/{int(business_id)}/offer-cards?limit=20', h,
-        {'offerIds': offer_ids} if offer_ids else {},
-    )
+    st, data = r.get('cards') if isinstance(r.get('cards'), tuple) else (0, 'нет ответа')
     if st == 200 and isinstance(data, dict):
         for c in ((data.get('result') or {}).get('offerCards') or [])[:5]:
             errs = c.get('errors') or []
@@ -981,8 +1101,12 @@ def _card_analyze(dsn, schema, shop, mps, query):
             out.append('В справочнике CRM точного совпадения нет — ищу только в живых кабинетах.')
         else:
             out.append(f'Найдено в CRM: {len(items)}')
-        # Берём до 3 совпадений, для каждого — live по нужным площадкам.
-        targets = items[:2] if items else [None]
+        # Живой кабинет — только по лучшему совпадению (укладываемся в шлюз);
+        # остальные совпадения перечисляем, чтобы менеджер уточнил артикул.
+        targets = items[:1] if items else [None]
+        if len(items) > 1:
+            out.append('Другие совпадения в CRM (sku | название | магазин): ' + '; '.join(
+                f"{r.get('sku')} | {(r.get('name') or '')[:50]} | {r.get('shop')}" for r in items[1:6]))
         shops = [shop] if shop else _shops(cur, schema)
         for item_row in targets:
             if item_row:
@@ -1001,36 +1125,32 @@ def _card_analyze(dsn, schema, shop, mps, query):
             else:
                 shop_loop = shops[:1]  # без CRM-попадания не обходим все магазины
                 use_mps = list(mps)[:1] if len(mps) > 1 else list(mps)
-            for s in shop_loop:
-                if _time_left() < 42:
-                    out.append('Живой кабинет: дальше не читаю — заканчивается время ответа.')
-                    break
-                out.append(f"--- Живой кабинет: {s['name']} (shop_id {s['id']}) ---")
-                for mp in use_mps:
-                    if _time_left() < 40:
-                        out.append(f'{MP_TITLES[mp]}: пропуск (мало времени)')
-                        continue
-                    creds, enabled = _load_creds(cur, schema, mp, s['id'])
-                    if not creds or not enabled:
-                        out.append(f'{MP_TITLES[mp]}: нет ключей или выключено')
-                        continue
-                    try:
-                        if mp == 'ozon':
-                            lines = _card_live_ozon(creds, item_row, q)
-                        elif mp == 'wildberries':
-                            lines = _card_live_wb(creds, item_row, q)
-                        else:
-                            lines = _card_live_ym(creds, item_row, q)
-                    except Exception as e:
-                        lines = [f'{MP_TITLES[mp]}: ошибка ({str(e)[:150]})']
-                    secrets = [str(v) for v in creds.values() if isinstance(v, (str, int))]
-                    out.append(_scrub('\n'.join(lines), secrets))
-                if item_row:
-                    break  # для строки CRM достаточно её магазина
+            fns = {'ozon': _card_live_ozon, 'wildberries': _card_live_wb, 'yandex_market': _card_live_ym}
+            s = shop_loop[0] if shop_loop else None
+            if s is None:
+                out.append('Живой кабинет: нет активных магазинов.')
+                continue
+            out.append(f"--- Живой кабинет: {s['name']} (shop_id {s['id']}) ---")
+            jobs, creds_map = [], {}
+            for mp in use_mps:
+                creds, enabled = _load_creds(cur, schema, mp, s['id'])
+                if not creds or not enabled:
+                    out.append(f'{MP_TITLES[mp]}: нет ключей или выключено')
+                    continue
+                creds_map[mp] = creds
+                jobs.append((mp, fns[mp], (creds, item_row, q)))
+            res = _parallel(jobs, min(LIVE_BUDGET, _time_left() - 40))
+            for mp, creds in creds_map.items():
+                lines = res.get(mp)
+                if lines is None:
+                    lines = [f'{MP_TITLES[mp]}: кабинет не ответил за {LIVE_BUDGET} с']
+                elif isinstance(lines, Exception):
+                    lines = [f'{MP_TITLES[mp]}: ошибка ({str(lines)[:150]})']
+                secrets = [str(v) for v in creds.values() if isinstance(v, (str, int))]
+                out.append(_scrub('\n'.join(lines), secrets))
         out.append(
-            'Формат ответа менеджеру: 1) что с карточкой сейчас, 2) SEO/контент по пунктам, '
-            '3) остатки/цена/реклама/отзывы если есть, 4) что поправить руками в кабинете, '
-            '5) ссылка на официальную справку площадки.'
+            'Формат ответа: разбор по чеклисту площадки из инструкции (каждый пункт: ✅/⚠️/❌ + '
+            'факт из данных), коммерция, приоритетный план правок руками в кабинете.'
         )
         return '\n'.join(out)
     except Exception as e:
@@ -1357,7 +1477,7 @@ def _model_candidates(api_key, state):
     # Старые секреты с фиксированной моделью игнорируем — только явный AITUNNEL_MODEL.
     # MEGAMAG_FAST_MODELS / DEFAULT_MODEL больше не используем.
     t0 = time.monotonic()
-    allowed = _key_allowed_models(api_key)
+    allowed = None if state.get('skip_key_lookup') else _key_allowed_models(api_key)
     print(f'[megamag] key models={allowed} {time.monotonic() - t0:.1f}s', flush=True)
     state['allowed_models'] = allowed
     ordered = []
@@ -1391,11 +1511,114 @@ def _call_model(api_key, model, messages, tools):
         'model': model,
         'messages': messages,
         'temperature': 0.2,
-        'max_tokens': 2000,
+        'max_tokens': 2500,
     }
     if tools:
         payload['tools'] = tools
     return _aitunnel_open('chat/completions', api_key, payload, timeout=75)
+
+
+ANSWER_DEADLINE = 27  # с от старта: шлюз Поехали фактически рвёт соединение на 33–60 с
+
+
+def _stream_answer(api_key, messages, state, deadline_left):
+    """Потоковый ответ модели без инструментов. Возвращает (text, err, truncated).
+
+    Если время подходит к концу — останавливаемся и отдаём уже написанное,
+    вместо обрыва шлюзом с 503.
+    """
+    stop_at = time.monotonic() + max(5, deadline_left)
+    last_err = 'модель не ответила'
+    fast = [m.strip() for m in os.environ.get(
+        'MEGAMAG_FAST_MODELS', 'gpt-4.1-mini,openai/gpt-4.1-mini,gpt-4o-mini').split(',') if m.strip()]
+    allowed = state.get('allowed_models')
+    if allowed:
+        allowed_set = {a for n in allowed for a in _model_aliases(n)}
+        fast = [m for m in fast if m in allowed_set]
+    base_list = [state['model']] if state.get('model') else _model_candidates(api_key, state)
+    order = []
+    for m in fast + base_list:
+        if m not in order:
+            order.append(m)
+    for model in order:
+        payload = {
+            'model': model, 'messages': messages,
+            'max_tokens': 2200, 'stream': True,
+        }
+        if not state.get('no_reasoning_param'):
+            payload['reasoning_effort'] = os.environ.get('MEGAMAG_REASONING', 'low')
+        else:
+            payload['temperature'] = 0.2
+        body = json.dumps(payload, ensure_ascii=False).encode('utf-8')
+        for base in _aitunnel_bases():
+            left = stop_at - time.monotonic()
+            if left < 3:
+                return '', 'не хватило времени на ответ модели', True
+            req = urllib.request.Request(
+                base.rstrip('/') + '/chat/completions', data=body, method='POST',
+                headers={'Authorization': f'Bearer {api_key}', 'Content-Type': 'application/json',
+                         'Accept': 'text/event-stream'},
+            )
+            parts = []
+            t0 = time.monotonic()
+            try:
+                # Короткий таймаут сокета: зависшая модель не съедает весь бюджет.
+                r = urllib.request.urlopen(req, timeout=max(2, min(10, left)))
+            except urllib.error.HTTPError as e:
+                raw = e.read().decode('utf-8', 'ignore')[:300]
+                last_err = f'Сервис ИИ ответил ошибкой {e.code}: {raw}'
+                _GOOD_BASE[0] = base
+                print(f'[megamag] stream http {e.code}: {raw[:200]}', flush=True)
+                if e.code == 400 and 'reasoning' in raw.lower() and not state.get('no_reasoning_param'):
+                    state['no_reasoning_param'] = True
+                    return _stream_answer(api_key, messages, state, stop_at - time.monotonic())
+                if e.code in (400, 403, 404):
+                    break  # следующая модель
+                return '', last_err, False
+            except Exception as e:
+                last_err = f'нет связи с {base}: {type(e).__name__}'
+                _DEAD_BASES[base] = time.monotonic()
+                continue
+            _GOOD_BASE[0] = base
+            truncated = False
+            first = [None]
+            try:
+                with r:
+                    for raw_line in r:
+                        if first[0] is None:
+                            first[0] = time.monotonic() - t0
+                        if time.monotonic() > stop_at:
+                            truncated = True
+                            break
+                        line = raw_line.decode('utf-8', 'ignore').strip()
+                        if not line.startswith('data:'):
+                            continue
+                        chunk = line[5:].strip()
+                        if chunk == '[DONE]':
+                            break
+                        try:
+                            d = json.loads(chunk)
+                        except ValueError:
+                            continue
+                        for ch in d.get('choices') or []:
+                            piece = (ch.get('delta') or {}).get('content') or \
+                                    (ch.get('message') or {}).get('content') or ''
+                            if piece:
+                                parts.append(piece)
+            except Exception as e:
+                truncated = True
+                last_err = f'обрыв потока: {type(e).__name__}'
+            text = ''.join(parts).strip()
+            stalled = not text and first[0] is None
+            print(f'[megamag] stream {model} {time.monotonic() - t0:.1f}s first_byte={first[0]} '
+                  f'{len(text)} chars truncated={truncated}', flush=True)
+            if text:
+                state['model'] = model
+                return text, None, truncated
+            if stalled or (not text and not truncated):
+                break  # следующая модель
+            return '', last_err, truncated
+    return '', last_err, False
 
 
 def _ask_model(api_key, messages, tools, state):
@@ -1458,28 +1681,48 @@ SYSTEM_PROMPT = """Ты — МЕГАМАГ, помощник менеджера 
   docs.ozon.ru, seller.wildberries.ru, dev.wildberries.ru, yandex.ru/support.
 - read_page: открыть страницу этих же доменов.
 
-ТРЕБОВАНИЯ К КАРТОЧКАМ (ориентир для рекомендаций; спорное — подтверди справкой):
+ЧЕКЛИСТЫ ТРЕБОВАНИЙ ПЛОЩАДОК (проверяй карточку по КАЖДОМУ пункту; спорное — подтверди справкой):
 OZON:
-- название информативное, без воды и капса; лучше ≥50–60 символов с типом товара и ключевыми свойствами (ткань, размер, цвет);
-- фото: несколько ракурсов, на белом/нейтральном фоне, без чужих логотипов и водяных знаков;
-- заполнены обязательные характеристики категории, есть штрихкод;
-- описание полезное покупателю (материал, размер, уход), не копипаст названия;
-- смотри рейтинг контента / ошибки модерации из кабинета — поднимай то, что OZON пометил.
+ 1. Модерация: нет ошибок/STATE_FAILED; карточка видна (VISIBLE), есть остаток.
+ 2. Название: формула «тип товара + бренд/коллекция + ключевые свойства (материал, размер Ш×В, цвет,
+    крепление)»; ориентир 60–120 символов, без капса, повторов, эмодзи, слов «хит/скидка/лучший».
+ 3. Фото: ≥5 (цель 8–15), главное — товар целиком на белом/светлом фоне, без водяных знаков,
+    чужих логотипов и цен; есть интерьерное фото, крупный план ткани, фото крепления/ленты, размеры.
+ 4. Видео/видеообложка и Rich-контент — плюс к рейтингу контента.
+ 5. Характеристики: заполнены все обязательные и максимум рекомендуемых (тип, материал, состав,
+    ширина/высота, цвет, плотность, тип крепления, комплектация, страна, уход).
+ 6. Описание: 1000+ символов, польза для покупателя, ключевые запросы естественно, уход, размеры.
+ 7. Штрихкод есть; рейтинг контента OZON — цель 80+ (смотри группы, где недобор).
 Wildberries:
-- title и описание не пустые; описание содержательное (≥300 символов как ориентир слабости);
-- фото обязательны (лучше ≥3–5), vendorCode совпадает с нашим sku;
-- характеристики категории заполнены; ошибки из cards/error/list устранять в первую очередь.
+ 1. Нет ошибок в cards/error/list; vendorCode = наш sku; карточка в склейке по цвету/размеру если нужно.
+ 2. Наименование: до 60 символов, тип товара + ключевое свойство, без бренда-спама и капса.
+ 3. Фото: ≥3 обязательно, цель 5–10, 3:4 (900×1200+), белый/интерьерный фон, инфографика без
+    обещаний «лучший/№1»; видео — плюс.
+ 4. Описание: 1000–2000 символов (ниже 300 — явно слабое), без ссылок, контактов, html.
+ 5. Характеристики категории — все обязательные + рекомендуемые (состав, размер, цвет, крепление).
+ 6. Размеры/баркоды на каждый размер; комплектация указана.
 Яндекс Маркет:
-- оффер сматчен с карточкой Маркета; contentRating не внизу списка;
-- нет rejectedMapping / ошибок в offer-cards; на модерации — ждать или править по тексту ошибки.
+ 1. Оффер сматчен с карточкой Маркета (mapping есть), нет rejectedMapping; на модерации — ждать.
+ 2. contentRating: цель 80+; ниже 50 — приоритет. Ошибки и предупреждения offer-cards устранять первыми.
+ 3. Название: «тип + бренд + модель/коллекция + ключевые свойства», без рекламных слов.
+ 4. Фото: ≥3, цель 5+, белый фон у главного; описание содержательное (до 6000 симв.).
+ 5. Обязательные параметры категории заполнены; штрихкод, габариты и вес упаковки указаны.
 
-КАК РАЗБИРАТЬ КАРТОЧКУ / ВИТРИНУ (развёрнутый ответ):
-1) Контекст: магазин, sku, размер/материал, привязки к площадкам.
-2) Что в живом кабинете: название, фото, описание, атрибуты, ошибки, рейтинг контента.
-3) Коммерция: остаток, цена, реклама/ДРР, свежие отзывы — если есть в данных.
-4) Вердикт по требованиям площадки выше: что ок, что мешает продажам (конкретно).
-5) План правок руками в кабинете — по приоритету (сначала ошибки модерации, потом SEO, потом реклама).
-6) Спорное правило — web_search/read_page по официальной справке.
+КАК ОТВЕЧАТЬ (развёрнуто, но по делу):
+• Вопрос про слабые карточки / витрину → сводка цифрами (всего, видимых, без остатка, с ошибками),
+  затем таблица/список слабых карточек: артикул (offer_id/sku) | название | что не так по чеклисту |
+  что сделать. Затем общие выводы (системные проблемы: например, у большинства мало фото) и
+  приоритетный план на неделю.
+• Разбор одной карточки → 
+  1) Контекст: магазин, sku, размер/материал, привязки к площадкам.
+  2) Чеклист площадки по пунктам: ✅ ок / ⚠️ можно лучше / ❌ мешает продажам — с фактом из данных
+     (длина названия, число фото, атрибутов, ошибки, рейтинг контента).
+  3) Коммерция: остаток, цена, реклама/ДРР, свежие отзывы — если есть в данных.
+  4) Конкретные правки: предложи пример улучшенного названия и структуру описания, какие фото доснять,
+     какие характеристики дозаполнить.
+  5) План по приоритету: ошибки модерации → видимость/остаток → контент (название, фото, атрибуты)
+     → описание/Rich → реклама. Где это сделать в кабинете (раздел, шаги).
+• Пункта нет в данных API (например, видео) — так и пиши «в данных API не видно, проверьте в кабинете».
 
 ПРАВИЛА ОТВЕТА:
 - Опирайся на цифры из инструментов; не выдумывай. Нет данных — так и скажи и что проверить.
@@ -1539,7 +1782,7 @@ def _resp(code, body, headers):
 
 
 _CARD_INTENT = re.compile(r'карточк|артикул|\bsku\b|\bseo\b|\bсео\b|nmid|offer_?id|разбер|провер', re.I)
-_ART_TOKEN = re.compile(r'\b(?=[A-Za-z0-9_\-./]*\d)[A-Za-z0-9][A-Za-z0-9_\-./]{3,}\b')
+_ART_TOKEN = re.compile(r'(?<![\wА-Яа-яЁё])(?=[A-Za-zА-Яа-яЁё0-9_\-./]*\d)[A-Za-zА-Яа-яЁё0-9][A-Za-zА-Яа-яЁё0-9_\-./]{3,}')
 _LIVE_INTENT = re.compile(
     r'витрин|кабинет|seo|сео|карточк|качеств|слаб|плох|ошибк|модерац|что.*смотр',
     re.I,
@@ -1657,7 +1900,8 @@ def handler(event: dict, context) -> dict:
         pre_result = _cabinet_read(dsn, schema, pre)
         print(
             f"[megamag] prefetch {pre.get('what')} {pre} "
-            f"{time.monotonic() - t1:.1f}s {len(pre_result or '')} chars",
+            f"{time.monotonic() - t1:.1f}s {len(pre_result or '')} chars: "
+            f"{(pre_result or '')[:400]!r}",
             flush=True,
         )
         queries_ran.append(
@@ -1679,31 +1923,55 @@ def handler(event: dict, context) -> dict:
             'content': (pre_result or '')[:MAX_TOOL_CHARS],
         })
     if key_thread:
-        key_thread.join(timeout=max(1, _time_left() - 55))
+        # Не ждём список моделей ключа дольше пары секунд — модель важнее.
+        key_thread.join(timeout=2)
+        if key_thread.is_alive():
+            state['skip_key_lookup'] = True
     for step in range(MAX_STEPS):
         # Шлюз Поехали фактически рвёт ответ раньше заявленных 90 с.
         final = _time_left() < 50 or step == MAX_STEPS - 1
         if step == 0 and pre:
             hint = (
-                'Данные кабинета выше. Дай развёрнутый разбор: что не так по требованиям '
-                'площадки, вердикт SEO, приоритетный план правок руками. '
-                'Инструменты сейчас не вызывай — отвечай сразу по этим данным.'
+                'Данные кабинета выше. Ответь развёрнуто по разделу «КАК ОТВЕЧАТЬ» инструкции: '
+                'сводка цифрами, список слабых карточек (артикул | название | что не так по '
+                'чеклисту площадки | что сделать), системные проблемы, приоритетный план правок '
+                'руками в кабинете. Инструменты сейчас не вызывай — отвечай сразу по этим данным.'
             )
             if pre.get('what') == 'card':
                 hint = (
-                    'Данные карточки выше. Дай развёрнутый разбор по схеме из инструкции '
-                    '(CRM, живой кабинет, коммерция, вердикт по требованиям площадки, '
-                    'что поправить руками). Инструменты не вызывай — отвечай сразу.'
+                    'Данные карточки выше. Дай развёрнутый разбор по схеме «Разбор одной карточки»: '
+                    'контекст (кратко), чеклист площадки по каждому пункту (✅/⚠️/❌ + факт), '
+                    'коммерция, ПЛАН ПРАВОК ПО ПРИОРИТЕТУ с шагами в кабинете, затем пример '
+                    'улучшенного названия и структуры описания. Если поле «не читается методом API» — '
+                    'не называй его пустым, а скажи проверить в кабинете. Пиши плотно, без воды. '
+                    'Инструменты не вызывай — отвечай сразу.'
                 )
-            data, err = _ask_model(api_key, messages + [{'role': 'user', 'content': hint}], None, state)
-            print(f'[megamag] one-shot {pre.get("what")} {time.monotonic() - t_start:.1f}s err={bool(err)}', flush=True)
-            if not err:
-                msg = ((data.get('choices') or [{}])[0]).get('message') or {}
-                answer = (msg.get('content') or '').strip()
-                if answer:
-                    if api_key in answer:
-                        answer = answer.replace(api_key, '***')
-                    return _resp(200, {'answer': answer, 'queries': queries_ran, 'model': state.get('model')}, headers)
+            print(f'[megamag] one-shot start left={_time_left():.0f}s', flush=True)
+            elapsed = REQUEST_BUDGET - _time_left()
+            plain = [m for m in messages if m.get('role') in ('system', 'user', 'assistant')
+                     and not m.get('tool_calls')]
+            plain.append({'role': 'user', 'content': (
+                'ДАННЫЕ КАБИНЕТА (только что прочитаны, только чтение):\n'
+                + (pre_result or '')[:MAX_TOOL_CHARS] + '\n\n' + hint)})
+            answer, err, truncated = _stream_answer(
+                api_key, plain, state,
+                ANSWER_DEADLINE - elapsed,
+            )
+            print(f'[megamag] one-shot {pre.get("what")} {time.monotonic() - t_start:.1f}s err={err}', flush=True)
+            if answer:
+                if api_key in answer:
+                    answer = answer.replace(api_key, '***')
+                if truncated:
+                    answer += ('\n\n…Ответ сокращён по времени шлюза. Напишите «продолжи» — '
+                               'допишу план правок.')
+                return _resp(200, {'answer': answer, 'queries': queries_ran, 'model': state.get('model')}, headers)
+            return _resp(200, {
+                'answer': 'Сервис ИИ не успел ответить, поэтому показываю данные кабинета как есть '
+                          f'(повторите вопрос для разбора).\n\n{(pre_result or "")[:6000]}',
+                'queries': queries_ran,
+                'model': state.get('model'),
+                'error': err,
+            }, headers)
         if final and step > 0:
             messages.append({
                 'role': 'user',
