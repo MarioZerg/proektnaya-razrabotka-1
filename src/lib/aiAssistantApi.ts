@@ -1,5 +1,6 @@
 import type { Role } from '@/lib/roles';
 import type { PracticeDigest } from '@/lib/megabuhBusinessLog';
+import { CHAT_DOC_CHARS, extractChatFileText } from '@/lib/chatFileExtract';
 
 const AI_ASSISTANT_URL = 'https://functions.poehali.dev/c6f2fe80-681d-438f-85c6-f30503927ede';
 
@@ -34,12 +35,18 @@ export interface AiAnswer {
   quiet?: boolean;
 }
 
-/** Файл, который уходит в облачную функцию: имя, тип и base64. */
+/**
+ * Файл для облачной функции.
+ * Тяжёлые отчёты идут как textExcerpt (текст уже на устройстве),
+ * лёгкие — как data (base64), картинки — сжатый JPEG.
+ */
 export interface AiUpload {
   name: string;
   mime: string;
   data: string;
   size: number;
+  /** Текст, извлечённый на клиенте — для файлов больше лимита шлюза. */
+  textExcerpt?: string;
 }
 
 /** Закреплённый вопрос: живёт отдельно от переписки, очистка чата его не трогает. */
@@ -81,7 +88,9 @@ export const chatDisplayName = (full?: string): string => {
   return parts[0];
 };
 
-export const CHAT_FILE_MAX_BYTES = 2_000_000;
+export const CHAT_FILE_MAX_BYTES = 20 * 1024 * 1024;
+/** Выше этого base64+JSON не проходит шлюз Поехали — шлём только текст. */
+export const CHAT_FILE_INLINE_BYTES = 1_400_000;
 export const CHAT_FILE_MAX_COUNT = 3;
 export const CHAT_FILE_ACCEPT =
   '.pdf,.doc,.docx,.xls,.xlsx,.csv,.txt,.rtf,.jpg,.jpeg,.png,.webp,.gif';
@@ -149,7 +158,7 @@ const compressImage = (file: File): Promise<string> =>
     img.src = url;
   });
 
-/** Готовит файлы к отправке: проверка типа и размера, фото сжимаем. */
+/** Готовит файлы к отправке: до 20 МБ; тяжёлые отчёты — текст на устройстве. */
 export const prepareChatUploads = async (
   incoming: File[],
   already: number,
@@ -171,16 +180,62 @@ export const prepareChatUploads = async (
     if (file.size > CHAT_FILE_MAX_BYTES) {
       return {
         uploads: [],
-        error: `«${file.name}» слишком тяжёлый — до ${Math.round(CHAT_FILE_MAX_BYTES / 1_000_000)} МБ`,
+        error: `«${file.name}» слишком тяжёлый — до ${Math.round(CHAT_FILE_MAX_BYTES / (1024 * 1024))} МБ`,
       };
     }
-    const isImage = file.type.startsWith('image/') || ['jpg', 'jpeg', 'png', 'webp', 'gif'].includes(ext);
-    const dataUrl = isImage ? await compressImage(file) : await fileToDataUrl(file);
+    const isImage =
+      file.type.startsWith('image/') || ['jpg', 'jpeg', 'png', 'webp', 'gif'].includes(ext);
+
+    if (isImage) {
+      const dataUrl = await compressImage(file);
+      const comma = dataUrl.indexOf(',');
+      const data = comma >= 0 ? dataUrl.slice(comma + 1) : dataUrl;
+      uploads.push({
+        name: file.name.slice(0, 180),
+        mime: 'image/jpeg',
+        data,
+        size: file.size,
+      });
+      continue;
+    }
+
+    // Тяжёлый отчёт / таблица: текст здесь — иначе шлюз режет base64.
+    const needExtract =
+      file.size > CHAT_FILE_INLINE_BYTES
+      || ['xlsx', 'xls', 'csv', 'docx', 'doc'].includes(ext);
+
+    if (needExtract) {
+      let text = '';
+      try {
+        text = await extractChatFileText(file);
+      } catch {
+        text = '';
+      }
+      text = (text || '').trim().slice(0, CHAT_DOC_CHARS);
+      if (!text) {
+        return {
+          uploads: [],
+          error:
+            `«${file.name}» не удалось прочитать на устройстве. `
+            + 'Для Excel сохраните в .xlsx или CSV и попробуйте снова.',
+        };
+      }
+      uploads.push({
+        name: file.name.slice(0, 180),
+        mime: 'text/plain',
+        data: '',
+        size: file.size,
+        textExcerpt: text,
+      });
+      continue;
+    }
+
+    const dataUrl = await fileToDataUrl(file);
     const comma = dataUrl.indexOf(',');
     const data = comma >= 0 ? dataUrl.slice(comma + 1) : dataUrl;
     uploads.push({
       name: file.name.slice(0, 180),
-      mime: isImage ? 'image/jpeg' : mimeOf(file),
+      mime: mimeOf(file),
       data,
       size: file.size,
     });
@@ -220,7 +275,12 @@ export const askAiAssistant = async (
             : content,
       })),
       role,
-      files: files.map(({ name, mime, data }) => ({ name, mime, data })),
+      files: files.map(({ name, mime, data, textExcerpt }) => ({
+        name,
+        mime,
+        data,
+        textExcerpt,
+      })),
       practice,
     }),
   });

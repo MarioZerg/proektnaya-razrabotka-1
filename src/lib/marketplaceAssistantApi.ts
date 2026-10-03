@@ -76,7 +76,12 @@ export const askMarketplaceAssistant = async (
               : content,
         })),
         role,
-        files: files.map(({ name, mime, data }) => ({ name, mime, data })),
+        files: files.map(({ name, mime, data, textExcerpt }) => ({
+          name,
+          mime,
+          data,
+          textExcerpt,
+        })),
         stream: true,
       }),
     });

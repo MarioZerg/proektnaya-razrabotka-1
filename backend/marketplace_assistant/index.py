@@ -106,8 +106,8 @@ ALLOWED_SITE_TOKENS = ALLOWED_DOMAINS + (
 # Образовательный центр — каталог ссылок в MEGAMAG_EDU ниже.
 # Вложения из чата: отчёты, выгрузки и скрины кабинетов маркетплейсов.
 MAX_ATTACH = 3
-MAX_ATTACH_BYTES = 2_000_000
-MAX_DOC_CHARS = 14000
+MAX_ATTACH_BYTES = 20 * 1024 * 1024
+MAX_DOC_CHARS = 40000
 DOC_EXT_OK = {
     'pdf', 'doc', 'docx', 'xls', 'xlsx', 'csv', 'txt', 'rtf',
     'jpg', 'jpeg', 'png', 'webp', 'gif',
@@ -263,6 +263,11 @@ def _read_attachments(files) -> tuple:
         name = str(item.get('name') or 'файл')[:180]
         mime = str(item.get('mime') or '').lower()
         ext = (name.rsplit('.', 1)[-1] if '.' in name else '').lower()
+        # Текст уже извлечён на устройстве (тяжёлые отчёты до 20 МБ).
+        pre = item.get('textExcerpt') or item.get('text')
+        if isinstance(pre, str) and pre.strip():
+            texts.append(f'--- {name} ---\n{pre.strip()[:MAX_DOC_CHARS]}')
+            continue
         if ext not in DOC_EXT_OK:
             texts.append(f'--- {name} ---\nЭтот тип файла не читаю.')
             continue
@@ -275,7 +280,7 @@ def _read_attachments(files) -> tuple:
             texts.append(f'--- {name} ---\nФайл пустой.')
             continue
         if len(raw) > MAX_ATTACH_BYTES:
-            texts.append(f'--- {name} ---\nФайл слишком большой.')
+            texts.append(f'--- {name} ---\nФайл слишком большой (лимит 20 МБ).')
             continue
         try:
             if ext in ('jpg', 'jpeg', 'png', 'webp', 'gif') or mime.startswith('image/'):
