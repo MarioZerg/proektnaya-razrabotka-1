@@ -1195,6 +1195,10 @@ def _card_live_wb(creds, item_row, query):
     if item_row and item_row.get('sku'):
         search = str(item_row['sku'])
     nm = item_row.get('wb_nm_id') if item_row else None
+    if not nm and search.isdigit() and len(search) >= 6:
+        nm = int(search)
+    if nm:
+        search = str(nm)  # textSearch WB ищет и по nmID, и по vendorCode
     lines = []
     payload = {
         'settings': {
@@ -1251,7 +1255,10 @@ def _card_live_wb(creds, item_row, query):
             lines.append('  SEO/качество: явных дыр в ответе API не видно')
         # Короткий срез характеристик — менеджеру видно, что заполнено.
         for ch in chars[:8]:
-            lines.append(f"  · {(ch.get('name') or '')}: {', '.join(ch.get('value') or [])}"[:180])
+            val = ch.get('value')
+            if isinstance(val, (list, tuple)):
+                val = ', '.join(str(v) for v in val)
+            lines.append(f"  · {(ch.get('name') or '')}: {'' if val is None else val}"[:180])
     return lines
 
 
@@ -2169,7 +2176,7 @@ def _call_model(api_key, model, messages, tools):
 
 
 ANSWER_DEADLINE = 31  # с от старта: шлюз Поехали рвёт соединение на 33–50 с → держим запас
-TTFT_TIMEOUT = 22  # с: connect + ожидание первого токена GPT 6 Luna Pro
+TTFT_TIMEOUT = 24  # с: connect + ожидание первого токена GPT 6 Luna Pro
 
 
 def _set_sock_timeout(r, seconds):
@@ -2531,6 +2538,11 @@ def _resp(code, body, headers):
 RUNTIME_NOTES = """
 
 ТЕХНИЧЕСКИ В ЭТОМ ЧАТЕ:
+- У тебя ЕСТЬ доступ на чтение к кабинетам OZON, Wildberries и Яндекс Маркета через API
+  (ключи из CRM). Когда в вопросе есть артикул, sku, nmID или offer_id, система сама находит
+  карточку и даёт блок «ДАННЫЕ КАБИНЕТА». Никогда не пиши «не могу открыть кабинет» или
+  «пришлите ссылку». Если данных по артикулу нет в блоке — скажи, что карточка не нашлась,
+  и попроси уточнить артикул или площадку.
 - Строку «Пошёл смотреть информацию: <url>» система сама показывает менеджеру в статусе,
   когда открывает справку. В тексте ответа её не повторяй — давай ссылку на страницу в конце.
 - Если ниже есть блок «ОФИЦИАЛЬНАЯ СПРАВКА (прочитано сейчас)» — опирайся на него и ссылайся
@@ -2560,7 +2572,13 @@ def _looking_text(url):
     return f'Пошёл смотреть информацию: {url}'
 
 
-_CARD_INTENT = re.compile(r'карточк|артикул|\bsku\b|\bseo\b|\bсео\b|nmid|offer_?id|разбер|провер', re.I)
+_CARD_INTENT = re.compile(
+    r'карточк|артикул|\bsku\b|\bскю\b|\bseo\b|\bсео\b|nmid|nm\s?id|offer_?id|разбер|провер|'
+    r'товар|позици|найди|найти|покажи|посмотри|глянь|что\s+с\b|как\s+там|инф\w*\s+по',
+    re.I,
+)
+# Сообщение — только артикул (например «2vyal8_290» или «1055690496»): тоже карточка.
+_ONLY_ART = re.compile(r'^\s*[A-Za-zА-Яа-яЁё0-9][A-Za-zА-Яа-яЁё0-9_\-./]{3,}\s*[?!.]*\s*$')
 _ART_TOKEN = re.compile(r'(?<![\wА-Яа-яЁё])(?=[A-Za-zА-Яа-яЁё0-9_\-./]*\d)[A-Za-zА-Яа-яЁё0-9][A-Za-zА-Яа-яЁё0-9_\-./]{3,}')
 _LIVE_INTENT = re.compile(
     r'витрин|кабинет|seo|сео|карточк|качеств|слаб|плох|ошибк|модерац|что.*смотр',
@@ -2592,6 +2610,8 @@ def _cabinet_prefetch(question):
     mp = _guess_marketplace(q)
     if _FILL_INTENT.search(q):
         return None
+    if _ONLY_ART.match(q) and re.search(r'\d', q) and not _SIZE_TOKEN.fullmatch(q.strip(' ?!.')):
+        return {'what': 'card', 'marketplace': mp, 'query': q.strip(' ?!.')}
     if _CARD_INTENT.search(q):
         m = next((x for x in _ART_TOKEN.finditer(q) if not _SIZE_TOKEN.fullmatch(x.group(0))), None)
         if m:
@@ -2601,6 +2621,24 @@ def _cabinet_prefetch(question):
     if _LIVE_INTENT.search(q):
         return {'what': 'live', 'marketplace': mp if mp != 'all' else 'ozon'}
     return None
+
+
+def _card_fallback_text(pre, raw):
+    """Если ИИ не успел — показываем менеджеру, что нашли по артикулу на площадках."""
+    raw = (raw or '').strip()
+    if not raw or 'не найден' in raw[:300].lower() and 'Найдено в CRM' not in raw:
+        return ''
+    keep = []
+    for line in raw.splitlines():
+        if line.startswith('Формат ответа'):
+            continue
+        keep.append(line)
+    body = '\n'.join(keep)[:3500]
+    return (
+        f'Нашёл карточку по артикулу **{pre.get("query")}** на площадках. Подробный разбор ИИ '
+        'не успел подготовить — ниже данные из кабинетов, напишите «разбери подробнее», '
+        'и я сделаю выводы.\n\n```\n' + body + '\n```'
+    )
 
 
 def handler(event: dict, context) -> dict:
@@ -2883,9 +2921,11 @@ def handler(event: dict, context) -> dict:
                     'model': state.get('model'),
                     'docExcerpt': doc_excerpt[:6000],
                 })
+            fallback = _card_fallback_text(pre, pre_result) if pre.get('what') == 'card' else ''
             return finish(200, {
-                'answer': 'Извините, сервис ИИ ответил слишком медленно, и я не успел разобрать данные. '
-                          'Повторите вопрос через минуту.',
+                'answer': fallback or (
+                    'Извините, сервис ИИ ответил слишком медленно, и я не успел разобрать данные. '
+                    'Повторите вопрос через минуту.'),
                 'queries': queries_ran,
                 'model': state.get('model'),
                 'error': err,
