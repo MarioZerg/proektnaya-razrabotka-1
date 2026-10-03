@@ -35,17 +35,11 @@ AITUNNEL_BASES = (
     'https://api.aitunnel.ru/v1',
     'https://ru-api.aitunnel.ru/v1',
 )
-# Запас, если ключ без белого списка и auto не ответил.
-DEFAULT_MODEL = 'openai/gpt-6-luna-pro'
+# Модель не фиксируем: AITUNNEL сам выбирает через «auto».
+# Если у ключа есть белый список — берём только его имена.
+# AITUNNEL_MODEL — необязательный приоритет; иначе только auto.
 MODEL_CANDIDATES = [
-    DEFAULT_MODEL,
-    'gpt-6-luna-pro',
-    'gpt-6.1-sol-pro',
-    'gpt-4o-mini',
-    'gpt-4.1-mini',
-    'gpt-5-mini',
-    'gpt-5.4-mini',
-    'gpt-4.1-nano',
+    'auto',
 ]
 MAX_STEPS = 6
 MAX_TOOL_CHARS = 14000
@@ -1356,16 +1350,20 @@ def _add_models(ordered, name):
 
 
 def _model_candidates(api_key, state):
-    """Модель берём с ключа: если он ограничен — только его список, иначе auto."""
+    """Модель не хардкодим: auto или белый список ключа AITUNNEL."""
     if state.get('candidates'):
         return state['candidates']
     preferred = os.environ.get('AITUNNEL_MODEL', '').strip()
+    # Старые секреты с фиксированной моделью игнорируем — только явный AITUNNEL_MODEL.
+    # MEGAMAG_FAST_MODELS / DEFAULT_MODEL больше не используем.
     t0 = time.monotonic()
     allowed = _key_allowed_models(api_key)
     print(f'[megamag] key models={allowed} {time.monotonic() - t0:.1f}s', flush=True)
     state['allowed_models'] = allowed
     ordered = []
     if allowed:
+        # Ключ ограничен — зовём только то, что в кабинете AITUNNEL.
+        # Если в списке есть auto — ставим его первым.
         if preferred:
             pref_set = set(_model_aliases(preferred))
             for name in allowed:
@@ -1373,16 +1371,18 @@ def _model_candidates(api_key, state):
                     _add_models(ordered, name)
                     break
         for name in allowed:
+            if name == 'auto' or name.endswith('/auto'):
+                _add_models(ordered, name)
+        for name in allowed:
             _add_models(ordered, name)
         state['candidates'] = ordered[:8]
         return state['candidates']
+    # Без ограничений ключа — только автоподбор AITUNNEL.
     if preferred:
         _add_models(ordered, preferred)
-    _add_models(ordered, 'auto')
-    _add_models(ordered, DEFAULT_MODEL)
     for name in MODEL_CANDIDATES:
         _add_models(ordered, name)
-    state['candidates'] = ordered[:8]
+    state['candidates'] = ordered[:5]
     return state['candidates']
 
 
@@ -1421,8 +1421,8 @@ def _ask_model(api_key, messages, tools, state):
     elif last_err and ('не разрешена' in last_err or '403' in last_err):
         last_err = (
             'Ключ AITUNNEL ограничен моделями, которых МЕГАМАГ не смог вызвать. '
-            'Имена должны совпасть с каталогом один в один (gpt-6-luna-pro и '
-            'openai/gpt-6-luna-pro — разные записи).'
+            'В aitunnel.ru у ключа либо очистите список (тогда будет auto), '
+            'либо оставьте имена из каталога один в один.'
         )
     return None, last_err
 
