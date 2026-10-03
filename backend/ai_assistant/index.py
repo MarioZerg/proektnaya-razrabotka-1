@@ -1511,10 +1511,8 @@ def handler(event: dict, context) -> dict:
 
     headers = {'Access-Control-Allow-Origin': '*', 'Content-Type': 'application/json'}
 
-    # Личный ключ Мегабуха; общий AITUNNEL_API_KEY — запасной вариант.
-    # Не кладите один и тот же ключ в МЕГАМАГ: иначе чужой агент жрёт бюджет МЕГАБУХа.
-    api_key = (os.environ.get('API_KEY_MEGABUX', '').strip()
-               or os.environ.get('AITUNNEL_API_KEY', '').strip())
+    # Только личный ключ Мегабуха. Общего ключа больше нет — расход по ключу = расход МЕГАБУХа.
+    api_key = os.environ.get('API_KEY_MEGABUX', '').strip()
 
     # Проверка моделей отключена: публичный GET ?models= / ?probe= жег баланс ключа.
     if method == 'GET' and (event.get('queryStringParameters') or {}).get('models'):

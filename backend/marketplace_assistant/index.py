@@ -2672,8 +2672,7 @@ def handler(event: dict, context) -> dict:
         note_looking(hub)
 
     # Отдельный ключ агента менеджера. Не подставляйте сюда ключ МЕГАБУХа.
-    api_key = (os.environ.get('API_KEY_MEGAMAG', '').strip()
-               or os.environ.get('AITUNNEL_API_KEY', '').strip())
+    api_key = os.environ.get('API_KEY_MEGAMAG', '').strip()
     if not api_key:
         return _resp(500, {'error': _public_ai_error('Не настроен ключ доступа к сервису ИИ')}, headers)
 
