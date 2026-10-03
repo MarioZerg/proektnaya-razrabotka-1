@@ -47,9 +47,9 @@ MODEL_CANDIDATES = [
     'gpt-5.4-mini',
     'gpt-4.1-nano',
 ]
-MAX_STEPS = 10
-MAX_TOOL_CHARS = 16000
-MP_TIMEOUT = 20
+MAX_STEPS = 6
+MAX_TOOL_CHARS = 14000
+MP_TIMEOUT = 12
 
 OZON_API = 'https://api-seller.ozon.ru'
 WB_CONTENT_API = 'https://content-api.wildberries.ru'
@@ -418,13 +418,16 @@ def _live_ozon(creds):
         return 'OZON: в CRM нет Client-Id или Api-Key'
     h = {'Client-Id': client_id, 'Api-Key': api_key}
     lines = ['OZON (живые данные кабинета):']
+    # Короткий набор фильтров — укладываемся в таймаут шлюза Поехали.
     for vis, title in (
         ('ALL', 'всего карточек'),
         ('VISIBLE', 'видны покупателю'),
-        ('INVISIBLE', 'скрыты'),
         ('EMPTY_STOCK', 'нет в наличии'),
         ('STATE_FAILED', 'ошибка создания/модерации'),
     ):
+        if _time_left() < 45:
+            lines.append(f'- {title}: пропуск (мало времени на ответ)')
+            continue
         st, data = _mp_call('POST', OZON_API + '/v3/product/list', h,
                             {'filter': {'visibility': vis}, 'limit': 1, 'last_id': ''})
         if st == 200 and isinstance(data, dict):
@@ -432,32 +435,34 @@ def _live_ozon(creds):
             lines.append(f'- {title}: {total}')
         else:
             lines.append(f'- {title}: не получено (код {st})')
-    # Примеры проблемных карточек — по коду и названию.
     st, data = _mp_call('POST', OZON_API + '/v3/product/list', h,
-                        {'filter': {'visibility': 'STATE_FAILED'}, 'limit': 20, 'last_id': ''})
+                        {'filter': {'visibility': 'STATE_FAILED'}, 'limit': 10, 'last_id': ''})
     ids = []
     if st == 200 and isinstance(data, dict):
         ids = [it.get('product_id') for it in (data.get('result') or {}).get('items') or []
                if it.get('product_id')]
-    if ids:
-        st, info = _mp_call('POST', OZON_API + '/v3/product/info/list', h, {'product_id': ids[:20]})
+    if ids and _time_left() >= 42:
+        st, info = _mp_call('POST', OZON_API + '/v3/product/info/list', h, {'product_id': ids[:10]})
         if st == 200 and isinstance(info, dict):
             lines.append('Карточки с ошибкой (offer_id | название | ошибки):')
-            for it in (info.get('items') or [])[:20]:
+            for it in (info.get('items') or [])[:10]:
                 errs = '; '.join(
                     (e.get('texts') or {}).get('short_description') or e.get('code') or ''
                     for e in (it.get('errors') or [])[:3]
                 )
                 lines.append(f"  {it.get('offer_id')} | {(it.get('name') or '')[:80]} | {errs}")
-    # Выборка видимых карточек — SEO-срез, чтобы агент мог говорить про витрину без query.
+    # SEO-срез видимых — до 20 карточек, чтобы успеть до обрыва шлюза.
+    if _time_left() < 40:
+        lines.append('SEO-срез видимых: пропуск (мало времени на ответ)')
+        return '\n'.join(lines)
     st, data = _mp_call('POST', OZON_API + '/v3/product/list', h,
-                        {'filter': {'visibility': 'VISIBLE'}, 'limit': 40, 'last_id': ''})
+                        {'filter': {'visibility': 'VISIBLE'}, 'limit': 20, 'last_id': ''})
     vis_ids = []
     if st == 200 and isinstance(data, dict):
         vis_ids = [it.get('product_id') for it in (data.get('result') or {}).get('items') or []
                    if it.get('product_id')]
     if vis_ids:
-        st, info = _mp_call('POST', OZON_API + '/v3/product/info/list', h, {'product_id': vis_ids[:40]})
+        st, info = _mp_call('POST', OZON_API + '/v3/product/info/list', h, {'product_id': vis_ids[:20]})
         if st == 200 and isinstance(info, dict):
             weak = []
             for it in (info.get('items') or []):
@@ -469,10 +474,10 @@ def _live_ozon(creds):
                 barcodes = it.get('barcodes') or ([] if not it.get('barcode') else [it.get('barcode')])
                 score = 0
                 reasons = []
-                if len(name) < 40:
+                if len(name) < 50:
                     score += 2
                     reasons.append(f'короткий title {len(name)}')
-                if img_n < 3:
+                if img_n < 4:
                     score += 2
                     reasons.append(f'фото {img_n}')
                 if not barcodes:
@@ -483,7 +488,7 @@ def _live_ozon(creds):
             weak.sort(key=lambda x: -x[0])
             lines.append(f'SEO-срез видимых (проверено {len(info.get("items") or [])}): '
                          f'слабых по заголовку/фото/штрихкоду — {len(weak)}')
-            for _, offer, name, why in weak[:12]:
+            for _, offer, name, why in weak[:10]:
                 lines.append(f'  {offer} | {name} | {why}')
     return '\n'.join(lines)
 
@@ -756,18 +761,20 @@ def _card_live_ozon(creds, item_row, query):
                 rating_skus.append(int(s))
             except (TypeError, ValueError):
                 pass
-    if rating_skus:
+    if rating_skus and _time_left() >= 48:
         st, rating = _mp_call(
-            'POST', OZON_API + '/v1/product/rating-by-sku', h, {'skus': rating_skus[:20]},
+            'POST', OZON_API + '/v1/product/rating-by-sku', h, {'skus': rating_skus[:10]},
         )
         if st == 200 and isinstance(rating, dict):
-            for g in (rating.get('products') or rating.get('result') or [])[:10]:
+            for g in (rating.get('products') or rating.get('result') or [])[:5]:
                 lines.append(
                     f"  рейтинг контента OZON sku={g.get('sku')}: {g.get('rating')} "
                     f"(группы: {json.dumps(g.get('groups') or g.get('conditions') or [], ensure_ascii=False)[:300]})"
                 )
         else:
             lines.append(f'  рейтинг контента: не получен (код {st})')
+    elif rating_skus:
+        lines.append('  рейтинг контента: пропуск (мало времени на ответ)')
     return lines
 
 
@@ -981,18 +988,34 @@ def _card_analyze(dsn, schema, shop, mps, query):
         else:
             out.append(f'Найдено в CRM: {len(items)}')
         # Берём до 3 совпадений, для каждого — live по нужным площадкам.
-        targets = items[:3] if items else [None]
+        targets = items[:2] if items else [None]
         shops = [shop] if shop else _shops(cur, schema)
         for item_row in targets:
             if item_row:
                 out.extend(_card_context(cur, schema, item_row, mps))
                 shop_id = item_row.get('shop_id')
                 shop_loop = [s for s in shops if s['id'] == shop_id] or shops
+                # Только площадки, куда карточка реально привязана — быстрее и точнее.
+                bound = []
+                if item_row.get('ozon_sku') and 'ozon' in mps:
+                    bound.append('ozon')
+                if (item_row.get('wb_nm_id') or item_row.get('wb_sku')) and 'wildberries' in mps:
+                    bound.append('wildberries')
+                if item_row.get('ym_sku') and 'yandex_market' in mps:
+                    bound.append('yandex_market')
+                use_mps = bound or list(mps)
             else:
-                shop_loop = shops
+                shop_loop = shops[:1]  # без CRM-попадания не обходим все магазины
+                use_mps = list(mps)[:1] if len(mps) > 1 else list(mps)
             for s in shop_loop:
+                if _time_left() < 42:
+                    out.append('Живой кабинет: дальше не читаю — заканчивается время ответа.')
+                    break
                 out.append(f"--- Живой кабинет: {s['name']} (shop_id {s['id']}) ---")
-                for mp in mps:
+                for mp in use_mps:
+                    if _time_left() < 40:
+                        out.append(f'{MP_TITLES[mp]}: пропуск (мало времени)')
+                        continue
                     creds, enabled = _load_creds(cur, schema, mp, s['id'])
                     if not creds or not enabled:
                         out.append(f'{MP_TITLES[mp]}: нет ключей или выключено')
@@ -1423,40 +1446,53 @@ SYSTEM_PROMPT = """Ты — МЕГАМАГ, помощник менеджера 
   what=listings — справочник карточек, дыры в привязках, нулевые остатки, цены.
   what=ads — реклама и ДРР.
   what=attention — что горит (отзывы 1–3★, дорогая реклама, нули, кабинеты без ключей).
-  what=live — живой обход кабинета площадки (счётчики и проблемные выборки).
+  what=live — живой обход кабинета площадки (счётчики и SEO-срез).
   what=card — РАЗБОР КОНКРЕТНОЙ КАРТОЧКИ. Обязателен query: артикул sku / offer_id OZON /
-    nmID WB / offerId Яндекса / часть названия. Читает CRM + живой кабинет: заголовок,
-    описание, фото, характеристики, ошибки модерации, рейтинг контента, остатки, цену,
-    рекламу, отзывы.
+    nmID WB / offerId Яндекса / часть названия. Читает CRM + живой кабинет.
   marketplace = ozon | wildberries | yandex_market | all. shop_id — из overview.
-  Если спрашивают про карточку, SEO, «проверь артикул», «разбери товар» — сразу what=card.
-  Если магазин неизвестен — сначала overview, потом card/live с shop_id.
+  Карточка/артикул/SEO одной позиции → what=card.
+  «Какие карточки плохие / SEO витрины / что с кабинетом» → what=live (+ marketplace).
+  «Что горит» → what=attention. Магазин неизвестен → overview.
 
 - web_search: только официальные справки, запрос ВСЕГДА с site: — seller-edu.ozon.ru,
   docs.ozon.ru, seller.wildberries.ru, dev.wildberries.ru, yandex.ru/support.
 - read_page: открыть страницу этих же доменов.
 
-КАК РАЗБИРАТЬ КАРТОЧКУ (развёрнутый ответ):
-1) Что это за товар в CRM (магазин, sku, размер, материал, привязки к площадкам).
-2) Что видит кабинет площадки прямо сейчас (название, длина, фото, описание, атрибуты,
-   ошибки, рейтинг контента).
-3) Коммерция: остаток, цена, реклама/ДРР, свежие отзывы.
-4) Вердикт SEO: что мешает продажам (конкретно), что уже нормально.
-5) План правок руками в кабинете — по приоритету, без воды.
-6) Если правило площадки спорное — подтверди официальной справкой (web_search/read_page).
+ТРЕБОВАНИЯ К КАРТОЧКАМ (ориентир для рекомендаций; спорное — подтверди справкой):
+OZON:
+- название информативное, без воды и капса; лучше ≥50–60 символов с типом товара и ключевыми свойствами (ткань, размер, цвет);
+- фото: несколько ракурсов, на белом/нейтральном фоне, без чужих логотипов и водяных знаков;
+- заполнены обязательные характеристики категории, есть штрихкод;
+- описание полезное покупателю (материал, размер, уход), не копипаст названия;
+- смотри рейтинг контента / ошибки модерации из кабинета — поднимай то, что OZON пометил.
+Wildberries:
+- title и описание не пустые; описание содержательное (≥300 символов как ориентир слабости);
+- фото обязательны (лучше ≥3–5), vendorCode совпадает с нашим sku;
+- характеристики категории заполнены; ошибки из cards/error/list устранять в первую очередь.
+Яндекс Маркет:
+- оффер сматчен с карточкой Маркета; contentRating не внизу списка;
+- нет rejectedMapping / ошибок в offer-cards; на модерации — ждать или править по тексту ошибки.
+
+КАК РАЗБИРАТЬ КАРТОЧКУ / ВИТРИНУ (развёрнутый ответ):
+1) Контекст: магазин, sku, размер/материал, привязки к площадкам.
+2) Что в живом кабинете: название, фото, описание, атрибуты, ошибки, рейтинг контента.
+3) Коммерция: остаток, цена, реклама/ДРР, свежие отзывы — если есть в данных.
+4) Вердикт по требованиям площадки выше: что ок, что мешает продажам (конкретно).
+5) План правок руками в кабинете — по приоритету (сначала ошибки модерации, потом SEO, потом реклама).
+6) Спорное правило — web_search/read_page по официальной справке.
 
 ПРАВИЛА ОТВЕТА:
 - Опирайся на цифры из инструментов; не выдумывай. Нет данных — так и скажи и что проверить.
 - Никогда не показывай ключи, токены, Client-Id, пароли.
-- Отвечай по-русски, развёрнуто по делу: сначала вывод, потом блоки выше. Не односложный ответ.
-- Не отказывайся «я не вижу карточку», пока не вызвал what=card (и при необходимости live)."""
+- По-русски, развёрнуто по делу. Не односложный ответ и не «сейчас сверю» без вызова инструмента.
+- Не пиши, что не видишь карточку, пока не вызвал what=card или what=live."""
 
 TOOLS = [
     {'type': 'function', 'function': {
         'name': 'cabinet_read',
         'description': (
             'Читает данные кабинетов маркетплейсов (только чтение). '
-            'Для разбора одной карточки: what=card и query=артикул/название.'
+            'Карточка: what=card + query. Витрина/SEO кабинета: what=live.'
         ),
         'parameters': {'type': 'object', 'properties': {
             'what': {
@@ -1504,25 +1540,37 @@ def _resp(code, body, headers):
 
 _CARD_INTENT = re.compile(r'карточк|артикул|\bsku\b|\bseo\b|\bсео\b|nmid|offer_?id|разбер|провер', re.I)
 _ART_TOKEN = re.compile(r'\b(?=[A-Za-z0-9_\-./]*\d)[A-Za-z0-9][A-Za-z0-9_\-./]{3,}\b')
+_LIVE_INTENT = re.compile(
+    r'витрин|кабинет|seo|сео|карточк|качеств|слаб|плох|ошибк|модерац|что.*смотр',
+    re.I,
+)
+_ATTENTION_INTENT = re.compile(r'вниман|что горит|проблем|срочн|горит', re.I)
 
 
-def _card_prefetch(question):
-    """Вопрос про конкретную карточку с артикулом — сразу готовим аргументы what=card."""
-    q = question or ''
-    if not _CARD_INTENT.search(q):
-        return None
-    m = _ART_TOKEN.search(q)
-    if not m:
-        return None
-    low = q.lower()
-    mp = 'all'
+def _guess_marketplace(question):
+    low = (question or '').lower()
     if 'ozon' in low or 'озон' in low:
-        mp = 'ozon'
-    elif 'wildberries' in low or re.search(r'\bwb\b|вб|вайлдб', low):
-        mp = 'wildberries'
-    elif 'яндекс' in low or 'маркет' in low or 'yandex' in low or re.search(r'\bym\b', low):
-        mp = 'yandex_market'
-    return {'what': 'card', 'marketplace': mp, 'query': m.group(0).strip('.-/')}
+        return 'ozon'
+    if 'wildberries' in low or re.search(r'\bwb\b|вб|вайлдб', low):
+        return 'wildberries'
+    if 'яндекс' in low or 'yandex' in low or re.search(r'\bym\b', low):
+        return 'yandex_market'
+    return 'all'
+
+
+def _cabinet_prefetch(question):
+    """Сразу читаем кабинет до модели — шлюз Поехали рвёт долгие цепочки tool-calls."""
+    q = question or ''
+    mp = _guess_marketplace(q)
+    if _CARD_INTENT.search(q):
+        m = _ART_TOKEN.search(q)
+        if m:
+            return {'what': 'card', 'marketplace': mp, 'query': m.group(0).strip('.-/')}
+    if _ATTENTION_INTENT.search(q):
+        return {'what': 'attention', 'marketplace': mp}
+    if _LIVE_INTENT.search(q):
+        return {'what': 'live', 'marketplace': mp if mp != 'all' else 'ozon'}
+    return None
 
 
 def handler(event: dict, context) -> dict:
@@ -1602,42 +1650,53 @@ def handler(event: dict, context) -> dict:
     queries_ran = []
     state = {}
     t_start = time.monotonic()
-    pre = _card_prefetch(question)
+    pre = _cabinet_prefetch(question)
     if pre:
         # Экономим один круг модели: шлюз Поехали рвёт долгие запросы.
         t1 = time.monotonic()
         pre_result = _cabinet_read(dsn, schema, pre)
-        print(f'[megamag] prefetch card {pre} {time.monotonic() - t1:.1f}s {len(pre_result or "")} chars', flush=True)
-        queries_ran.append(f"cabinet: card / {pre['marketplace']} / q {pre['query']}")
+        print(
+            f"[megamag] prefetch {pre.get('what')} {pre} "
+            f"{time.monotonic() - t1:.1f}s {len(pre_result or '')} chars",
+            flush=True,
+        )
+        queries_ran.append(
+            f"cabinet: {pre.get('what')} / {pre.get('marketplace') or 'all'}"
+            + (f" / q {pre['query']}" if pre.get('query') else '')
+        )
         messages.append({
             'role': 'assistant',
             'content': None,
             'tool_calls': [{
-                'id': 'prefetch_card',
+                'id': 'prefetch_cabinet',
                 'type': 'function',
                 'function': {'name': 'cabinet_read', 'arguments': json.dumps(pre, ensure_ascii=False)},
             }],
         })
         messages.append({
             'role': 'tool',
-            'tool_call_id': 'prefetch_card',
+            'tool_call_id': 'prefetch_cabinet',
             'content': (pre_result or '')[:MAX_TOOL_CHARS],
         })
     if key_thread:
-        key_thread.join(timeout=max(1, _time_left() - 60))
+        key_thread.join(timeout=max(1, _time_left() - 55))
     for step in range(MAX_STEPS):
-        # Время на исходе или последний шаг — просим ответить по уже собранным данным.
-        # Шлюз Поехали фактически рвёт ответ раньше 90 с — после ~30 с сворачиваемся.
-        final = _time_left() < 52 or step == MAX_STEPS - 1
+        # Шлюз Поехали фактически рвёт ответ раньше заявленных 90 с.
+        final = _time_left() < 50 or step == MAX_STEPS - 1
         if step == 0 and pre:
-            # Карточка уже прочитана — отвечаем за один круг, без похода в справку.
-            data, err = _ask_model(api_key, messages + [{
-                'role': 'user',
-                'content': 'Данные карточки выше. Дай развёрнутый разбор по схеме из инструкции '
-                           '(CRM, живой кабинет, остатки/цена/реклама/отзывы, вердикт SEO, что поправить руками). '
-                           'Инструменты сейчас не вызываются — не пиши «сейчас сверю», отвечай сразу.',
-            }], None, state)
-            print(f'[megamag] card one-shot {time.monotonic() - t_start:.1f}s err={bool(err)}', flush=True)
+            hint = (
+                'Данные кабинета выше. Дай развёрнутый разбор: что не так по требованиям '
+                'площадки, вердикт SEO, приоритетный план правок руками. '
+                'Инструменты сейчас не вызывай — отвечай сразу по этим данным.'
+            )
+            if pre.get('what') == 'card':
+                hint = (
+                    'Данные карточки выше. Дай развёрнутый разбор по схеме из инструкции '
+                    '(CRM, живой кабинет, коммерция, вердикт по требованиям площадки, '
+                    'что поправить руками). Инструменты не вызывай — отвечай сразу.'
+                )
+            data, err = _ask_model(api_key, messages + [{'role': 'user', 'content': hint}], None, state)
+            print(f'[megamag] one-shot {pre.get("what")} {time.monotonic() - t_start:.1f}s err={bool(err)}', flush=True)
             if not err:
                 msg = ((data.get('choices') or [{}])[0]).get('message') or {}
                 answer = (msg.get('content') or '').strip()
