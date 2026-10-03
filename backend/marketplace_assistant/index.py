@@ -37,6 +37,8 @@ AITUNNEL_BASES = (
 )
 # Модель МЕГАМАГа: GPT 6 Luna Pro. AITUNNEL_MODEL перекрывает при необходимости.
 DEFAULT_MODEL = 'openai/gpt-6-luna-pro'
+# Ключ API_KEY_MEGAMAG пускает только пресет MEGAMAG (модель GPT 6 Luna Pro внутри пресета).
+MEGAMAG_PRESET = 'MEGAMAG'
 MODEL_CANDIDATES = [
     DEFAULT_MODEL,
     'gpt-6-luna-pro',
@@ -1409,6 +1411,7 @@ def _aitunnel_open(path, api_key, payload=None, timeout=30):
 
 
 _KEY_CACHE = {}
+_PRESET_CACHE = {}  # api_key -> имена из ошибки 403 «Разрешённые: …»
 _KEY_TTL = 600
 
 
@@ -1469,9 +1472,29 @@ def _add_models(ordered, name):
             ordered.append(alias)
 
 
+_ALLOWED_RE = re.compile(r'Разреш[её]нные:\s*([^"}]+?)(?:\.\s*["}]|\.?$|["}])')
+
+
+def _allowed_from_error(raw):
+    """AITUNNEL пишет «Разрешённые: MEGAMAG.» — берём имена один в один (пресет ключа)."""
+    m = _ALLOWED_RE.search(raw or '')
+    if not m:
+        return []
+    names = [n.strip().strip('.').strip() for n in m.group(1).split(',')]
+    return [n for n in names if n]
+
+
 def _model_candidates(api_key, state):
     """Сначала GPT 6 Luna Pro; если ключ ограничен — пересечение с его списком."""
     if state.get('candidates'):
+        return state['candidates']
+    # Пресет AITUNNEL ключа МЕГАМАГ (внутри него — GPT 6 Luna Pro). Имя — один в один.
+    preset = os.environ.get('MEGAMAG_MODEL', '').strip() or MEGAMAG_PRESET
+    if preset and not state.get('preset_failed'):
+        state['candidates'] = [preset]
+        return state['candidates']
+    if _PRESET_CACHE.get(api_key):
+        state['candidates'] = list(_PRESET_CACHE[api_key])
         return state['candidates']
     preferred = os.environ.get('AITUNNEL_MODEL', '').strip() or DEFAULT_MODEL
     t0 = time.monotonic()
@@ -1490,7 +1513,9 @@ def _model_candidates(api_key, state):
                 if set(_model_aliases(name)) & set(_model_aliases(a)):
                     _add_models(ordered, a)
         for name in allowed:
-            _add_models(ordered, name)
+            if name not in ordered:
+                ordered.insert(0, name) if not (set(_model_aliases(preferred)) & set(_model_aliases(ordered[0] if ordered else ''))) else ordered.append(name)
+        _PRESET_CACHE[api_key] = list(ordered[:8])
         state['candidates'] = ordered[:8]
         return state['candidates']
     _add_models(ordered, preferred)
@@ -1569,6 +1594,15 @@ def _stream_answer(api_key, messages, state, deadline_left):
                 last_err = f'Сервис ИИ ответил ошибкой {e.code}: {raw}'
                 _GOOD_BASE[0] = base
                 print(f'[megamag] stream http {e.code}: {raw[:200]}', flush=True)
+                allowed_names = _allowed_from_error(raw) if e.code == 403 else []
+                if allowed_names and not state.get('preset_retry'):
+                    print(f'[megamag] ключ пускает только {allowed_names} — повторяю с ними', flush=True)
+                    _PRESET_CACHE[api_key] = allowed_names
+                    state['candidates'] = allowed_names
+                    state['allowed_models'] = allowed_names
+                    state['preset_retry'] = True
+                    state.pop('model', None)
+                    return _stream_answer(api_key, messages, state, stop_at - time.monotonic())
                 if e.code == 400 and 'reasoning' in raw.lower() and not state.get('no_reasoning_param'):
                     state['no_reasoning_param'] = True
                     return _stream_answer(api_key, messages, state, stop_at - time.monotonic())
@@ -1646,6 +1680,13 @@ def _ask_model(api_key, messages, tools, state):
             state['model'] = model
             return data, None
         last_err = err
+        names = _allowed_from_error(err) if code == 403 else []
+        if names and not state.get('preset_retry'):
+            state['preset_retry'] = True
+            _PRESET_CACHE[api_key] = names
+            state['candidates'] = names
+            state['allowed_models'] = names
+            return _ask_model(api_key, messages, tools, state)
         if code not in (400, 403, 404):
             break
     allowed = state.get('allowed_models') or []
