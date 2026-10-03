@@ -34,6 +34,19 @@ import urllib.request
 
 import psycopg2
 
+# В облаке IPv6 до внешних сайтов висит до таймаута (~8 с на попытку), а потом
+# уже идёт IPv4. Оставляем только IPv4 — иначе ответ не укладывается в лимит шлюза.
+_orig_getaddrinfo = socket.getaddrinfo
+
+
+def _ipv4_getaddrinfo(host, port, family=0, type=0, proto=0, flags=0):
+    res = _orig_getaddrinfo(host, port, family, type, proto, flags)
+    v4 = [r for r in res if r[0] == socket.AF_INET]
+    return v4 or res
+
+
+socket.getaddrinfo = _ipv4_getaddrinfo
+
 # Основной API и зеркало: у части провайдеров блокируют api.aitunnel.ru —
 # тогда тот же ключ и пути работают на ru-api.
 AITUNNEL_BASES = (
@@ -43,7 +56,11 @@ AITUNNEL_BASES = (
 
 # Если ключ без белого списка — auto подберёт модель из каталога AITUNNEL.
 # Список ниже: запас, когда auto или заказанная модель ключу недоступны.
+# Ключ API_KEY_MEGABUX в кабинете AITUNNEL разрешает только модель MEGABUX.
+MEGABUX_MODEL = 'MEGABUX'
+
 MODEL_CANDIDATES = [
+    MEGABUX_MODEL,
     'auto',
     'openai/gpt-6-luna-pro',
     'gpt-6-luna-pro',
@@ -280,8 +297,21 @@ def _run_select(dsn, schema, sql, allowed_tables=None):
         conn.close()
 
 
-def _http_get(url, timeout=20):
+# Сколько секунд держим в запасе под финальный ответ модели.
+ANSWER_RESERVE = 11
+
+
+def _tool_timeout(want=7):
+    """Таймаут для поиска/чтения страниц: не съедаем время финального ответа."""
+    left = _time_left() - ANSWER_RESERVE
+    return max(0.0, min(float(want), left))
+
+
+def _http_get(url, timeout=7):
     """Простой GET: облачная функция без лишних библиотек."""
+    timeout = _tool_timeout(timeout)
+    if timeout < 3:
+        raise TimeoutError('нет времени на запрос')
     req = urllib.request.Request(
         url,
         headers={
@@ -309,6 +339,8 @@ def _web_search(query: str) -> str:
     q = (query or '').strip()[:180]
     if not q:
         return 'Пустой поисковый запрос'
+    if _tool_timeout() < 3:
+        return 'Время на поиск закончилось — отвечай по уже найденному и своим знаниям.'
     try:
         text = _http_get('https://s.jina.ai/' + urllib.parse.quote(q)).strip()
         if len(text) > 80:
@@ -325,7 +357,10 @@ def _web_search(query: str) -> str:
                 'Content-Type': 'application/x-www-form-urlencoded',
             },
         )
-        with urllib.request.urlopen(req, timeout=20) as r:
+        ddg_timeout = _tool_timeout(6)
+        if ddg_timeout < 3:
+            return 'Время на поиск закончилось — отвечай по уже найденному и своим знаниям.'
+        with urllib.request.urlopen(req, timeout=ddg_timeout) as r:
             page = r.read()[:80000].decode('utf-8', 'ignore')
         items = []
         titles = re.findall(r'class="result__a"[^>]*>(.*?)</a>', page, re.S | re.I)
@@ -363,6 +398,8 @@ def _read_page(url: str) -> str:
         return 'Эта ссылка недоступна'
     if re.match(r'^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)', host):
         return 'Эта ссылка недоступна'
+    if _tool_timeout() < 3:
+        return 'Время на чтение страниц закончилось — отвечай по уже найденному.'
     try:
         text = _http_get('https://r.jina.ai/' + url).strip()
         if len(text) < 40:
@@ -653,8 +690,9 @@ def _read_attachments(files) -> tuple:
     return excerpt[:MAX_DOC_CHARS * 2], images[:4]
 
 
-# Лимит функции на Поехали — 90 с. Держим запас, чтобы успеть вернуть ответ самим.
-REQUEST_BUDGET = 82
+# Шлюз Поехали рвёт соединение примерно на 35 с без ответа (499/503).
+# Укладываемся в ~27 с, чтобы человек всегда получил ответ.
+REQUEST_BUDGET = 27
 _DEADLINE = [0.0]
 
 
@@ -720,6 +758,9 @@ def _aitunnel_open(path, api_key, payload=None, timeout=30):
     headers = {
         'Authorization': f'Bearer {api_key}',
         'Content-Type': 'application/json',
+        'Accept': 'application/json',
+        # Без User-Agent Cloudflare перед AITUNNEL отвечает 403 «error code: 1010».
+        'User-Agent': 'Mozilla/5.0 (compatible; Megabuh/1.0)',
     }
     last_err = None
     for base in _aitunnel_bases():
@@ -738,13 +779,15 @@ def _aitunnel_open(path, api_key, payload=None, timeout=30):
         try:
             with urllib.request.urlopen(req, timeout=min(timeout, left)) as r:
                 out = json.loads(r.read().decode('utf-8'))
-            print(f'[aitunnel] {path} via {urllib.parse.urlparse(base).hostname} {time.monotonic() - t_req:.1f}s', flush=True)
+            print(f'[aitunnel] {path} {(payload or {}).get("model", "")} via {urllib.parse.urlparse(base).hostname} {time.monotonic() - t_req:.1f}s', flush=True)
             _GOOD_BASE[0] = base
             _DEAD_BASES.pop(base, None)
             return out, None, 0
         except urllib.error.HTTPError as e:
             _GOOD_BASE[0] = base
             raw = e.read().decode('utf-8', 'ignore')
+            model = (payload or {}).get('model', '')
+            print(f'[aitunnel] {path} {model} HTTP {e.code} через {time.monotonic() - t_req:.1f}s: {raw[:200]}', flush=True)
             return None, f'Сервис ИИ ответил ошибкой {e.code}: {raw[:300]}', e.code
         except Exception as e:
             last_err = e
@@ -785,7 +828,7 @@ def _public_ai_error(err, code=0):
     return text or TUNNEL_ADMIN_MSG
 
 
-def _call_model(api_key, model, messages, tools):
+def _call_model(api_key, model, messages, tools, final=False):
     """Один запрос к сервису ИИ. Возвращает (ответ, ошибка, код ошибки)."""
     payload = {
         'model': model,
@@ -795,24 +838,29 @@ def _call_model(api_key, model, messages, tools):
     }
     if tools:
         payload['tools'] = tools
+        if final:
+            payload['tool_choice'] = 'none'
     return _aitunnel_open('chat/completions', api_key, payload, timeout=75)
 
 
 _KEY_CACHE = {}
 _KEY_TTL = 600
+_KEY_LOCK = threading.Lock()
 
 
 def _key_allowed_models(api_key):
     """Белый список моделей ключа AITUNNEL. None — ограничений нет или ключ не ответил."""
-    cached = _KEY_CACHE.get(api_key)
-    if cached and time.monotonic() - cached[0] < _KEY_TTL:
-        return cached[1]
-    data, err, _code = _aitunnel_open('aitunnel/key', api_key, None, timeout=8)
-    if data is None:
-        return None
-    result = _parse_allowed(data)
-    _KEY_CACHE[api_key] = (time.monotonic(), result)
-    return result
+    # Один запрос на контейнер: фоновый прогрев и основной поток не дублируют друг друга.
+    with _KEY_LOCK:
+        cached = _KEY_CACHE.get(api_key)
+        if cached and time.monotonic() - cached[0] < _KEY_TTL:
+            return cached[1]
+        data, err, _code = _aitunnel_open('aitunnel/key', api_key, None, timeout=6)
+        if data is None:
+            return None
+        result = _parse_allowed(data)
+        _KEY_CACHE[api_key] = (time.monotonic(), result)
+        return result
 
 
 def _warm_key(api_key):
@@ -863,7 +911,18 @@ def _model_candidates(api_key, state):
     """Ключ с белым списком — зовём только его модели. Иначе auto из каталога."""
     if state.get('candidates'):
         return state['candidates']
-    preferred = os.environ.get('AITUNNEL_MODEL', '').strip()
+    # В секрете бывает «openai\\gpt-...» — обратную косую считаем прямой.
+    preferred = os.environ.get('AITUNNEL_MODEL', '').strip().replace('\\', '/')
+    cached = _KEY_CACHE.get(api_key)
+    if not cached:
+        # Не ждём медленный /aitunnel/key: сначала личная модель MEGABUX.
+        ordered = [MEGABUX_MODEL]
+        if preferred:
+            _add_models(ordered, preferred)
+        for name in MODEL_CANDIDATES:
+            _add_models(ordered, name)
+        state['candidates'] = ordered[:4]
+        return state['candidates']
     allowed = _key_allowed_models(api_key)
     state['allowed_models'] = allowed
     ordered = []
@@ -886,17 +945,17 @@ def _model_candidates(api_key, state):
     return state['candidates']
 
 
-def _ask_model(api_key, messages, tools, model_state):
+def _ask_model(api_key, messages, tools, model_state, final=False):
     """Отправляет диалог модели и возвращает её ответ.
 
     Модель подбирается по ключу AITUNNEL: если в кабинете ключ ограничен
     одной моделью — зовём её. Если список пустой — auto, затем запасные.
     """
     if model_state.get('model'):
-        return _call_model(api_key, model_state['model'], messages, tools)[:2]
+        return _call_model(api_key, model_state['model'], messages, tools, final)[:2]
     last_err = 'Не удалось подобрать доступную модель'
     for model in _model_candidates(api_key, model_state):
-        data, err, code = _call_model(api_key, model, messages, tools)
+        data, err, code = _call_model(api_key, model, messages, tools, final)
         if data is not None:
             model_state['model'] = model
             return data, None
@@ -1687,8 +1746,16 @@ def handler(event: dict, context) -> dict:
     steps = MAX_STEPS_ACCOUNTANT if scope == 'accountant' else MAX_STEPS
     if want_digest and scope == 'accountant':
         steps = MAX_STEPS_DIGEST
-    for _ in range(steps):
-        data, err = _ask_model(api_key, messages, tools, model_state)
+    for step in range(steps):
+        # Время на исходе или последний шаг — инструменты убираем, просим ответ сейчас.
+        final = step == steps - 1 or _time_left() < ANSWER_RESERVE + 4
+        if final and step > 0:
+            messages.append({
+                'role': 'system',
+                'content': 'Время на поиск вышло. Ответь сейчас по тому, что уже собрано, '
+                           'без новых запросов. Если чего-то не хватило — честно скажи, что проверить.',
+            })
+        data, err = _ask_model(api_key, messages, tools, model_state, final and step > 0)
         if err:
             return {'statusCode': 502, 'headers': headers,
                     'body': json.dumps({'error': _public_ai_error(err)}, ensure_ascii=False)}
@@ -1711,38 +1778,60 @@ def handler(event: dict, context) -> dict:
             }, ensure_ascii=False)}
 
         messages.append(msg)
-        for call in calls:
+
+        def _run_tool(call, slot):
             fn = (call.get('function') or {})
             name = fn.get('name') or ''
             try:
                 args = json.loads(fn.get('arguments') or '{}')
             except json.JSONDecodeError:
                 args = {}
+            t0 = time.monotonic()
             if name == 'sql_query':
                 if scope == 'accountant':
                     result = (
                         'МЕГАБУХ не смотрит производственную базу. Только бухгалтерский и '
                         'кадровый учёт, 1С, СБИС, Диадок, банк Точка и правила маркетплейсов.'
                     )
-                    queries_ran.append('sql: отказано')
+                    slot['q'] = 'sql: отказано'
                 else:
                     sql = (args.get('sql') or '').strip()
                     result = _run_select(dsn, schema, sql)
-                    queries_ran.append(sql)
+                    slot['q'] = sql
             elif name == 'web_search' and scope == 'accountant':
                 q = (args.get('query') or '').strip()
+                slot['q'] = 'search: ' + q
                 result = _web_search(q)
-                queries_ran.append('search: ' + q)
             elif name == 'read_page' and scope == 'accountant':
                 url = (args.get('url') or '').strip()
+                slot['q'] = 'read: ' + url
                 result = _read_page(url)
-                queries_ran.append('read: ' + url)
             else:
                 result = 'Этот инструмент сейчас недоступен'
+            slot['r'] = result
+            print(f'[tool] {name} {time.monotonic() - t0:.1f}s', flush=True)
+
+        # Все вызовы шага — параллельно и с жёстким дедлайном: медленный сайт
+        # не должен съесть время, нужное модели на итоговый ответ.
+        slots = [{} for _ in calls]
+        threads = []
+        for call, slot in zip(calls, slots):
+            t = threading.Thread(target=_run_tool, args=(call, slot), daemon=True)
+            t.start()
+            threads.append(t)
+        tool_deadline = time.monotonic() + max(1.0, _time_left() - ANSWER_RESERVE)
+        for t in threads:
+            t.join(max(0.0, tool_deadline - time.monotonic()))
+        for call, slot in zip(calls, slots):
+            if slot.get('q'):
+                queries_ran.append(slot['q'])
+            result = slot.get('r')
+            if result is None:
+                result = 'Источник не ответил вовремя — отвечай по уже найденному и своим знаниям.'
             messages.append({
                 'role': 'tool',
                 'tool_call_id': call.get('id'),
-                'content': result[:12000],
+                'content': str(result)[:12000],
             })
 
     return {'statusCode': 200, 'headers': headers, 'body': json.dumps({
