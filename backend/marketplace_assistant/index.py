@@ -12,9 +12,12 @@
 - Ключи площадок читаются из marketplace_integrations (вкладка «Интеграции
   маркетплейсов» в CRM) и никогда не попадают в текст для модели.
 
-POST { question, history?, userId, role? }
+POST { question, history?, userId, role?, files? }
+Файлы — выгрузки с маркетплейсов (PDF, Excel, CSV, фото карточек): агент читает и разбирает.
 """
 
+import base64
+import io
 import json
 import os
 import socket
@@ -26,6 +29,9 @@ import ipaddress
 import urllib.error
 import urllib.parse
 import urllib.request
+import zipfile
+import zlib
+import xml.etree.ElementTree as ET
 
 import psycopg2
 
@@ -86,11 +92,270 @@ ALLOWED_DOMAINS = (
     'docs.ozon.ru',
     'seller.wildberries.ru',
     'dev.wildberries.ru',
+    'partner.market.yandex.ru',
 )
-# yandex.ru — только раздел /support.
+# yandex.ru — только раздел /support (старые ссылки).
 YANDEX_SUPPORT_HOST = 'yandex.ru'
 YANDEX_SUPPORT_PATH = '/support'
-ALLOWED_SITE_TOKENS = ALLOWED_DOMAINS + ('yandex.ru/support',)
+ALLOWED_SITE_TOKENS = ALLOWED_DOMAINS + (
+    'seller.wildberries.ru/instructions',
+    'yandex.ru/support',
+)
+
+# Образовательный центр — каталог ссылок в MEGAMAG_EDU ниже.
+# Вложения из чата: отчёты, выгрузки и скрины кабинетов маркетплейсов.
+MAX_ATTACH = 3
+MAX_ATTACH_BYTES = 2_000_000
+MAX_DOC_CHARS = 14000
+DOC_EXT_OK = {
+    'pdf', 'doc', 'docx', 'xls', 'xlsx', 'csv', 'txt', 'rtf',
+    'jpg', 'jpeg', 'png', 'webp', 'gif',
+}
+IMAGE_MIME_BY_EXT = {
+    'png': 'image/png',
+    'webp': 'image/webp',
+    'gif': 'image/gif',
+    'jpg': 'image/jpeg',
+    'jpeg': 'image/jpeg',
+}
+
+
+def _xml_local(tag: str) -> str:
+    return tag.rsplit('}', 1)[-1]
+
+
+def _decode_upload(raw: str) -> bytes:
+    s = (raw or '').strip()
+    if ',' in s and s.lower().startswith('data:'):
+        s = s.split(',', 1)[1]
+    s = re.sub(r'\s+', '', s)
+    return base64.b64decode(s)
+
+
+def _docx_text(data: bytes) -> str:
+    z = zipfile.ZipFile(io.BytesIO(data))
+    xml = z.read('word/document.xml')
+    root = ET.fromstring(xml)
+    paras = []
+    for p in root.iter():
+        if _xml_local(p.tag) != 'p':
+            continue
+        bits = [t.text or '' for t in p.iter() if _xml_local(t.tag) == 't']
+        line = ''.join(bits).strip()
+        if line:
+            paras.append(line)
+    return '\n'.join(paras)
+
+
+def _xlsx_text(data: bytes) -> str:
+    z = zipfile.ZipFile(io.BytesIO(data))
+    shared = []
+    if 'xl/sharedStrings.xml' in z.namelist():
+        root = ET.fromstring(z.read('xl/sharedStrings.xml'))
+        for si in root.iter():
+            if _xml_local(si.tag) != 'si':
+                continue
+            shared.append(''.join(t.text or '' for t in si.iter() if _xml_local(t.tag) == 't'))
+    sheets = [n for n in z.namelist() if n.startswith('xl/worksheets/sheet') and n.endswith('.xml')]
+    rows_out = []
+    for name in sheets[:6]:
+        root = ET.fromstring(z.read(name))
+        rows_out.append(f'Лист {name.split("/")[-1]}:')
+        for row in root.iter():
+            if _xml_local(row.tag) != 'row':
+                continue
+            cells = []
+            for c in row:
+                if _xml_local(c.tag) != 'c':
+                    continue
+                t = c.attrib.get('t', '')
+                v = ''
+                for child in c:
+                    if _xml_local(child.tag) == 'v':
+                        v = child.text or ''
+                if t == 's' and v.isdigit() and int(v) < len(shared):
+                    cells.append(shared[int(v)])
+                elif v:
+                    cells.append(v)
+            if cells:
+                rows_out.append(' | '.join(cells))
+        if len('\n'.join(rows_out)) > MAX_DOC_CHARS:
+            break
+    return '\n'.join(rows_out)
+
+
+def _pdf_inflate(buf: bytes) -> bytes:
+    for wbits in (zlib.MAX_WBITS, -zlib.MAX_WBITS):
+        try:
+            return zlib.decompress(buf, wbits)
+        except Exception:
+            pass
+    return buf
+
+
+def _pdf_unescape(s: str) -> str:
+    s = s.replace('\\n', '\n').replace('\\r', '\n').replace('\\t', ' ')
+    s = s.replace('\\(', '(').replace('\\)', ')').replace('\\\\', '\\')
+    s = re.sub(r'\\([0-7]{1,3})', lambda m: chr(int(m.group(1), 8) % 256), s)
+    return s
+
+
+def _pdf_text(data: bytes) -> str:
+    chunks = [data]
+    for m in re.finditer(rb'stream\r?\n(.*?)\r?\nendstream', data, re.S):
+        chunks.append(_pdf_inflate(m.group(1)))
+    texts = []
+    for chunk in chunks:
+        raw = chunk.decode('latin-1', 'ignore')
+        for m in re.finditer(r'\((?:\\.|[^\\)]){2,}\)\s*Tj', raw):
+            inner = m.group(0)[1:m.group(0).rfind(')')]
+            t = _pdf_unescape(inner).strip()
+            if t:
+                texts.append(t)
+        for m in re.finditer(r'\[(.*?)\]\s*TJ', raw, re.S):
+            parts = re.findall(r'\((?:\\.|[^\\)])*\)', m.group(1))
+            line = ''.join(_pdf_unescape(p[1:-1]) for p in parts).strip()
+            if line:
+                texts.append(line)
+    joined = re.sub(r'\s+', ' ', ' '.join(texts)).strip()
+    if len(joined) < 40:
+        extra = re.findall(r'[\x20-\x7eА-яЁё]{6,}', data.decode('latin-1', 'ignore'))
+        joined = ' '.join(extra[:200])
+    return joined[:MAX_DOC_CHARS]
+
+
+def _pdf_jpegs(data: bytes) -> list:
+    found = []
+    i = 0
+    while len(found) < 3:
+        start = data.find(b'\xff\xd8\xff', i)
+        if start < 0:
+            break
+        end = data.find(b'\xff\xd9', start + 3)
+        if end < 0:
+            break
+        chunk = data[start:end + 2]
+        if 8000 < len(chunk) < 2_400_000:
+            found.append(chunk)
+        i = start + 3
+    return found
+
+
+def _plain_text(data: bytes) -> str:
+    for enc in ('utf-8-sig', 'utf-8', 'cp1251', 'latin-1'):
+        try:
+            return data.decode(enc)
+        except UnicodeDecodeError:
+            continue
+    return data.decode('utf-8', 'ignore')
+
+
+def _read_attachments(files) -> tuple:
+    """Текст и картинки из вложений чата. Без сторонних библиотек."""
+    texts = []
+    images = []
+    if not isinstance(files, list):
+        return '', images
+    for item in files[:MAX_ATTACH]:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get('name') or 'файл')[:180]
+        mime = str(item.get('mime') or '').lower()
+        ext = (name.rsplit('.', 1)[-1] if '.' in name else '').lower()
+        if ext not in DOC_EXT_OK:
+            texts.append(f'--- {name} ---\nЭтот тип файла не читаю.')
+            continue
+        try:
+            raw = _decode_upload(item.get('data') or '')
+        except Exception:
+            texts.append(f'--- {name} ---\nНе удалось прочитать файл.')
+            continue
+        if not raw:
+            texts.append(f'--- {name} ---\nФайл пустой.')
+            continue
+        if len(raw) > MAX_ATTACH_BYTES:
+            texts.append(f'--- {name} ---\nФайл слишком большой.')
+            continue
+        try:
+            if ext in ('jpg', 'jpeg', 'png', 'webp', 'gif') or mime.startswith('image/'):
+                b64 = base64.b64encode(raw).decode('ascii')
+                img_mime = mime if mime.startswith('image/') else IMAGE_MIME_BY_EXT.get(ext, 'image/jpeg')
+                images.append({'mime': img_mime, 'b64': b64, 'name': name})
+                texts.append(f'--- {name} ---\nИзображение приложено, смотри картинку.')
+            elif ext == 'docx':
+                texts.append(f'--- {name} ---\n{_docx_text(raw)[:MAX_DOC_CHARS]}')
+            elif ext == 'xlsx':
+                texts.append(f'--- {name} ---\n{_xlsx_text(raw)[:MAX_DOC_CHARS]}')
+            elif ext == 'pdf':
+                body = _pdf_text(raw)
+                jpegs = _pdf_jpegs(raw) if len(body) < 80 else []
+                if body.strip():
+                    texts.append(f'--- {name} ---\n{body}')
+                for n, jpg in enumerate(jpegs, 1):
+                    images.append({
+                        'mime': 'image/jpeg',
+                        'b64': base64.b64encode(jpg).decode('ascii'),
+                        'name': f'{name} стр.{n}',
+                    })
+                if not body.strip() and not jpegs:
+                    texts.append(
+                        f'--- {name} ---\nВ PDF не нашлось текста. Это, похоже, скан без распознавания.'
+                    )
+            elif ext in ('txt', 'csv', 'rtf'):
+                texts.append(f'--- {name} ---\n{_plain_text(raw)[:MAX_DOC_CHARS]}')
+            elif ext in ('doc', 'xls'):
+                texts.append(
+                    f'--- {name} ---\nСтарый формат .{ext}. Сохраните в .docx / .xlsx или PDF.'
+                )
+            else:
+                texts.append(f'--- {name} ---\nНе умею открыть этот файл.')
+        except Exception as e:
+            texts.append(f'--- {name} ---\nНе получилось открыть: {e}')
+    excerpt = '\n\n'.join(t for t in texts if t).strip()
+    return excerpt[:MAX_DOC_CHARS * 2], images[:4]
+
+
+# Официальные базы — вшиты в контекст. Тексты страниц не копируем: только каталог + как работать.
+MEGAMAG_EDU = """
+ОБРАЗОВАТЕЛЬНЫЙ ЦЕНТР И СПРАВКИ (только официальные; блоги, Telegram и totalcrm не используй)
+
+OZON — общая база знаний селлера (карточки и SEO, FBO/FBS, финансы и комиссии,
+продвижение, API, гайды по категориям, в т.ч. Ozon Global):
+https://docs.ozon.ru
+Образовательный центр / Libra (старт обучения):
+https://seller-edu.ozon.ru/libra/how-to-start
+База обучения: https://seller-edu.ozon.ru
+
+Wildberries — Справочный центр (регистрация, заказы, FBS/FBO, упаковка, приёмка,
+отзывы, частые проблемы):
+https://seller.wildberries.ru/instructions
+Кабинет и API-справка: https://seller.wildberries.ru , https://dev.wildberries.ru
+
+Яндекс Маркет — Справка для продавцов в кабинете партнёра (подключение магазина,
+товары и каталог, склады и логистика, заказы, расчёты, продвижение, аналитика, поддержка):
+https://partner.market.yandex.ru
+Доп. раздел поддержки: https://yandex.ru/support
+
+КАК РАБОТАТЬ СО СПРАВКАМИ (обязательно):
+1) Обращайся к этим источникам, если вопрос про правила площадки: модерация карточки,
+   требования к фото/названию/атрибутам, логистика FBS/FBO, упаковка, приёмка, отзывы,
+   комиссии, акции, продвижение. Схема: web_search site:<домен> … → read_page по найденной
+   ссылке → в ответе дай кликабельную ссылку на конкретную страницу.
+2) Сравнивай правила площадок, если менеджер спрашивает «для WB и OZON» или ведёт
+   несколько витрин. Явно пиши, что актуально для WB, что для OZON, что для Яндекс Маркета
+   (лимиты символов, обязательные поля, фильтры, модерация).
+3) Ищи свежие версии правил: в материале смотри дату публикации/обновления; если дата
+   старая или страница противоречит другой официальной — скажи об этом и предложи
+   перепроверить в кабинете. Тарифы, оферта и документы часто меняются.
+4) Если в официальной базе нет ответа — честно скажи: «в справке площадки этого не нашёл».
+   Не выдумывай требования и цифры. Можно предложить, какой раздел открыть в кабинете
+   или какой запрос поиска повторить.
+
+Поиск:
+- OZON: site:docs.ozon.ru или site:seller-edu.ozon.ru
+- WB: site:seller.wildberries.ru/instructions (или site:seller.wildberries.ru)
+- Яндекс: site:partner.market.yandex.ru (или site:yandex.ru/support)
+"""
 
 
 # ---------------------------------------------------------------- доступ
@@ -1776,10 +2041,19 @@ def _ask_model(api_key, messages, tools, state):
     return None, last_err
 
 
-SYSTEM_PROMPT = """Ты — МЕГАМАГ, опытный менеджер маркетплейсов и наставник для коллеги в швейном
-производстве штор и тюля. Магазины: МЕГАТЮЛЬ и ДЮНА. Площадки: OZON, Wildberries, Яндекс Маркет.
-Ты хорошо знаешь, как устроены кабинеты продавца, поиск, рейтинг контента, реклама, остатки,
-цены и отзывы на всех трёх площадках.
+SYSTEM_PROMPT = """Ты — МЕГАМАГ, агент по работе с карточками товаров на маркетплейсах
+(OZON, Wildberries, Яндекс Маркет) для продавца штор и тюля (производство + онлайн‑продажи).
+Магазины: МЕГАТЮЛЬ и ДЮНА.
+Главная задача — помогать быстро и качественно заполнять карточки, чтобы они лучше
+ранжировались и конвертировались. Плюс аналитика продаж/выгрузок и текстильная специфика
+(плотность, прозрачность, усадка, драпировка, крепление, уход) и кабинеты продавца.
+
+ТВОИ СИЛЬНЫЕ СТОРОНЫ ПО КАРТОЧКАМ:
+- продающие заголовки с учётом лимитов символов и правил площадок (без КАПСА, без лишних спецсимволов);
+- SEO‑описания с органично встроенными ключами, без переспама;
+- релевантные характеристики и атрибуты под категорию («Шторы», «Тюль», «Комплекты штор» и др.);
+- требования к фото и инфографике (размер, фон, композиция, драпировка, масштаб);
+- разница в модерации между OZON, Wildberries и Яндекс Маркетом.
 
 КАК ТЫ ОБЩАЕШЬСЯ:
 - Как живой человек и коллега: тепло, по-деловому, на «вы», без канцелярита и без роботизированных
@@ -1787,25 +2061,44 @@ SYSTEM_PROMPT = """Ты — МЕГАМАГ, опытный менеджер ма
   ответ будет неточным.
 - На приветствие или «что умеешь» — ответь по-человечески в 2–4 фразах и предложи, с чего начать.
 - Отвечай на ТОТ вопрос, который задан. Простой вопрос — простой ответ; разбор — развёрнуто.
-- Ты АНАЛИТИК, а не пересказчик. Данные кабинета — это сырьё. Никогда не вываливай их списком
-  как есть. Сначала главный вывод одной-двумя фразами («Карточка в порядке, но не продаётся,
-  потому что нет остатка»), потом объясни ПОЧЕМУ так и ЧТО ДЕЛАТЬ — конкретно, по шагам,
+- Ты АНАЛИТИК, а не пересказчик. Данные кабинета и выгрузок — это сырьё. Никогда не вываливай
+  их списком как есть. Сначала главный вывод, потом ПОЧЕМУ и ЧТО ДЕЛАТЬ — конкретно, по шагам,
   с указанием раздела кабинета.
-- Связывай факты: нет остатка → реклама бесполезна; рейтинг контента 100, но нет описания в API →
-  проверить в кабинете; много карточек без остатка у одного магазина → системная проблема с поставкой.
+- Связывай факты: нет остатка → реклама бесполезна; низкий выкуп → возвраты/размер/ожидания;
+  акция жрёт маржу без прироста заказов → вывести из акции; рейтинг контента 100 без описания
+  в API → проверить в кабинете.
 - Расставляй приоритеты: что сделать сегодня, что на неделе, что можно отложить.
-- Если в данных нет поля — честно скажи «этого в данных нет, проверьте в кабинете: раздел …».
-  Не выдумывай цифры.
-- Таблицы — только когда сравниваешь несколько карточек. В остальном — нормальный текст и
-  короткие списки.
+- Если в данных нет поля — честно скажи «этого в данных нет…». Не выдумывай цифры.
+- Таблицы — для характеристик карточки, сравнения товаров и экономики. Иначе — текст и списки.
 
-ТВОЯ ЗОНА: витрина и кабинет продавца — карточки, SEO, рейтинг контента, модерация, остатки на
-складах площадки, цены и индекс цен, акции, реклама и ДРР, отзывы, воронка продаж.
+ТВОЯ ЗОНА (карточки + аналитика + текстиль):
+- Заполнять и править карточки: заголовок, SEO‑описание, атрибуты, советы по фото/инфографике,
+  подсказки под модерацию каждой площадки.
+- Для штор/тюля: Ш×В, крепление, плотность, светопроницаемость; не путать ширину полотна и
+  ширину в готовом виде; замеры; уход и усадка против возвратов.
+- Интерпретировать выгрузки CSV/Excel: выкуп, возвраты, остатки, оборачиваемость, акции;
+  экономика (маржа, комиссия, логистика); сезонность и гипотезы по конкурентам.
+- Кабинет: SEO, рейтинг контента, модерация, остатки, цены, акции, реклама и ДРР, отзывы, воронка.
 НЕ ТВОЯ ЗОНА: бухгалтерия, 1С, налоги, зарплаты, раскрой, склад цеха — это к МЕГАБУХу или
-администратору; скажи об этом мягко.
+администратору; скажи об этом мягко. Полную налоговую отчётность не ведёшь — только юнит‑экономику
+товара для решений по витрине и акциям.
 
 ТОЛЬКО ЧТЕНИЕ. Ты ничего не меняешь ни в базе, ни в кабинетах. Если просят сделать — объясни,
 где и как менеджер сделает это сам (раздел кабинета, шаги), со ссылкой на справку площадки.
+
+ОБУЧЕНИЕ И ПРАВИЛА ПЛОЩАДОК:
+Опирайся на каталог ОБРАЗОВАТЕЛЬНЫЙ ЦЕНТР И СПРАВКИ и работай с ним так:
+1) Вопрос про правила площадки (модерация, карточка, FBS/FBO, упаковка, отзывы, комиссии,
+   продвижение) — открой официальную базу через web_search + read_page, не отвечай «из головы».
+   Точки входа: OZON docs.ozon.ru (+ seller-edu.ozon.ru/libra/how-to-start);
+   WB seller.wildberries.ru/instructions; Яндекс partner.market.yandex.ru.
+2) Сравнивай правила разных площадок: лимиты заголовка, обязательные поля, фото, модерация —
+   явно помечай «для WB / для OZON / для Маркета».
+3) Ищи свежие версии: смотри дату публикации/обновления в материале; если сомневаешься
+   в актуальности тарифов/оферты/документов — скажи об этом.
+4) Нет в базе — честно скажи, что не нашёл; не выдумывай. В ответе всегда давай ссылку
+   на конкретную официальную страницу, которой пользовался.
+Блоги, Telegram и сторонние SEO‑сайты (в т.ч. totalcrm) не используй как источник правил.
 
 ДАННЫЕ, КОТОРЫЕ ТЫ ПОЛУЧАЕШЬ:
 Перед ответом система сама читает кабинет (разбор карточки по артикулу, срез витрины, «что горит»)
@@ -1814,7 +2107,39 @@ SYSTEM_PROMPT = """Ты — МЕГАМАГ, опытный менеджер ма
 Если вопрос требует данных, которых нет, — подскажи, как спросить: «разберите артикул …»,
 «какие слабые карточки на OZON», «что горит на WB».
 
-ЧЕКЛИСТЫ КАРТОЧКИ (ориентиры, по ним оценивай):
+ФАЙЛЫ / ФОТО / ВЫГРУЗКИ ОТ МЕНЕДЖЕРА:
+Коллега может приложить фото товара, скрины карточки, CSV/Excel, PDF, Word, ссылку на товар.
+- Фото или ссылка на товар: сначала анализ — главные преимущества и слабые места, потом готовая
+  карточка в формате ниже. Не хватает цвета / размера / материала — спроси конкретно, что дослать.
+- Выгрузка продаж/остатков: сначала краткий свод (товары, динамика по неделям, топ‑3 проблемных),
+  затем рекомендации. Данных мало — запроси период, площадку и список полей.
+Не проси переслать то, что уже во вложении. Сверь с живыми данными кабинета по артикулу.
+
+КОГДА ЗАПОЛНЯЕШЬ ИЛИ ПРАВИШЬ КАРТОЧКУ — формат ответа:
+1) Заголовок — не длиннее 60 символов, без КАПСА, без лишних спецсимволов
+   (тип + ключевое преимущество; для OZON при необходимости отдельно дай расширенный вариант
+   60–120 симв. с пометкой «для OZON»).
+2) Описание — 2–3 абзаца:
+   первый — выгоды для покупателя;
+   второй — характеристики и применение;
+   третий — призыв к действию.
+   Ключи в тексте органично, без переспама.
+3) Список ключевых слов (5–7) для SEO.
+4) Таблица характеристик: название поля — значение
+   (для штор/тюля обязательно: Ш×В с пояснением полотно/готовый вид, крепление, плотность/
+   светопроницаемость, состав, цвет, уход — если данные известны).
+Если не хватает данных (цвет, размер, материал, крепление) — спроси конкретно, не выдумывай.
+Для штор/тюля дополнительно можно дать короткий чек‑лист из 5 пунктов перед публикацией
+и советы по фото (драпировка, фактура, масштаб, свет).
+
+КОГДА АНАЛИЗИРУЕШЬ ПРОДАЖИ / ВЫГРУЗКУ / ЭКОНОМИКУ — формат ответа:
+1) Краткий вывод (3–4 строки) по ситуации.
+2) 3–5 конкретных рекомендаций с приоритетом (сегодня / на неделе / можно отложить).
+3) Расчёт по 2–3 ключевым товарам в таблице: себестоимость, комиссия, логистика, прибыль, маржа %.
+   Если какого‑то поля нет — явно напиши «нет в данных» и не подставляй цифру с потолка.
+4) Риски и допущения (пример: «если логистика вырастет на 15 %, маржа снизится на X %»).
+
+ЧЕКЛИСТЫ КАРТОЧКИ НА ПЛОЩАДКЕ (ориентиры, по ним оценивай живые данные):
 OZON: модерация без ошибок и есть остаток; название 60–120 симв. «тип + бренд + свойства
 (материал, Ш×В, цвет, крепление)»; фото ≥5 (цель 8–15), видео/видеообложка; все обязательные и
 максимум рекомендуемых характеристик; описание 1000+ симв.; Rich-контент; рейтинг контента 80+.
@@ -1856,15 +2181,26 @@ TOOLS = [
     }},
     {'type': 'function', 'function': {
         'name': 'web_search',
-        'description': ('Поиск по официальным справкам площадок. Запрос обязательно с site: '
-                        + ', '.join(ALLOWED_SITE_TOKENS)),
+        'description': (
+            'Поиск только по официальным справкам. '
+            'OZON: site:docs.ozon.ru или site:seller-edu.ozon.ru. '
+            'WB: site:seller.wildberries.ru/instructions. '
+            'Яндекс: site:partner.market.yandex.ru. '
+            'Разрешены: ' + ', '.join(ALLOWED_SITE_TOKENS)
+        ),
         'parameters': {'type': 'object', 'properties': {
             'query': {'type': 'string'},
         }, 'required': ['query']},
     }},
     {'type': 'function', 'function': {
         'name': 'read_page',
-        'description': 'Открыть страницу официальной справки (те же домены).',
+        'description': (
+            'Открыть страницу официальной справки. '
+            'OZON — docs.ozon.ru / seller-edu.ozon.ru; '
+            'WB — seller.wildberries.ru/instructions; '
+            'Яндекс — partner.market.yandex.ru. '
+            'В тексте ищи дату обновления правила.'
+        ),
         'parameters': {'type': 'object', 'properties': {
             'url': {'type': 'string'},
         }, 'required': ['url']},
@@ -1874,6 +2210,26 @@ TOOLS = [
 
 def _resp(code, body, headers):
     return {'statusCode': code, 'headers': headers, 'body': json.dumps(body, ensure_ascii=False)}
+
+
+def _source_hub(question):
+    """Точка входа в официальную справку по вопросу — для статуса в чате."""
+    low = (question or '').lower()
+    if 'wildberries' in low or re.search(r'\bwb\b|вб|вайлд', low):
+        return 'https://seller.wildberries.ru/instructions'
+    if re.search(r'яндекс|yandex|\bym\b', low) and re.search(
+        r'маркет|справк|правил|партн|логист|заказ', low,
+    ):
+        return 'https://partner.market.yandex.ru'
+    if 'ozon' in low or 'озон' in low or 'seller-edu' in low:
+        return 'https://docs.ozon.ru'
+    if re.search(r'модерац|справк|правил|инструкц|требован|fbo|fbs|упаков|при[её]мк|комисси', low):
+        return 'https://docs.ozon.ru'
+    return ''
+
+
+def _looking_text(url):
+    return f'Пошёл смотреть информацию: {url}'
 
 
 _CARD_INTENT = re.compile(r'карточк|артикул|\bsku\b|\bseo\b|\bсео\b|nmid|offer_?id|разбер|провер', re.I)
@@ -1942,10 +2298,42 @@ def handler(event: dict, context) -> dict:
     user_id = body_data.get('userId')
     history = body_data.get('history') or []
     requested_role = (body_data.get('role') or '').strip()
-    if not question:
+    files = body_data.get('files') or []
+    want_stream = bool(body_data.get('stream'))
+    status_log = []
+
+    def note_looking(url):
+        text = _looking_text(url)
+        if not status_log or status_log[-1] != text:
+            status_log.append(text)
+
+    def finish(code, body):
+        """При stream=true отдаём NDJSON: статусы «Пошёл смотреть…» + финальный ответ."""
+        if want_stream and code == 200 and isinstance(body, dict) and 'answer' in body:
+            nd_headers = dict(headers)
+            nd_headers['Content-Type'] = 'application/x-ndjson; charset=utf-8'
+            lines = [{'type': 'status', 'text': t} for t in status_log]
+            lines.append({'type': 'done', **body})
+            payload = '\n'.join(json.dumps(x, ensure_ascii=False) for x in lines) + '\n'
+            return {'statusCode': 200, 'headers': nd_headers, 'body': payload}
+        return _resp(code, body, headers)
+
+    if not isinstance(files, list):
+        files = []
+    if files and not question:
+        question = (
+            'Прочитайте выгрузку с маркетплейса и разберите по делу: краткий свод '
+            '(сколько товаров, динамика по неделям если есть, топ‑3 проблемных), '
+            'затем рекомендации с приоритетом и экономику по 2–3 ключевым позициям.'
+        )
+    if not files and not question:
         return _resp(400, {'error': 'Пустой вопрос'}, headers)
     if not user_id:
         return _resp(400, {'error': 'Не указан пользователь'}, headers)
+
+    hub = _source_hub(question)
+    if hub:
+        note_looking(hub)
 
     # Отдельный ключ агента менеджера; если его нет — общий ключ ИИ проекта.
     api_key = (os.environ.get('API_KEY_MEGAMAG', '').strip()
@@ -1975,7 +2363,7 @@ def handler(event: dict, context) -> dict:
     else:
         extra += '\nИмя собеседника неизвестно — говори на «вы».'
 
-    messages = [{'role': 'system', 'content': SYSTEM_PROMPT + extra}]
+    messages = [{'role': 'system', 'content': SYSTEM_PROMPT + MEGAMAG_EDU + extra}]
     if isinstance(history, list):
         for m in history[-24:]:
             if not isinstance(m, dict):
@@ -1984,14 +2372,44 @@ def handler(event: dict, context) -> dict:
             content = (m.get('content') or '').strip() if isinstance(m.get('content'), str) else ''
             if role in ('user', 'assistant') and content:
                 messages.append({'role': role, 'content': content[:8000]})
-    messages.append({'role': 'user', 'content': question[:8000]})
+
+    doc_excerpt = ''
+    image_parts = []
+    if files:
+        doc_excerpt, image_parts = _read_attachments(files)
+    user_text = question
+    if doc_excerpt:
+        user_text = (
+            question
+            + '\n\nПРИЛОЖЕННЫЕ ФАЙЛЫ С МАРКЕТПЛЕЙСА (прочитай и опирайся на них):\n'
+            + doc_excerpt
+        )
+    if image_parts:
+        content_parts = [{'type': 'text', 'text': user_text[:24000]}]
+        for im in image_parts:
+            content_parts.append({
+                'type': 'image_url',
+                'image_url': {'url': f"data:{im['mime']};base64,{im['b64']}"},
+            })
+        messages.append({'role': 'user', 'content': content_parts})
+    else:
+        messages.append({'role': 'user', 'content': user_text[:24000]})
 
     queries_ran = []
     state = {}
     t_start = time.monotonic()
-    pre = _cabinet_prefetch(question)
+    # Если прислали файл — сначала разбор вложения; prefetch кабинета только если в вопросе артикул/SKU.
+    pre = None if (files and not re.search(
+        r'(?i)\b(артикул|sku|offer[_ ]?id|nmid|nm[_ ]?id|разбери карточ)', question
+    )) else _cabinet_prefetch(question)
     if pre:
         # Экономим один круг модели: шлюз Поехали рвёт долгие запросы.
+        mp_title = MP_TITLES.get(pre.get('marketplace') or '', 'маркетплейса')
+        note_looking({
+            'ozon': 'https://docs.ozon.ru',
+            'wildberries': 'https://seller.wildberries.ru/instructions',
+            'yandex_market': 'https://partner.market.yandex.ru',
+        }.get(pre.get('marketplace') or '', f'кабинет {mp_title}'))
         t1 = time.monotonic()
         pre_result = _cabinet_read(dsn, schema, pre)
         print(
@@ -2041,9 +2459,14 @@ def handler(event: dict, context) -> dict:
                 answer = answer.replace(api_key, '***')
             if truncated:
                 answer += '\n\n…Ответ сокращён по времени шлюза. Напишите «продолжи».'
-            return _resp(200, {'answer': answer, 'queries': queries_ran, 'model': state.get('model')}, headers)
+            return finish(200, {
+                'answer': answer,
+                'queries': queries_ran,
+                'model': state.get('model'),
+                'docExcerpt': doc_excerpt[:6000],
+            })
         # Если стрим не успел — не зависаем в tool-loop до Failed to fetch.
-        return _resp(200, {
+        return finish(200, {
             'answer': (
                 'Извините, сервис ИИ сейчас отвечает медленно и я не успел сформулировать ответ. '
                 'Повторите, пожалуйста, вопрос через минуту.'
@@ -2051,18 +2474,21 @@ def handler(event: dict, context) -> dict:
             'queries': queries_ran,
             'model': state.get('model'),
             'error': err,
-        }, headers)
+            'docExcerpt': doc_excerpt[:6000],
+        })
     for step in range(MAX_STEPS):
         # Шлюз Поехали фактически рвёт ответ раньше заявленных 90 с.
         final = _time_left() < 50 or step == MAX_STEPS - 1
         if step == 0 and pre:
             if pre.get('what') == 'card':
                 hint = (
-                    'Это данные по карточке, о которой спросил коллега. Разбери её как опытный '
-                    'менеджер: начни с главного вывода (продаётся ли и что мешает), затем пройди '
-                    'по чеклисту площадки — что хорошо, что слабо и почему это влияет на продажи, '
-                    'дай конкретный план правок по приоритету с разделами кабинета и пример '
-                    'улучшенного названия. Поля «не читается методом API» не называй пустыми.'
+                    'Это данные по карточке, о которой спросил коллега. Разбери её как агент '
+                    'по карточкам штор и тюля: сначала плюсы и слабые места (SEO, фото, атрибуты, '
+                    'модерация, остаток). Если просят заполнить или переписать — дай: '
+                    'заголовок ≤60 симв. (без капса), описание из 2–3 абзацев '
+                    '(выгоды → характеристики → призыв), 5–7 ключевых слов, таблицу характеристик. '
+                    'Для OZON при необходимости добавь расширенный заголовок. '
+                    'Поля «не читается методом API» не называй пустыми.'
                 )
             elif pre.get('what') == 'attention':
                 hint = (
@@ -2096,14 +2522,20 @@ def handler(event: dict, context) -> dict:
                 if truncated:
                     answer += ('\n\n…Ответ сокращён по времени шлюза. Напишите «продолжи» — '
                                'допишу план правок.')
-                return _resp(200, {'answer': answer, 'queries': queries_ran, 'model': state.get('model')}, headers)
-            return _resp(200, {
+                return finish(200, {
+                    'answer': answer,
+                    'queries': queries_ran,
+                    'model': state.get('model'),
+                    'docExcerpt': doc_excerpt[:6000],
+                })
+            return finish(200, {
                 'answer': 'Извините, сервис ИИ ответил слишком медленно, и я не успел разобрать данные. '
                           'Повторите вопрос через минуту.',
                 'queries': queries_ran,
                 'model': state.get('model'),
                 'error': err,
-            }, headers)
+                'docExcerpt': doc_excerpt[:6000],
+            })
         if final and step > 0:
             messages.append({
                 'role': 'user',
@@ -2121,11 +2553,12 @@ def handler(event: dict, context) -> dict:
             answer = (msg.get('content') or '').strip()
             if api_key and api_key in answer:
                 answer = answer.replace(api_key, '***')
-            return _resp(200, {
+            return finish(200, {
                 'answer': answer or 'Не удалось получить ответ, попробуйте переспросить.',
                 'queries': queries_ran,
                 'model': state.get('model'),
-            }, headers)
+                'docExcerpt': doc_excerpt[:6000],
+            })
         messages.append(msg)
         for call in calls:
             fn = call.get('function') or {}
@@ -2135,6 +2568,12 @@ def handler(event: dict, context) -> dict:
             except json.JSONDecodeError:
                 args = {}
             if name == 'cabinet_read':
+                mp = args.get('marketplace') or 'all'
+                note_looking({
+                    'ozon': 'https://docs.ozon.ru',
+                    'wildberries': 'https://seller.wildberries.ru/instructions',
+                    'yandex_market': 'https://partner.market.yandex.ru',
+                }.get(mp, 'https://docs.ozon.ru'))
                 t1 = time.monotonic()
                 result = _cabinet_read(dsn, schema, args)
                 print(f'[megamag] cabinet {args.get("what")} {time.monotonic() - t1:.1f}s', flush=True)
@@ -2145,10 +2584,19 @@ def handler(event: dict, context) -> dict:
                 )
             elif name == 'web_search':
                 q = (args.get('query') or '').strip()
+                sites = re.findall(r'site:(\S+)', q, re.I)
+                if sites:
+                    note_looking('https://' + sites[0].lstrip('/').rstrip('/'))
+                elif hub:
+                    note_looking(hub)
+                else:
+                    note_looking('https://docs.ozon.ru')
                 result = _web_search(q)
                 queries_ran.append('search: ' + q)
             elif name == 'read_page':
                 url = (args.get('url') or '').strip()
+                if url:
+                    note_looking(url)
                 result = _read_page(url)
                 queries_ran.append('read: ' + url)
             else:
@@ -2160,8 +2608,9 @@ def handler(event: dict, context) -> dict:
                 'content': (result or '')[:MAX_TOOL_CHARS],
             })
 
-    return _resp(200, {
+    return finish(200, {
         'answer': 'Вопрос оказался слишком сложным — попробуйте спросить конкретнее.',
         'queries': queries_ran,
         'model': state.get('model'),
-    }, headers)
+        'docExcerpt': doc_excerpt[:6000],
+    })

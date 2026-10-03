@@ -21,11 +21,11 @@ const ShopAssistantPage = () => {
     <CrmLayout>
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
         <div className="mb-3 flex shrink-0 items-center gap-3">
-          <MegamagAvatar size={40} />
+          <MegamagAvatar size={40} idleFlip />
           <div>
             <h1 className="text-xl font-semibold">МЕГАМАГ</h1>
             <p className="mt-0.5 text-sm text-muted-foreground">
-              {`${name || 'Коллега'}, кабинеты OZON, Wildberries и Яндекс Маркета: карточки, SEO, реклама.`}
+              {`${name || 'Коллега'}, карточки на OZON, Wildberries и Яндекс Маркете: заголовки, SEO, фото; плюс аналитика выгрузок.`}
             </p>
           </div>
         </div>

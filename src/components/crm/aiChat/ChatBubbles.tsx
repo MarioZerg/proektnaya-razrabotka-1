@@ -171,46 +171,68 @@ export const Thinking = ({
   stages,
   isAccountant,
   kind,
+  compact,
 }: {
   stages: string[];
   isAccountant: boolean;
   kind?: 'accountant' | 'shop';
+  /** Только текущий статус поиска — без списка «рассуждений». */
+  compact?: boolean;
 }) => {
   const current = stages[stages.length - 1] || 'Думаю...';
   const face = kind || (isAccountant ? 'accountant' : undefined);
   const spin = kind === 'shop' ? 'text-amber-700' : 'text-teal-700';
+  const linkClass = kind === 'shop'
+    ? 'break-all font-semibold text-amber-800 underline underline-offset-2'
+    : 'break-all font-semibold text-teal-800 underline underline-offset-2';
   const dot = kind === 'shop' ? 'bg-amber-600' : 'bg-teal-600';
+
+  const formatStatus = (text: string) => {
+    const parts = text.split(/(https?:\/\/[^\s<>"']+)/g);
+    return parts.map((p, i) =>
+      /^https?:\/\//.test(p) ? (
+        <span key={i} className={linkClass}>{p}</span>
+      ) : (
+        <span key={i}>{p}</span>
+      ),
+    );
+  };
+
   return (
     <div className="flex gap-2 animate-in fade-in duration-200">
       <AgentFace isAccountant={isAccountant} kind={face} size={32} />
       <div className="min-w-0 max-w-[86%] rounded-2xl rounded-bl-md border border-border bg-background px-3 py-2.5 shadow-sm">
-        <div className="mb-2 flex items-center gap-2">
-          <Icon name="Loader2" size={14} className={`shrink-0 animate-spin ${spin}`} />
-          <span className="text-[13px] font-medium text-foreground">{current}</span>
-          <span className="inline-flex items-center gap-1.5">
+        <div className={`flex items-start gap-2 ${compact ? '' : 'mb-2'}`}>
+          <Icon name="Loader2" size={14} className={`mt-0.5 shrink-0 animate-spin ${spin}`} />
+          <span className="min-w-0 text-[13px] font-medium leading-snug text-foreground">
+            {formatStatus(current)}
+          </span>
+          <span className="mt-1 inline-flex shrink-0 items-center gap-1.5">
             <span className={`h-1.5 w-1.5 rounded-full ${dot} animate-bounce [animation-delay:-0.3s]`} />
             <span className={`h-1.5 w-1.5 rounded-full ${dot} animate-bounce [animation-delay:-0.15s]`} />
             <span className={`h-1.5 w-1.5 rounded-full ${dot} animate-bounce`} />
           </span>
         </div>
-        <ul className="space-y-1">
-          {stages.map((s, i) => {
-            const last = i === stages.length - 1;
-            return (
-              <li
-                key={`${s}-${i}`}
-                className={`flex items-center gap-2 text-[12px] ${last ? 'text-foreground' : 'text-muted-foreground'}`}
-              >
-                {last ? (
-                  <Icon name="Loader2" size={12} className={`shrink-0 animate-spin ${spin}`} />
-                ) : (
-                  <Icon name="Check" size={12} className={`shrink-0 ${spin}`} />
-                )}
-                {s}
-              </li>
-            );
-          })}
-        </ul>
+        {!compact ? (
+          <ul className="space-y-1">
+            {stages.map((s, i) => {
+              const last = i === stages.length - 1;
+              return (
+                <li
+                  key={`${s}-${i}`}
+                  className={`flex items-start gap-2 text-[12px] ${last ? 'text-foreground' : 'text-muted-foreground'}`}
+                >
+                  {last ? (
+                    <Icon name="Loader2" size={12} className={`mt-0.5 shrink-0 animate-spin ${spin}`} />
+                  ) : (
+                    <Icon name="Check" size={12} className={`mt-0.5 shrink-0 ${spin}`} />
+                  )}
+                  <span className="min-w-0">{formatStatus(s)}</span>
+                </li>
+              );
+            })}
+          </ul>
+        ) : null}
       </div>
     </div>
   );

@@ -1,10 +1,9 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import Icon from '@/components/ui/icon';
-import { Textarea } from '@/components/ui/textarea';
 import { useMarketplaceAssistant } from '@/hooks/useMarketplaceAssistant';
 import { Bubble, Thinking, dayLabel, sameDay } from '@/components/crm/aiChat/ChatBubbles';
 import NotesStrip from '@/components/crm/aiChat/NotesStrip';
-import ShopChatGreeting from '@/components/crm/aiChat/ShopChatGreeting';
+import ChatComposer from '@/components/crm/aiChat/ChatComposer';
 
 /** Окно переписки с МЕГАМАГ. */
 const ShopAssistantChat = ({ fill }: { fill?: boolean }) => {
@@ -20,18 +19,19 @@ const ShopAssistantChat = ({ fill }: { fill?: boolean }) => {
     loading,
     busy,
     error,
-    hydrated,
     notes,
+    pendingFiles,
     bottomRef,
     send,
+    addFiles,
+    removePending,
     reset,
     saveNote,
     removeNote,
   } = useMarketplaceAssistant();
   const [openNoteId, setOpenNoteId] = useState<string | null>(null);
-  const [greetingOpen, setGreetingOpen] = useState(false);
-
-  const empty = hydrated && !messages.some((m) => m.role === 'user') && !loading && typing === null;
+  const [dragging, setDragging] = useState(false);
+  const dragDepth = useRef(0);
 
   const pairAt = (i: number) => {
     const m = messages[i];
@@ -44,8 +44,43 @@ const ShopAssistantChat = ({ fill }: { fill?: boolean }) => {
     return { question: prev?.content || '', answer: m.content };
   };
 
+  const takeFiles = (list: FileList | File[] | null) => {
+    if (!list || busy) return;
+    const files = Array.from(list);
+    if (files.length) void addFiles(files);
+  };
+
   return (
-    <div className="relative flex h-full min-h-0 flex-1 flex-col overflow-hidden bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-amber-50/50 via-transparent to-transparent">
+    <div
+      className="relative flex h-full min-h-0 flex-1 flex-col overflow-hidden bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-amber-50/50 via-transparent to-transparent"
+      onDragEnter={(e) => {
+        e.preventDefault();
+        dragDepth.current += 1;
+        setDragging(true);
+      }}
+      onDragOver={(e) => {
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'copy';
+      }}
+      onDragLeave={(e) => {
+        e.preventDefault();
+        dragDepth.current = Math.max(0, dragDepth.current - 1);
+        if (dragDepth.current === 0) setDragging(false);
+      }}
+      onDrop={(e) => {
+        e.preventDefault();
+        dragDepth.current = 0;
+        setDragging(false);
+        takeFiles(e.dataTransfer.files);
+      }}
+    >
+      {dragging ? (
+        <div className="pointer-events-none absolute inset-0 z-10 grid place-items-center rounded-xl border-2 border-dashed border-amber-700 bg-background/80">
+          <p className="px-4 text-center text-sm font-medium text-amber-900">
+            Отпустите файл — разберу выгрузку с маркетплейса
+          </p>
+        </div>
+      ) : null}
       {fill && messages.length > 0 && (
         <div className="flex shrink-0 items-center justify-between border-b border-border/80 px-3 py-1.5">
           <p className="text-[11px] text-muted-foreground">История сохраняется на этом компьютере</p>
@@ -60,15 +95,6 @@ const ShopAssistantChat = ({ fill }: { fill?: boolean }) => {
         </div>
       )}
       <div className="min-h-0 flex-1 space-y-3 overflow-x-hidden overflow-y-scroll overscroll-contain p-3">
-        {empty && (
-          <ShopChatGreeting
-            agentName={agentName}
-            youName={youName}
-            greetingOpen={greetingOpen}
-            setGreetingOpen={setGreetingOpen}
-          />
-        )}
-
         {messages.map((m, i) => {
           const prev = messages[i - 1];
           const showDay = m.at && (!prev?.at || !sameDay(prev.at, m.at));
@@ -98,7 +124,7 @@ const ShopAssistantChat = ({ fill }: { fill?: boolean }) => {
           );
         })}
 
-        {loading && <Thinking stages={stages} isAccountant={false} kind="shop" />}
+        {loading && <Thinking stages={stages} isAccountant={false} kind="shop" compact />}
 
         {typing !== null && (
           <Bubble
@@ -122,33 +148,17 @@ const ShopAssistantChat = ({ fill }: { fill?: boolean }) => {
         <div ref={bottomRef} />
       </div>
 
-      <div className="shrink-0 border-t border-border bg-background/80 p-2 backdrop-blur-sm">
-        <div className="flex items-end gap-2">
-          <Textarea
-            value={question}
-            onChange={(e) => setQuestion(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && !e.shiftKey) {
-                e.preventDefault();
-                if (!busy && question.trim()) void send(question);
-              }
-            }}
-            placeholder={placeholder}
-            disabled={busy}
-            rows={1}
-            className="min-h-[40px] max-h-32 resize-none"
-          />
-          <button
-            type="button"
-            disabled={busy || !question.trim()}
-            onClick={() => send(question)}
-            className="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-amber-600 text-white disabled:opacity-40"
-            aria-label="Отправить"
-          >
-            <Icon name="Send" size={16} />
-          </button>
-        </div>
-      </div>
+      <ChatComposer
+        pendingFiles={pendingFiles}
+        removePending={removePending}
+        takeFiles={takeFiles}
+        question={question}
+        setQuestion={setQuestion}
+        send={send}
+        placeholder={placeholder}
+        busy={busy}
+        tone="shop"
+      />
 
       {fill ? (
         <NotesStrip
