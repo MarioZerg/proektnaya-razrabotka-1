@@ -1511,7 +1511,9 @@ def handler(event: dict, context) -> dict:
 
     headers = {'Access-Control-Allow-Origin': '*', 'Content-Type': 'application/json'}
 
-    api_key = os.environ.get('AITUNNEL_API_KEY', '').strip()
+    # Личный ключ Мегабуха; общий AITUNNEL_API_KEY — запасной вариант.
+    api_key = (os.environ.get('API_KEY_MEGABUX', '').strip()
+               or os.environ.get('AITUNNEL_API_KEY', '').strip())
 
     # Проверка настройки: какие модели доступны сервису. Нужна, когда чат
     # отвечает ошибкой доступа — сразу видно, дело в ключе или в модели.
