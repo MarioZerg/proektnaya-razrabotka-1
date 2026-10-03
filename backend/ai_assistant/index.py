@@ -34,15 +34,58 @@ import urllib.request
 
 import psycopg2
 
-# В облаке IPv6 до внешних сайтов висит до таймаута (~8 с на попытку), а потом
-# уже идёт IPv4. Оставляем только IPv4 — иначе ответ не укладывается в лимит шлюза.
+# В облаке IPv6 до внешних сайтов висит до таймаута, а один из двух IPv4 адресов
+# AITUNNEL из облака Поехали не отвечает вовсе: urllib висел на нём ~25 с.
+# Поэтому: только IPv4, а для AITUNNEL — один самый быстрый живой адрес.
 _orig_getaddrinfo = socket.getaddrinfo
+_AITUNNEL_HOSTS = ('api.aitunnel.ru', 'ru-api.aitunnel.ru')
+_LIVE_IPS = {}
+_BAD_IPS = {}
+
+
+def _probe_ips(host, infos):
+    from concurrent.futures import ThreadPoolExecutor
+    ips = list(dict.fromkeys(i[4][0] for i in infos))
+
+    def lat(ip):
+        t = time.monotonic()
+        try:
+            socket.create_connection((ip, 443), timeout=1.5).close()
+            return ip, time.monotonic() - t
+        except Exception:
+            return ip, None
+    with ThreadPoolExecutor(max_workers=max(1, len(ips))) as ex:
+        res = list(ex.map(lat, ips))
+    alive = [ip for ip, t in sorted((r for r in res if r[1] is not None), key=lambda r: r[1])]
+    print(f'[aitunnel] {host}: живые IP {alive} из {ips}', flush=True)
+    return alive
+
+
+def mark_bad_ip(host):
+    """Запрос завис — исключаем адрес, через который шли, на 10 минут."""
+    cached = _LIVE_IPS.get(host)
+    if cached and cached[1]:
+        ip = cached[1][0]
+        _BAD_IPS[ip] = time.monotonic()
+        _LIVE_IPS[host] = (cached[0], [x for x in cached[1] if x != ip])
+        print(f'[aitunnel] {host}: IP {ip} завис — исключаю', flush=True)
 
 
 def _ipv4_getaddrinfo(host, port, family=0, type=0, proto=0, flags=0):
     res = _orig_getaddrinfo(host, port, family, type, proto, flags)
-    v4 = [r for r in res if r[0] == socket.AF_INET]
-    return v4 or res
+    v4 = [r for r in res if r[0] == socket.AF_INET] or res
+    if host not in _AITUNNEL_HOSTS:
+        return v4
+    cached = _LIVE_IPS.get(host)
+    if not cached or time.monotonic() - cached[0] > 600 or not cached[1]:
+        now = time.monotonic()
+        alive = [ip for ip in _probe_ips(host, v4) if now - _BAD_IPS.get(ip, -1e9) > 600]
+        _LIVE_IPS[host] = (now, alive)
+        cached = _LIVE_IPS[host]
+    if not cached[1]:
+        return v4
+    best = cached[1][0]
+    return [i for i in v4 if i[4][0] == best] or v4
 
 
 socket.getaddrinfo = _ipv4_getaddrinfo
@@ -299,11 +342,23 @@ def _run_select(dsn, schema, sql, allowed_tables=None):
 
 # Сколько секунд держим в запасе под финальный ответ модели.
 ANSWER_RESERVE = 11
+# Сколько текста одного источника держим в пошаговом режиме: состояние ездит
+# браузер ↔ функция и не должно раздуваться (и модель на коротком контексте быстрее).
+CONT_TOOL_CHARS = 5000
+# Сколько кругов поиска разрешаем, прежде чем просить итоговый ответ.
+CONT_MAX_TOOL_STEPS = 3
+# Поток для итогового ответа: у пресета MEGABUX через AITUNNEL первый токен не приходит
+# (проверено) — выключено, итог берём обычным вызовом с повтором в следующем заходе.
+STREAM_FINAL = False
+
+
+_RESERVE_NOW = [None]
 
 
 def _tool_timeout(want=7):
     """Таймаут для поиска/чтения страниц: не съедаем время финального ответа."""
-    left = _time_left() - ANSWER_RESERVE
+    reserve = ANSWER_RESERVE if _RESERVE_NOW[0] is None else _RESERVE_NOW[0]
+    left = _time_left() - reserve
     return max(0.0, min(float(want), left))
 
 
@@ -692,7 +747,7 @@ def _read_attachments(files) -> tuple:
 
 # Шлюз Поехали рвёт соединение примерно на 35 с без ответа (499/503).
 # Укладываемся в ~27 с, чтобы человек всегда получил ответ.
-REQUEST_BUDGET = 27
+REQUEST_BUDGET = 28
 _DEADLINE = [0.0]
 
 
@@ -826,6 +881,66 @@ def _public_ai_error(err, code=0):
     ):
         return TUNNEL_ADMIN_MSG
     return text or TUNNEL_ADMIN_MSG
+
+
+def _stream_final(api_key, model, messages, tools, stop_at):
+    """Итоговый ответ потоком: копим текст до stop_at. Возвращает (text, done, err)."""
+    payload = {
+        'model': model, 'messages': messages, 'temperature': 0.2,
+        'max_tokens': 2000, 'stream': True,
+    }
+    if tools:
+        payload['tools'] = tools
+        payload['tool_choice'] = 'none'
+    body = json.dumps(payload, ensure_ascii=False).encode('utf-8')
+    base = _GOOD_BASE[0] or AITUNNEL_BASES[0]
+    req = urllib.request.Request(
+        base.rstrip('/') + '/chat/completions', data=body, method='POST',
+        headers={'Authorization': f'Bearer {api_key}', 'Content-Type': 'application/json',
+                 'Accept': 'text/event-stream',
+                 'User-Agent': 'Mozilla/5.0 (compatible; Megabuh/1.0)'},
+    )
+    parts = []
+    done = False
+    t0 = time.monotonic()
+    try:
+        r = urllib.request.urlopen(req, timeout=max(2.0, min(10.0, stop_at - time.monotonic())))
+    except urllib.error.HTTPError as e:
+        return '', False, f'Сервис ИИ ответил ошибкой {e.code}: {e.read().decode("utf-8", "ignore")[:200]}'
+    except Exception as e:
+        return '', False, f'нет связи: {type(e).__name__}'
+    try:
+        with r:
+            for raw in r:
+                left = stop_at - time.monotonic()
+                if left <= 0:
+                    break
+                try:
+                    r.fp.raw._sock.settimeout(max(1.0, min(15.0, left)))
+                except Exception:
+                    pass
+                line = raw.decode('utf-8', 'ignore').strip()
+                if not line.startswith('data:'):
+                    continue
+                chunk = line[5:].strip()
+                if chunk == '[DONE]':
+                    done = True
+                    break
+                try:
+                    d = json.loads(chunk)
+                except ValueError:
+                    continue
+                for ch in d.get('choices') or []:
+                    piece = (ch.get('delta') or {}).get('content') or ''
+                    if piece:
+                        parts.append(piece)
+                    if ch.get('finish_reason'):
+                        done = True
+    except Exception as e:
+        print(f'[megabuh] stream оборван: {type(e).__name__}', flush=True)
+    text = ''.join(parts)
+    print(f'[megabuh] stream {time.monotonic() - t0:.1f}s {len(text)} симв. done={done}', flush=True)
+    return text, done, None
 
 
 def _call_model(api_key, model, messages, tools, final=False):
@@ -1746,17 +1861,131 @@ def handler(event: dict, context) -> dict:
     steps = MAX_STEPS_ACCOUNTANT if scope == 'accountant' else MAX_STEPS
     if want_digest and scope == 'accountant':
         steps = MAX_STEPS_DIGEST
-    for step in range(steps):
-        # Время на исходе или последний шаг — инструменты убираем, просим ответ сейчас.
-        final = step == steps - 1 or _time_left() < ANSWER_RESERVE + 4
+
+    # Пошаговый режим: шлюз Поехали рвёт запрос на ~33 с, поэтому длинный ответ
+    # собираем за несколько заходов. Клиент присылает назад промежуточное состояние.
+    cont_ok = bool(body_data.get('cont_ok'))
+    _RESERVE_NOW[0] = 3 if cont_ok else None
+    cont = body_data.get('cont') if cont_ok else None
+    step_start = 0
+    retries = 0
+    restored = 0
+    if isinstance(cont, dict):
+        # Восстанавливаем только целые пары «вызов → результат», иначе модель отвечает 400.
+        open_ids = set()
+        for m in (cont.get('messages') or [])[:60]:
+            if not isinstance(m, dict):
+                continue
+            role = m.get('role')
+            if role == 'assistant':
+                calls_in = m.get('tool_calls') if isinstance(m.get('tool_calls'), list) else []
+                item = {'role': 'assistant', 'content': m.get('content') or ''}
+                if calls_in:
+                    item['tool_calls'] = calls_in
+                    open_ids = {str(c.get('id')) for c in calls_in if isinstance(c, dict)}
+                messages.append(item)
+                restored += 1
+            elif role == 'tool' and str(m.get('tool_call_id')) in open_ids:
+                messages.append({'role': 'tool', 'tool_call_id': str(m['tool_call_id']),
+                                 'content': str(m.get('content') or '')[:CONT_TOOL_CHARS]})
+                restored += 1
+            elif role == 'system':
+                continue
+        queries_ran = [str(q) for q in (cont.get('queries') or [])][:30]
+        if cont.get('model'):
+            model_state['model'] = str(cont['model'])[:80]
+        step_start = max(0, min(int(cont.get('step') or 0), steps - 1))
+        retries = max(0, int(cont.get('retries') or 0))
+    base_len = len(messages) - restored
+
+    def _pending(step_next, retry_n=0, status=''):
+        tail = [m for m in messages[base_len:] if m.get('role') != 'system']
+        return {'statusCode': 200, 'headers': headers, 'body': json.dumps({
+            'pending': True,
+            'status': status or 'Собираю ответ…',
+            'cont': {
+                'messages': tail,
+                'queries': queries_ran,
+                'model': model_state.get('model'),
+                'step': step_next,
+                'retries': retry_n,
+            },
+            'docExcerpt': doc_excerpt[:6000],
+        }, ensure_ascii=False)}
+
+    calls_this_run = 0
+    for step in range(step_start, steps):
+        if cont_ok and calls_this_run > 0 and _time_left() < 24:
+            return _pending(step, 0, 'Изучаю найденное…')
+        final = (step == steps - 1
+                 or (not cont_ok and _time_left() < ANSWER_RESERVE + 4)
+                 or (cont_ok and step >= CONT_MAX_TOOL_STEPS))
         if final and step > 0:
             messages.append({
                 'role': 'system',
                 'content': 'Время на поиск вышло. Ответь сейчас по тому, что уже собрано, '
                            'без новых запросов. Если чего-то не хватило — честно скажи, что проверить.',
             })
-        data, err = _ask_model(api_key, messages, tools, model_state, final and step > 0)
+        calls_this_run += 1
+        if STREAM_FINAL and cont_ok and final and step > 0 and model_state.get('model'):
+            partial = str((cont or {}).get('partial') or '') if isinstance(cont, dict) else ''
+            parts_n = int((cont or {}).get('parts') or 0) if isinstance(cont, dict) else 0
+            msgs = list(messages)
+            if partial:
+                msgs.append({'role': 'assistant', 'content': partial})
+                msgs.append({'role': 'user', 'content': 'Продолжи ответ ровно с места, где остановился, без повторов.'})
+            text, done, serr = _stream_final(api_key, model_state['model'], msgs, tools, time.monotonic() + max(3.0, _time_left() - 1))
+            full = partial + text
+            if serr and not full:
+                data, err = None, serr
+            elif done or parts_n >= 4 or retries >= 3 or (not text and full):
+                return {'statusCode': 200, 'headers': headers, 'body': json.dumps({
+                    'answer': full.strip() or 'Не удалось получить ответ, попробуйте переспросить.',
+                    'queries': queries_ran,
+                    'model': model_state.get('model'),
+                    'docExcerpt': doc_excerpt[:6000],
+                    'quiet': False,
+                }, ensure_ascii=False)}
+            else:
+                messages.pop()
+                resp = _pending(step, retries if text else retries + 1, 'Пишу ответ…')
+                body = json.loads(resp['body'])
+                body['cont']['partial'] = full
+                body['cont']['parts'] = parts_n + 1
+                body['partial'] = full
+                resp['body'] = json.dumps(body, ensure_ascii=False)
+                return resp
+        elif cont_ok:
+            # Жёсткий потолок по часам: urllib-таймаут считает паузы, а не всё время,
+            # и вызов модели мог тянуться 35+ с — шлюз в это время рвёт соединение.
+            box = {}
+
+            def _call():
+                box['r'] = _ask_model(api_key, list(messages), tools, model_state, final and step > 0)
+
+            th = threading.Thread(target=_call, daemon=True)
+            th.start()
+            th.join(max(1.0, _time_left() - 1))
+            if 'r' not in box:
+                print(f'[megabuh] модель не уложилась в заход, step={step}', flush=True)
+                if retries >= 1:
+                    mark_bad_ip(urllib.parse.urlparse(_GOOD_BASE[0] or AITUNNEL_BASES[0]).hostname)
+                if final and step > 0:
+                    messages.pop()
+                if retries < 3:
+                    return _pending(step, retries + 1, 'Модель думает дольше обычного…')
+                data, err = None, 'не хватило времени на запрос'
+            else:
+                data, err = box['r']
+        else:
+            data, err = _ask_model(api_key, messages, tools, model_state, final and step > 0)
         if err:
+            low = str(err).lower()
+            slow = ('timed out' in low or 'timeout' in low or 'не хватило времени' in low)
+            if cont_ok and slow and retries < 3:
+                if final and step > 0:
+                    messages.pop()
+                return _pending(step, retries + 1, 'Модель думает дольше обычного…')
             return {'statusCode': 502, 'headers': headers,
                     'body': json.dumps({'error': _public_ai_error(err)}, ensure_ascii=False)}
 
@@ -1777,7 +2006,11 @@ def handler(event: dict, context) -> dict:
                 'quiet': quiet,
             }, ensure_ascii=False)}
 
-        messages.append(msg)
+        messages.append({
+            'role': 'assistant',
+            'content': msg.get('content') or '',
+            'tool_calls': calls,
+        })
 
         def _run_tool(call, slot):
             fn = (call.get('function') or {})
@@ -1811,15 +2044,15 @@ def handler(event: dict, context) -> dict:
             slot['r'] = result
             print(f'[tool] {name} {time.monotonic() - t0:.1f}s', flush=True)
 
-        # Все вызовы шага — параллельно и с жёстким дедлайном: медленный сайт
-        # не должен съесть время, нужное модели на итоговый ответ.
+        # Все вызовы шага — параллельно и с жёстким дедлайном.
         slots = [{} for _ in calls]
         threads = []
         for call, slot in zip(calls, slots):
             t = threading.Thread(target=_run_tool, args=(call, slot), daemon=True)
             t.start()
             threads.append(t)
-        tool_deadline = time.monotonic() + max(1.0, _time_left() - ANSWER_RESERVE)
+        reserve = 3 if cont_ok else ANSWER_RESERVE
+        tool_deadline = time.monotonic() + max(1.0, _time_left() - reserve)
         for t in threads:
             t.join(max(0.0, tool_deadline - time.monotonic()))
         for call, slot in zip(calls, slots):
@@ -1831,7 +2064,7 @@ def handler(event: dict, context) -> dict:
             messages.append({
                 'role': 'tool',
                 'tool_call_id': call.get('id'),
-                'content': str(result)[:12000],
+                'content': str(result)[:CONT_TOOL_CHARS if cont_ok else 12000],
             })
 
     return {'statusCode': 200, 'headers': headers, 'body': json.dumps({

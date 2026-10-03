@@ -261,34 +261,61 @@ export const askAiAssistant = async (
   role?: Role,
   files: AiUpload[] = [],
   practice?: PracticeDigest,
+  onStatus?: (text: string) => void,
 ): Promise<AiAnswer> => {
-  const res = await fetch(AI_ASSISTANT_URL, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      question,
-      userId,
-      history: history.map(({ role: r, content, docExcerpt }) => ({
-        role: r,
-        content:
-          r === 'user' && docExcerpt
-            ? `${content}\n\n---\nТекст документов из того сообщения:\n${docExcerpt}`
-            : content,
-      })),
-      role,
-      files: files.map(({ name, mime, data, textExcerpt }) => ({
-        name,
-        mime,
-        data,
-        textExcerpt,
-      })),
-      practice,
-    }),
-  });
-  const data = await res.json();
-  if (!res.ok) throw new Error(friendlyAgentError(data.error || 'Помощник не ответил'));
-  return data;
+  const base = {
+    question,
+    userId,
+    history: history.map(({ role: r, content, docExcerpt }) => ({
+      role: r,
+      content:
+        r === 'user' && docExcerpt
+          ? `${content}\n\n---\nТекст документов из того сообщения:\n${docExcerpt}`
+          : content,
+    })),
+    role,
+    files: files.map(({ name, mime, data, textExcerpt }) => ({
+      name,
+      mime,
+      data,
+      textExcerpt,
+    })),
+    practice,
+    // Длинный ответ собирается за несколько заходов: шлюз рвёт запрос на ~33 с.
+    cont_ok: true,
+  };
+  let cont: unknown = null;
+  let docExcerpt: string | undefined;
+  for (let round = 0; round < MAX_ROUNDS; round += 1) {
+    const res = await fetch(AI_ASSISTANT_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(cont ? { ...base, cont } : base),
+    });
+    let data: Record<string, unknown> = {};
+    try {
+      data = await res.json();
+    } catch {
+      throw new Error('Помощник не ответил вовремя — попробуйте ещё раз');
+    }
+    if (!res.ok) {
+      throw new Error(friendlyAgentError((data.error as string) || 'Помощник не ответил'));
+    }
+    if (typeof data.docExcerpt === 'string' && data.docExcerpt) docExcerpt = data.docExcerpt;
+    if (data.pending && data.cont) {
+      cont = data.cont;
+      if (onStatus && typeof data.status === 'string') onStatus(data.status);
+      continue;
+    }
+    if (!data.answer && typeof data.partial === 'string') data.answer = data.partial;
+    const answer = data as unknown as AiAnswer;
+    return { ...answer, docExcerpt: answer.docExcerpt || docExcerpt };
+  }
+  throw new Error('Вопрос оказался слишком длинным — разбейте его на части');
 };
+
+/** Сколько заходов к функции разрешаем на один ответ (~30 с каждый). */
+const MAX_ROUNDS = 10;
 
 /**
  * Раз в сутки: МЕГАБУХ сам обходит новости кабинетов продавца.
