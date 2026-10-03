@@ -12,6 +12,8 @@ interface ChatComposerProps {
   send: (text: string) => void;
   placeholder: string;
   busy: boolean;
+  /** false — роль не из списка агента, поле только для просмотра. */
+  canAsk?: boolean;
   /** МЕГАБУХ — бирюза, МЕГАМАГ — янтарь. */
   tone?: 'accountant' | 'shop';
 }
@@ -26,9 +28,11 @@ const ChatComposer = ({
   send,
   placeholder,
   busy,
+  canAsk = true,
   tone = 'accountant',
 }: ChatComposerProps) => {
   const fileRef = useRef<HTMLInputElement>(null);
+  const locked = busy || !canAsk;
   const fileTint = tone === 'shop' ? 'text-amber-800' : 'text-teal-800';
   const sendBtn =
     tone === 'shop'
@@ -73,7 +77,7 @@ const ChatComposer = ({
       <button
         type="button"
         title="Приложить файл с маркетплейса"
-        disabled={busy}
+        disabled={locked}
         onClick={() => fileRef.current?.click()}
         className="grid h-10 w-10 shrink-0 place-items-center rounded-full border border-border text-muted-foreground hover:bg-accent hover:text-foreground disabled:opacity-40"
       >
@@ -85,25 +89,26 @@ const ChatComposer = ({
         onKeyDown={(e) => {
           if (e.key === 'Enter' && !e.shiftKey) {
             e.preventDefault();
-            send(question);
+            if (canAsk) send(question);
           }
         }}
         onPaste={(e) => {
+          if (!canAsk) return;
           const files = Array.from(e.clipboardData.files);
           if (files.length) {
             e.preventDefault();
             takeFiles(files);
           }
         }}
-        placeholder={placeholder}
+        placeholder={canAsk ? placeholder : 'Писать могут только роли агента'}
         rows={1}
-        disabled={busy}
+        disabled={locked}
         className="max-h-24 min-h-[40px] resize-none rounded-xl bg-background text-[13px]"
       />
       <button
         type="button"
         onClick={() => send(question)}
-        disabled={busy || (!question.trim() && pendingFiles.length === 0)}
+        disabled={locked || (!question.trim() && pendingFiles.length === 0)}
         className={`grid h-10 w-10 shrink-0 place-items-center ${sendBtn}`}
         aria-label="Отправить"
       >

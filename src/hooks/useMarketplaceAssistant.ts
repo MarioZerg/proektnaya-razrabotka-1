@@ -1,6 +1,6 @@
 import { createContext, createElement, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
 import { useAuth } from '@/context/AuthContext';
-import { isMegamagRole } from '@/lib/roles';
+import { canWriteMegamag, megamagApiRole } from '@/lib/roles';
 import {
   chatDisplayName,
   prepareChatUploads,
@@ -147,7 +147,8 @@ export const MarketplaceAssistantProvider = ({ children }: { children: ReactNode
   const cancelType = useRef(false);
 
   const role = user?.role;
-  const canAsk = isMegamagRole(role);
+  const canAsk = canWriteMegamag(role);
+  const apiRole = megamagApiRole(role);
   const youName = chatDisplayName(user?.name);
   const agentName = 'МЕГАМАГ';
   const placeholder = 'Спросить...';
@@ -241,7 +242,7 @@ export const MarketplaceAssistantProvider = ({ children }: { children: ReactNode
     const q = display || (uploads.length
       ? 'Прочитайте выгрузку с маркетплейса и разберите: свод, топ проблемных, рекомендации и экономику.'
       : '');
-    if ((!q && uploads.length === 0) || busy || !user?.id || !canAsk) return;
+    if ((!q && uploads.length === 0) || busy || !user?.id || !canAsk || !apiRole) return;
     setError(null);
     setQuestion('');
     setPendingFiles([]);
@@ -260,7 +261,7 @@ export const MarketplaceAssistantProvider = ({ children }: { children: ReactNode
         q,
         user.id,
         history,
-        role,
+        apiRole,
         uploads,
         (status) => setStages([status]),
       );

@@ -12,6 +12,7 @@ import ChatComposer from '@/components/crm/aiChat/ChatComposer';
 const AiAssistantChat = ({ fill }: { fill?: boolean }) => {
   const {
     isAccountant,
+    canAsk,
     agentName,
     youName,
     placeholder,
@@ -53,7 +54,7 @@ const AiAssistantChat = ({ fill }: { fill?: boolean }) => {
   };
 
   const takeFiles = (list: FileList | File[] | null) => {
-    if (!list || busy) return;
+    if (!list || busy || !canAsk) return;
     const files = Array.from(list);
     if (files.length) void addFiles(files);
   };
@@ -172,6 +173,7 @@ const AiAssistantChat = ({ fill }: { fill?: boolean }) => {
         send={send}
         placeholder={placeholder}
         busy={busy}
+        canAsk={canAsk}
       />
 
       {fill ? (

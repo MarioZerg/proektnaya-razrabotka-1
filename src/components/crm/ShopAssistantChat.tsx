@@ -18,6 +18,7 @@ const ShopAssistantChat = ({ fill }: { fill?: boolean }) => {
     setQuestion,
     loading,
     busy,
+    canAsk,
     error,
     notes,
     pendingFiles,
@@ -45,7 +46,7 @@ const ShopAssistantChat = ({ fill }: { fill?: boolean }) => {
   };
 
   const takeFiles = (list: FileList | File[] | null) => {
-    if (!list || busy) return;
+    if (!list || busy || !canAsk) return;
     const files = Array.from(list);
     if (files.length) void addFiles(files);
   };
@@ -157,6 +158,7 @@ const ShopAssistantChat = ({ fill }: { fill?: boolean }) => {
         send={send}
         placeholder={placeholder}
         busy={busy}
+        canAsk={canAsk}
         tone="shop"
       />
 

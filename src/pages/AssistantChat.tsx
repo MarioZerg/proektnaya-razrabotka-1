@@ -7,9 +7,7 @@ import { useAuth } from '@/context/AuthContext';
 import { isMegabuhRole } from '@/lib/roles';
 import { givenName } from '@/lib/aiAssistantApi';
 
-/**
- * Чат МЕГАБУХ — страница в админке для бухгалтера.
- */
+/** Чат МЕГАБУХ — бухгалтер и админ (раздел «Агенты»). */
 const AssistantChat = () => {
   const { user } = useAuth();
   const megabuh = isMegabuhRole(user?.role);

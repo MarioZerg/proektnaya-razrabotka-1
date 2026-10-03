@@ -1,6 +1,6 @@
 import { createContext, createElement, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
 import { useAuth } from '@/context/AuthContext';
-import { isMegabuhRole } from '@/lib/roles';
+import { canWriteMegabuh, isMegabuhRole, megabuhApiRole } from '@/lib/roles';
 import { askAiAssistant, chatDisplayName, givenName, prepareChatUploads, type AiMessage, type AiNote, type AiUpload } from '@/lib/aiAssistantApi';
 import { megabuhPracticeDigest, recordMegabuhPractice } from '@/lib/megabuhBusinessLog';
 import { playMegabuhReplySound, primeMegabuhSound } from '@/lib/megabuhSound';
@@ -134,7 +134,8 @@ export const AiAssistantProvider = ({ children }: { children: ReactNode }) => {
 
   const role = user?.role;
   const isAccountant = isMegabuhRole(role);
-  const canAsk = isMegabuhRole(role);
+  const canAsk = canWriteMegabuh(role);
+  const apiRole = megabuhApiRole(role);
   const youName = chatDisplayName(user?.name);
   const agentName = 'МЕГАБУХ';
   const placeholder = 'Спросить...';
@@ -270,7 +271,7 @@ export const AiAssistantProvider = ({ children }: { children: ReactNode }) => {
     const uploads = pendingFiles;
     const display = text.trim();
     const q = display || (uploads.length ? 'Прочитайте документ и разберите по делу.' : '');
-    if ((!q && uploads.length === 0) || busy || !user?.id || !canAsk) return;
+    if ((!q && uploads.length === 0) || busy || !user?.id || !canAsk || !apiRole) return;
     primeMegabuhSound();
     if (role) markMegabuhActivity(user.id, role);
     sendingDocs.current = uploads.length > 0;
@@ -287,7 +288,14 @@ export const AiAssistantProvider = ({ children }: { children: ReactNode }) => {
     setMessages([...history, userMsg]);
     setLoading(true);
     try {
-      const r = await askAiAssistant(q, user.id, history, role, uploads, megabuhPracticeDigest(user.id));
+      const r = await askAiAssistant(
+        q,
+        user.id,
+        history,
+        apiRole,
+        uploads,
+        megabuhPracticeDigest(user.id),
+      );
       if (r.docExcerpt) {
         setMessages((prev) =>
           prev.map((m) =>

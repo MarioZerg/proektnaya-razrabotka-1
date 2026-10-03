@@ -362,7 +362,7 @@ https://partner.market.yandex.ru
 # ---------------------------------------------------------------- доступ
 
 def _access(cur, schema, user_id, requested_role):
-    """МЕГАМАГ — менеджеру. Админ проходит, если явно переключился на role=manager."""
+    """МЕГАМАГ — менеджеру и админу (раздел «Агенты»)."""
     try:
         uid = int(user_id)
     except (TypeError, ValueError):
@@ -382,11 +382,11 @@ def _access(cur, schema, user_id, requested_role):
     )
     roles |= {r[0] for r in cur.fetchall()}
     full_name = (row[2] or '').strip()
+    # Админ из «Агенты» — полный доступ к МЕГАМАГу (любая requested_role).
+    if 'admin' in roles:
+        return True, full_name
     want = (requested_role or '').strip()
     if 'manager' in roles and want in ('', 'manager'):
-        return True, full_name
-    # Админ из раздела «Агенты» — полный доступ к МЕГАМАГу.
-    if 'admin' in roles and want in ('', 'manager', 'admin'):
         return True, full_name
     return False, ''
 
@@ -2617,7 +2617,7 @@ def handler(event: dict, context) -> dict:
         cur = conn.cursor()
         ok, full_name = _access(cur, schema, user_id, requested_role)
         if not ok:
-            return _resp(403, {'error': 'МЕГАМАГ доступен менеджеру'}, headers)
+            return _resp(403, {'error': 'МЕГАМАГ доступен менеджеру и администратору'}, headers)
         cur.execute("SELECT to_char(now() + interval '3 hours', 'DD.MM.YYYY HH24:MI')")
         now_human = cur.fetchone()[0]
     finally:

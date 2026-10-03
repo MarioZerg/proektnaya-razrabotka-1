@@ -7,7 +7,7 @@ import { useAuth } from '@/context/AuthContext';
 import { isMegamagRole } from '@/lib/roles';
 import { givenName } from '@/lib/aiAssistantApi';
 
-/** Чат МЕГАМАГ — кабинеты маркетплейсов, только у менеджера. */
+/** Чат МЕГАМАГ — менеджер и админ (раздел «Агенты»). */
 const ShopAssistantPage = () => {
   const { user } = useAuth();
   const allowed = isMegamagRole(user?.role);

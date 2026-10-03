@@ -573,9 +573,11 @@ def handler(event: dict, context) -> dict:
             )
             roles = [r[0] for r in cur.fetchall()]
             if role and role not in roles:
-                # Админ смотрит панель бухгалтера — должность может быть только
-                # в меню переключения, без отдельной записи в карточке.
-                if not (role == 'accountant' and 'admin' in roles):
+                # Админ открывает агентов без отдельной записи accountant/manager в карточке.
+                if not (
+                    'admin' in roles
+                    and role in ('accountant', 'manager')
+                ):
                     return _resp_access(False, 'Должность больше не подтверждена администратором')
 
             return {
@@ -751,10 +753,9 @@ def handler(event: dict, context) -> dict:
                 return {'statusCode': 403, 'headers': headers,
                         'body': json.dumps({'error': 'У сотрудника нет утверждённых должностей'})}
             if role and role not in roles:
-                # Бухгалтера как отдельной должности у человека может не быть:
-                # админ всё равно открывает эту панель из меню переключения ролей.
-                if role == 'accountant' and 'admin' in roles:
-                    roles = list(roles) + ['accountant']
+                # Админ открывает панели агентов без записи accountant/manager в карточке.
+                if role in ('accountant', 'manager') and 'admin' in roles:
+                    roles = list(roles) + [role]
                 else:
                     return {'statusCode': 403, 'headers': headers,
                             'body': json.dumps({'error': 'Эта должность у сотрудника не утверждена'})}

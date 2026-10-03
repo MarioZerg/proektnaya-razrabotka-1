@@ -1,4 +1,5 @@
 import { askMegabuhDigest, type AiMessage } from '@/lib/aiAssistantApi';
+import { megabuhApiRole, type Role } from '@/lib/roles';
 
 /** Событие: сводка готова и чат сейчас открыт — хук допишет пузырь в состояние. */
 export const MEGABUH_DIGEST_EVENT = 'megabuh-digest';
@@ -167,7 +168,7 @@ export const runMegabuhDigestCheck = async (userId: number, role: string): Promi
     return null;
   }
 
-  const r = await askMegabuhDigest(userId, role);
+  const r = await askMegabuhDigest(userId, megabuhApiRole(role as Role) ?? (role as Role));
   const answer = (r.answer || '').trim();
   if (!answer || isQuiet(answer, r.quiet)) {
     writeDigest(userId, role, { ...state, lastCheckDay: day, pending: null });

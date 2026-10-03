@@ -160,7 +160,7 @@ def _sql_uses_only_tables(sql: str, schema: str, allowed) -> tuple:
 
 
 def _assistant_scope(cur, schema, user_id, requested_role: str):
-    """Кто может спрашивать. Сейчас только МЕГАБУХ: бухгалтер.
+    """Кто может спрашивать МЕГАБУХа: бухгалтер и админ (раздел «Агенты»).
 
     Производственный помощник администратора выключен — к базе заказов и зарплат
     агент не подключается. Менеджеру чат закрыт.
@@ -182,15 +182,11 @@ def _assistant_scope(cur, schema, user_id, requested_role: str):
     roles = {r[0] for r in cur.fetchall()}
     if card_role:
         roles.add(card_role)
-    want = (requested_role or '').strip()
-    if want == 'accountant':
-        if 'accountant' in roles or 'admin' in roles:
-            return 'accountant', full_name
-        return None, ''
-    # Админ из раздела «Агенты» заходит как admin — открываем МЕГАБУХа.
-    if 'admin' in roles and want in ('', 'admin'):
+    # Админ из «Агенты» — полный доступ к МЕГАБУХу (любая requested_role).
+    if 'admin' in roles:
         return 'accountant', full_name
-    if 'accountant' in roles:
+    want = (requested_role or '').strip()
+    if want in ('', 'accountant') and 'accountant' in roles:
         return 'accountant', full_name
     return None, ''
 
@@ -1555,7 +1551,7 @@ def handler(event: dict, context) -> dict:
         scope, person_full = _assistant_scope(cur, schema, user_id, requested_role)
         if not scope:
             return {'statusCode': 403, 'headers': headers, 'body': json.dumps(
-                {'error': 'МЕГАБУХ доступен бухгалтеру'}, ensure_ascii=False)}
+                {'error': 'МЕГАБУХ доступен бухгалтеру и администратору'}, ensure_ascii=False)}
         schema_text = ''
         if scope != 'accountant':
             schema_text = _schema_digest(cur, schema, USEFUL_TABLES)

@@ -71,13 +71,37 @@ export const roleLabels: Record<Role, string> = {
   accountant: 'Бухгалтер',
 };
 
-/** МЕГАБУХ — бухгалтер; админ смотрит из раздела «Агенты». */
-export const isMegabuhRole = (role?: Role | null): boolean =>
-  role === 'accountant' || role === 'admin';
+/** Кто может писать МЕГАБУХу (бухгалтер + админ из «Агенты»). */
+export const MEGABUH_WRITE_ROLES: Role[] = ['accountant', 'admin'];
 
-/** МЕГАМАГ — менеджер; админ смотрит из раздела «Агенты». */
-export const isMegamagRole = (role?: Role | null): boolean =>
-  role === 'manager' || role === 'admin';
+/** Кто может писать МЕГАМАГу (менеджер + админ из «Агенты»). */
+export const MEGAMAG_WRITE_ROLES: Role[] = ['manager', 'admin'];
+
+export const canWriteMegabuh = (role?: Role | null): boolean =>
+  !!role && MEGABUH_WRITE_ROLES.includes(role);
+
+export const canWriteMegamag = (role?: Role | null): boolean =>
+  !!role && MEGAMAG_WRITE_ROLES.includes(role);
+
+/** МЕГАБУХ — бухгалтер; админ пишет из раздела «Агенты». */
+export const isMegabuhRole = (role?: Role | null): boolean => canWriteMegabuh(role);
+
+/** МЕГАМАГ — менеджер; админ пишет из раздела «Агенты». */
+export const isMegamagRole = (role?: Role | null): boolean => canWriteMegamag(role);
+
+/**
+ * Роль для API агента: админ ходит под «родной» ролью агента,
+ * чтобы бэкенд и старые проверки доступа принимали запрос.
+ */
+export const megabuhApiRole = (role?: Role | null): Role | undefined => {
+  if (!canWriteMegabuh(role)) return undefined;
+  return role === 'admin' ? 'accountant' : role!;
+};
+
+export const megamagApiRole = (role?: Role | null): Role | undefined => {
+  if (!canWriteMegamag(role)) return undefined;
+  return role === 'admin' ? 'manager' : role!;
+};
 
 /**
  * Раздел «Инструкции» — как что делать на производстве.
