@@ -1529,17 +1529,10 @@ def _stream_answer(api_key, messages, state, deadline_left):
     """
     stop_at = time.monotonic() + max(5, deadline_left)
     last_err = 'модель не ответила'
-    fast = [m.strip() for m in os.environ.get(
-        'MEGAMAG_FAST_MODELS', 'gpt-4.1-mini,openai/gpt-4.1-mini,gpt-4o-mini').split(',') if m.strip()]
-    allowed = state.get('allowed_models')
-    if allowed:
-        allowed_set = {a for n in allowed for a in _model_aliases(n)}
-        fast = [m for m in fast if m in allowed_set]
-    base_list = [state['model']] if state.get('model') else _model_candidates(api_key, state)
-    order = []
-    for m in fast + base_list:
-        if m not in order:
-            order.append(m)
+    # Без фиксированных mini/luna: только auto / белый список ключа / AITUNNEL_MODEL.
+    order = list(_model_candidates(api_key, state))
+    if state.get('model') and state['model'] not in order:
+        order.insert(0, state['model'])
     for model in order:
         payload = {
             'model': model, 'messages': messages,
