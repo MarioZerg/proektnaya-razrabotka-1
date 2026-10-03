@@ -710,7 +710,7 @@ def _mp_call(method, url, headers, payload=None):
         req.add_header(k, v)
     req.add_header('Content-Type', 'application/json')
     try:
-        with urllib.request.urlopen(req, timeout=max(3, min(MP_TIMEOUT, _time_left() - 40))) as r:
+        with urllib.request.urlopen(req, timeout=max(3, min(MP_TIMEOUT, _mp_budget(MP_TIMEOUT) or 3))) as r:
             raw = r.read().decode('utf-8', 'replace')
             return r.status, (json.loads(raw) if raw else {})
     except urllib.error.HTTPError as e:
@@ -778,7 +778,7 @@ def _live_ozon(creds):
                  {'filter': {'visibility': 'STATE_FAILED'}, 'limit': 10, 'last_id': ''})))
     jobs.append(('VIS_LIST', _mp_call, ('POST', url, h,
                  {'filter': {'visibility': 'VISIBLE'}, 'limit': 50, 'last_id': ''})))
-    r1 = _parallel(jobs, min(LIVE_BUDGET * 0.5, _time_left() - 45))
+    r1 = _parallel(jobs, _mp_budget(LIVE_BUDGET * 0.55))
 
     def _total(res):
         if isinstance(res, tuple) and res[0] == 200 and isinstance(res[1], dict):
@@ -793,10 +793,10 @@ def _live_ozon(creds):
 
     # Повтор для тех, кому OZON отказал (429 при параллельных запросах).
     retry = [(k, f, a) for k, f, a in jobs
-             if not (isinstance(r1.get(k), tuple) and r1[k][0] == 200) and _time_left() > 50]
+             if not (isinstance(r1.get(k), tuple) and r1[k][0] == 200) and _mp_budget(4) >= 3]
     if retry:
         time.sleep(0.5)
-        r1.update({k: v for k, v in _parallel(retry, 4).items() if v is not None})
+        r1.update({k: v for k, v in _parallel(retry, _mp_budget(4)).items() if v is not None})
     for key, title in (('ALL', 'всего карточек'), ('VISIBLE', 'видны покупателю'),
                        ('EMPTY_STOCK', 'нет в наличии'), ('FAILED', 'ошибка создания/модерации')):
         t = _total(r1.get(key))
@@ -811,7 +811,7 @@ def _live_ozon(creds):
         jobs2.append(('F', _mp_call, ('POST', info_url, h, {'product_id': failed_ids[:10]})))
     if vis_ids:
         jobs2.append(('V', _mp_call, ('POST', info_url, h, {'product_id': vis_ids[:50]})))
-    r2 = _parallel(jobs2, min(LIVE_BUDGET * 0.5, _time_left() - 42)) if _time_left() > 45 else {}
+    r2 = _parallel(jobs2, _mp_budget(LIVE_BUDGET * 0.5)) if jobs2 and _mp_budget(3) >= 2.5 else {}
     res = r2.get('F')
     if isinstance(res, tuple) and res[0] == 200 and isinstance(res[1], dict):
         lines.append('Карточки с ошибкой модерации (offer_id | название | ошибки):')
@@ -868,7 +868,7 @@ def _live_wb(creds):
                              {'settings': {'cursor': {'limit': 100}, 'filter': {'withPhoto': -1}}})),
         ('errs', _mp_call, ('GET', WB_CONTENT_API + '/content/v2/cards/error/list', h)),
         ('adv', _mp_call, ('GET', WB_ADVERT_API + '/adv/v1/promotion/count', h)),
-    ], LIVE_BUDGET - 1)
+    ], _mp_budget(LIVE_BUDGET - 1))
     st, data = r.get('cards') if isinstance(r.get('cards'), tuple) else (0, 'нет ответа')
     if st == 200 and isinstance(data, dict):
         cards = data.get('cards') or []
@@ -924,7 +924,7 @@ def _live_ym(creds):
     r = _parallel([
         ('maps', _mp_call, ('POST', f'{YM_API}/businesses/{bid}/offer-mappings?limit=100', h, {})),
         ('cards', _mp_call, ('POST', f'{YM_API}/businesses/{bid}/offer-cards?limit=100', h, {})),
-    ], LIVE_BUDGET - 4)
+    ], _mp_budget(LIVE_BUDGET - 4))
     st, data = r.get('maps') if isinstance(r.get('maps'), tuple) else (0, 'нет ответа')
     if st == 200 and isinstance(data, dict):
         maps = (data.get('result') or {}).get('offerMappings') or []
@@ -980,7 +980,7 @@ def _live(cur, schema, shop, mps):
             else:
                 slots.append((s, mp, None, creds))
                 jobs.append((key, fns[mp], (creds,)))
-    res = _parallel(jobs, min(LIVE_BUDGET, _time_left() - 40))
+    res = _parallel(jobs, _mp_budget(LIVE_BUDGET))
     out = []
     cur_shop = None
     for s, mp, text, creds in slots:
@@ -1140,7 +1140,7 @@ def _card_live_ozon(creds, item_row, query):
     sku_int = [int(x) for x in skus if str(x).isdigit()][:20]
     if sku_int:
         jobs.append(('sku', _mp_call, ('POST', info_url, h, {'sku': sku_int})))
-    r = _parallel(jobs, min(LIVE_BUDGET * 0.6, _time_left() - 42))
+    r = _parallel(jobs, _mp_budget(LIVE_BUDGET * 0.7))
     items = []
     st = 0
     seen = set()
@@ -1167,7 +1167,7 @@ def _card_live_ozon(creds, item_row, query):
                 rating_skus.append(int(s))
             except (TypeError, ValueError):
                 pass
-    if rating_skus and _time_left() >= 45:
+    if rating_skus and _mp_budget(4) >= 3:
         st, rating = _mp_call(
             'POST', OZON_API + '/v1/product/rating-by-sku', h, {'skus': rating_skus[:10]},
         )
@@ -1289,7 +1289,7 @@ def _card_live_ym(creds, item_row, query):
     r = _parallel([
         ('maps', _mp_call, ('POST', f'{YM_API}/businesses/{bid}/offer-mappings?limit=20', h, payload)),
         ('cards', _mp_call, ('POST', f'{YM_API}/businesses/{bid}/offer-cards?limit=20', h, payload)),
-    ], LIVE_BUDGET - 4)
+    ], _mp_budget(LIVE_BUDGET - 4))
     st, data = r.get('maps') if isinstance(r.get('maps'), tuple) else (0, 'нет ответа')
     maps = []
     if st == 200 and isinstance(data, dict):
@@ -1438,7 +1438,7 @@ def _card_analyze(dsn, schema, shop, mps, query):
                     continue
                 creds_map[mp] = creds
                 jobs.append((mp, fns[mp], (creds, item_row, q)))
-            res = _parallel(jobs, min(LIVE_BUDGET, _time_left() - 40))
+            res = _parallel(jobs, _mp_budget(LIVE_BUDGET))
             for mp, creds in creds_map.items():
                 lines = res.get(mp)
                 if lines is None:
@@ -1860,6 +1860,8 @@ def _read_page(url):
 
 # Лимит функции на Поехали — 90 с. Держим запас, чтобы успеть вернуть ответ самим.
 REQUEST_BUDGET = 82
+# Шлюз Поехали рвёт соединение на 33–50 с → держим запас под стрим ответа.
+ANSWER_DEADLINE = 31
 _DEADLINE = [0.0]
 
 
@@ -1871,6 +1873,19 @@ def _time_left():
     if not _DEADLINE[0]:
         return float(REQUEST_BUDGET)
     return _DEADLINE[0] - time.monotonic()
+
+
+def _elapsed():
+    return max(0.0, REQUEST_BUDGET - _time_left())
+
+
+def _mp_budget(want):
+    """Секунды на вызов площадки: укладываемся в шлюз (~ANSWER_DEADLINE), оставляем запас модели."""
+    # Раньше стояло «_time_left() - 40» от REQUEST_BUDGET=82 — при живом шлюзе ~31 с
+    # это либо душило API, либо давало ложное ощущение запаса.
+    gateway_left = ANSWER_DEADLINE - _elapsed()
+    for_api = gateway_left - 16  # минимум ~16 с на стрим ответа после API
+    return max(0.0, min(float(want), for_api, _time_left() - 1.5))
 
 
 # База, до которой уже достучались (живёт, пока жив тёплый контейнер).
@@ -2175,7 +2190,6 @@ def _call_model(api_key, model, messages, tools):
     return _aitunnel_open('chat/completions', api_key, payload, timeout=75)
 
 
-ANSWER_DEADLINE = 31  # с от старта: шлюз Поехали рвёт соединение на 33–50 с → держим запас
 TTFT_TIMEOUT = 24  # с: connect + ожидание первого токена GPT 6 Luna Pro
 
 
@@ -2429,7 +2443,10 @@ https://yandex.ru/support
 - Яндекс: site:partner.market.yandex.ru
 
 ДАННЫЕ:
-Система может дать блок «ДАННЫЕ КАБИНЕТА» и справку. Данные — что происходит, справка — как исправить. Нет данных — подскажи, как спросить: «разберите артикул …», «какие слабые карточки на OZON», «что горит на WB».
+У тебя есть чтение кабинетов OZON / WB / Я.Маркет через API (ключи CRM). Система сама
+ходит в API и подставляет блок «ДАННЫЕ КАБИНЕТА» (карточка, live, attention, overview).
+Не пиши «не могу открыть кабинет» / «нет доступа к API». Данные — что происходит,
+справка — как исправить. В блоке пусто — попроси уточнить артикул, площадку или магазин.
 
 ФАЙЛЫ / ФОТО / ВЫГРУЗКИ:
 - Фото или ссылка на товар: сначала плюсы и слабые места, потом готовая карточка. Нет цвета/размера/материала — спроси конкретно.
@@ -2540,12 +2557,12 @@ RUNTIME_NOTES = """
 
 ТЕХНИЧЕСКИ В ЭТОМ ЧАТЕ:
 - У тебя ЕСТЬ доступ на чтение к кабинетам OZON, Wildberries и Яндекс Маркета через API
-  (ключи из CRM). Когда в вопросе есть артикул, sku, nmID или offer_id, система сама находит
-  карточку и даёт блок «ДАННЫЕ КАБИНЕТА». Никогда не пиши «не могу открыть кабинет» или
-  «пришлите ссылку». Если данных по артикулу нет в блоке — скажи, что карточка не нашлась,
-  и попроси уточнить артикул или площадку.
-- Строку «Пошёл смотреть информацию: <url>» система сама показывает менеджеру в статусе,
-  когда открывает справку. В тексте ответа её не повторяй — давай ссылку на страницу в конце.
+  (ключи из CRM). Система сама ходит в API и подставляет блок «ДАННЫЕ КАБИНЕТА»
+  (карточка / live / attention / overview). Никогда не пиши «не могу открыть кабинет»,
+  «нет доступа к API» или «пришлите ссылку». Опирайся на блок данных; если в нём пусто
+  или «не найдена» — скажи это и попроси уточнить артикул/площадку/магазин.
+- Строку «Пошёл смотреть…» / «Читаю кабинет…» система сама показывает в статусе.
+  В тексте ответа её не повторяй — ссылку на справку давай в конце, если нужна.
 - Если ниже есть блок «ОФИЦИАЛЬНАЯ СПРАВКА (прочитано сейчас)» — опирайся на него и ссылайся
   на его url. Если страницу открыть не удалось (OZON закрыт защитой от роботов) — так и скажи
   и дай ссылку, где менеджер посмотрит сам; правило площадки тогда давай как ориентир,
@@ -2584,7 +2601,9 @@ _CARD_INTENT = re.compile(
 _ONLY_ART = re.compile(r'^\s*[A-Za-zА-Яа-яЁё0-9][A-Za-zА-Яа-яЁё0-9_\-./]{3,}\s*[?!.]*\s*$')
 _ART_TOKEN = re.compile(r'(?<![\wА-Яа-яЁё])(?=[A-Za-zА-Яа-яЁё0-9_\-./]*\d)[A-Za-zА-Яа-яЁё0-9][A-Za-zА-Яа-яЁё0-9_\-./]{3,}')
 _LIVE_INTENT = re.compile(
-    r'витрин|кабинет|seo|сео|карточк|качеств|слаб|плох|ошибк|модерац|что.*смотр',
+    r'витрин|кабинет|seo|сео|карточк|качеств|слаб|плох|ошибк|модерац|что.*смотр|'
+    r'остатк|наличие|нулев|цен[аы]|индекс\s*цен|реклам|дrr|дрр|продаж|выдач|'
+    r'данн\w*|информац|срез|сводк|статистик|аналитик|подключен',
     re.I,
 )
 _FILL_INTENT = re.compile(
@@ -2594,6 +2613,14 @@ _FILL_INTENT = re.compile(
 )
 _SIZE_TOKEN = re.compile(r'\d{2,4}\s*[xх×*]\s*\d{2,4}(\s*(см|мм|м))?', re.I)
 _ATTENTION_INTENT = re.compile(r'вниман|что горит|проблем|срочн|горит', re.I)
+_OVERVIEW_INTENT = re.compile(
+    r'обзор|какие\s+магазин|какие\s+кабинет|что\s+подключ|список\s+магазин|интеграц',
+    re.I,
+)
+_MP_MENTION = re.compile(
+    r'ozon|озон|wildberries|\bwb\b|\bвб\b|вайлд|яндекс|yandex|\bym\b|маркетплейс',
+    re.I,
+)
 
 
 def _guess_marketplace(question):
@@ -2605,6 +2632,17 @@ def _guess_marketplace(question):
     if 'яндекс' in low or 'yandex' in low or re.search(r'\bym\b', low):
         return 'yandex_market'
     return 'all'
+
+
+def _cabinet_status_text(marketplace, what='live'):
+    title = MP_TITLES.get(marketplace or '', '')
+    if what == 'card':
+        return f'Читаю карточку в кабинете {title or "площадки"}…'
+    if what == 'attention':
+        return f'Смотрю, что горит в кабинете {title or "площадок"}…'
+    if what == 'overview':
+        return 'Смотрю подключения кабинетов в CRM…'
+    return f'Читаю живые данные кабинета {title or "площадок"}…'
 
 
 def _cabinet_prefetch(question):
@@ -2619,9 +2657,15 @@ def _cabinet_prefetch(question):
         m = next((x for x in _ART_TOKEN.finditer(q) if not _SIZE_TOKEN.fullmatch(x.group(0))), None)
         if m:
             return {'what': 'card', 'marketplace': mp, 'query': m.group(0).strip('.-/')}
+        # «разбери карточку / покажи товар» без артикула — всё равно даём live-срез,
+        # иначе модель отвечает без API.
+        if _LIVE_INTENT.search(q) or _MP_MENTION.search(q):
+            return {'what': 'live', 'marketplace': mp if mp != 'all' else 'ozon'}
     if _ATTENTION_INTENT.search(q):
         return {'what': 'attention', 'marketplace': mp}
-    if _LIVE_INTENT.search(q):
+    if _OVERVIEW_INTENT.search(q):
+        return {'what': 'overview', 'marketplace': mp}
+    if _LIVE_INTENT.search(q) or _MP_MENTION.search(q):
         return {'what': 'live', 'marketplace': mp if mp != 'all' else 'ozon'}
     return None
 
@@ -2784,12 +2828,7 @@ def handler(event: dict, context) -> dict:
     )) else _cabinet_prefetch(question)
     if pre:
         # Экономим один круг модели: шлюз Поехали рвёт долгие запросы.
-        mp_title = MP_TITLES.get(pre.get('marketplace') or '', 'маркетплейса')
-        note_looking({
-            'ozon': 'https://docs.ozon.ru',
-            'wildberries': 'https://seller.wildberries.ru/instructions',
-            'yandex_market': 'https://partner.market.yandex.ru',
-        }.get(pre.get('marketplace') or '', f'кабинет {mp_title}'))
+        status_log.append(_cabinet_status_text(pre.get('marketplace'), pre.get('what') or 'live'))
         t1 = time.monotonic()
         pre_result = _cabinet_read(dsn, schema, pre)
         print(
@@ -2967,11 +3006,7 @@ def handler(event: dict, context) -> dict:
                 args = {}
             if name == 'cabinet_read':
                 mp = args.get('marketplace') or 'all'
-                note_looking({
-                    'ozon': 'https://docs.ozon.ru',
-                    'wildberries': 'https://seller.wildberries.ru/instructions',
-                    'yandex_market': 'https://partner.market.yandex.ru',
-                }.get(mp, 'https://docs.ozon.ru'))
+                status_log.append(_cabinet_status_text(mp, args.get('what') or 'live'))
                 t1 = time.monotonic()
                 result = _cabinet_read(dsn, schema, args)
                 print(f'[megamag] cabinet {args.get("what")} {time.monotonic() - t1:.1f}s', flush=True)

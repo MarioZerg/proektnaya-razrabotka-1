@@ -29,12 +29,25 @@ const extractUrl = (line: string) => {
   return m ? m[0].replace(/[),.]+$/, '') : '';
 };
 
-/** Статус «Пошёл смотреть…» из queries бэкенда (search:/read:). */
+/** Статус «Пошёл смотреть…» / «Читаю кабинет…» из queries бэкенда. */
 export const statusFromQueries = (queries: string[] | undefined): string[] => {
   if (!queries?.length) return [];
   const out: string[] = [];
   for (const q of queries) {
-    if (q.startsWith('read: ')) {
+    if (q.startsWith('cabinet: ')) {
+      const rest = q.slice(9).trim();
+      const what = rest.split('/')[0]?.trim() || 'live';
+      const mpRaw = rest.split('/')[1]?.trim() || '';
+      const mp =
+        /ozon/i.test(mpRaw) ? 'OZON'
+          : /wildberries|wb/i.test(mpRaw) ? 'Wildberries'
+            : /yandex|ym/i.test(mpRaw) ? 'Яндекс Маркет'
+              : mpRaw && mpRaw !== 'all' ? mpRaw : 'площадок';
+      if (what === 'card') out.push(`Читаю карточку в кабинете ${mp}…`);
+      else if (what === 'attention') out.push(`Смотрю, что горит в кабинете ${mp}…`);
+      else if (what === 'overview') out.push('Смотрю подключения кабинетов в CRM…');
+      else out.push(`Читаю живые данные кабинета ${mp}…`);
+    } else if (q.startsWith('read: ')) {
       const url = q.slice(6).trim();
       if (url) out.push(`Пошёл смотреть информацию: ${url}`);
     } else if (q.startsWith('search: ')) {
