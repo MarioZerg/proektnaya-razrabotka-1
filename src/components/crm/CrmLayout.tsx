@@ -33,7 +33,6 @@ import CloseSidebarOnNavigate from '@/components/crm/CloseSidebarOnNavigate';
 import SidebarNav from '@/components/crm/SidebarNav';
 import { fetchStartupInfo, resetStartupInfoCache, impersonateUser } from '@/lib/authApi';
 import { useToast } from '@/hooks/use-toast';
-import { useMegabuhDigest } from '@/hooks/useMegabuhDigest';
 import type { Role } from '@/lib/roles';
 
 /** Порядок в меню «переключить аккаунт»: бухгалтер рядом с админом, не в хвосте. */
@@ -52,7 +51,6 @@ const ACCOUNT_SWITCH_ORDER: Role[] = [
 const CrmLayout = ({ children }: { children: ReactNode }) => {
   const { user, login, logout, switchRole, impersonate } = useAuth();
   const { toast } = useToast();
-  useMegabuhDigest();
 
   // Загрузка с маркетплейсов ПОЛНОСТЬЮ передана внешнему планировщику: и заказы, и заявки
   // на возврат приезжают по расписанию — круглосуточно, а не только когда кто-то открыл

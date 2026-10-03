@@ -1,6 +1,7 @@
 import { createContext, createElement, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
 import { useAuth } from '@/context/AuthContext';
-import { canWriteMegabuh, isMegabuhRole, megabuhApiRole } from '@/lib/roles';
+import { friendlyAgentError } from '@/lib/agentErrors';
+import { isMegabuhRole, megabuhApiRole, canWriteMegabuh } from '@/lib/roles';
 import { askAiAssistant, chatDisplayName, givenName, prepareChatUploads, type AiMessage, type AiNote, type AiUpload } from '@/lib/aiAssistantApi';
 import { megabuhPracticeDigest, recordMegabuhPractice } from '@/lib/megabuhBusinessLog';
 import { playMegabuhReplySound, primeMegabuhSound } from '@/lib/megabuhSound';
@@ -12,21 +13,25 @@ import {
   setMegabuhChatOpen,
 } from '@/lib/megabuhDigest';
 
-const ACCOUNTANT_STAGES = [
-  { delay: 0, label: 'Читаю ваш вопрос' },
-  { delay: 800, label: 'Обдумываю, как подойти' },
-  { delay: 2000, label: 'Ищу в 1С, СБИС, Диадоке и Точке' },
-  { delay: 4200, label: 'Сверяю законы и справку маркетплейса' },
-  { delay: 7000, label: 'Печатаю ответ' },
-];
+/** Приветствие без вопроса — не пишем «ищу информацию: привет». */
+const isGreetingOnly = (text: string) => {
+  const t = text.replace(/\s+/g, ' ').trim().toLowerCase();
+  if (!t) return false;
+  return /^(прив(ет|етствую)?|здравствуй(те)?|добр(ый|ое|ого)\s+(день|утро|вечер)|хай|hello|hi|здаров[ао]?|салют)([!.…\s]*|$)/i.test(t)
+    && t.length <= 40
+    && !/[?]/.test(t);
+};
 
-const DOCUMENT_STAGES = [
-  { delay: 0, label: 'Открываю документ' },
-  { delay: 700, label: 'Читаю суммы и реквизиты' },
-  { delay: 2000, label: 'Сверяю с НК РФ и 402-ФЗ' },
-  { delay: 4200, label: 'Собираю проводки и первичку' },
-  { delay: 7000, label: 'Печатаю ответ' },
-];
+/** Статус ожидания: одна стабильная строка, без смены на «сверяю 1С» и т.п. */
+const waitStatus = (text: string, fileNames: string[] = []) => {
+  if (fileNames.length) {
+    const names = fileNames.join(', ');
+    const short = names.length > 56 ? `${names.slice(0, 53)}…` : names;
+    return `Читаю ваш файл: ${short}`;
+  }
+  if (isGreetingOnly(text)) return 'Думаю…';
+  return 'Ищу вашу информацию…';
+};
 
 const MAX_STORED = 80;
 const MAX_NOTES = 40;
@@ -130,7 +135,6 @@ export const AiAssistantProvider = ({ children }: { children: ReactNode }) => {
   const bottomRef = useRef<HTMLDivElement>(null);
   const persistRef = useRef(false);
   const cancelType = useRef(false);
-  const sendingDocs = useRef(false);
 
   const role = user?.role;
   const isAccountant = isMegabuhRole(role);
@@ -222,18 +226,6 @@ export const AiAssistantProvider = ({ children }: { children: ReactNode }) => {
     markMegabuhActivity(user.id, role);
   }, [question, user?.id, role]);
 
-  useEffect(() => {
-    if (!loading) return;
-    const list = sendingDocs.current ? DOCUMENT_STAGES : ACCOUNTANT_STAGES;
-    setStages([list[0].label]);
-    const timers = list.slice(1).map((s) =>
-      window.setTimeout(() => {
-        setStages((prev) => (prev.includes(s.label) ? prev : [...prev, s.label]));
-      }, s.delay),
-    );
-    return () => timers.forEach(clearTimeout);
-  }, [loading]);
-
   const typeOut = (full: string) =>
     new Promise<void>((resolve) => {
       cancelType.current = false;
@@ -274,7 +266,6 @@ export const AiAssistantProvider = ({ children }: { children: ReactNode }) => {
     if ((!q && uploads.length === 0) || busy || !user?.id || !canAsk || !apiRole) return;
     primeMegabuhSound();
     if (role) markMegabuhActivity(user.id, role);
-    sendingDocs.current = uploads.length > 0;
     setError(null);
     setQuestion('');
     setPendingFiles([]);
@@ -286,6 +277,7 @@ export const AiAssistantProvider = ({ children }: { children: ReactNode }) => {
       files: uploads.map((f) => ({ name: f.name, size: f.size })),
     };
     setMessages([...history, userMsg]);
+    setStages([waitStatus(display || q, uploads.map((f) => f.name))]);
     setLoading(true);
     try {
       const r = await askAiAssistant(
@@ -308,11 +300,9 @@ export const AiAssistantProvider = ({ children }: { children: ReactNode }) => {
       await typeOut(r.answer);
       recordMegabuhPractice(user.id, q);
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Помощник не ответил');
+      setError(friendlyAgentError(e instanceof Error ? e.message : 'Помощник не ответил'));
       setLoading(false);
       setStages([]);
-    } finally {
-      sendingDocs.current = false;
     }
   };
 

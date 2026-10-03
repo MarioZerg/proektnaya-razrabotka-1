@@ -1,5 +1,6 @@
 import type { Role } from '@/lib/roles';
 import type { AiMessage, AiUpload } from '@/lib/aiAssistantApi';
+import { friendlyAgentError, TUNNEL_ADMIN_MSG } from '@/lib/agentErrors';
 
 /**
  * Живая функция marketplace_assistant (Поехали).
@@ -124,6 +125,10 @@ export const askMarketplaceAssistant = async (
       }
     }
     if (!res.ok || (!answer?.answer && lastErr)) {
+      const friendly = friendlyAgentError(lastErr);
+      if (friendly === TUNNEL_ADMIN_MSG) {
+        throw new Error(TUNNEL_ADMIN_MSG);
+      }
       if (
         res.status === 504 ||
         res.status === 502 ||
@@ -132,9 +137,9 @@ export const askMarketplaceAssistant = async (
       ) {
         throw new Error(TIMEOUT_HINT);
       }
-      throw new Error(lastErr || `МЕГАМАГ не ответил (${res.status})`);
+      throw new Error(friendly || `МЕГАМАГ не ответил (${res.status})`);
     }
-    if (!answer?.answer) throw new Error(lastErr || 'МЕГАМАГ не ответил');
+    if (!answer?.answer) throw new Error(friendlyAgentError(lastErr) || 'МЕГАМАГ не ответил');
     for (const st of statusFromQueries(answer.queries)) onStatus?.(st);
     return answer;
   }
@@ -153,6 +158,10 @@ export const askMarketplaceAssistant = async (
     const msg = [data.error, data.errorMessage].find(
       (v): v is string => typeof v === 'string' && v.length > 0,
     );
+    const friendly = friendlyAgentError(msg);
+    if (friendly === TUNNEL_ADMIN_MSG) {
+      throw new Error(TUNNEL_ADMIN_MSG);
+    }
     if (
       res.status === 504 ||
       res.status === 502 ||
@@ -161,7 +170,7 @@ export const askMarketplaceAssistant = async (
     ) {
       throw new Error(TIMEOUT_HINT);
     }
-    throw new Error(msg || `МЕГАМАГ не ответил (${res.status})`);
+    throw new Error(friendly || `МЕГАМАГ не ответил (${res.status})`);
   }
   const parsed = data as unknown as ShopAiAnswer;
   for (const st of statusFromQueries(parsed.queries)) onStatus?.(st);

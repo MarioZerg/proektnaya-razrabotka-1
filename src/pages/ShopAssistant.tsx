@@ -25,7 +25,7 @@ const ShopAssistantPage = () => {
           <div>
             <h1 className="text-xl font-semibold">МЕГАМАГ</h1>
             <p className="mt-0.5 text-sm text-muted-foreground">
-              {`${name || 'Коллега'}, карточки на OZON, Wildberries и Яндекс Маркете: заголовки, SEO, фото; плюс аналитика выгрузок.`}
+              {`${name || 'Коллега'}, карточки, SEO и аналитика маркетплейсов.`}
             </p>
           </div>
         </div>

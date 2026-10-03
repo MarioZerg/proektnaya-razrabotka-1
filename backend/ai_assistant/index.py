@@ -756,6 +756,35 @@ def _aitunnel_open(path, api_key, payload=None, timeout=30):
     return None, f'Не удалось связаться с сервисом ИИ: {last_err}', 0
 
 
+TUNNEL_ADMIN_MSG = (
+    'Агент не работает обратитесь к Администратору - Нужна проверка Тунеля!'
+)
+
+
+def _public_ai_error(err, code=0):
+    """Ошибки бюджета/ключа AITUNNEL — без технических деталей пользователю."""
+    text = str(err or '')
+    low = text.lower()
+    if (
+        int(code or 0) in (401, 402, 403)
+        or '402' in text
+        or 'бюджет' in low
+        or 'aitunnel' in low
+        or 'не разрешена' in low
+        or 'разрешает только' in low
+        or 'разрешённые' in low
+        or 'разрешенные' in low
+        or 'не настроен ключ' in low
+        or 'ключ доступа к' in low
+        or 'превышен' in low
+        or 'payment required' in low
+        or 'insufficient' in low
+        or 'quota' in low
+    ):
+        return TUNNEL_ADMIN_MSG
+    return text or TUNNEL_ADMIN_MSG
+
+
 def _call_model(api_key, model, messages, tools):
     """Один запрос к сервису ИИ. Возвращает (ответ, ошибка, код ошибки)."""
     payload = {
@@ -872,17 +901,11 @@ def _ask_model(api_key, messages, tools, model_state):
             model_state['model'] = model
             return data, None
         last_err = err
+        if int(code or 0) in (401, 402):
+            return None, _public_ai_error(err, code)
         if code not in (400, 403, 404):
             break
-    allowed = model_state.get('allowed_models') or []
-    if allowed and last_err:
-        last_err = (
-            last_err
-            + ' Ключ AITUNNEL разрешает только: '
-            + ', '.join(allowed[:8])
-            + '.'
-        )
-    return None, last_err
+    return None, _public_ai_error(last_err, 403 if model_state.get('allowed_models') else 0)
 
 
 SYSTEM_PROMPT = """Ты — помощник по системе управления производством штор и тюля «Мегатюль».
@@ -1085,6 +1108,7 @@ ACCOUNTANT_SYSTEM_PROMPT = """Ты — МЕГАБУХ, живой бухгалт
 - Собеседника зовут по имени из карточки — обратись по имени в начале, когда уместно.
   Не в каждом абзаце. «Андрей, смотрите…».
 - Не начинай с «Конечно!» и не извиняйся без причины.
+- На «что умеешь» / приветствие — коротко: 1–2 фразы и до 5 пунктов списком. Без портянки.
 
 НОРМАТИВНАЯ БАЗА (только это, не блоги и не форумы):
 - НК РФ (части первая и вторая).
@@ -1523,7 +1547,7 @@ def handler(event: dict, context) -> dict:
 
     if not api_key:
         return {'statusCode': 500, 'headers': headers, 'body': json.dumps(
-            {'error': 'Не настроен ключ доступа к сервису ИИ'}, ensure_ascii=False)}
+            {'error': _public_ai_error('Не настроен ключ доступа к сервису ИИ')}, ensure_ascii=False)}
 
     body_data = json.loads(event.get('body') or '{}')
     question = (body_data.get('question') or '').strip()
@@ -1672,24 +1696,8 @@ def handler(event: dict, context) -> dict:
     for _ in range(steps):
         data, err = _ask_model(api_key, messages, tools, model_state)
         if err:
-            # Частый случай — ключ выпущен с ограничением по списку моделей.
-            # Человеку нужен не текст ошибки сервиса, а что именно поправить.
-            if 'не разрешена для этого API-ключа' in err:
-                allowed = model_state.get('allowed_models') or []
-                if allowed:
-                    err = (
-                        'Ключ AITUNNEL пускает только: '
-                        + ', '.join(allowed[:8])
-                        + '. Агент подставляет эти имена сам — опубликуйте функцию.'
-                    )
-                else:
-                    err = (
-                        'Ключ доступа к ИИ выдан без прав на модели. В aitunnel.ru '
-                        'у ключа либо очистите список моделей, либо оставьте ту, '
-                        'что выбрали — агент возьмёт её с ключа автоматически.'
-                    )
             return {'statusCode': 502, 'headers': headers,
-                    'body': json.dumps({'error': err}, ensure_ascii=False)}
+                    'body': json.dumps({'error': _public_ai_error(err)}, ensure_ascii=False)}
 
         choice = (data.get('choices') or [{}])[0]
         msg = choice.get('message') or {}

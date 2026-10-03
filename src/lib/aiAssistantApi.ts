@@ -1,6 +1,7 @@
 import type { Role } from '@/lib/roles';
 import type { PracticeDigest } from '@/lib/megabuhBusinessLog';
 import { CHAT_DOC_CHARS, extractChatFileText } from '@/lib/chatFileExtract';
+import { friendlyAgentError } from '@/lib/agentErrors';
 
 const AI_ASSISTANT_URL = 'https://functions.poehali.dev/c6f2fe80-681d-438f-85c6-f30503927ede';
 
@@ -285,7 +286,7 @@ export const askAiAssistant = async (
     }),
   });
   const data = await res.json();
-  if (!res.ok) throw new Error(data.error || 'Помощник не ответил');
+  if (!res.ok) throw new Error(friendlyAgentError(data.error || 'Помощник не ответил'));
   return data;
 };
 

@@ -25,7 +25,7 @@ const AssistantChat = () => {
           <div>
             <h1 className="text-xl font-semibold">МЕГАБУХ</h1>
             <p className="mt-0.5 text-sm text-muted-foreground">
-              {`${name || 'Коллега'}, бухгалтерский и кадровый учёт, 1С, СБИС, Диадок, Точка и маркетплейсы.`}
+              {`${name || 'Коллега'}, бухучёт, кадры, 1С и ЭДО.`}
             </p>
           </div>
         </div>

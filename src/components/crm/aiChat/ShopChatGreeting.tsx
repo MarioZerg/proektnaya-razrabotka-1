@@ -2,18 +2,18 @@ import type { Dispatch, SetStateAction } from 'react';
 import Icon from '@/components/ui/icon';
 import { AgentFace } from '@/components/crm/aiChat/ChatBubbles';
 
-interface ChatGreetingProps {
+interface Props {
   agentName: string;
   youName: string;
   greetingOpen: boolean;
   setGreetingOpen: Dispatch<SetStateAction<boolean>>;
 }
 
-/** Короткое приветствие МЕГАБУХа: что умеет без портянки. */
-const ChatGreeting = ({ agentName, youName, greetingOpen, setGreetingOpen }: ChatGreetingProps) => (
+/** Короткое приветствие МЕГАМАГа: что умеет без портянки. */
+const ShopChatGreeting = ({ agentName, youName, greetingOpen, setGreetingOpen }: Props) => (
   <div className="flex w-full items-start justify-start gap-2">
     <div className="mt-4">
-      <AgentFace isAccountant size={32} />
+      <AgentFace isAccountant={false} kind="shop" size={32} />
     </div>
     <div className="flex min-w-0 max-w-[92%] flex-col gap-0.5 sm:max-w-[86%]">
       <div className="flex items-baseline gap-1.5 px-0.5">
@@ -29,10 +29,10 @@ const ChatGreeting = ({ agentName, youName, greetingOpen, setGreetingOpen }: Cha
         }`}
       >
         <p>
-          {youName ? `${youName}, это МЕГАБУХ.` : 'Это МЕГАБУХ.'}{' '}
-          Бухучёт, кадры, 1С, СБИС/Диадок, Точка — пишите кратко.
+          {youName ? `${youName}, это МЕГАМАГ.` : 'Это МЕГАМАГ.'}{' '}
+          Карточки, SEO и аналитика OZON / WB / Яндекс Маркет.
         </p>
-        <span className="mt-2 flex items-center gap-1 text-[11px] text-teal-800">
+        <span className="mt-2 flex items-center gap-1 text-[11px] text-amber-800">
           <Icon
             name="ChevronDown"
             size={14}
@@ -42,11 +42,11 @@ const ChatGreeting = ({ agentName, youName, greetingOpen, setGreetingOpen }: Cha
         </span>
         {greetingOpen ? (
           <ul className="mt-2 list-disc space-y-1 pl-4 text-[13px]">
-            <li>Налоги, взносы, проводки, первичная и отчётность</li>
-            <li>1С:Бухгалтерия / ЗУП — куда зайти и что заполнить</li>
-            <li>СБИС, Диадок, Точка — ЭДО, выписки, платежи</li>
-            <li>Закрывающие маркетплейсов и налоги с продаж</li>
-            <li>Разбор PDF / Excel / выписок по скрепке</li>
+            <li>Заголовки, описания, характеристики, фото</li>
+            <li>Сравнение с конкурентами и УТП</li>
+            <li>Разбор выгрузок: выкуп, остатки, маржа</li>
+            <li>Кабинеты: модерация, SEO, реклама, отзывы</li>
+            <li>Шторы/тюль: размеры, крепление, плотность</li>
           </ul>
         ) : null}
       </button>
@@ -54,4 +54,4 @@ const ChatGreeting = ({ agentName, youName, greetingOpen, setGreetingOpen }: Cha
   </div>
 );
 
-export default ChatGreeting;
+export default ShopChatGreeting;

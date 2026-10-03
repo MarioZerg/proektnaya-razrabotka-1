@@ -1,5 +1,6 @@
 import { createContext, createElement, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
 import { useAuth } from '@/context/AuthContext';
+import { friendlyAgentError } from '@/lib/agentErrors';
 import { canWriteMegamag, megamagApiRole } from '@/lib/roles';
 import {
   chatDisplayName,
@@ -9,6 +10,15 @@ import {
   type AiUpload,
 } from '@/lib/aiAssistantApi';
 import { askMarketplaceAssistant } from '@/lib/marketplaceAssistantApi';
+
+/** Приветствие без вопроса — не пишем «ищу информацию: привет». */
+const isGreetingOnly = (text: string) => {
+  const t = text.replace(/\s+/g, ' ').trim().toLowerCase();
+  if (!t) return false;
+  return /^(прив(ет|етствую)?|здравствуй(те)?|добр(ый|ое|ого)\s+(день|утро|вечер)|хай|hello|hi|здаров[ао]?|салют)([!.…\s]*|$)/i.test(t)
+    && t.length <= 40
+    && !/[?]/.test(t);
+};
 
 /** Кусок вопроса для подписи «что ищем» — без длинных вводных. */
 const searchTopic = (text: string) => {
@@ -38,13 +48,14 @@ const sourceHub = (text: string) => {
   return '';
 };
 
-/** Статус: при поиске по справке — «Пошёл смотреть информацию: ссылка». */
+/** Статус: файл / приветствие / поиск (или смотрю справку). */
 const searchStatus = (text: string, fileNames: string[] = []) => {
   if (fileNames.length) {
     const names = fileNames.join(', ');
     const short = names.length > 56 ? `${names.slice(0, 53)}…` : names;
     return `Читаю ваш файл: ${short}`;
   }
+  if (isGreetingOnly(text)) return 'Думаю…';
   const hub = sourceHub(text);
   if (hub) return `Пошёл смотреть информацию: ${hub}`;
   const topic = searchTopic(text);
@@ -276,7 +287,7 @@ export const MarketplaceAssistantProvider = ({ children }: { children: ReactNode
       setStages([]);
       await typeOut(r.answer);
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'МЕГАМАГ не ответил');
+      setError(friendlyAgentError(e instanceof Error ? e.message : 'МЕГАМАГ не ответил'));
       setLoading(false);
       setStages([]);
     }

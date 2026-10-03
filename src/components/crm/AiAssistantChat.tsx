@@ -141,7 +141,7 @@ const AiAssistantChat = ({ fill }: { fill?: boolean }) => {
           );
         })}
 
-        {loading && <Thinking stages={stages} isAccountant={isAccountant} />}
+        {loading && <Thinking stages={stages} isAccountant={isAccountant} kind="accountant" compact />}
 
         {typing !== null && (
           <Bubble

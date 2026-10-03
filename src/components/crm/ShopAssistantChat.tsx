@@ -4,6 +4,7 @@ import { useMarketplaceAssistant } from '@/hooks/useMarketplaceAssistant';
 import { Bubble, Thinking, dayLabel, sameDay } from '@/components/crm/aiChat/ChatBubbles';
 import NotesStrip from '@/components/crm/aiChat/NotesStrip';
 import ChatComposer from '@/components/crm/aiChat/ChatComposer';
+import ShopChatGreeting from '@/components/crm/aiChat/ShopChatGreeting';
 
 /** Окно переписки с МЕГАМАГ. */
 const ShopAssistantChat = ({ fill }: { fill?: boolean }) => {
@@ -31,8 +32,10 @@ const ShopAssistantChat = ({ fill }: { fill?: boolean }) => {
     removeNote,
   } = useMarketplaceAssistant();
   const [openNoteId, setOpenNoteId] = useState<string | null>(null);
+  const [greetingOpen, setGreetingOpen] = useState(false);
   const [dragging, setDragging] = useState(false);
   const dragDepth = useRef(0);
+  const empty = messages.length === 0 && !loading && typing === null;
 
   const pairAt = (i: number) => {
     const m = messages[i];
@@ -96,6 +99,14 @@ const ShopAssistantChat = ({ fill }: { fill?: boolean }) => {
         </div>
       )}
       <div className="min-h-0 flex-1 space-y-3 overflow-x-hidden overflow-y-scroll overscroll-contain p-3">
+        {empty && (
+          <ShopChatGreeting
+            agentName={agentName}
+            youName={youName}
+            greetingOpen={greetingOpen}
+            setGreetingOpen={setGreetingOpen}
+          />
+        )}
         {messages.map((m, i) => {
           const prev = messages[i - 1];
           const showDay = m.at && (!prev?.at || !sameDay(prev.at, m.at));
