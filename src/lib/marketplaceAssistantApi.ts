@@ -5,7 +5,7 @@ import { friendlyAgentError, TUNNEL_ADMIN_MSG } from '@/lib/agentErrors';
 /**
  * Живая функция marketplace_assistant (Поехали).
  * Ключи OZON/WB/YM берёт из вкладки интеграций.
- * Секреты функции: DATABASE_URL, API_KEY_MEGAMAG (запасной AITUNNEL_API_KEY).
+ * Секреты функции: DATABASE_URL, API_KEY_MEGAMAG (только он, общего ключа нет).
  */
 export const MARKETPLACE_ASSISTANT_URL =
   'https://functions.poehali.dev/031fc26f-9279-450e-a606-c662b07fe128';

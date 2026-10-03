@@ -287,6 +287,7 @@ export const AiAssistantProvider = ({ children }: { children: ReactNode }) => {
         apiRole,
         uploads,
         megabuhPracticeDigest(user.id),
+        (status) => setStages([status]),
       );
       if (r.docExcerpt) {
         setMessages((prev) =>
