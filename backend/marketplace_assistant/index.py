@@ -1512,7 +1512,7 @@ def _call_model(api_key, model, messages, tools):
     return _aitunnel_open('chat/completions', api_key, payload, timeout=75)
 
 
-ANSWER_DEADLINE = 26  # с от старта: шлюз Поехали рвёт ~33 с → в браузере Failed to fetch
+ANSWER_DEADLINE = 28  # с от старта: шлюз Поехали рвёт ~33 с → Failed to fetch
 
 
 def _stream_answer(api_key, messages, state, deadline_left):
@@ -1529,19 +1529,22 @@ def _stream_answer(api_key, messages, state, deadline_left):
     for model in order:
         payload = {
             'model': model, 'messages': messages,
-            'max_tokens': 1800, 'stream': True,
+            'max_tokens': 1600, 'stream': True,
+            'temperature': 0.2,
         }
-        if not state.get('no_reasoning_param'):
-            payload['reasoning_effort'] = os.environ.get('MEGAMAG_REASONING', 'low')
-        else:
-            payload['temperature'] = 0.2
+        # reasoning_effort у Luna сильно тянет TTFT — шлюз не ждёт.
+        # Включать только явно: MEGAMAG_REASONING=low|medium|high
+        reason = os.environ.get('MEGAMAG_REASONING', '').strip().lower()
+        if reason and reason not in ('0', 'off', 'none', 'false') and not state.get('no_reasoning_param'):
+            payload['reasoning_effort'] = reason
+            payload.pop('temperature', None)
         body = json.dumps(payload, ensure_ascii=False).encode('utf-8')
         for base in _aitunnel_bases()[:2]:
             left = stop_at - time.monotonic()
             if left < 4:
                 return '', 'не хватило времени на ответ модели', True
-            # До первого байта — макс 8 с. Дальше читаем до stop_at кусками по 5 с.
-            connect_timeout = max(3, min(8, left - 2))
+            # Luna Pro часто 10–20 с до первого токена — 8 с мало.
+            connect_timeout = max(6, min(18, left - 2))
             req = urllib.request.Request(
                 base.rstrip('/') + '/chat/completions', data=body, method='POST',
                 headers={'Authorization': f'Bearer {api_key}', 'Content-Type': 'application/json',
@@ -1927,6 +1930,39 @@ def handler(event: dict, context) -> dict:
         key_thread.join(timeout=2)
         if key_thread.is_alive():
             state['skip_key_lookup'] = True
+    # Простой чат без prefetch: Luna через нестримовый tool-loop не успевает до шлюза.
+    if not pre:
+        elapsed = REQUEST_BUDGET - _time_left()
+        plain = [m for m in messages if m.get('role') in ('system', 'user', 'assistant')
+                 and not m.get('tool_calls')]
+        plain.append({
+            'role': 'user',
+            'content': (
+                'Ответь коротко по делу. Если нужны цифры кабинета — скажите, что спросить '
+                '(артикул / SEO OZON / что горит). Инструменты сейчас не вызывай.'
+            ),
+        })
+        answer, err, truncated = _stream_answer(
+            api_key, plain, state, ANSWER_DEADLINE - elapsed,
+        )
+        print(f'[megamag] chat-stream {time.monotonic() - t_start:.1f}s err={err} model={state.get("model")}', flush=True)
+        if answer:
+            if api_key in answer:
+                answer = answer.replace(api_key, '***')
+            if truncated:
+                answer += '\n\n…Ответ сокращён по времени шлюза. Напишите «продолжи».'
+            return _resp(200, {'answer': answer, 'queries': queries_ran, 'model': state.get('model')}, headers)
+        # Если стрим не успел — не зависаем в tool-loop до Failed to fetch.
+        return _resp(200, {
+            'answer': (
+                'Модель GPT 6 Luna Pro не успела ответить до лимита шлюза Поехали. '
+                'Спросите конкретнее: «слабые карточки на OZON» или «разбери артикул …». '
+                f'({err or "таймаут"})'
+            ),
+            'queries': queries_ran,
+            'model': state.get('model'),
+            'error': err,
+        }, headers)
     for step in range(MAX_STEPS):
         # Шлюз Поехали фактически рвёт ответ раньше заявленных 90 с.
         final = _time_left() < 50 or step == MAX_STEPS - 1
