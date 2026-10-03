@@ -35,11 +35,11 @@ AITUNNEL_BASES = (
     'https://api.aitunnel.ru/v1',
     'https://ru-api.aitunnel.ru/v1',
 )
-# Модель не фиксируем: AITUNNEL сам выбирает через «auto».
-# Если у ключа есть белый список — берём только его имена.
-# AITUNNEL_MODEL — необязательный приоритет; иначе только auto.
+# Модель МЕГАМАГа: GPT 6 Luna Pro. AITUNNEL_MODEL перекрывает при необходимости.
+DEFAULT_MODEL = 'openai/gpt-6-luna-pro'
 MODEL_CANDIDATES = [
-    'auto',
+    DEFAULT_MODEL,
+    'gpt-6-luna-pro',
 ]
 MAX_STEPS = 6
 MAX_TOOL_CHARS = 14000
@@ -1470,36 +1470,30 @@ def _add_models(ordered, name):
 
 
 def _model_candidates(api_key, state):
-    """Модель не хардкодим: auto или белый список ключа AITUNNEL."""
+    """Сначала GPT 6 Luna Pro; если ключ ограничен — пересечение с его списком."""
     if state.get('candidates'):
         return state['candidates']
-    preferred = os.environ.get('AITUNNEL_MODEL', '').strip()
-    # Старые секреты с фиксированной моделью игнорируем — только явный AITUNNEL_MODEL.
-    # MEGAMAG_FAST_MODELS / DEFAULT_MODEL больше не используем.
+    preferred = os.environ.get('AITUNNEL_MODEL', '').strip() or DEFAULT_MODEL
     t0 = time.monotonic()
     allowed = None if state.get('skip_key_lookup') else _key_allowed_models(api_key)
     print(f'[megamag] key models={allowed} {time.monotonic() - t0:.1f}s', flush=True)
     state['allowed_models'] = allowed
     ordered = []
     if allowed:
-        # Ключ ограничен — зовём только то, что в кабинете AITUNNEL.
-        # Если в списке есть auto — ставим его первым.
-        if preferred:
-            pref_set = set(_model_aliases(preferred))
-            for name in allowed:
-                if pref_set & set(_model_aliases(name)):
-                    _add_models(ordered, name)
-                    break
+        pref_set = set(_model_aliases(preferred))
         for name in allowed:
-            if name == 'auto' or name.endswith('/auto'):
+            if pref_set & set(_model_aliases(name)):
                 _add_models(ordered, name)
+                break
+        for name in MODEL_CANDIDATES:
+            for a in allowed:
+                if set(_model_aliases(name)) & set(_model_aliases(a)):
+                    _add_models(ordered, a)
         for name in allowed:
             _add_models(ordered, name)
         state['candidates'] = ordered[:8]
         return state['candidates']
-    # Без ограничений ключа — только автоподбор AITUNNEL.
-    if preferred:
-        _add_models(ordered, preferred)
+    _add_models(ordered, preferred)
     for name in MODEL_CANDIDATES:
         _add_models(ordered, name)
     state['candidates'] = ordered[:5]
@@ -1518,35 +1512,36 @@ def _call_model(api_key, model, messages, tools):
     return _aitunnel_open('chat/completions', api_key, payload, timeout=75)
 
 
-ANSWER_DEADLINE = 27  # с от старта: шлюз Поехали фактически рвёт соединение на 33–60 с
+ANSWER_DEADLINE = 26  # с от старта: шлюз Поехали рвёт ~33 с → в браузере Failed to fetch
 
 
 def _stream_answer(api_key, messages, state, deadline_left):
     """Потоковый ответ модели без инструментов. Возвращает (text, err, truncated).
 
     Если время подходит к концу — останавливаемся и отдаём уже написанное,
-    вместо обрыва шлюзом с 503.
+    вместо обрыва шлюзом с 503 / Failed to fetch в браузере.
     """
     stop_at = time.monotonic() + max(5, deadline_left)
     last_err = 'модель не ответила'
-    # Без фиксированных mini/luna: только auto / белый список ключа / AITUNNEL_MODEL.
     order = list(_model_candidates(api_key, state))
     if state.get('model') and state['model'] not in order:
         order.insert(0, state['model'])
     for model in order:
         payload = {
             'model': model, 'messages': messages,
-            'max_tokens': 2200, 'stream': True,
+            'max_tokens': 1800, 'stream': True,
         }
         if not state.get('no_reasoning_param'):
             payload['reasoning_effort'] = os.environ.get('MEGAMAG_REASONING', 'low')
         else:
             payload['temperature'] = 0.2
         body = json.dumps(payload, ensure_ascii=False).encode('utf-8')
-        for base in _aitunnel_bases():
+        for base in _aitunnel_bases()[:2]:
             left = stop_at - time.monotonic()
-            if left < 3:
+            if left < 4:
                 return '', 'не хватило времени на ответ модели', True
+            # До первого байта — макс 8 с. Дальше читаем до stop_at кусками по 5 с.
+            connect_timeout = max(3, min(8, left - 2))
             req = urllib.request.Request(
                 base.rstrip('/') + '/chat/completions', data=body, method='POST',
                 headers={'Authorization': f'Bearer {api_key}', 'Content-Type': 'application/json',
@@ -1555,8 +1550,7 @@ def _stream_answer(api_key, messages, state, deadline_left):
             parts = []
             t0 = time.monotonic()
             try:
-                # Короткий таймаут сокета: зависшая модель не съедает весь бюджет.
-                r = urllib.request.urlopen(req, timeout=max(2, min(10, left)))
+                r = urllib.request.urlopen(req, timeout=connect_timeout)
             except urllib.error.HTTPError as e:
                 raw = e.read().decode('utf-8', 'ignore')[:300]
                 last_err = f'Сервис ИИ ответил ошибкой {e.code}: {raw}'
@@ -1567,22 +1561,32 @@ def _stream_answer(api_key, messages, state, deadline_left):
                     return _stream_answer(api_key, messages, state, stop_at - time.monotonic())
                 if e.code in (400, 403, 404):
                     break  # следующая модель
-                return '', last_err, False
+                continue
             except Exception as e:
                 last_err = f'нет связи с {base}: {type(e).__name__}'
                 _DEAD_BASES[base] = time.monotonic()
+                print(f'[megamag] stream connect fail {base}: {e}', flush=True)
                 continue
             _GOOD_BASE[0] = base
             truncated = False
             first = [None]
             try:
+                try:
+                    r.fp.raw._sock.settimeout(max(2.0, min(5.0, stop_at - time.monotonic())))
+                except Exception:
+                    pass
                 with r:
                     for raw_line in r:
                         if first[0] is None:
                             first[0] = time.monotonic() - t0
+                            print(f'[megamag] stream TTFT {first[0]:.1f}s model={model}', flush=True)
                         if time.monotonic() > stop_at:
                             truncated = True
                             break
+                        try:
+                            r.fp.raw._sock.settimeout(max(2.0, min(5.0, stop_at - time.monotonic())))
+                        except Exception:
+                            pass
                         line = raw_line.decode('utf-8', 'ignore').strip()
                         if not line.startswith('data:'):
                             continue
@@ -1601,6 +1605,7 @@ def _stream_answer(api_key, messages, state, deadline_left):
             except Exception as e:
                 truncated = True
                 last_err = f'обрыв потока: {type(e).__name__}'
+                print(f'[megamag] stream read fail: {e}', flush=True)
             text = ''.join(parts).strip()
             stalled = not text and first[0] is None
             print(f'[megamag] stream {model} {time.monotonic() - t0:.1f}s first_byte={first[0]} '
@@ -1610,7 +1615,9 @@ def _stream_answer(api_key, messages, state, deadline_left):
                 return text, None, truncated
             if stalled or (not text and not truncated):
                 break  # следующая модель
-            return '', last_err, truncated
+            if truncated and not text:
+                return '', last_err, True
+        # следующая модель в order
     return '', last_err, False
 
 

@@ -16,7 +16,10 @@ export interface ShopAiAnswer {
 }
 
 const TIMEOUT_HINT =
-  'МЕГАМАГ оборвался по таймауту. В Поехали у функции marketplace_assistant поставьте таймаут 90 секунд — как у МЕГАБУХа.';
+  'МЕГАМАГ оборвался по таймауту шлюза Поехали (~30 с). Спросите короче или напишите «продолжи».';
+
+const FETCH_HINT =
+  'Нет ответа от МЕГАМАГа (обрыв сети или шлюз Поехали). Повторите вопрос; если снова — опубликуйте свежую функцию marketplace_assistant.';
 
 export const askMarketplaceAssistant = async (
   question: string,
@@ -29,23 +32,32 @@ export const askMarketplaceAssistant = async (
       'МЕГАМАГ ещё не подключён: опубликуйте функцию marketplace_assistant на Поехали и вставьте URL в marketplaceAssistantApi.ts.',
     );
   }
-  const res = await fetch(MARKETPLACE_ASSISTANT_URL, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      question,
-      userId,
-      history: history.map(({ role: r, content }) => ({ role: r, content })),
-      role,
-    }),
-  });
+  let res: Response;
+  try {
+    res = await fetch(MARKETPLACE_ASSISTANT_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        question,
+        userId,
+        history: history.map(({ role: r, content }) => ({ role: r, content })),
+        role,
+      }),
+    });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    if (/failed to fetch|networkerror|load failed|aborted/i.test(msg)) {
+      throw new Error(FETCH_HINT);
+    }
+    throw e instanceof Error ? e : new Error(FETCH_HINT);
+  }
   const raw = await res.text();
   let data: Record<string, unknown> = {};
   try {
     data = raw ? (JSON.parse(raw) as Record<string, unknown>) : {};
   } catch {
     throw new Error(
-      res.status === 504
+      res.status === 504 || res.status === 502 || res.status === 499
         ? TIMEOUT_HINT
         : `МЕГАМАГ не ответил (${res.status})`,
     );
@@ -54,7 +66,12 @@ export const askMarketplaceAssistant = async (
     const msg = [data.error, data.errorMessage].find(
       (v): v is string => typeof v === 'string' && v.length > 0,
     );
-    if (res.status === 504 || (msg && /timeout/i.test(msg))) {
+    if (
+      res.status === 504 ||
+      res.status === 502 ||
+      res.status === 499 ||
+      (msg && /timeout|499|503/i.test(msg))
+    ) {
       throw new Error(TIMEOUT_HINT);
     }
     throw new Error(msg || `МЕГАМАГ не ответил (${res.status})`);
