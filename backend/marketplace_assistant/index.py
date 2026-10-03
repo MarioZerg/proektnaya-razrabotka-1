@@ -1513,6 +1513,14 @@ def _call_model(api_key, model, messages, tools):
 
 
 ANSWER_DEADLINE = 28  # с от старта: шлюз Поехали рвёт ~33 с → Failed to fetch
+TTFT_TIMEOUT = 18  # с: connect + ожидание первого токена GPT 6 Luna Pro
+
+
+def _set_sock_timeout(r, seconds):
+    try:
+        r.fp.raw._sock.settimeout(seconds)
+    except Exception:
+        pass
 
 
 def _stream_answer(api_key, messages, state, deadline_left):
@@ -1521,7 +1529,9 @@ def _stream_answer(api_key, messages, state, deadline_left):
     Если время подходит к концу — останавливаемся и отдаём уже написанное,
     вместо обрыва шлюзом с 503 / Failed to fetch в браузере.
     """
-    stop_at = time.monotonic() + max(5, deadline_left)
+    # Не выходим за ANSWER_DEADLINE от старта запроса — иначе шлюз рвёт → Failed to fetch.
+    hard_left = ANSWER_DEADLINE - (REQUEST_BUDGET - _time_left())
+    stop_at = time.monotonic() + max(4, min(deadline_left, hard_left))
     last_err = 'модель не ответила'
     order = list(_model_candidates(api_key, state))
     if state.get('model') and state['model'] not in order:
@@ -1543,8 +1553,8 @@ def _stream_answer(api_key, messages, state, deadline_left):
             left = stop_at - time.monotonic()
             if left < 4:
                 return '', 'не хватило времени на ответ модели', True
-            # Luna Pro часто 10–20 с до первого токена — 8 с мало.
-            connect_timeout = max(6, min(18, left - 2))
+            # Luna Pro часто 10–18 с до первого токена — 8 с мало.
+            connect_timeout = max(3.0, min(TTFT_TIMEOUT, left - 1))
             req = urllib.request.Request(
                 base.rstrip('/') + '/chat/completions', data=body, method='POST',
                 headers={'Authorization': f'Bearer {api_key}', 'Content-Type': 'application/json',
@@ -1574,25 +1584,27 @@ def _stream_answer(api_key, messages, state, deadline_left):
             truncated = False
             first = [None]
             try:
-                try:
-                    r.fp.raw._sock.settimeout(max(2.0, min(5.0, stop_at - time.monotonic())))
-                except Exception:
-                    pass
+                # Заголовки SSE приходят сразу, а первый токен Luna — через 10–18 с.
+                # До первого токена ждём до TTFT_TIMEOUT, дальше — короткий таймаут между кусками.
+                ttft_until = t0 + TTFT_TIMEOUT
+                _set_sock_timeout(r, max(1.0, min(ttft_until, stop_at) - time.monotonic()))
                 with r:
                     for raw_line in r:
-                        if first[0] is None:
-                            first[0] = time.monotonic() - t0
-                            print(f'[megamag] stream TTFT {first[0]:.1f}s model={model}', flush=True)
                         if time.monotonic() > stop_at:
                             truncated = True
                             break
-                        try:
-                            r.fp.raw._sock.settimeout(max(2.0, min(5.0, stop_at - time.monotonic())))
-                        except Exception:
-                            pass
                         line = raw_line.decode('utf-8', 'ignore').strip()
                         if not line.startswith('data:'):
+                            # keep-alive / комментарии SSE — это ещё не токен
+                            if first[0] is None:
+                                if time.monotonic() > ttft_until:
+                                    raise socket.timeout('нет первого токена за 18 с')
+                                _set_sock_timeout(r, max(1.0, min(ttft_until, stop_at) - time.monotonic()))
                             continue
+                        if first[0] is None:
+                            first[0] = time.monotonic() - t0
+                            print(f'[megamag] stream TTFT {first[0]:.1f}s model={model}', flush=True)
+                        _set_sock_timeout(r, max(2.0, min(8.0, stop_at - time.monotonic())))
                         chunk = line[5:].strip()
                         if chunk == '[DONE]':
                             break
@@ -1927,7 +1939,8 @@ def handler(event: dict, context) -> dict:
         })
     if key_thread:
         # Не ждём список моделей ключа дольше пары секунд — модель важнее.
-        key_thread.join(timeout=2)
+        # В простом чате не ждём вовсе: сразу стрим GPT 6 Luna Pro.
+        key_thread.join(timeout=2 if pre else 0.3)
         if key_thread.is_alive():
             state['skip_key_lookup'] = True
     # Простой чат без prefetch: Luna через нестримовый tool-loop не успевает до шлюза.
