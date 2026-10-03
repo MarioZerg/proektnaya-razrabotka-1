@@ -1512,36 +1512,20 @@ def handler(event: dict, context) -> dict:
     headers = {'Access-Control-Allow-Origin': '*', 'Content-Type': 'application/json'}
 
     # Личный ключ Мегабуха; общий AITUNNEL_API_KEY — запасной вариант.
+    # Не кладите один и тот же ключ в МЕГАМАГ: иначе чужой агент жрёт бюджет МЕГАБУХа.
     api_key = (os.environ.get('API_KEY_MEGABUX', '').strip()
                or os.environ.get('AITUNNEL_API_KEY', '').strip())
 
-    # Проверка настройки: какие модели доступны сервису. Нужна, когда чат
-    # отвечает ошибкой доступа — сразу видно, дело в ключе или в модели.
+    # Проверка моделей отключена: публичный GET ?models= / ?probe= жег баланс ключа.
     if method == 'GET' and (event.get('queryStringParameters') or {}).get('models'):
-        probe = (event.get('queryStringParameters') or {}).get('probe')
-        if probe:
-            checked = {}
-            for m in [x.strip() for x in probe.split(',') if x.strip()]:
-                data, err, code = _call_model(
-                    api_key, m,
-                    [{'role': 'user', 'content': 'ответь одним словом: ок'}], None,
-                )
-                checked[m] = 'ok' if data is not None else f'{code}: {(err or "")[:400]}'
-            return {'statusCode': 200, 'headers': headers,
-                    'body': json.dumps(checked, ensure_ascii=False)}
-
-        data, err, _code = _aitunnel_open('models', api_key, None, timeout=30)
-        if data is None:
-            return {'statusCode': 502, 'headers': headers,
-                    'body': json.dumps({'error': err or 'Не удалось получить список моделей'},
-                                       ensure_ascii=False)}
-        ids = [m.get('id') for m in data.get('data', [])]
-        return {'statusCode': 200, 'headers': headers,
-                'body': json.dumps({
-                    'total': len(ids),
-                    'models': ids,
-                    'allowed_models': _key_allowed_models(api_key),
-                }, ensure_ascii=False)}
+        return {
+            'statusCode': 410,
+            'headers': headers,
+            'body': json.dumps(
+                {'error': 'Проверка моделей отключена — смотрите кабинет aitunnel.ru'},
+                ensure_ascii=False,
+            ),
+        }
 
     if method != 'POST':
         return {'statusCode': 405, 'headers': headers,
@@ -1560,7 +1544,17 @@ def handler(event: dict, context) -> dict:
     if not isinstance(files, list):
         files = []
     mode = (body_data.get('mode') or '').strip()
-    want_digest = mode == 'marketplace_digest'
+    # Фоновая сводка маркетплейсов отключена — раньше жгла баланс без диалога.
+    if mode == 'marketplace_digest':
+        return {
+            'statusCode': 200,
+            'headers': headers,
+            'body': json.dumps(
+                {'answer': 'NO_NEWS', 'quiet': True, 'queries': [], 'model': None},
+                ensure_ascii=False,
+            ),
+        }
+    want_digest = False
 
     if not files and not question:
         return {'statusCode': 400, 'headers': headers,

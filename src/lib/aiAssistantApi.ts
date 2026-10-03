@@ -290,30 +290,13 @@ export const askAiAssistant = async (
   return data;
 };
 
-const DIGEST_QUESTION =
-  'Сводка новостей маркетплейсов за сегодня: OZON, Wildberries, Яндекс Маркет. '
-  + 'Только свежие официальные изменения для бухгалтера продавца. Если новостей нет — NO_NEWS.';
-
 /**
  * Раз в сутки: МЕГАБУХ сам обходит новости кабинетов продавца.
- * Историю чата не передаём — это не продолжение диалога.
+ * Отключено: жгло баланс AITUNNEL без диалога.
  */
 export const askMegabuhDigest = async (
-  userId: number,
-  role?: Role,
+  _userId: number,
+  _role?: Role,
 ): Promise<AiAnswer> => {
-  const res = await fetch(AI_ASSISTANT_URL, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      question: DIGEST_QUESTION,
-      userId,
-      history: [],
-      role,
-      mode: 'marketplace_digest',
-    }),
-  });
-  const data = await res.json();
-  if (!res.ok) throw new Error(data.error || 'Сводка маркетплейсов не пришла');
-  return data;
+  return { answer: 'NO_NEWS', quiet: true };
 };

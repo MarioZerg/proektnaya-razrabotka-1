@@ -2671,7 +2671,7 @@ def handler(event: dict, context) -> dict:
     if hub:
         note_looking(hub)
 
-    # Отдельный ключ агента менеджера; если его нет — общий ключ ИИ проекта.
+    # Отдельный ключ агента менеджера. Не подставляйте сюда ключ МЕГАБУХа.
     api_key = (os.environ.get('API_KEY_MEGAMAG', '').strip()
                or os.environ.get('AITUNNEL_API_KEY', '').strip())
     if not api_key:
