@@ -82,7 +82,8 @@ def handler(event: dict, context) -> dict:
                                                начислено). Отдаёт filteredTotal — сумму
                                                по всем записям фильтра, не только страницы
         ?type=salary|manual|penalty|all       - фильтр по типу начисления
-        ?page=1                              - пагинация (по 50 записей)
+        ?page=1                              - пагинация по рабочим дням (по 2 дня; все
+                                               начисления дня целиком, без обрезки)
     GET  /?my=1&userId=1                     - для сотрудника: его начисления (с указанием
                                                заказа) и список последних выплат.
                                                Дополнительно возвращает salaryLocked/daysLeft/
@@ -439,11 +440,11 @@ def handler(event: dict, context) -> dict:
 
             if params.get('sewerBonus'):
                 # Прогресс швей по бонусной программе — для виджета на главной.
+                # Сентябрь 2026: 01.09–30.09 включительно. С 01.10 программа закрыта —
+                # на дашборд ничего не отдаём (иначе карточка висела бы «вечно»).
                 bonus_from = date(2026, 9, 1)
                 bonus_to = date(2026, 10, 1)
                 today = date.today()
-                # До старта программы показываем предупреждение, во время — прогресс,
-                # после — итог месяца.
                 if today < bonus_from:
                     period_from, period_to = bonus_from, bonus_to
                     state = 'upcoming'
@@ -451,8 +452,11 @@ def handler(event: dict, context) -> dict:
                     period_from, period_to = bonus_from, bonus_to
                     state = 'active'
                 else:
-                    period_from, period_to = bonus_from, bonus_to
-                    state = 'finished'
+                    return {
+                        'statusCode': 200,
+                        'headers': headers,
+                        'body': json.dumps({'active': False, 'sewers': []}, ensure_ascii=False),
+                    }
 
                 cur.execute(
                     "SELECT u.id, u.full_name, "
@@ -819,8 +823,11 @@ def handler(event: dict, context) -> dict:
             user_id_filter = params.get('userId')
             type_filter = params.get('type')
             page = int(params.get('page') or 1)
-            per_page = 15
-            offset = (page - 1) * per_page
+            # Пагинация по РАБОЧИМ ДНЯМ, не по отдельным строкам.
+            # Иначе у швеи за смену 40–80 начислений, а на странице видны 7 —
+            # день рвётся, и в блоке сотрудника «не хватает» работы.
+            days_per_page = 2
+            offset = (page - 1) * days_per_page
 
             conditions = []
             if user_id_filter:
@@ -851,37 +858,56 @@ def handler(event: dict, context) -> dict:
             cur.execute(f"SELECT COUNT(*) FROM salary_accruals sa {where_clause}")
             total_count = cur.fetchone()[0]
 
+            # Сначала список дат (убывание), потом целиком все строки выбранных дней.
             cur.execute(
-                f"SELECT sa.id, sa.user_id, u.full_name, sa.type, sa.amount, sa.description, "
-                f"o.order_number, sa.accrued_for, sa.created_at, sa.paid_at, "
-                f"w.name, ss.shift_number, ss.opened_at, u.workshop "
-                f"FROM salary_accruals sa JOIN users u ON u.id = sa.user_id "
-                f"LEFT JOIN orders o ON o.id = sa.order_id "
-                f"LEFT JOIN shift_sessions ss ON ss.id = sa.shift_session_id "
-                f"LEFT JOIN workshops w ON w.id = ss.workshop_id "
-                f"{where_clause} "
-                f"ORDER BY sa.created_at DESC LIMIT {per_page} OFFSET {offset}"
+                f"SELECT DISTINCT sa.accrued_for::date AS d "
+                f"FROM salary_accruals sa {where_clause} "
+                f"ORDER BY d DESC"
             )
-            operations = [
-                {
-                    'id': r[0],
-                    'userId': r[1],
-                    'userName': r[2],
-                    'type': r[3],
-                    'amount': float(r[4]),
-                    'description': r[5],
-                    'orderNumber': r[6],
-                    'accruedFor': r[7].isoformat(),
-                    'createdAt': r[8].isoformat() + 'Z',
-                    'paidAt': (r[9].isoformat() + 'Z') if r[9] else None,
-                    'shiftWorkshopName': r[10],
-                    'shiftNumber': r[11],
-                    'shiftOpenedAt': (r[12].isoformat() + 'Z') if r[12] else None,
-                    # Оклад начислен за смену в чужом цехе — сотрудник работал гостем.
-                    'shiftIsGuest': bool(r[10] and r[13] and r[10] != r[13]),
-                }
-                for r in cur.fetchall()
-            ]
+            all_dates = [r[0] for r in cur.fetchall()]
+            total_days = len(all_dates)
+            page_dates = all_dates[offset:offset + days_per_page]
+
+            operations = []
+            if page_dates:
+                date_ph = ','.join(['%s'] * len(page_dates))
+                day_where = (
+                    f"{where_clause} AND sa.accrued_for IN ({date_ph})"
+                    if where_clause
+                    else f"WHERE sa.accrued_for IN ({date_ph})"
+                )
+                cur.execute(
+                    f"SELECT sa.id, sa.user_id, u.full_name, sa.type, sa.amount, sa.description, "
+                    f"o.order_number, sa.accrued_for, sa.created_at, sa.paid_at, "
+                    f"w.name, ss.shift_number, ss.opened_at, u.workshop "
+                    f"FROM salary_accruals sa JOIN users u ON u.id = sa.user_id "
+                    f"LEFT JOIN orders o ON o.id = sa.order_id "
+                    f"LEFT JOIN shift_sessions ss ON ss.id = sa.shift_session_id "
+                    f"LEFT JOIN workshops w ON w.id = ss.workshop_id "
+                    f"{day_where} "
+                    f"ORDER BY sa.accrued_for DESC, u.full_name ASC, sa.created_at DESC",
+                    tuple(page_dates),
+                )
+                operations = [
+                    {
+                        'id': r[0],
+                        'userId': r[1],
+                        'userName': r[2],
+                        'type': r[3],
+                        'amount': float(r[4]),
+                        'description': r[5],
+                        'orderNumber': r[6],
+                        'accruedFor': r[7].isoformat(),
+                        'createdAt': r[8].isoformat() + 'Z',
+                        'paidAt': (r[9].isoformat() + 'Z') if r[9] else None,
+                        'shiftWorkshopName': r[10],
+                        'shiftNumber': r[11],
+                        'shiftOpenedAt': (r[12].isoformat() + 'Z') if r[12] else None,
+                        # Оклад начислен за смену в чужом цехе — сотрудник работал гостем.
+                        'shiftIsGuest': bool(r[10] and r[13] and r[10] != r[13]),
+                    }
+                    for r in cur.fetchall()
+                ]
 
             # "К выплате" разбито на два числа, чтобы штраф одного сотрудника не
             # компенсировал незаметно премию другого в общей сумме:
@@ -998,7 +1024,8 @@ def handler(event: dict, context) -> dict:
             'body': json.dumps({
                 'operations': operations,
                 'totalCount': total_count,
-                'totalPages': max(1, (total_count + per_page - 1) // per_page),
+                # Страницы = рабочие дни (по 2 дня), не куски по 15 строк.
+                'totalPages': max(1, (total_days + days_per_page - 1) // days_per_page),
                 'filteredTotal': filtered_total,
                 'totalToAccrue': total_to_accrue,
                 'totalDebts': total_debts,

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -83,23 +83,38 @@ const rateGroupTitles: Record<string, string> = {
   packer_overlock: 'Упаковщик — после оверлока',
 };
 
-const SalaryRatesCard = ({ onUpdate }: SalaryRatesCardProps) => {
-  // packer_repack — не должность, а отдельный вид оплаты упаковщицы (перепаковка
-  // возвратов за штуку), поэтому в списке ролей идёт сразу после её основной ставки.
-  const roleOrder: string[] = [
-    'cutter',
-    'sewer',
-    'sewer_overlock',
-    'overlock',
-    'packer',
-    'packer_overlock',
-    'packer_repack',
-    'storekeeper',
-    'senior_storekeeper',
-    'cleaner',
-    'admin',
-  ];
+/** packer_repack — не должность, а вид оплаты упаковщицы; в списке сразу после её ставки. */
+const ROLE_ORDER: string[] = [
+  'cutter',
+  'sewer',
+  'sewer_overlock',
+  'overlock',
+  'packer',
+  'packer_overlock',
+  'packer_repack',
+  'storekeeper',
+  'senior_storekeeper',
+  'cleaner',
+  'admin',
+];
 
+const pluralRates = (n: number) => (n === 1 ? 'ставка' : n < 5 ? 'ставки' : 'ставок');
+
+/** Только строки, по которым реально считается оплата (нули и мёртвые ширины скрыты). */
+const ratesForRole = (rates: SalaryRate[], role: string): SalaryRate[] =>
+  rates.filter((r) => {
+    if (r.role !== role) return false;
+    if (role === 'cutter') return r.width === null;
+    if (role === 'packer') return r.materialId === null && r.width === null;
+    if (role === 'packer_repack') return r.width === null;
+    if (role.includes('overlock')) return r.materialId === null && r.width === null;
+    return true;
+  });
+
+const roleTitle = (role: string) =>
+  roleLabels[role as Role] || rateGroupTitles[role] || role;
+
+const SalaryRatesCard = ({ onUpdate }: SalaryRatesCardProps) => {
   const [workshops, setWorkshops] = useState<Workshop[]>([]);
   const [workshopsLoading, setWorkshopsLoading] = useState(true);
   const [workshopsError, setWorkshopsError] = useState<string | null>(null);
@@ -108,6 +123,17 @@ const SalaryRatesCard = ({ onUpdate }: SalaryRatesCardProps) => {
   const [rates, setRates] = useState<SalaryRate[]>([]);
   const [ratesLoading, setRatesLoading] = useState(false);
   const [ratesError, setRatesError] = useState<string | null>(null);
+  const [openRoles, setOpenRoles] = useState<Set<string>>(() => new Set());
+
+  const roleFolders = useMemo(
+    () =>
+      ROLE_ORDER.map((role) => {
+        const roleRates = ratesForRole(rates, role);
+        if (roleRates.length === 0) return null;
+        return { role, rates: roleRates, title: roleTitle(role) };
+      }).filter((x): x is NonNullable<typeof x> => x != null),
+    [rates],
+  );
 
   const loadWorkshops = () => {
     setWorkshopsLoading(true);
@@ -144,12 +170,22 @@ const SalaryRatesCard = ({ onUpdate }: SalaryRatesCardProps) => {
 
   useEffect(() => {
     loadRates();
+    setOpenRoles(new Set());
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeWorkshopId]);
 
   const handleUpdate = async (id: number, rate: number) => {
     await onUpdate(id, rate);
     loadRates();
+  };
+
+  const toggleRole = (role: string) => {
+    setOpenRoles((prev) => {
+      const next = new Set(prev);
+      if (next.has(role)) next.delete(role);
+      else next.add(role);
+      return next;
+    });
   };
 
   return (
@@ -196,43 +232,59 @@ const SalaryRatesCard = ({ onUpdate }: SalaryRatesCardProps) => {
                 <Icon name="Loader2" size={16} className="animate-spin" />
                 Загрузка тарифов...
               </div>
+            ) : roleFolders.length === 0 ? (
+              <p className="text-sm text-muted-foreground">Тарифов в этом цехе пока нет</p>
             ) : (
-              roleOrder.map((role) => {
-                // Показываем ровно те строки, по которым реально считается оплата:
-                //  - закройщик: одна ставка на ткань (строки по ширинам обнулены);
-                //  - упаковщик и перепаковка: одна ставка на цех (без ткани и ширины).
-                // Остальное осталось в базе с нулями и в расчёте не участвует — в списке
-                // это была бы простыня из десятков полей, которые ни на что не влияют.
-                const roleRates = rates.filter((r) => {
-                  if (r.role !== role) return false;
-                  if (role === 'cutter') return r.width === null;
-                  if (role === 'packer') return r.materialId === null && r.width === null;
-                  if (role === 'packer_repack') return r.width === null;
-                  // Этап оверлока: одна ставка на цех, без ткани и ширины.
-                  if (role.includes('overlock')) return r.materialId === null && r.width === null;
-                  return true;
-                });
-                if (roleRates.length === 0) return null;
+              <div className="overflow-hidden rounded-lg border border-border">
+                <div className="divide-y divide-border">
+                  {roleFolders.map(({ role, rates: roleRates, title }) => {
+                    const open = openRoles.has(role);
+                    return (
+                      <div key={role} className="bg-card">
+                        <button
+                          type="button"
+                          onClick={() => toggleRole(role)}
+                          className="flex w-full min-w-0 items-center gap-2 px-3 py-3 text-left transition-colors hover:bg-muted/50"
+                        >
+                          <Icon
+                            name="Folder"
+                            size={14}
+                            className={`shrink-0 transition-colors ${
+                              open ? 'text-amber-600' : 'text-muted-foreground'
+                            }`}
+                          />
+                          <Icon
+                            name="ChevronRight"
+                            size={14}
+                            className={`shrink-0 text-muted-foreground transition-transform ${
+                              open ? 'rotate-90' : ''
+                            }`}
+                          />
+                          <div className="min-w-0 flex-1">
+                            <p className="truncate text-sm font-semibold">{title}</p>
+                            <p className="text-xs text-muted-foreground">
+                              {roleRateLabels[role] || `${roleRates.length} ${pluralRates(roleRates.length)}`}
+                            </p>
+                          </div>
+                          <span className="shrink-0 text-xs text-muted-foreground">
+                            {roleRates.length} {pluralRates(roleRates.length)}
+                          </span>
+                        </button>
 
-                return (
-                  <div key={role} className="space-y-2">
-                    <div>
-                      <p className="text-sm font-semibold">
-                        {/* Виды оплаты, у которых нет одноимённой должности
-                            (перепаковка возвратов, этап оверлока), берут название
-                            из подписи тарифа: в справочнике ролей их нет. */}
-                        {roleLabels[role as Role] || rateGroupTitles[role] || role}
-                      </p>
-                      <p className="text-xs text-muted-foreground">{roleRateLabels[role]}</p>
-                    </div>
-                    <div className="grid gap-1.5 sm:grid-cols-2">
-                      {roleRates.map((rate) => (
-                        <RateRow key={rate.id} rate={rate} onUpdate={handleUpdate} />
-                      ))}
-                    </div>
-                  </div>
-                );
-              })
+                        {open && (
+                          <div className="border-t border-border bg-background px-3 py-3">
+                            <div className="grid gap-1.5 sm:grid-cols-2">
+                              {roleRates.map((rate) => (
+                                <RateRow key={rate.id} rate={rate} onUpdate={handleUpdate} />
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
             )}
           </>
         )}

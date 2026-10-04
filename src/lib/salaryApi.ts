@@ -474,6 +474,8 @@ export const fetchSewerBonus = async (): Promise<SewerBonusInfo | null> => {
     throw new Error(data.error || 'Не удалось загрузить премию за выработку');
   }
   if (!data || !Array.isArray(data.sewers)) return null;
+  // Программа закрыта (после 30.09) — сервер отдаёт пустой ответ без state.
+  if (data.active === false || data.state === 'finished') return null;
   return data as SewerBonusInfo;
 };
 

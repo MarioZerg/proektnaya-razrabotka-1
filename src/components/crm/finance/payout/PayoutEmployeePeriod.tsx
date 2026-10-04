@@ -63,28 +63,33 @@ const PayoutEmployeePeriod = ({
   setTo,
   wholePeriod,
 }: PayoutEmployeePeriodProps) => (
-  <>
-    <div className="space-y-1.5">
+  <div className="min-w-0 space-y-4">
+    <div className="min-w-0 space-y-1.5">
       <Label>Сотрудник</Label>
       <Select value={userId} onValueChange={setUserId}>
-        <SelectTrigger>
+        <SelectTrigger className="h-11 w-full min-w-0 sm:h-10">
           <SelectValue placeholder="Выберите сотрудника" />
         </SelectTrigger>
-        <SelectContent>
-          {/* В списке только те, кому правда есть что выплатить.
-              Раньше стояли все сотрудники компании, включая уволенных и
-              тех, у кого ничего не начислено: админ выбирал наугад и
-              получал отказ «нет начислений» уже после нажатия. */}
+        {/* Ширина строго по триггеру: иначе длинное ФИО + сумма раздувают
+            выпадашку шире окна и уезжают за край на телефоне. */}
+        <SelectContent
+          position="popper"
+          className="w-[var(--radix-select-trigger-width)] min-w-0 max-w-[var(--radix-select-trigger-width)] overflow-hidden"
+        >
           {pending.length === 0 ? (
             <div className="px-2 py-3 text-center text-xs text-muted-foreground">
               Невыплаченных начислений нет
             </div>
           ) : (
             pending.map((e) => (
-              <SelectItem key={e.userId} value={String(e.userId)}>
-                <span className="flex w-full items-center justify-between gap-3">
-                  <span className="truncate">{e.fullName}</span>
-                  <span className="shrink-0 text-xs font-semibold text-muted-foreground">
+              <SelectItem
+                key={e.userId}
+                value={String(e.userId)}
+                className="w-full min-w-0 overflow-hidden pr-2 [&>span:last-child]:min-w-0 [&>span:last-child]:flex-1 [&>span:last-child]:overflow-hidden"
+              >
+                <span className="grid w-full min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-2">
+                  <span className="min-w-0 truncate">{e.fullName}</span>
+                  <span className="shrink-0 text-right text-xs font-semibold tabular-nums text-muted-foreground">
                     {formatMoney(e.amount)} ₽
                   </span>
                 </span>
@@ -95,7 +100,7 @@ const PayoutEmployeePeriod = ({
       </Select>
     </div>
 
-    <div className="space-y-1.5">
+    <div className="min-w-0 space-y-1.5">
       <Label>Период</Label>
       <div className="flex flex-wrap gap-1.5">
         {quickPeriods().map((p) => (
@@ -104,7 +109,7 @@ const PayoutEmployeePeriod = ({
             type="button"
             variant={from === p.from && to === p.to ? 'default' : 'outline'}
             size="sm"
-            className="h-7 text-xs"
+            className="h-auto min-h-7 max-w-full whitespace-normal px-2 py-1 text-xs leading-snug"
             onClick={() => {
               setFrom(p.from);
               setTo(p.to);
@@ -117,7 +122,7 @@ const PayoutEmployeePeriod = ({
           type="button"
           variant={wholePeriod ? 'default' : 'outline'}
           size="sm"
-          className="h-7 text-xs"
+          className="h-auto min-h-7 max-w-full whitespace-normal px-2 py-1 text-xs leading-snug"
           onClick={() => {
             setFrom('');
             setTo('');
@@ -126,23 +131,25 @@ const PayoutEmployeePeriod = ({
           Всё целиком
         </Button>
       </div>
-      <div className="flex items-center gap-2">
+      {/* type=date на телефоне имеет большой min-width и рвёт flex-ряд —
+          ставим сеткой, чтобы поля не вылезали за край окна. */}
+      <div className="grid min-w-0 grid-cols-1 gap-2 sm:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] sm:items-center">
         <Input
           type="date"
           value={from}
           onChange={(e) => setFrom(e.target.value)}
-          className="h-9"
+          className="h-11 w-full min-w-0 sm:h-9"
         />
-        <span className="text-xs text-muted-foreground">—</span>
+        <span className="hidden text-center text-xs text-muted-foreground sm:inline">—</span>
         <Input
           type="date"
           value={to}
           onChange={(e) => setTo(e.target.value)}
-          className="h-9"
+          className="h-11 w-full min-w-0 sm:h-9"
         />
       </div>
     </div>
-  </>
+  </div>
 );
 
 export default PayoutEmployeePeriod;

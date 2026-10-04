@@ -502,3 +502,33 @@ svg.animate-logo-spin,
     animation: none;
   }
 }
+
+/*
+ * Поля даты: на Chrome/Edge иконка календаря («кубик») имеет свой размер
+ * и при узком инпуте уезжает за границу, не сжимаясь вместе с адаптивкой.
+ */
+input[type="date"],
+input[type="datetime-local"],
+input[type="month"],
+input[type="time"] {
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
+input[type="date"]::-webkit-datetime-edit,
+input[type="datetime-local"]::-webkit-datetime-edit,
+input[type="month"]::-webkit-datetime-edit {
+  min-width: 0;
+  overflow: hidden;
+}
+
+input[type="date"]::-webkit-calendar-picker-indicator,
+input[type="datetime-local"]::-webkit-calendar-picker-indicator,
+input[type="month"]::-webkit-calendar-picker-indicator {
+  margin: 0;
+  padding: 0;
+  flex-shrink: 0;
+  cursor: pointer;
+}
+

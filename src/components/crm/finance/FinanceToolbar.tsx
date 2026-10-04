@@ -88,7 +88,7 @@ const FinanceToolbar = ({
 
   return (
     <div className="space-y-3">
-      <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap">
+      <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap [&>*]:min-w-0">
         <ManualAccrualDialog employees={employees} mode="accrual" saving={savingAccrual} onSubmit={onManualAccrual} />
         <ManualAccrualDialog employees={employees} mode="deduction" saving={savingAccrual} onSubmit={onDeduction} />
         <ManualAccrualDialog employees={employees} mode="penalty" saving={savingAccrual} onSubmit={onPenalty} />
@@ -97,24 +97,37 @@ const FinanceToolbar = ({
 
       <div className="grid grid-cols-1 gap-2 sm:flex sm:flex-wrap sm:items-end sm:gap-3">
         <Select value={userFilter} onValueChange={setUserFilter}>
-          <SelectTrigger className="h-11 w-full sm:h-10 sm:w-[220px]">
+          <SelectTrigger className="h-11 w-full min-w-0 sm:h-10 sm:w-[220px] [&>span]:min-w-0 [&>span]:truncate">
             <SelectValue placeholder="Все" />
           </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">Все сотрудники</SelectItem>
+          {/* Длинные ФИО не раздувают список шире триггера — обрезаем с многоточием. */}
+          <SelectContent
+            position="popper"
+            className="w-[var(--radix-select-trigger-width)] min-w-0 max-w-[var(--radix-select-trigger-width)] overflow-hidden"
+          >
+            <SelectItem value="all" className="w-full min-w-0 overflow-hidden pr-2 [&>span:last-child]:min-w-0 [&>span:last-child]:flex-1 [&>span:last-child]:truncate">
+              Все сотрудники
+            </SelectItem>
             {employees.map((e) => (
-              <SelectItem key={e.id} value={String(e.id)}>
-                {e.fullName}
+              <SelectItem
+                key={e.id}
+                value={String(e.id)}
+                className="w-full min-w-0 overflow-hidden pr-2 [&>span:last-child]:min-w-0 [&>span:last-child]:flex-1 [&>span:last-child]:truncate"
+              >
+                <span className="block min-w-0 truncate">{e.fullName}</span>
               </SelectItem>
             ))}
           </SelectContent>
         </Select>
 
         <Select value={typeFilter} onValueChange={setTypeFilter}>
-          <SelectTrigger className="h-11 w-full sm:h-10 sm:w-[220px]">
+          <SelectTrigger className="h-11 w-full min-w-0 sm:h-10 sm:w-[220px] [&>span]:min-w-0 [&>span]:truncate">
             <SelectValue placeholder="Все" />
           </SelectTrigger>
-          <SelectContent>
+          <SelectContent
+            position="popper"
+            className="w-[var(--radix-select-trigger-width)] min-w-0 max-w-[var(--radix-select-trigger-width)] overflow-hidden"
+          >
             <SelectItem value="all">Все типы</SelectItem>
             <SelectItem value="cutter_cut">Раскрой</SelectItem>
             <SelectItem value="sewer_piece">Пошив</SelectItem>
@@ -131,23 +144,23 @@ const FinanceToolbar = ({
           </SelectContent>
         </Select>
 
-        <div className="grid grid-cols-2 gap-2 sm:flex sm:items-end sm:gap-2">
-          <div className="min-w-0">
+        <div className="grid min-w-0 grid-cols-2 gap-2 sm:flex sm:min-w-0 sm:flex-1 sm:items-end sm:gap-2">
+          <div className="min-w-0 flex-1 sm:max-w-[11.5rem]">
             <Label className="mb-1 block text-xs text-muted-foreground">Начислено с</Label>
             <Input
               type="date"
               value={dateFrom}
               onChange={(e) => setDateFrom(e.target.value)}
-              className="h-11 w-full sm:h-10 sm:w-[160px]"
+              className="h-11 w-full min-w-0 sm:h-10"
             />
           </div>
-          <div className="min-w-0">
+          <div className="min-w-0 flex-1 sm:max-w-[11.5rem]">
             <Label className="mb-1 block text-xs text-muted-foreground">по</Label>
             <Input
               type="date"
               value={dateTo}
               onChange={(e) => setDateTo(e.target.value)}
-              className="h-11 w-full sm:h-10 sm:w-[160px]"
+              className="h-11 w-full min-w-0 sm:h-10"
             />
           </div>
         </div>
@@ -159,16 +172,36 @@ const FinanceToolbar = ({
       </div>
 
       <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap">
-        <Button variant="outline" className="h-11 sm:h-9" size="sm" onClick={() => setPeriod('month')}>
+        <Button
+          variant="outline"
+          className="h-auto min-h-11 whitespace-normal px-2 py-2 text-center text-xs leading-snug sm:h-9 sm:whitespace-nowrap sm:text-sm"
+          size="sm"
+          onClick={() => setPeriod('month')}
+        >
           Текущий месяц
         </Button>
-        <Button variant="outline" className="h-11 sm:h-9" size="sm" onClick={() => setPeriod('prevMonth')}>
+        <Button
+          variant="outline"
+          className="h-auto min-h-11 whitespace-normal px-2 py-2 text-center text-xs leading-snug sm:h-9 sm:whitespace-nowrap sm:text-sm"
+          size="sm"
+          onClick={() => setPeriod('prevMonth')}
+        >
           Прошлый месяц
         </Button>
-        <Button variant="outline" className="h-11 sm:h-9" size="sm" onClick={() => setPeriod('first')}>
+        <Button
+          variant="outline"
+          className="h-auto min-h-11 whitespace-normal px-2 py-2 text-center text-xs leading-snug sm:h-9 sm:whitespace-nowrap sm:text-sm"
+          size="sm"
+          onClick={() => setPeriod('first')}
+        >
           1–15 число
         </Button>
-        <Button variant="outline" className="h-11 sm:h-9" size="sm" onClick={() => setPeriod('second')}>
+        <Button
+          variant="outline"
+          className="h-auto min-h-11 whitespace-normal px-2 py-2 text-center text-xs leading-snug sm:h-9 sm:whitespace-nowrap sm:text-sm"
+          size="sm"
+          onClick={() => setPeriod('second')}
+        >
           16–конец месяца
         </Button>
       </div>

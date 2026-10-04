@@ -67,7 +67,7 @@ const AdminOperationsPanel = ({
   onReload,
   error = null,
 }: AdminOperationsPanelProps) => (
-  <div className="space-y-4 lg:col-span-3">
+  <div className="min-w-0 space-y-4 lg:col-span-3">
     <FinanceToolbar
       employees={employees}
       userFilter={userFilter}

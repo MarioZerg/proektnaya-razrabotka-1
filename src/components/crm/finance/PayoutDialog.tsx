@@ -167,16 +167,17 @@ const PayoutDialog = ({ pending, saving, onSubmit }: PayoutDialogProps) => {
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
-        <Button className="h-11 w-full bg-blue-600 text-white hover:bg-blue-700 sm:h-9 sm:w-auto">
-          <Icon name="Banknote" size={16} className="mr-2" />
-          Выплатить зарплату
+        <Button className="h-11 w-full min-w-0 overflow-hidden bg-blue-600 px-2 text-white hover:bg-blue-700 sm:h-9 sm:w-auto sm:px-3">
+          <Icon name="Banknote" size={16} className="shrink-0" />
+          <span className="min-w-0 truncate sm:hidden">Выплатить</span>
+          <span className="hidden sm:inline">Выплатить зарплату</span>
         </Button>
       </DialogTrigger>
-      <DialogContent className="sm:max-w-md">
+      <DialogContent className="min-w-0 sm:max-w-md">
         <DialogHeader>
           <DialogTitle>Выплатить зарплату</DialogTitle>
         </DialogHeader>
-        <div className="space-y-4">
+        <div className="min-w-0 space-y-4 overflow-x-hidden">
           <PayoutEmployeePeriod
             pending={pending}
             userId={userId}
@@ -225,13 +226,17 @@ const PayoutDialog = ({ pending, saving, onSubmit }: PayoutDialogProps) => {
           )}
 
           <Button
-            className="w-full"
+            className="h-11 w-full min-w-0 overflow-hidden whitespace-normal px-2 text-sm leading-snug sm:h-10"
             onClick={handleSubmit}
             disabled={saving || !userId || amount <= 0 || notEnough || !amountValid}
           >
-            {saving
-              ? 'Выплата...'
-              : `Выплатить ${amount > 0 ? `${formatMoney(amount)} ₽` : ''}`}
+            <span className="min-w-0 truncate">
+              {saving
+                ? 'Выплата...'
+                : amount > 0
+                  ? `Выплатить ${formatMoney(amount)} ₽`
+                  : 'Выплатить'}
+            </span>
           </Button>
         </div>
       </DialogContent>

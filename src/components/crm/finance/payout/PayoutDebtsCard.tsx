@@ -23,16 +23,16 @@ const PayoutDebtsCard = ({
   willRepay,
   carryOver,
 }: PayoutDebtsCardProps) => (
-  <div className="rounded-md border border-amber-300 bg-amber-50 p-3">
-    <p className="flex items-center gap-1.5 text-xs font-semibold text-amber-900">
+  <div className="min-w-0 overflow-hidden rounded-md border border-amber-300 bg-amber-50 p-3">
+    <p className="flex min-w-0 items-center gap-1.5 text-xs font-semibold text-amber-900">
       <Icon name="TriangleAlert" size={13} className="shrink-0" />
-      Непогашенные удержания за другие даты
+      <span className="min-w-0 break-words">Непогашенные удержания за другие даты</span>
     </p>
     <div className="mt-2 space-y-1.5">
       {debts.map((d) => (
         <label
           key={d.id}
-          className="flex cursor-pointer items-start gap-2 text-xs"
+          className="flex min-w-0 cursor-pointer items-start gap-2 text-xs"
         >
           <input
             type="checkbox"
@@ -46,15 +46,15 @@ const PayoutDebtsCard = ({
               )
             }
           />
-          <span className="min-w-0 flex-1">
-            <span className="font-semibold text-amber-900">
+          <span className="min-w-0 flex-1 break-words">
+            <span className="font-semibold tabular-nums text-amber-900">
               {formatMoney(Math.abs(d.amount))} ₽
             </span>
             <span className="text-amber-800">
               {' '}
               · {d.type === 'penalty' ? 'штраф' : 'удержание'} от {d.accruedFor}
             </span>
-            <span className="block truncate text-amber-700">
+            <span className="mt-0.5 block break-words text-amber-700">
               {d.description}
             </span>
           </span>
@@ -64,7 +64,7 @@ const PayoutDebtsCard = ({
     {/* Долг больше заработка — гасим частично, остальное перенесём.
         Человек не должен уйти с выплатой «минус». */}
     {carryOver > 0 && (
-      <p className="mt-2 text-xs text-amber-800">
+      <p className="mt-2 break-words text-xs text-amber-800">
         Заработка хватает на {formatMoney(willRepay)} ₽ — остаток{' '}
         {formatMoney(carryOver)} ₽ перейдёт на следующую выплату
       </p>

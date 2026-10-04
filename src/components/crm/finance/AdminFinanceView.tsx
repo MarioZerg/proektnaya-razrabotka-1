@@ -143,7 +143,7 @@ const AdminFinanceView = ({
           человек просто остаётся без зарплаты. Показываем сразу под шапкой. */}
       <MissedAccrualsAlert />
 
-      <div className="flex flex-col-reverse gap-6 lg:grid lg:grid-cols-4">
+      <div className="flex min-w-0 flex-col-reverse gap-6 lg:grid lg:grid-cols-4 lg:items-start">
         <AdminOperationsPanel
           employees={employees}
           userFilter={userFilter}
@@ -172,7 +172,7 @@ const AdminFinanceView = ({
           error={operationsError}
         />
 
-        <div className="space-y-6 lg:col-span-1">
+        <div className="min-w-0 space-y-6 lg:col-span-1">
           <FinanceSummaryCard
             totalToAccrue={totalToAccrue}
             totalDebts={totalDebts}

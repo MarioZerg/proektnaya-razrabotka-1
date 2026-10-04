@@ -34,6 +34,7 @@ const MissedAccrualsAlert = () => {
   const [listError, setListError] = useState<string | null>(null);
   const [hiding, setHiding] = useState<string | null>(null);
   const [accruing, setAccruing] = useState<string | null>(null);
+  const [open, setOpen] = useState(false);
 
   const load = () =>
     fetchMissedAccruals()
@@ -118,17 +119,31 @@ const MissedAccrualsAlert = () => {
   const total = items.reduce((s, i) => s + i.count, 0);
 
   return (
-    <div className="rounded-lg border border-amber-300 bg-amber-50 p-4">
-      <div className="flex items-start gap-3">
-        <Icon name="TriangleAlert" size={20} className="mt-0.5 shrink-0 text-amber-600" />
-        <div className="min-w-0 flex-1">
-          <p className="font-semibold text-amber-900">
-            Работа без начисления: {total} шт
-          </p>
-          <p className="mt-0.5 text-sm text-amber-900">
-            Этапы выполнены, но зарплата за них не начислена. «Доначислить» — начислит
-            по заведённым ставкам. Если дыра объяснима (выдали наличными, закрыли задним
-            числом) — уберите строку крестиком.
+    <div className="overflow-hidden rounded-lg border border-amber-300 bg-amber-50">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="flex w-full items-center gap-2 px-3 py-2.5 text-left transition-colors hover:bg-amber-100/70"
+      >
+        <Icon name="TriangleAlert" size={16} className="shrink-0 text-amber-600" />
+        <Icon
+          name="ChevronRight"
+          size={14}
+          className={`shrink-0 text-amber-700 transition-transform ${open ? 'rotate-90' : ''}`}
+        />
+        <p className="min-w-0 flex-1 truncate text-sm font-semibold text-amber-900">
+          Работа без начисления
+        </p>
+        <span className="shrink-0 rounded-sm bg-amber-200 px-1.5 py-0.5 text-xs font-bold tabular-nums text-amber-900">
+          {total} шт · {items.length}
+        </span>
+      </button>
+
+      {open && (
+        <div className="border-t border-amber-200 px-3 py-3">
+          <p className="text-xs leading-snug text-amber-900">
+            Этапы выполнены, но зарплата за них не начислена. «Доначислить» — по
+            заведённым ставкам. Если дыра объяснима — уберите строку крестиком.
           </p>
 
           <div className="mt-3 space-y-1.5">
@@ -177,14 +192,18 @@ const MissedAccrualsAlert = () => {
                     title="Убрать это предупреждение"
                     className="shrink-0 rounded-sm p-0.5 text-amber-700 hover:bg-amber-200 hover:text-amber-900 disabled:opacity-50"
                   >
-                    <Icon name={hiding === key ? 'Loader2' : 'X'} size={14} className={hiding === key ? 'animate-spin' : ''} />
+                    <Icon
+                      name={hiding === key ? 'Loader2' : 'X'}
+                      size={14}
+                      className={hiding === key ? 'animate-spin' : ''}
+                    />
                   </button>
                 </div>
               );
             })}
           </div>
         </div>
-      </div>
+      )}
     </div>
   );
 };

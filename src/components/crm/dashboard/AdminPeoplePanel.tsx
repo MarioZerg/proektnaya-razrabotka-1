@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Card, CardContent } from '@/components/ui/card';
 import Icon from '@/components/ui/icon';
-import SewerOutputPanel from '@/components/crm/dashboard/SewerOutputPanel';
 import StaffEfficiencyCard from '@/components/crm/dashboard/StaffEfficiencyCard';
 import LototronCard from '@/components/crm/dashboard/LototronCard';
 
@@ -9,16 +8,9 @@ interface AdminPeoplePanelProps {
   actorId?: number;
 }
 
-type TabKey = 'output' | 'efficiency' | 'lototron';
+type TabKey = 'efficiency' | 'lototron';
 
 const TABS: { key: TabKey; label: string; short: string; icon: string; hint: string }[] = [
-  {
-    key: 'output',
-    label: 'Выработка',
-    short: 'Выработка',
-    icon: 'Trophy',
-    hint: 'Акция дня и премия за месяц по швеям',
-  },
   {
     key: 'efficiency',
     label: 'Эффективность',
@@ -38,30 +30,22 @@ const TABS: { key: TabKey; label: string; short: string; icon: string; hint: str
 const KEY = 'dash-people-tab';
 
 /**
- * «Люди» — один блок панели вместо трёх отдельных простыней.
+ * «Люди» — один блок панели вместо отдельных простыней.
  *
- * Раньше выработка, эффективность и лототрон стояли на главной тремя
- * сворачиваемыми секциями подряд. Все три — про одно и то же: как работают
- * люди и что им за это причитается. Открытые, они давали три экрана
- * прокрутки; свёрнутые — три одинаковых серых полоски, между которыми админ
- * всё равно щёлкал по очереди, чтобы сопоставить цифры.
- *
- * Теперь это один блок с вкладками: высота постоянная, переключение —
- * мгновенное, а выбранная вкладка запоминается до следующего захода.
- * Тяжёлые отчёты внутри монтируются только когда их открыли, поэтому панель
- * не тянет три запроса разом при загрузке главной.
+ * Вкладку «Выработка» (акция дня и премия за метраж) убрали: программа
+ * закончилась 30.09.2026. Остались эффективность и лототрон.
  */
 const AdminPeoplePanel = ({ actorId }: AdminPeoplePanelProps) => {
   const [tab, setTab] = useState<TabKey>(() => {
     try {
-      const saved = localStorage.getItem(KEY) as TabKey | null;
-      return saved && TABS.some((t) => t.key === saved) ? saved : 'output';
+      const saved = localStorage.getItem(KEY);
+      // Старое значение «output» после снятия вкладки больше не валидно.
+      if (saved === 'efficiency' || saved === 'lototron') return saved;
     } catch {
-      return 'output';
+      /* память недоступна */
     }
+    return 'efficiency';
   });
-  // Какие вкладки человек уже открывал: закрытая вкладка не должна ходить в
-  // сеть, но и перезагружаться при каждом возврате — тоже.
   const [visited, setVisited] = useState<Set<TabKey>>(() => new Set<TabKey>([tab]));
 
   useEffect(() => {
@@ -88,9 +72,7 @@ const AdminPeoplePanel = ({ actorId }: AdminPeoplePanelProps) => {
           </p>
         </div>
 
-        {/* Вкладки: на телефоне — короткие подписи, чтобы три штуки влезли
-            в строку и не превращались в скролл. */}
-        <div className="grid grid-cols-3 gap-1 rounded-lg bg-muted p-1">
+        <div className="grid grid-cols-2 gap-1 rounded-lg bg-muted p-1">
           {TABS.map((t) => (
             <button
               key={t.key}
@@ -109,13 +91,6 @@ const AdminPeoplePanel = ({ actorId }: AdminPeoplePanelProps) => {
           ))}
         </div>
 
-        {/* Каждая вкладка остаётся смонтированной после первого открытия:
-            возврат к ней не должен заново дёргать сервер и терять фильтры. */}
-        {visited.has('output') && (
-          <div className={tab === 'output' ? '' : 'hidden'}>
-            <SewerOutputPanel />
-          </div>
-        )}
         {visited.has('efficiency') && (
           <div className={tab === 'efficiency' ? '' : 'hidden'}>
             <StaffEfficiencyCard />

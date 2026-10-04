@@ -29,6 +29,29 @@ const personWord = (n: number) => {
   return 'сотрудников';
 };
 
+/** Строка метка + сумма: на узкой колонке сумма не уезжает за край. */
+const MoneyRow = ({
+  label,
+  hint,
+  amount,
+  amountClass = '',
+}: {
+  label: string;
+  hint?: string;
+  amount: number;
+  amountClass?: string;
+}) => (
+  <div className="min-w-0">
+    <p className="break-words text-muted-foreground">{label}</p>
+    {hint ? (
+      <p className="mt-0.5 break-words text-xs leading-snug text-muted-foreground">{hint}</p>
+    ) : null}
+    <p className={`mt-1 break-all text-xl font-bold tabular-nums ${amountClass}`}>
+      {formatMoney(amount)} ₽
+    </p>
+  </div>
+);
+
 const FinanceSummaryCard = ({
   totalToAccrue,
   totalDebts,
@@ -48,11 +71,11 @@ const FinanceSummaryCard = ({
   const finesCount = penaltiesCount - deductionsCount;
 
   return (
-    <Card className="border-border shadow-none">
-      <CardHeader>
+    <Card className="min-w-0 overflow-hidden border-border shadow-none">
+      <CardHeader className="min-w-0 space-y-1">
         <CardTitle className="text-base">Баланс начислений</CardTitle>
       </CardHeader>
-      <CardContent className="space-y-4 text-sm">
+      <CardContent className="min-w-0 space-y-4 overflow-hidden text-sm">
         {loading ? (
           <div className="flex items-center gap-2 text-muted-foreground">
             <Icon name="Loader2" size={16} className="animate-spin" />
@@ -60,10 +83,11 @@ const FinanceSummaryCard = ({
           </div>
         ) : (
           <>
-            <div>
-              <p className="text-muted-foreground">К выплате (сумма начислений по сотрудникам с положительным балансом)</p>
-              <p className="text-xl font-bold">{formatMoney(totalToAccrue)} ₽</p>
-            </div>
+            <MoneyRow
+              label="К выплате"
+              hint="Сумма по сотрудникам с положительным балансом"
+              amount={totalToAccrue}
+            />
 
             {/* Удержания показываем ВСЕГДА, когда они есть.
                 Раньше в сводке была только строка «Долги сотрудников» — она видна
@@ -72,38 +96,47 @@ const FinanceSummaryCard = ({
                 уводит: он молча вычитался внутри строки «К выплате», и админ
                 считал, что удержание не прошло. */}
             {totalPenalties < 0 && (
-              <div className="rounded-md border border-destructive/30 bg-destructive/5 p-3">
-                <p className="text-muted-foreground">Списано с сотрудников (ещё не выплачено)</p>
-                <p className="text-xl font-bold text-destructive">
-                  {formatMoney(totalPenalties)} ₽
-                </p>
-                <p className="mt-0.5 text-xs text-muted-foreground">
-                  {penaltiesCount} шт. у {penaltiesUsers} {personWord(penaltiesUsers)} · уже
-                  вычтено из суммы к выплате
+              <div className="min-w-0 overflow-hidden rounded-md border border-destructive/30 bg-destructive/5 p-3">
+                <MoneyRow
+                  label="Списано с сотрудников"
+                  hint="Ещё не выплачено · уже вычтено из «К выплате»"
+                  amount={totalPenalties}
+                  amountClass="text-destructive"
+                />
+                <p className="mt-1 break-words text-xs text-muted-foreground">
+                  {penaltiesCount} шт. у {penaltiesUsers} {personWord(penaltiesUsers)}
                 </p>
 
                 {/* Штрафы и удержания разделены: по одной сумме нельзя понять,
                     это нарушения в цехе или люди рассчитались за спецодежду. */}
                 {totalDeductions < 0 && (
-                  <div className="mt-2 space-y-1 border-t border-destructive/20 pt-2 text-xs">
+                  <div className="mt-2 space-y-2 border-t border-destructive/20 pt-2 text-xs">
                     {fines < 0 && (
-                      <p className="flex items-center justify-between gap-2">
-                        <span className="flex items-center gap-1.5 text-muted-foreground">
-                          <Icon name="TriangleAlert" size={12} className="text-destructive" />
-                          Штрафы · {finesCount} шт.
+                      <div className="flex min-w-0 flex-col gap-0.5 sm:flex-row sm:items-baseline sm:justify-between sm:gap-2">
+                        <span className="flex min-w-0 items-start gap-1.5 break-words text-muted-foreground">
+                          <Icon
+                            name="TriangleAlert"
+                            size={12}
+                            className="mt-0.5 shrink-0 text-destructive"
+                          />
+                          <span className="min-w-0">Штрафы · {finesCount} шт.</span>
                         </span>
-                        <span className="font-semibold text-destructive">
+                        <span className="shrink-0 pl-5 font-semibold tabular-nums text-destructive sm:pl-0">
                           {formatMoney(fines)} ₽
                         </span>
-                      </p>
+                      </div>
                     )}
-                    <p className="flex items-center justify-between gap-2">
-                      <span className="flex items-center gap-1.5 text-muted-foreground">
-                        <Icon name="Wallet" size={12} />
-                        Удержания без вины · {deductionsCount} шт.
+                    <div className="flex min-w-0 flex-col gap-0.5 sm:flex-row sm:items-baseline sm:justify-between sm:gap-2">
+                      <span className="flex min-w-0 items-start gap-1.5 break-words text-muted-foreground">
+                        <Icon name="Wallet" size={12} className="mt-0.5 shrink-0" />
+                        <span className="min-w-0">
+                          Удержания без вины · {deductionsCount} шт.
+                        </span>
                       </span>
-                      <span className="font-semibold">{formatMoney(totalDeductions)} ₽</span>
-                    </p>
+                      <span className="shrink-0 pl-5 font-semibold tabular-nums sm:pl-0">
+                        {formatMoney(totalDeductions)} ₽
+                      </span>
+                    </div>
                   </div>
                 )}
 
@@ -111,7 +144,7 @@ const FinanceSummaryCard = ({
                   <button
                     type="button"
                     onClick={onShowPenalties}
-                    className="mt-1.5 text-xs font-medium text-destructive underline underline-offset-2"
+                    className="mt-2 break-words text-left text-xs font-medium text-destructive underline underline-offset-2"
                   >
                     Показать все списания
                   </button>
@@ -120,20 +153,31 @@ const FinanceSummaryCard = ({
             )}
 
             {totalDebts < 0 && (
-              <div>
-                <p className="text-muted-foreground">Долги сотрудников (штрафы превысили начисления)</p>
-                <p className="text-xl font-bold text-destructive">{formatMoney(totalDebts)} ₽</p>
-              </div>
+              <MoneyRow
+                label="Долги сотрудников"
+                hint="Штрафы превысили начисления"
+                amount={totalDebts}
+                amountClass="text-destructive"
+              />
             )}
-            <div className="space-y-2 border-t border-border pt-3">
+
+            <div className="min-w-0 space-y-2 border-t border-border pt-3">
               <p className="font-medium">Выплата 10 числа</p>
-              <p className="text-xs text-muted-foreground">невыплаченные начисления за период с 20 по конец текущего месяца</p>
-              <p className="font-semibold">{formatMoney(period1Total)} ₽</p>
+              <p className="break-words text-xs leading-snug text-muted-foreground">
+                Невыплаченные начисления с 20-го по конец месяца
+              </p>
+              <p className="break-all font-semibold tabular-nums">
+                {formatMoney(period1Total)} ₽
+              </p>
             </div>
-            <div className="space-y-2 border-t border-border pt-3">
+            <div className="min-w-0 space-y-2 border-t border-border pt-3">
               <p className="font-medium">Выплата 25 числа</p>
-              <p className="text-xs text-muted-foreground">невыплаченные начисления за период с 1 по 19 число текущего месяца</p>
-              <p className="font-semibold">{formatMoney(period2Total)} ₽</p>
+              <p className="break-words text-xs leading-snug text-muted-foreground">
+                Невыплаченные начисления с 1-го по 19-е число
+              </p>
+              <p className="break-all font-semibold tabular-nums">
+                {formatMoney(period2Total)} ₽
+              </p>
             </div>
           </>
         )}

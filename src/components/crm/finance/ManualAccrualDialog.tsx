@@ -35,24 +35,34 @@ type DialogMode = 'accrual' | 'penalty' | 'deduction';
 
 const MODE_TEXT: Record<
   DialogMode,
-  { button: string; title: string; submit: string; hint: string; icon: string }
+  {
+    button: string;
+    buttonFull: string;
+    title: string;
+    submit: string;
+    hint: string;
+    icon: string;
+  }
 > = {
   accrual: {
-    button: 'Ручное начисление',
+    button: 'Начислить',
+    buttonFull: 'Ручное начисление',
     title: 'Ручное начисление средств',
     submit: 'Начислить',
     hint: 'За что начисление',
     icon: 'Plus',
   },
   penalty: {
-    button: 'Выписать штраф',
+    button: 'Штраф',
+    buttonFull: 'Выписать штраф',
     title: 'Выписать штраф',
     submit: 'Выписать штраф',
     hint: 'Причина штрафа',
     icon: 'TriangleAlert',
   },
   deduction: {
-    button: 'Удержание',
+    button: 'Удержать',
+    buttonFull: 'Удержание',
     title: 'Удержать из зарплаты',
     submit: 'Удержать',
     hint: 'За что удержание: спецодежда, товар, аванс',
@@ -90,10 +100,11 @@ const ManualAccrualDialog = ({ employees, mode, saving, onSubmit }: ManualAccrua
             выделяем только штраф, чтобы его нельзя было нажать по инерции. */}
         <Button
           variant={mode === 'penalty' ? 'destructive' : mode === 'deduction' ? 'outline' : 'default'}
-          className="h-11 w-full sm:h-9 sm:w-auto"
+          className="h-11 w-full min-w-0 overflow-hidden px-2 sm:h-9 sm:w-auto sm:px-3"
         >
-          <Icon name={text.icon} size={16} className="mr-2" />
-          {text.button}
+          <Icon name={text.icon} size={16} className="shrink-0" />
+          <span className="min-w-0 truncate sm:hidden">{text.button}</span>
+          <span className="hidden sm:inline">{text.buttonFull}</span>
         </Button>
       </DialogTrigger>
       <DialogContent className="sm:max-w-md">
@@ -101,16 +112,23 @@ const ManualAccrualDialog = ({ employees, mode, saving, onSubmit }: ManualAccrua
           <DialogTitle>{text.title}</DialogTitle>
         </DialogHeader>
         <div className="space-y-4">
-          <div className="space-y-1.5">
+          <div className="min-w-0 space-y-1.5">
             <Label>Сотрудник</Label>
             <Select value={userId} onValueChange={setUserId}>
-              <SelectTrigger>
+              <SelectTrigger className="min-w-0 [&>span]:min-w-0 [&>span]:truncate">
                 <SelectValue placeholder="Выберите сотрудника" />
               </SelectTrigger>
-              <SelectContent>
+              <SelectContent
+                position="popper"
+                className="w-[var(--radix-select-trigger-width)] min-w-0 max-w-[var(--radix-select-trigger-width)] overflow-hidden"
+              >
                 {employees.map((e) => (
-                  <SelectItem key={e.id} value={String(e.id)}>
-                    {e.fullName}
+                  <SelectItem
+                    key={e.id}
+                    value={String(e.id)}
+                    className="w-full min-w-0 overflow-hidden pr-2 [&>span:last-child]:min-w-0 [&>span:last-child]:flex-1 [&>span:last-child]:truncate"
+                  >
+                    <span className="block min-w-0 truncate">{e.fullName}</span>
                   </SelectItem>
                 ))}
               </SelectContent>

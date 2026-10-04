@@ -3,8 +3,6 @@ import EtrnToSignCard from '@/components/crm/dashboard/EtrnToSignCard';
 import VarikiPurchasesCard from '@/components/crm/variki/VarikiPurchasesCard';
 import MyShiftCard from '@/components/crm/dashboard/MyShiftCard';
 import AwardCard from '@/components/crm/dashboard/AwardCard';
-import SewerBonusCard from '@/components/crm/dashboard/SewerBonusCard';
-import SewerDailyCard from '@/components/crm/dashboard/SewerDailyCard';
 import { type EmployeeShiftStatus } from '@/lib/shiftSessionsApi';
 
 interface CrmDashboardHeaderProps {
@@ -20,17 +18,16 @@ interface CrmDashboardHeaderProps {
 }
 
 /**
- * Верх главной: заголовок, своя смена, уведомления администратора и выработка швей.
+ * Верх главной: заголовок, своя смена и уведомления администратора.
  *
- * Вынесено из страницы 1:1 — тот же порядок блоков и те же условия показа. Порядок
- * здесь смысловой, а не случайный: сначала личное (смена), потом то, что требует
- * решения администратора, и только затем отчёты.
+ * Выработка швей и премия за метраж с главной сняты: программа закончилась
+ * 30.09.2026, блоки больше не показываем ни швее, ни руководству.
  */
 const CrmDashboardHeader = ({
   userName,
   userId,
   userRole,
-  isSewer,
+  isSewer: _isSewer,
   isStorekeeper,
   myShiftStatus,
   shiftsLoading,
@@ -80,24 +77,6 @@ const CrmDashboardHeader = ({
     {/* Покупки за варики: сотрудник заплатил и ждёт купон — заявка не должна
         потеряться, поэтому висит на панели, пока админ не прикрепит PDF. */}
     {userRole === 'admin' && <VarikiPurchasesCard />}
-
-    {/* Бонусная программа: швея видит СВОЙ прогресс к премии, руководство — всех.
-        Остальным ролям карточка не нужна: программа только для швей. */}
-    {/* Швее — открыто и всегда: свой прогресс к премии она смотрит каждую смену,
-        прятать его под клик нельзя. Админу это отчёт по всем сразу, он длинный
-        и нужен раз в период — сворачиваем. */}
-    {isSewer && (
-      <>
-        {/* Акция дня — выше месячной премии: её цель нужно взять до конца смены,
-            поэтому она важнее для решений «здесь и сейчас». */}
-        <SewerDailyCard onlyUserId={userId} />
-        <SewerBonusCard onlyUserId={userId} />
-      </>
-    )}
-    {/* Выработка по всем швеям админу здесь БОЛЬШЕ НЕ ПОКАЗЫВАЕТСЯ: она уехала
-        во вкладку «Выработка» блока «Люди и результат» ниже, к эффективности и
-        лототрону. Там акция дня и премия месяца стоят в одной таблице, а не
-        двумя списками одних и тех же фамилий подряд. */}
   </>
 );
 

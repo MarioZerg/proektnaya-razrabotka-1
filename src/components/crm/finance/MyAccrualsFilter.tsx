@@ -76,21 +76,21 @@ const MyAccrualsFilter = ({
 
   return (
     <div className="space-y-3 rounded-md border border-border p-3 sm:p-4">
-      <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap sm:items-end sm:gap-3">
-        <div className="min-w-0 space-y-1">
+      <div className="grid min-w-0 grid-cols-2 gap-2 sm:flex sm:flex-wrap sm:items-end sm:gap-3">
+        <div className="min-w-0 flex-1 space-y-1 sm:max-w-[11.5rem]">
           <Label className="text-xs text-muted-foreground">С даты</Label>
           <Input
             type="date"
-            className="h-11 w-full sm:h-9 sm:w-[150px]"
+            className="h-11 w-full min-w-0 sm:h-9"
             value={dateFrom}
             onChange={(e) => setDateFrom(e.target.value)}
           />
         </div>
-        <div className="min-w-0 space-y-1">
+        <div className="min-w-0 flex-1 space-y-1 sm:max-w-[11.5rem]">
           <Label className="text-xs text-muted-foreground">По дату</Label>
           <Input
             type="date"
-            className="h-11 w-full sm:h-9 sm:w-[150px]"
+            className="h-11 w-full min-w-0 sm:h-9"
             value={dateTo}
             onChange={(e) => setDateTo(e.target.value)}
           />

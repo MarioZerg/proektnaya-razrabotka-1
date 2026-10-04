@@ -38,7 +38,7 @@ const PayoutAmountPanel = ({
   willRepay,
   notEnough,
 }: PayoutAmountPanelProps) => (
-  <div className="rounded-md border border-border p-3 text-sm">
+  <div className="min-w-0 overflow-hidden rounded-md border border-border p-3 text-sm">
     {loading ? (
       <div className="flex items-center gap-2 text-muted-foreground">
         <Icon name="Loader2" size={14} className="animate-spin" />
@@ -47,9 +47,9 @@ const PayoutAmountPanel = ({
     ) : error ? (
       /* Запрос не прошёл. Молчаливый ноль здесь опаснее ошибки:
          по нему решают, что человеку платить нечего. */
-      <div className="flex items-start gap-2 text-sm text-destructive">
+      <div className="flex min-w-0 items-start gap-2 text-sm text-destructive">
         <Icon name="TriangleAlert" size={14} className="mt-0.5 shrink-0" />
-        <span>
+        <span className="min-w-0 break-words">
           Не удалось посчитать сумму: {error}
           <span className="mt-1 block text-xs text-muted-foreground">
             Обновите страницу или войдите заново — начисления никуда не делись
@@ -63,7 +63,7 @@ const PayoutAmountPanel = ({
             ? 'Весь невыплаченный остаток'
             : 'К выплате за выбранный период'}
         </p>
-        <p className="text-lg font-bold">{formatMoney(fullAmount)} ₽</p>
+        <p className="break-all text-lg font-bold tabular-nums">{formatMoney(fullAmount)} ₽</p>
 
         {/* ВЫПЛАТА КРУГЛОЙ СУММОЙ — В ЛЮБУЮ СТОРОНУ.
             Зарплату выдают наличными и переводом без копеек: к выплате
@@ -71,25 +71,25 @@ const PayoutAmountPanel = ({
             остаётся за сотрудником, переплата удержится из следующей
             выплаты — держать разницу в голове не нужно. */}
         {fullAmount > 0 && (
-          <div className="mt-3 border-t border-border pt-3">
-            <Label className="text-xs text-muted-foreground">
+          <div className="mt-3 min-w-0 border-t border-border pt-3">
+            <Label className="text-xs leading-snug text-muted-foreground">
               Выплатить сейчас — можно округлить в любую сторону
             </Label>
-            <div className="mt-1.5 flex items-center gap-2">
+            <div className="mt-1.5 flex min-w-0 flex-wrap items-center gap-2">
               <Input
                 inputMode="decimal"
                 placeholder={fullAmount.toFixed(2)}
                 value={payAmount}
                 onChange={(e) => setPayAmount(e.target.value)}
-                className="h-9 w-40"
+                className="h-11 w-full min-w-0 flex-1 basis-[8rem] sm:h-9 sm:max-w-[10rem]"
               />
-              <span className="text-sm text-muted-foreground">₽</span>
+              <span className="shrink-0 text-sm text-muted-foreground">₽</span>
               {payAmount.trim() && (
                 <Button
                   type="button"
                   variant="ghost"
                   size="sm"
-                  className="h-8 text-xs"
+                  className="h-8 shrink-0 text-xs"
                   onClick={() => setPayAmount('')}
                 >
                   Всю сумму
@@ -99,19 +99,21 @@ const PayoutAmountPanel = ({
 
             {/* Округление в один клик: вручную набирать круглое число
                 каждому сотруднику — та же рутина, от которой уходим. */}
-            <div className="mt-2 flex flex-wrap items-center gap-1.5">
-              <span className="text-[11px] text-muted-foreground">Округлить:</span>
+            <div className="mt-2 flex min-w-0 flex-wrap items-center gap-1.5">
+              <span className="w-full text-[11px] text-muted-foreground sm:w-auto">
+                Округлить:
+              </span>
               {[100, 500, 1000].map((step) => {
                 const down = Math.floor(fullAmount / step) * step;
                 const up = Math.ceil(fullAmount / step) * step;
                 return (
-                  <span key={step} className="flex gap-1">
+                  <span key={step} className="flex max-w-full flex-wrap gap-1">
                     {down > 0 && down !== fullAmount && (
                       <Button
                         type="button"
                         variant="outline"
                         size="sm"
-                        className="h-7 px-2 text-[11px]"
+                        className="h-7 max-w-full px-2 text-[11px] tabular-nums"
                         onClick={() => setPayAmount(String(down))}
                       >
                         {formatMoney(down)}
@@ -122,7 +124,7 @@ const PayoutAmountPanel = ({
                         type="button"
                         variant="outline"
                         size="sm"
-                        className="h-7 px-2 text-[11px]"
+                        className="h-7 max-w-full px-2 text-[11px] tabular-nums"
                         onClick={() => setPayAmount(String(up))}
                       >
                         {formatMoney(up)}
@@ -147,13 +149,13 @@ const PayoutAmountPanel = ({
             )}
 
             {restToNextPeriod > 0 && (
-              <p className="mt-1.5 flex items-start gap-1.5 rounded-md bg-blue-50 p-2 text-xs text-blue-900">
+              <p className="mt-1.5 flex min-w-0 items-start gap-1.5 rounded-md bg-blue-50 p-2 text-xs text-blue-900">
                 <Icon
                   name="ArrowRight"
                   size={12}
                   className="mt-0.5 shrink-0"
                 />
-                <span>
+                <span className="min-w-0 break-words">
                   На следующий период перейдёт{' '}
                   <b>{formatMoney(restToNextPeriod)} ₽</b> — сумма останется
                   за сотрудником и сама войдёт в ближайшую выплату
@@ -165,13 +167,13 @@ const PayoutAmountPanel = ({
                 округление вверх: разница станет удержанием и уменьшит
                 ближайшую следующую выплату. */}
             {overPaid > 0 && (
-              <p className="mt-1.5 flex items-start gap-1.5 rounded-md bg-amber-50 p-2 text-xs text-amber-900">
+              <p className="mt-1.5 flex min-w-0 items-start gap-1.5 rounded-md bg-amber-50 p-2 text-xs text-amber-900">
                 <Icon
                   name="Undo2"
                   size={12}
                   className="mt-0.5 shrink-0"
                 />
-                <span>
+                <span className="min-w-0 break-words">
                   Выдаём на <b>{formatMoney(overPaid)} ₽</b> больше начисленного
                   — эта сумма удержится из следующей выплаты сотрудника
                 </span>
@@ -180,7 +182,7 @@ const PayoutAmountPanel = ({
           </div>
         )}
         {!!preview && preview.count > 0 && (
-          <p className="mt-0.5 text-xs text-muted-foreground">
+          <p className="mt-0.5 break-words text-xs text-muted-foreground">
             {preview.count} начислений
             {preview.firstDate &&
               preview.lastDate &&
@@ -191,7 +193,7 @@ const PayoutAmountPanel = ({
             в этих датах начислений нет — либо их уже выплатили,
             либо работа записана другими днями. */}
         {!!preview && preview.count === 0 && (
-          <p className="mt-0.5 text-xs text-muted-foreground">
+          <p className="mt-0.5 break-words text-xs text-muted-foreground">
             {wholePeriod
               ? 'Невыплаченных начислений нет — всё уже выплачено'
               : 'В выбранных датах невыплаченных начислений нет: возможно, период уже закрыт выплатой или работа записана другими днями. Нажмите «Всё целиком», чтобы увидеть остаток.'}
@@ -200,7 +202,7 @@ const PayoutAmountPanel = ({
         {/* Расшифровка, когда часть заработка ушла на долги: без неё
             админ видит сумму меньше ожидаемой и не понимает почему. */}
         {willRepay > 0 && (
-          <p className="mt-1 text-xs text-muted-foreground">
+          <p className="mt-1 break-words text-xs text-muted-foreground">
             Начислено {formatMoney(accrued)} ₽ − удержано{' '}
             {formatMoney(willRepay)} ₽
           </p>
@@ -208,14 +210,16 @@ const PayoutAmountPanel = ({
         {/* Денег в кассе может не хватить — сказать об этом надо
             здесь, а не после нажатия отказом от сервера. */}
         {notEnough && preview && (
-          <p className="mt-1.5 flex items-start gap-1.5 text-xs text-destructive">
+          <p className="mt-1.5 flex min-w-0 items-start gap-1.5 text-xs text-destructive">
             <Icon
               name="TriangleAlert"
               size={12}
               className="mt-0.5 shrink-0"
             />
-            В кассе только {formatMoney(preview.cashBalance)} ₽ — пополните
-            кассу перед выплатой
+            <span className="min-w-0 break-words">
+              В кассе только {formatMoney(preview.cashBalance)} ₽ — пополните
+              кассу перед выплатой
+            </span>
           </p>
         )}
       </>

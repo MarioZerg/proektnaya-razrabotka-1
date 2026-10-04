@@ -15,13 +15,13 @@ interface PayoutSbpCardProps {
  * Показываем его прямо здесь, рядом с суммой.
  */
 const PayoutSbpCard = ({ preview, copied, setCopied }: PayoutSbpCardProps) => (
-  <div className="rounded-md border border-border bg-muted/40 p-3">
+  <div className="min-w-0 overflow-hidden rounded-md border border-border bg-muted/40 p-3">
     {preview.sbpPhone ? (
       <>
-        <div className="flex items-start justify-between gap-2">
+        <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
           <div className="min-w-0">
             <p className="text-xs text-muted-foreground">Перевод по СБП</p>
-            <p className="truncate text-base font-bold tracking-tight">
+            <p className="break-all text-base font-bold tracking-tight">
               {preview.sbpPhone}
             </p>
             {!!preview.sbpBank && (
@@ -34,7 +34,7 @@ const PayoutSbpCard = ({ preview, copied, setCopied }: PayoutSbpCardProps) => (
             type="button"
             variant="outline"
             size="sm"
-            className="h-8 shrink-0"
+            className="h-8 w-full shrink-0 sm:w-auto"
             onClick={() => {
               navigator.clipboard?.writeText(preview.sbpPhone || '');
               setCopied(true);
@@ -53,26 +53,30 @@ const PayoutSbpCard = ({ preview, copied, setCopied }: PayoutSbpCardProps) => (
         {/* Неподтверждённые реквизиты — не запрет, а повод сверить:
             деньги уйдут по этому номеру безвозвратно. */}
         {!preview.sbpConfirmed && (
-          <p className="mt-2 flex items-start gap-1.5 text-xs text-amber-700">
+          <p className="mt-2 flex min-w-0 items-start gap-1.5 text-xs text-amber-700">
             <Icon
               name="TriangleAlert"
               size={12}
               className="mt-0.5 shrink-0"
             />
-            Реквизиты ещё не сверены администратором — проверьте номер перед
-            переводом
+            <span className="min-w-0 break-words">
+              Реквизиты ещё не сверены администратором — проверьте номер перед
+              переводом
+            </span>
           </p>
         )}
       </>
     ) : (
-      <p className="flex items-start gap-1.5 text-xs text-muted-foreground">
+      <p className="flex min-w-0 items-start gap-1.5 text-xs text-muted-foreground">
         <Icon
           name="Info"
           size={13}
           className="mt-0.5 shrink-0 text-amber-600"
         />
-        Сотрудник не указал номер СБП в профиле.
-        {preview.loginPhone ? ` Телефон для входа: ${preview.loginPhone}` : ''}
+        <span className="min-w-0 break-words">
+          Сотрудник не указал номер СБП в профиле.
+          {preview.loginPhone ? ` Телефон для входа: ${preview.loginPhone}` : ''}
+        </span>
       </p>
     )}
   </div>
