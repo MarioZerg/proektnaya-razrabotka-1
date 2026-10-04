@@ -1,5 +1,5 @@
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import Icon from '@/components/ui/icon';
+import BlockSkeleton from '@/components/crm/finance/BlockSkeleton';
 import type { MyPayout } from '@/lib/salaryApi';
 import { formatDateTime, formatMoney } from '@/components/crm/finance/financeShared';
 import TablePager from '@/components/crm/finance/TablePager';
@@ -19,11 +19,8 @@ const MyPayoutsCard = ({ payouts, loading }: MyPayoutsCardProps) => {
         <CardTitle className="text-base">Последние выплаты</CardTitle>
       </CardHeader>
       <CardContent className="space-y-2">
-        {loading ? (
-          <div className="flex items-center gap-2 text-sm text-muted-foreground">
-            <Icon name="Loader2" size={16} className="animate-spin" />
-            Загрузка...
-          </div>
+        {loading && payouts.length === 0 ? (
+          <BlockSkeleton rows={2} />
         ) : payouts.length === 0 ? (
           <p className="text-sm text-muted-foreground">Выплат пока не было</p>
         ) : (

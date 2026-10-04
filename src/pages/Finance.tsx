@@ -91,9 +91,18 @@ const Finance = () => {
   const [myPenalties, setMyPenalties] = useState(0);
   const [myCount, setMyCount] = useState(0);
 
+  // Сотрудники нужны только админу (фильтр/диалоги). Грузятся параллельно с
+  // начислениями/кассой/выплатами — ничего не ждёт этот список.
   useEffect(() => {
-    fetchEmployees().then(setEmployees);
-  }, []);
+    if (user?.role !== 'admin') return;
+    fetchEmployees().then(setEmployees).catch(() => setEmployees([]));
+  }, [user?.role]);
+
+  // «Данные уже приходили хоть раз». Скелетон показываем только на первой
+  // загрузке; при перезагрузке (фильтр, выплата) блок остаётся с прежними
+  // цифрами, а не схлопывается в спиннер — вёрстка не прыгает.
+  const [operationsLoaded, setOperationsLoaded] = useState(false);
+  const [cashLoaded, setCashLoaded] = useState(false);
 
   // Быстро нажимая «Сегодня» → «7 дней» → «Этот месяц», сотрудник запускает
   // несколько запросов подряд, а отвечают они не по порядку. Принимаем только
@@ -170,6 +179,7 @@ const Finance = () => {
         setPeriod1Total(data.period1Total);
         setPeriod2Total(data.period2Total);
         setOperationsError(null);
+        setOperationsLoaded(true);
       })
       .catch((e) => {
         if (reqId !== operationsReqId.current) return;
@@ -201,6 +211,7 @@ const Finance = () => {
         setCashError(null);
         setCashBalance(data.balance);
         setCashTransactions(data.transactions);
+        setCashLoaded(true);
       })
       .catch((e) => {
         setCashError(e instanceof Error ? e.message : 'Не удалось загрузить кассу');
@@ -208,17 +219,19 @@ const Finance = () => {
       .finally(() => setCashLoading(false));
   };
 
-  useEffect(() => {
-    if (user?.role !== 'admin') return;
-    loadOperations();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [userFilter, typeFilter, dateFrom, dateTo, operationsPage, user?.role]);
-
+  // Касса и выплаты стартуют в том же коммите, что и начисления (эффекты ниже
+  // выполняются вместе) — запросы идут параллельно, без водопада.
   useEffect(() => {
     if (user?.role !== 'admin') return;
     loadPayouts();
     loadCashBox();
   }, [user?.role]);
+
+  useEffect(() => {
+    if (user?.role !== 'admin') return;
+    loadOperations();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [userFilter, typeFilter, dateFrom, dateTo, operationsPage, user?.role]);
 
   const handleManualAccrual = async (userId: number, amount: number, description: string) => {
     setSavingAccrual(true);
@@ -424,7 +437,8 @@ const Finance = () => {
       period2Total={period2Total}
       cashBalance={cashBalance}
       cashTransactions={cashTransactions}
-      cashLoading={cashLoading}
+      cashLoading={cashLoading && !cashLoaded}
+      summaryLoading={operationsLoading && !operationsLoaded}
       onCashDeposit={handleCashDeposit}
       onUpdateRate={handleUpdateRate}
       payouts={payouts}

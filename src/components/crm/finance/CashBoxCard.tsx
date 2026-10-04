@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import Icon from '@/components/ui/icon';
+import BlockSkeleton from '@/components/crm/finance/BlockSkeleton';
 import type { CashBoxTransaction } from '@/lib/salaryApi';
 import { formatDate, formatDateTime, formatMoney } from '@/components/crm/finance/financeShared';
 import TablePager from '@/components/crm/finance/TablePager';
@@ -104,10 +105,7 @@ const CashBoxCard = ({ balance, transactions, loading, saving, onDeposit }: Cash
       </CardHeader>
       <CardContent className="space-y-4">
         {loading ? (
-          <div className="flex items-center gap-2 text-sm text-muted-foreground">
-            <Icon name="Loader2" size={16} className="animate-spin" />
-            Загрузка...
-          </div>
+          <BlockSkeleton rows={4} />
         ) : (
           <>
             <div>

@@ -1,5 +1,6 @@
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import Icon from '@/components/ui/icon';
+import BlockSkeleton from '@/components/crm/finance/BlockSkeleton';
 import { formatMoney } from '@/components/crm/finance/financeShared';
 
 interface FinanceSummaryCardProps {
@@ -77,10 +78,7 @@ const FinanceSummaryCard = ({
       </CardHeader>
       <CardContent className="min-w-0 space-y-4 overflow-hidden text-sm">
         {loading ? (
-          <div className="flex items-center gap-2 text-muted-foreground">
-            <Icon name="Loader2" size={16} className="animate-spin" />
-            Загрузка...
-          </div>
+          <BlockSkeleton rows={4} />
         ) : (
           <>
             <MoneyRow

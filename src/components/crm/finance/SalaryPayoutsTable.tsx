@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import Icon from '@/components/ui/icon';
+import BlockSkeleton from '@/components/crm/finance/BlockSkeleton';
 import type { SalaryPayout } from '@/lib/salaryApi';
 import { formatDate, formatDateTime, formatMoney } from '@/components/crm/finance/financeShared';
 import ConfirmDeleteButton from '@/components/crm/finance/ConfirmDeleteButton';
@@ -83,10 +84,7 @@ const SalaryPayoutsTable = ({
       </CardHeader>
       <CardContent className="space-y-4">
         {loading && payouts.length === 0 ? (
-          <div className="flex items-center gap-2 text-sm text-muted-foreground">
-            <Icon name="Loader2" size={16} className="animate-spin" />
-            Загрузка...
-          </div>
+          <BlockSkeleton rows={3} />
         ) : payouts.length === 0 ? (
           error ? null : (
             <p className="text-sm text-muted-foreground">Выплат пока не было</p>

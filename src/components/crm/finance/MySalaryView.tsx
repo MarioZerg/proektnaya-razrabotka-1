@@ -6,6 +6,7 @@ import MyPayoutsCard from '@/components/crm/finance/MyPayoutsCard';
 import MyWorkCalendar from '@/components/crm/finance/MyWorkCalendar';
 import { formatMoney } from '@/components/crm/finance/financeShared';
 import type { MyAccrual, MyPayout } from '@/lib/salaryApi';
+import { Skeleton } from '@/components/ui/skeleton';
 import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
 
 interface MySalaryViewProps {
@@ -111,7 +112,11 @@ const MySalaryView = ({
           <div className="order-1 space-y-3 lg:order-2 lg:col-span-1 lg:space-y-6">
             <div className="rounded-md border border-border p-4">
               <p className="text-sm text-muted-foreground">К выплате</p>
-              <p className="text-xl font-bold">{formatMoney(myBalance)} ₽</p>
+              {myLoading && myBalance === 0 && !myError ? (
+                <Skeleton className="mt-1 h-7 w-28" />
+              ) : (
+                <p className="text-xl font-bold">{formatMoney(myBalance)} ₽</p>
+              )}
             </div>
             <MyWorkCalendar
               userId={userId}

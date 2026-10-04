@@ -5,6 +5,9 @@ import SalaryRatesCard from '@/components/crm/finance/SalaryRatesCard';
 import CashBoxCard from '@/components/crm/finance/CashBoxCard';
 import MissedAccrualsAlert from '@/components/crm/finance/MissedAccrualsAlert';
 import AdminOperationsPanel from '@/components/crm/finance/AdminOperationsPanel';
+import BlockSkeleton from '@/components/crm/finance/BlockSkeleton';
+import { useIdleMount } from '@/components/crm/finance/useIdleMount';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
 import type { Employee } from '@/lib/usersApi';
 import type {
@@ -52,6 +55,8 @@ interface AdminFinanceViewProps {
   cashBalance: number;
   cashTransactions: CashBoxTransaction[];
   cashLoading: boolean;
+  /** Скелетон сводки — только до первого ответа, перезагрузки не прячут цифры. */
+  summaryLoading?: boolean;
   onCashDeposit: (amount: number, description: string) => Promise<void>;
   onUpdateRate: (id: number, rate: number) => Promise<void>;
   payouts: SalaryPayout[];
@@ -102,6 +107,7 @@ const AdminFinanceView = ({
   cashBalance,
   cashTransactions,
   cashLoading,
+  summaryLoading,
   onCashDeposit,
   onUpdateRate,
   payouts,
@@ -112,7 +118,13 @@ const AdminFinanceView = ({
   operationsError = null,
   cashError = null,
   onRetryCash,
-}: AdminFinanceViewProps) => (
+}: AdminFinanceViewProps) => {
+  // Тарифы — тяжёлый блок ниже первого экрана со своими запросами (цеха → ставки).
+  // Монтируем после первого paint, чтобы не душить начисления/сводку; до этого —
+  // оболочка карточки той же формы.
+  const ratesReady = useIdleMount(300);
+
+  return (
   <CrmLayout>
     <div className="space-y-6">
       <h1 className="text-xl font-bold">Финансы компании</h1>
@@ -190,7 +202,7 @@ const AdminFinanceView = ({
             }}
             period1Total={period1Total}
             period2Total={period2Total}
-            loading={operationsLoading}
+            loading={summaryLoading ?? operationsLoading}
           />
         </div>
       </div>
@@ -203,7 +215,18 @@ const AdminFinanceView = ({
           saving={savingAccrual}
           onDeposit={onCashDeposit}
         />
-        <SalaryRatesCard onUpdate={onUpdateRate} />
+        {ratesReady ? (
+          <SalaryRatesCard onUpdate={onUpdateRate} />
+        ) : (
+          <Card className="border-border shadow-none">
+            <CardHeader>
+              <CardTitle className="text-base">Тарифы по ролям</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <BlockSkeleton rows={4} />
+            </CardContent>
+          </Card>
+        )}
       </div>
 
       <SalaryPayoutsTable
@@ -214,6 +237,7 @@ const AdminFinanceView = ({
       />
     </div>
   </CrmLayout>
-);
+  );
+};
 
 export default AdminFinanceView;
