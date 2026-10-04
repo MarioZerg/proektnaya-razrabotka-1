@@ -10,6 +10,7 @@ import type { SalaryOperation } from '@/lib/salaryApi';
 import { roleLabels } from '@/lib/roles';
 import {
   accrualTypeLabels,
+  financeOrderLabel,
   formatAccrualShift,
   formatDate,
   formatDateTime,
@@ -244,19 +245,26 @@ const AccrualRow = ({
   onReload: () => void;
 }) => {
   const meters = parseMeters(op.description);
+  const orderLabel = financeOrderLabel(op.orderNumber);
   return (
     <div className="min-w-0 border-t border-border px-3 py-2.5">
       <div className="flex items-start justify-between gap-2">
-        <div className="min-w-0">
+        <div className="min-w-0 flex-1">
           <p className="text-sm font-medium leading-snug">
             {accrualTypeLabels[op.type] || op.type}
-            {op.orderNumber ? ` · #${op.orderNumber}` : ''}
           </p>
+          {orderLabel ? (
+            <p className="mt-0.5 break-all text-sm font-semibold leading-snug">
+              Заказ {orderLabel}
+            </p>
+          ) : null}
           {op.description ? (
-            <p className="mt-0.5 text-xs leading-snug text-muted-foreground">{op.description}</p>
+            <p className="mt-0.5 break-words text-xs leading-snug text-muted-foreground">
+              {op.description}
+            </p>
           ) : null}
           {formatAccrualShift(op) ? (
-            <p className="mt-0.5 text-xs text-muted-foreground">
+            <p className="mt-0.5 break-words text-xs text-muted-foreground">
               {formatAccrualShift(op)}
               {op.shiftIsGuest ? ' · гость' : ''}
             </p>
@@ -270,7 +278,6 @@ const AccrualRow = ({
         {meters != null && <span>{formatMeters(meters)} пог.м.</span>}
         <span>{op.paidAt ? `выплачено ${formatDateTime(op.paidAt)}` : 'ожидает выплаты'}</span>
         <span>создано {formatDateTime(op.createdAt)}</span>
-        <span>#{op.id}</span>
       </div>
       <div className="mt-2">
         <OperationActions

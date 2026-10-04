@@ -4,6 +4,24 @@ import { formatTime } from '@/lib/dateUtils';
 export const formatMoney = (n: number) =>
   n.toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
+/**
+ * Номер заказа для финансов: заказ покупателя, а не строка/позиция в нашей БД.
+ *
+ * OZON часто хранит posting вида `01234567-0001` — суффикс это позиция в отправлении.
+ * Сотруднику и админу нужен номер заказа `01234567`. Внутренние `00000-N` не трогаем.
+ * После деплоя salary бэкенд уже отдаёт готовый ярлык; эта функция — страховка
+ * для старых ответов и описаний.
+ */
+export const financeOrderLabel = (orderNumber: string | null | undefined): string | null => {
+  if (!orderNumber) return null;
+  const n = String(orderNumber).trim();
+  if (!n) return null;
+  if (/^00000-\d+$/i.test(n)) return n;
+  const ozon = n.match(/^(\d{8,})-(\d{1,4})$/);
+  if (ozon) return ozon[1];
+  return n;
+};
+
 export const accrualTypeLabels: Record<string, string> = {
   cutter_cut: 'Раскрой',
   sewer_piece: 'Пошив',

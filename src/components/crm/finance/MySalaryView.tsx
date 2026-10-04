@@ -3,11 +3,13 @@ import Icon from '@/components/ui/icon';
 import MyAccrualsTable from '@/components/crm/finance/MyAccrualsTable';
 import MyAccrualsFilter from '@/components/crm/finance/MyAccrualsFilter';
 import MyPayoutsCard from '@/components/crm/finance/MyPayoutsCard';
+import MyWorkCalendar from '@/components/crm/finance/MyWorkCalendar';
 import { formatMoney } from '@/components/crm/finance/financeShared';
 import type { MyAccrual, MyPayout } from '@/lib/salaryApi';
 import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
 
 interface MySalaryViewProps {
+  userId: number;
   myLocked: boolean;
   myLoading: boolean;
   myError?: string | null;
@@ -33,6 +35,7 @@ interface MySalaryViewProps {
  * это отдельная строка, а не «мне меньше начислили за работу».
  */
 const MySalaryView = ({
+  userId,
   myLocked,
   myLoading,
   myError = null,
@@ -86,33 +89,42 @@ const MySalaryView = ({
           </p>
         </div>
       ) : (
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-4">
-        <div className="order-2 space-y-4 lg:order-1 lg:col-span-3">
-          <MyAccrualsFilter
-            dateFrom={myDateFrom}
-            dateTo={myDateTo}
-            setDateFrom={setMyDateFrom}
-            setDateTo={setMyDateTo}
-            earned={myEarned}
-            penalties={myPenalties}
-            count={myCount}
-            shown={myFiltered.length}
-          />
-          <MyAccrualsTable
-            accruals={myFiltered}
-            loading={myLoading}
-            error={myError}
-            filtered={!!myDateFrom || !!myDateTo}
-          />
-        </div>
-        <div className="order-1 space-y-3 lg:order-2 lg:col-span-1 lg:space-y-6">
-          <div className="rounded-md border border-border p-4">
-            <p className="text-sm text-muted-foreground">К выплате</p>
-            <p className="text-xl font-bold">{formatMoney(myBalance)} ₽</p>
+        <div className="grid grid-cols-1 gap-6 lg:grid-cols-4">
+          <div className="order-2 space-y-4 lg:order-1 lg:col-span-3">
+            <MyAccrualsFilter
+              dateFrom={myDateFrom}
+              dateTo={myDateTo}
+              setDateFrom={setMyDateFrom}
+              setDateTo={setMyDateTo}
+              earned={myEarned}
+              penalties={myPenalties}
+              count={myCount}
+              shown={myFiltered.length}
+            />
+            <MyAccrualsTable
+              accruals={myFiltered}
+              loading={myLoading}
+              error={myError}
+              filtered={!!myDateFrom || !!myDateTo}
+            />
           </div>
-          <MyPayoutsCard payouts={myPayouts} loading={myLoading} />
+          <div className="order-1 space-y-3 lg:order-2 lg:col-span-1 lg:space-y-6">
+            <div className="rounded-md border border-border p-4">
+              <p className="text-sm text-muted-foreground">К выплате</p>
+              <p className="text-xl font-bold">{formatMoney(myBalance)} ₽</p>
+            </div>
+            <MyWorkCalendar
+              userId={userId}
+              selectedFrom={myDateFrom}
+              selectedTo={myDateTo}
+              onSelectDay={(ymd) => {
+                setMyDateFrom(ymd);
+                setMyDateTo(ymd);
+              }}
+            />
+            <MyPayoutsCard payouts={myPayouts} loading={myLoading} />
+          </div>
         </div>
-      </div>
       )}
     </div>
   </CrmLayout>

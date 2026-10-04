@@ -26,6 +26,24 @@ def _esc_date(value: str) -> str:
     return date.fromisoformat(str(value)[:10]).isoformat()
 
 
+# Номер ЗАКАЗА покупателя для финансов — не id строки в нашей БД и не позиция -0001.
+# OZON: из posting убираем суффикс позиции; WB/YM: id площадки; иначе order_number.
+_ORDER_LABEL_SQL = (
+    "COALESCE("
+    "  CASE"
+    "    WHEN o.marketplace = 'OZON' AND NULLIF(TRIM(o.ozon_posting_number), '') IS NOT NULL"
+    "      THEN regexp_replace(TRIM(o.ozon_posting_number), '-[0-9]+$', '')"
+    "    WHEN o.marketplace = 'OZON' AND NULLIF(TRIM(o.order_number), '') IS NOT NULL"
+    "      THEN regexp_replace(TRIM(o.order_number), '-[0-9]+$', '')"
+    "    WHEN o.wb_order_id IS NOT NULL THEN o.wb_order_id::text"
+    "    WHEN o.ym_order_id IS NOT NULL THEN o.ym_order_id::text"
+    "    ELSE NULLIF(TRIM(o.order_number), '')"
+    "  END,"
+    "  NULLIF(TRIM(o.order_number), '')"
+    ")"
+)
+
+
 def log_action(cur, actor_id, actor_name, action, entity_type, entity_id, description, details=None):
     """Пишет запись в журнал действий (audit_log) в той же транзакции перед commit()."""
     cur.execute(
@@ -774,7 +792,8 @@ def handler(event: dict, context) -> dict:
                 # свою и гостевую в чужом цехе — по отчёту сразу видно, что оклад
                 # начислен один раз и за какую именно смену.
                 cur.execute(
-                    "SELECT sa.id, sa.type, sa.amount, sa.description, o.order_number, "
+                    "SELECT sa.id, sa.type, sa.amount, sa.description, "
+                    f"{_ORDER_LABEL_SQL}, "
                     "sa.accrued_for, sa.created_at, sa.paid_at, "
                     "w.name, ss.shift_number, ss.opened_at "
                     "FROM salary_accruals sa LEFT JOIN orders o ON o.id = sa.order_id "
@@ -905,7 +924,7 @@ def handler(event: dict, context) -> dict:
                 )
                 cur.execute(
                     f"SELECT sa.id, sa.user_id, u.full_name, sa.type, sa.amount, sa.description, "
-                    f"o.order_number, sa.accrued_for, sa.created_at, sa.paid_at, "
+                    f"{_ORDER_LABEL_SQL}, sa.accrued_for, sa.created_at, sa.paid_at, "
                     f"w.name, ss.shift_number, ss.opened_at, u.workshop "
                     f"FROM salary_accruals sa JOIN users u ON u.id = sa.user_id "
                     f"LEFT JOIN orders o ON o.id = sa.order_id "

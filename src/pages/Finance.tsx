@@ -364,8 +364,10 @@ const Finance = () => {
   }
 
   if (user?.role !== 'admin') {
+    if (!user?.id) return null;
     return (
       <MySalaryView
+        userId={user.id}
         myLocked={myLocked}
         myLoading={myLoading}
         myError={myError}
