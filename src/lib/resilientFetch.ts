@@ -20,13 +20,54 @@ import { isErrorReportUrl, reportError } from '@/lib/errorReporter';
 /** Сколько ждём ответ, прежде чем считать запрос зависшим. */
 const TIMEOUT_MS = 20000;
 
-/** Сколько раз повторяем чтение при обрыве связи. */
-const RETRIES = 2;
+/** Сколько раз повторяем чтение при обрыве связи или перегрузке сервера. */
+const RETRIES = 3;
 
 /** Пауза перед повтором — даём связи восстановиться. */
 const RETRY_DELAY_MS = 700;
 
+/**
+ * Ответы «сервер перегружен»: база отвечает «rate limit exceeded», функция — 502.
+ * Это не ошибка данных, а пик нагрузки, когда страница одновременно просит
+ * десяток разделов. Чтение в таком случае безопасно повторить через паузу.
+ */
+const RETRY_STATUSES = new Set([429, 502, 503, 504]);
+
+/**
+ * Сколько запросов к нашим функциям идёт одновременно.
+ * Дашборд и зарплата при открытии запрашивали 10–15 разделов разом —
+ * база не выдерживала пик и часть блоков показывала «ничего не найдено».
+ * Очередь растягивает пик на доли секунды, зато все блоки получают данные.
+ */
+const MAX_PARALLEL = 4;
+
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+let active = 0;
+const queue: Array<() => void> = [];
+
+const acquire = (): Promise<void> => {
+  if (active < MAX_PARALLEL) {
+    active += 1;
+    return Promise.resolve();
+  }
+  return new Promise((resolve) => {
+    queue.push(() => {
+      active += 1;
+      resolve();
+    });
+  });
+};
+
+const release = () => {
+  active = Math.max(0, active - 1);
+  const next = queue.shift();
+  if (next) next();
+};
+
+/** Пауза с разбросом: повторы разных блоков не должны прийти в базу одной пачкой. */
+const backoff = (attempt: number) =>
+  RETRY_DELAY_MS * (attempt + 1) + Math.floor(Math.random() * 500);
 
 /** Наши серверные запросы: только их имеет смысл повторять. */
 const isAppRequest = (url: string): boolean =>
@@ -75,16 +116,26 @@ export const setupResilientFetch = () => {
 
     for (let attempt = 0; attempt <= RETRIES; attempt += 1) {
       const controller = hasOwnSignal ? null : new AbortController();
-      const timer = controller
-        ? window.setTimeout(() => controller.abort(), TIMEOUT_MS)
-        : null;
+      let timer: number | null = null;
 
+      await acquire();
       try {
+        // Таймер — только на сам запрос, а не на ожидание в очереди.
+        timer = controller ? window.setTimeout(() => controller.abort(), TIMEOUT_MS) : null;
         const response = await originalFetch(input, {
           ...init,
           ...(controller ? { signal: controller.signal } : {}),
         });
         if (timer) window.clearTimeout(timer);
+
+        // Перегрузка — тихо повторяем, пока есть попытки: пользователь не должен
+        // видеть пустой блок из-за минутного пика.
+        if (RETRY_STATUSES.has(response.status) && attempt < RETRIES) {
+          release();
+          await wait(backoff(attempt));
+          continue;
+        }
+
         // Сервер ответил отказом — пишем в журнал сбоев. Раньше такие ответы
         // были видны только в консоли планшета: раздел оставался пустым, а
         // причина исчезала вместе с закрытой вкладкой.
@@ -96,9 +147,11 @@ export const setupResilientFetch = () => {
             message: `Функция ответила ошибкой ${response.status}: ${url}`,
           });
         }
+        release();
         return response;
       } catch (error) {
         if (timer) window.clearTimeout(timer);
+        release();
         lastError = error;
 
         // Запрос отменило само приложение — повторять нечего.
@@ -107,7 +160,7 @@ export const setupResilientFetch = () => {
         // Попытки кончились — отдаём ошибку наверх, как раньше.
         if (attempt === RETRIES) break;
 
-        await wait(RETRY_DELAY_MS * (attempt + 1));
+        await wait(backoff(attempt));
       }
     }
 

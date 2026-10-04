@@ -1,4 +1,5 @@
 import json
+import time
 import os
 from datetime import date, timedelta
 
@@ -41,6 +42,212 @@ def log_action(cur, actor_id, actor_name, action, entity_type, entity_id, descri
             json.dumps(details) if details else None,
         ),
     )
+
+
+
+# Служебные начисления (оклад админа, премии швей, разовые премии) раньше шли
+# при КАЖДОМ чтении зарплаты: дашборд, шапка и вкладка зарплаты дёргали функцию
+# по 10 раз за открытие страницы, и каждый раз — пачка запросов на запись.
+# База отвечала «rate limit exceeded», и на мобильных блоки показывали «ничего
+# не найдено». Теперь служебная часть идёт не чаще раза в _HOUSEKEEP_EVERY с
+# на тёплый контейнер. Начисления идемпотентны (проверки и уникальные индексы),
+# поэтому редкий запуск ничего не теряет — день выплаты всё равно не проскочит.
+_HOUSEKEEP_EVERY = 300
+_HOUSEKEEP_AT = [0.0]
+
+
+def _housekeeping(conn, cur):
+    now_mono = time.monotonic()
+    if _HOUSEKEEP_AT[0] and now_mono - _HOUSEKEEP_AT[0] < _HOUSEKEEP_EVERY:
+        return
+    _HOUSEKEEP_AT[0] = now_mono
+    try:
+        # Дневной оклад администратора — создаём один раз в день при любом заходе сюда.
+        # Тариф берётся по цеху, указанному в профиле админа (users.workshop -> workshops.name);
+        # если цех не указан — берём тариф первого по списку цеха как запасной вариант.
+        cur.execute(
+            "SELECT u.id, COALESCE(w.id, (SELECT id FROM workshops ORDER BY id LIMIT 1)) "
+            "FROM users u LEFT JOIN workshops w ON w.name = CASE WHEN u.workshop IN ('Цех №2', 'Тестовый цех (QA)') THEN 'Цех №1' ELSE u.workshop END "
+            "WHERE u.role = 'admin' AND u.is_active = true"
+        )
+        admin_workshop_rows = cur.fetchall()
+        admin_rows = []
+        for admin_user_id, admin_workshop_id in admin_workshop_rows:
+            if admin_workshop_id is None:
+                continue
+            cur.execute(
+                "SELECT rate FROM salary_rates WHERE role = 'admin' AND workshop_id = %s",
+                (admin_workshop_id,),
+            )
+            rate_row = cur.fetchone()
+            if rate_row and float(rate_row[0]) > 0:
+                admin_rows.append((float(rate_row[0]), admin_user_id))
+        for rate, admin_user_id in admin_rows:
+            cur.execute(
+                # «Сегодня» считаем по Москве: база живёт в UTC, и после 21:00 МСК
+                # там уже следующие сутки — оклад начислялся бы дважды за один день.
+                "SELECT id FROM salary_accruals WHERE user_id = %s AND type = 'admin_daily' "
+                "AND accrued_for = (now() + interval '3 hours')::date",
+                (admin_user_id,),
+            )
+            if cur.fetchone():
+                continue
+            cur.execute(
+                f"INSERT INTO salary_accruals (user_id, type, amount, description, accrued_for) "
+                f"VALUES ({admin_user_id}, 'admin_daily', {float(rate)}, "
+                f"        'Оклад администратора за день', (now() + interval '3 hours')::date)"
+            )
+        if admin_rows:
+            conn.commit()
+
+        # --- Бонусная программа швей ------------------------------------------
+        # 5000 пог.м., сданных на стикеровку за календарный месяц, дают +10 000 ₽.
+        # Первый расчётный период — сентябрь 2026.
+        #
+        # Начисление за прошедший месяц происходит САМО при первом обращении к
+        # зарплате в новом месяце: планировщика задач у платформы нет, а привязка
+        # к чьему-то входу надёжнее ручной кнопки — премию невозможно забыть
+        # начислить. От повторов защищает уникальный индекс в sewer_monthly_bonus.
+        bonus_month_start = date.today().replace(day=1)
+        # Месяц, за который считаем: предыдущий по отношению к текущему.
+        if bonus_month_start.month == 1:
+            prev_month = date(bonus_month_start.year - 1, 12, 1)
+        else:
+            prev_month = date(bonus_month_start.year, bonus_month_start.month - 1, 1)
+
+        # Программа стартует с сентября 2026 — за более ранние месяцы не платим.
+        if prev_month >= date(2026, 9, 1):
+            cur.execute(
+                "SELECT 1 FROM sewer_monthly_bonus WHERE period_month = %s LIMIT 1",
+                (prev_month,),
+            )
+            if not cur.fetchone():
+                # Метраж считаем по дате сдачи на стикеровку (sewn_at) — именно так
+                # звучит условие программы: «как швея скинула на стикеровку».
+                cur.execute(
+                    "SELECT o.sewer_user_id, SUM(o.width) / 100.0 AS meters "
+                    "FROM orders o "
+                    "WHERE o.sewer_user_id IS NOT NULL AND o.sewn_at >= %s "
+                    "  AND o.sewn_at < %s AND COALESCE(o.status, '') <> 'Отменён' "
+                    "GROUP BY o.sewer_user_id HAVING SUM(o.width) / 100.0 >= %s",
+                    (prev_month, bonus_month_start, BONUS_METERS_TARGET),
+                )
+                for bonus_user_id, bonus_meters in cur.fetchall():
+                    cur.execute(
+                        "INSERT INTO salary_accruals (user_id, type, amount, description, accrued_for) "
+                        "VALUES (%s, 'bonus', %s, %s, %s) RETURNING id",
+                        (
+                            bonus_user_id,
+                            BONUS_AMOUNT,
+                            f'Бонус за выработку {round(float(bonus_meters))} пог.м. '
+                            f'за {prev_month.strftime("%m.%Y")}',
+                            bonus_month_start,
+                        ),
+                    )
+                    bonus_accrual_id = cur.fetchone()[0]
+                    cur.execute(
+                        "INSERT INTO sewer_monthly_bonus "
+                        "(user_id, period_month, meters, amount, accrual_id) "
+                        "VALUES (%s, %s, %s, %s, %s) ON CONFLICT (user_id, period_month) DO NOTHING",
+                        (bonus_user_id, prev_month, round(float(bonus_meters), 2),
+                         BONUS_AMOUNT, bonus_accrual_id),
+                    )
+                conn.commit()
+
+        # --- Дневные акции швей -----------------------------------------------
+        # Разовый вызов на один день: N пог.м. УПАКОВАНО за день → фиксированная
+        # сумма на баланс. Считаем именно по упаковке (packed_at), а не по сдаче на
+        # стикеровку: иначе метры засчитывались за факт сдачи, и вещь могла спокойно
+        # лежать неупакованной — мотивации закрыть день не возникало. Условия лежат в sewer_daily_challenges, поэтому новую
+        # акцию можно объявить строкой в таблице, не трогая код.
+        #
+        # Начисляем за ЗАВЕРШЁННЫЕ дни: пока день идёт, метраж ещё растёт и платить
+        # рано. Как и месячная премия, расчёт цепляется к обращению за зарплатой —
+        # планировщика у платформы нет, а забыть начислить нельзя.
+        cur.execute(
+            "SELECT c.challenge_date, c.target_meters, c.amount FROM sewer_daily_challenges c "
+            "WHERE c.challenge_date < %s "
+            "  AND EXISTS (SELECT 1 FROM orders o WHERE o.packed_at::date = c.challenge_date) "
+            "  AND NOT EXISTS (SELECT 1 FROM sewer_daily_settled s "
+            "                  WHERE s.challenge_date = c.challenge_date) "
+            "ORDER BY c.challenge_date",
+            (date.today(),),
+        )
+        for ch_date, ch_target, ch_amount in cur.fetchall():
+            # Платим ПО ФАКТУ метража, без оглядки на смену: если человек сдал норму,
+            # деньги его — даже если смену в тот день забыли открыть на терминале.
+            # Фильтр по смене есть только в показе шкалы, чтобы не выводить туда тех,
+            # кто сегодня не работает.
+            cur.execute(
+                "SELECT o.sewer_user_id, SUM(o.width) / 100.0 AS meters "
+                "FROM orders o "
+                "WHERE o.sewer_user_id IS NOT NULL AND o.packed_at::date = %s "
+                "  AND COALESCE(o.status, '') <> 'Отменён' "
+                "GROUP BY o.sewer_user_id HAVING SUM(o.width) / 100.0 >= %s",
+                (ch_date, ch_target),
+            )
+            for d_user_id, d_meters in cur.fetchall():
+                cur.execute(
+                    "INSERT INTO salary_accruals (user_id, type, amount, description, accrued_for) "
+                    "VALUES (%s, 'bonus', %s, %s, %s) RETURNING id",
+                    (
+                        d_user_id,
+                        ch_amount,
+                        f'Акция дня {ch_date.strftime("%d.%m.%Y")}: '
+                        f'{round(float(d_meters))} пог.м. упаковано',
+                        ch_date,
+                    ),
+                )
+                d_accrual_id = cur.fetchone()[0]
+                cur.execute(
+                    "INSERT INTO sewer_daily_bonus "
+                    "(user_id, challenge_date, meters, amount, accrual_id) "
+                    "VALUES (%s, %s, %s, %s, %s) ON CONFLICT (user_id, challenge_date) DO NOTHING",
+                    (d_user_id, ch_date, round(float(d_meters), 2), ch_amount, d_accrual_id),
+                )
+            # Помечаем день посчитанным — даже если цель не взял никто. Иначе этот
+            # же день пересчитывался бы при каждом обращении к зарплате.
+            cur.execute(
+                "INSERT INTO sewer_daily_settled (challenge_date) VALUES (%s) "
+                "ON CONFLICT (challenge_date) DO NOTHING",
+                (ch_date,),
+            )
+            conn.commit()
+
+        # --- Разовые именные премии (one_time_awards) --------------------------
+        # Премия назначается заранее: сотрудник видит на главной карточку с
+        # таймером «начислится такого-то числа», а в назначенный день деньги
+        # сами падают на баланс. Планировщика у платформы нет, поэтому расчёт,
+        # как и у премий швей, цепляется к любому обращению за зарплатой —
+        # страницу зарплаты открывают десятки раз в день, день выплаты не
+        # проскочит незамеченным.
+        #
+        # ЗАПЛАТИТЬ РОВНО ОДИН РАЗ — главное требование. Поэтому строки не
+        # «читаем, потом обновляем», а сразу забираем UPDATE ... RETURNING:
+        # он отбирает только ещё не оплаченные и в той же транзакции помечает
+        # их оплаченными. Параллельный вызов, пришедший в ту же секунду,
+        # дождётся блокировки и не увидит уже ни одной строки — дубля не будет.
+        cur.execute(
+            "UPDATE one_time_awards SET paid_at = now() "
+            "WHERE paid_at IS NULL AND pay_on <= (now() + interval '3 hours')::date "
+            "RETURNING id, user_id, amount, title, pay_on"
+        )
+        for aw_id, aw_user_id, aw_amount, aw_title, aw_pay_on in cur.fetchall():
+            cur.execute(
+                "INSERT INTO salary_accruals (user_id, type, amount, description, accrued_for) "
+                "VALUES (%s, 'bonus', %s, %s, %s) RETURNING id",
+                (aw_user_id, aw_amount, aw_title, aw_pay_on),
+            )
+            cur.execute(
+                "UPDATE one_time_awards SET accrual_id = %s WHERE id = %s",
+                (cur.fetchone()[0], aw_id),
+            )
+        conn.commit()
+
+    except Exception as e:
+        conn.rollback()
+        _HOUSEKEEP_AT[0] = 0.0
+        print(f'[salary] служебные начисления отложены: {e}', flush=True)
 
 
 def handler(event: dict, context) -> dict:
@@ -163,187 +370,7 @@ def handler(event: dict, context) -> dict:
         try:
             cur = conn.cursor()
 
-            # Дневной оклад администратора — создаём один раз в день при любом заходе сюда.
-            # Тариф берётся по цеху, указанному в профиле админа (users.workshop -> workshops.name);
-            # если цех не указан — берём тариф первого по списку цеха как запасной вариант.
-            cur.execute(
-                "SELECT u.id, COALESCE(w.id, (SELECT id FROM workshops ORDER BY id LIMIT 1)) "
-                "FROM users u LEFT JOIN workshops w ON w.name = CASE WHEN u.workshop IN ('Цех №2', 'Тестовый цех (QA)') THEN 'Цех №1' ELSE u.workshop END "
-                "WHERE u.role = 'admin' AND u.is_active = true"
-            )
-            admin_workshop_rows = cur.fetchall()
-            admin_rows = []
-            for admin_user_id, admin_workshop_id in admin_workshop_rows:
-                if admin_workshop_id is None:
-                    continue
-                cur.execute(
-                    "SELECT rate FROM salary_rates WHERE role = 'admin' AND workshop_id = %s",
-                    (admin_workshop_id,),
-                )
-                rate_row = cur.fetchone()
-                if rate_row and float(rate_row[0]) > 0:
-                    admin_rows.append((float(rate_row[0]), admin_user_id))
-            for rate, admin_user_id in admin_rows:
-                cur.execute(
-                    # «Сегодня» считаем по Москве: база живёт в UTC, и после 21:00 МСК
-                    # там уже следующие сутки — оклад начислялся бы дважды за один день.
-                    "SELECT id FROM salary_accruals WHERE user_id = %s AND type = 'admin_daily' "
-                    "AND accrued_for = (now() + interval '3 hours')::date",
-                    (admin_user_id,),
-                )
-                if cur.fetchone():
-                    continue
-                cur.execute(
-                    f"INSERT INTO salary_accruals (user_id, type, amount, description, accrued_for) "
-                    f"VALUES ({admin_user_id}, 'admin_daily', {float(rate)}, "
-                    f"        'Оклад администратора за день', (now() + interval '3 hours')::date)"
-                )
-            if admin_rows:
-                conn.commit()
-
-            # --- Бонусная программа швей ------------------------------------------
-            # 5000 пог.м., сданных на стикеровку за календарный месяц, дают +10 000 ₽.
-            # Первый расчётный период — сентябрь 2026.
-            #
-            # Начисление за прошедший месяц происходит САМО при первом обращении к
-            # зарплате в новом месяце: планировщика задач у платформы нет, а привязка
-            # к чьему-то входу надёжнее ручной кнопки — премию невозможно забыть
-            # начислить. От повторов защищает уникальный индекс в sewer_monthly_bonus.
-            bonus_month_start = date.today().replace(day=1)
-            # Месяц, за который считаем: предыдущий по отношению к текущему.
-            if bonus_month_start.month == 1:
-                prev_month = date(bonus_month_start.year - 1, 12, 1)
-            else:
-                prev_month = date(bonus_month_start.year, bonus_month_start.month - 1, 1)
-
-            # Программа стартует с сентября 2026 — за более ранние месяцы не платим.
-            if prev_month >= date(2026, 9, 1):
-                cur.execute(
-                    "SELECT 1 FROM sewer_monthly_bonus WHERE period_month = %s LIMIT 1",
-                    (prev_month,),
-                )
-                if not cur.fetchone():
-                    # Метраж считаем по дате сдачи на стикеровку (sewn_at) — именно так
-                    # звучит условие программы: «как швея скинула на стикеровку».
-                    cur.execute(
-                        "SELECT o.sewer_user_id, SUM(o.width) / 100.0 AS meters "
-                        "FROM orders o "
-                        "WHERE o.sewer_user_id IS NOT NULL AND o.sewn_at >= %s "
-                        "  AND o.sewn_at < %s AND COALESCE(o.status, '') <> 'Отменён' "
-                        "GROUP BY o.sewer_user_id HAVING SUM(o.width) / 100.0 >= %s",
-                        (prev_month, bonus_month_start, BONUS_METERS_TARGET),
-                    )
-                    for bonus_user_id, bonus_meters in cur.fetchall():
-                        cur.execute(
-                            "INSERT INTO salary_accruals (user_id, type, amount, description, accrued_for) "
-                            "VALUES (%s, 'bonus', %s, %s, %s) RETURNING id",
-                            (
-                                bonus_user_id,
-                                BONUS_AMOUNT,
-                                f'Бонус за выработку {round(float(bonus_meters))} пог.м. '
-                                f'за {prev_month.strftime("%m.%Y")}',
-                                bonus_month_start,
-                            ),
-                        )
-                        bonus_accrual_id = cur.fetchone()[0]
-                        cur.execute(
-                            "INSERT INTO sewer_monthly_bonus "
-                            "(user_id, period_month, meters, amount, accrual_id) "
-                            "VALUES (%s, %s, %s, %s, %s) ON CONFLICT (user_id, period_month) DO NOTHING",
-                            (bonus_user_id, prev_month, round(float(bonus_meters), 2),
-                             BONUS_AMOUNT, bonus_accrual_id),
-                        )
-                    conn.commit()
-
-            # --- Дневные акции швей -----------------------------------------------
-            # Разовый вызов на один день: N пог.м. УПАКОВАНО за день → фиксированная
-            # сумма на баланс. Считаем именно по упаковке (packed_at), а не по сдаче на
-            # стикеровку: иначе метры засчитывались за факт сдачи, и вещь могла спокойно
-            # лежать неупакованной — мотивации закрыть день не возникало. Условия лежат в sewer_daily_challenges, поэтому новую
-            # акцию можно объявить строкой в таблице, не трогая код.
-            #
-            # Начисляем за ЗАВЕРШЁННЫЕ дни: пока день идёт, метраж ещё растёт и платить
-            # рано. Как и месячная премия, расчёт цепляется к обращению за зарплатой —
-            # планировщика у платформы нет, а забыть начислить нельзя.
-            cur.execute(
-                "SELECT c.challenge_date, c.target_meters, c.amount FROM sewer_daily_challenges c "
-                "WHERE c.challenge_date < %s "
-                "  AND EXISTS (SELECT 1 FROM orders o WHERE o.packed_at::date = c.challenge_date) "
-                "  AND NOT EXISTS (SELECT 1 FROM sewer_daily_settled s "
-                "                  WHERE s.challenge_date = c.challenge_date) "
-                "ORDER BY c.challenge_date",
-                (date.today(),),
-            )
-            for ch_date, ch_target, ch_amount in cur.fetchall():
-                # Платим ПО ФАКТУ метража, без оглядки на смену: если человек сдал норму,
-                # деньги его — даже если смену в тот день забыли открыть на терминале.
-                # Фильтр по смене есть только в показе шкалы, чтобы не выводить туда тех,
-                # кто сегодня не работает.
-                cur.execute(
-                    "SELECT o.sewer_user_id, SUM(o.width) / 100.0 AS meters "
-                    "FROM orders o "
-                    "WHERE o.sewer_user_id IS NOT NULL AND o.packed_at::date = %s "
-                    "  AND COALESCE(o.status, '') <> 'Отменён' "
-                    "GROUP BY o.sewer_user_id HAVING SUM(o.width) / 100.0 >= %s",
-                    (ch_date, ch_target),
-                )
-                for d_user_id, d_meters in cur.fetchall():
-                    cur.execute(
-                        "INSERT INTO salary_accruals (user_id, type, amount, description, accrued_for) "
-                        "VALUES (%s, 'bonus', %s, %s, %s) RETURNING id",
-                        (
-                            d_user_id,
-                            ch_amount,
-                            f'Акция дня {ch_date.strftime("%d.%m.%Y")}: '
-                            f'{round(float(d_meters))} пог.м. упаковано',
-                            ch_date,
-                        ),
-                    )
-                    d_accrual_id = cur.fetchone()[0]
-                    cur.execute(
-                        "INSERT INTO sewer_daily_bonus "
-                        "(user_id, challenge_date, meters, amount, accrual_id) "
-                        "VALUES (%s, %s, %s, %s, %s) ON CONFLICT (user_id, challenge_date) DO NOTHING",
-                        (d_user_id, ch_date, round(float(d_meters), 2), ch_amount, d_accrual_id),
-                    )
-                # Помечаем день посчитанным — даже если цель не взял никто. Иначе этот
-                # же день пересчитывался бы при каждом обращении к зарплате.
-                cur.execute(
-                    "INSERT INTO sewer_daily_settled (challenge_date) VALUES (%s) "
-                    "ON CONFLICT (challenge_date) DO NOTHING",
-                    (ch_date,),
-                )
-                conn.commit()
-
-            # --- Разовые именные премии (one_time_awards) --------------------------
-            # Премия назначается заранее: сотрудник видит на главной карточку с
-            # таймером «начислится такого-то числа», а в назначенный день деньги
-            # сами падают на баланс. Планировщика у платформы нет, поэтому расчёт,
-            # как и у премий швей, цепляется к любому обращению за зарплатой —
-            # страницу зарплаты открывают десятки раз в день, день выплаты не
-            # проскочит незамеченным.
-            #
-            # ЗАПЛАТИТЬ РОВНО ОДИН РАЗ — главное требование. Поэтому строки не
-            # «читаем, потом обновляем», а сразу забираем UPDATE ... RETURNING:
-            # он отбирает только ещё не оплаченные и в той же транзакции помечает
-            # их оплаченными. Параллельный вызов, пришедший в ту же секунду,
-            # дождётся блокировки и не увидит уже ни одной строки — дубля не будет.
-            cur.execute(
-                "UPDATE one_time_awards SET paid_at = now() "
-                "WHERE paid_at IS NULL AND pay_on <= (now() + interval '3 hours')::date "
-                "RETURNING id, user_id, amount, title, pay_on"
-            )
-            for aw_id, aw_user_id, aw_amount, aw_title, aw_pay_on in cur.fetchall():
-                cur.execute(
-                    "INSERT INTO salary_accruals (user_id, type, amount, description, accrued_for) "
-                    "VALUES (%s, 'bonus', %s, %s, %s) RETURNING id",
-                    (aw_user_id, aw_amount, aw_title, aw_pay_on),
-                )
-                cur.execute(
-                    "UPDATE one_time_awards SET accrual_id = %s WHERE id = %s",
-                    (cur.fetchone()[0], aw_id),
-                )
-            conn.commit()
+            _housekeeping(conn, cur)
 
             if params.get('myAward'):
                 # Своя разовая премия для карточки на главной: отдаём только ещё не
