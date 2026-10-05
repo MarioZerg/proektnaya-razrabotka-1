@@ -464,6 +464,62 @@ def _read_page(url: str) -> str:
         return f'Не удалось открыть страницу: {e}'
 
 
+# Справка 1С:Фреш (1cfresh.com/articles/faq*): выгружена в fresh_faq.json,
+# ищем по словам вопроса без похода в интернет.
+FRESH_FAQ_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'fresh_faq.json')
+_FRESH_FAQ = None
+
+
+def _fresh_faq():
+    global _FRESH_FAQ
+    if _FRESH_FAQ is None:
+        try:
+            with open(FRESH_FAQ_PATH, encoding='utf-8') as f:
+                _FRESH_FAQ = json.load(f)
+        except (OSError, json.JSONDecodeError):
+            _FRESH_FAQ = []
+    return _FRESH_FAQ
+
+
+def _fresh_words(text: str) -> list:
+    words = re.findall(r'[a-zа-яё0-9]+', (text or '').lower().replace('ё', 'е'))
+    stop = {'как', 'что', 'где', 'для', 'это', 'мне', 'мой', 'мои', 'при', 'или', 'мы',
+            'мою', 'нам', 'мне', 'мной', 'мная', 'можно', 'нужно', 'делать', 'мес', 'фреш',
+            '1с', 'fresh', '1cfresh', 'в', 'на', 'и', 'с', 'по', 'не', 'из', 'к', 'о', 'у'}
+    # Грубая основа слова: первые 5 букв — «приложения» ≈ «приложение».
+    return [w[:5] if len(w) > 5 else w for w in words if w not in stop and len(w) > 1]
+
+
+def _fresh_help(query: str) -> str:
+    """Ищет ответ в официальном FAQ 1С:Фреш."""
+    items = _fresh_faq()
+    if not items:
+        return 'Справка 1С:Фреш недоступна — открой https://1cfresh.com/articles/faq через read_page.'
+    qw = set(_fresh_words(query))
+    if not qw:
+        return 'Пустой запрос'
+    scored = []
+    for it in items:
+        qs = set(_fresh_words(it.get('q', '')))
+        body = set(_fresh_words(it.get('a', '')))
+        score = 3 * len(qw & qs) + len(qw & body)
+        if score:
+            scored.append((score, it))
+    scored.sort(key=lambda x: -x[0])
+    top = [it for _, it in scored[:4]]
+    if not top:
+        return ('В FAQ 1С:Фреш точного ответа нет. Посмотри алфавитный перечень '
+                'https://1cfresh.com/articles/faq_all (read_page) или '
+                'web_search «site:1cfresh.com ...».')
+    parts = []
+    for it in top:
+        parts.append(
+            f"[{it.get('s')}] {it.get('q')}\n{it.get('a')}\nИсточник: {it.get('url')}"
+        )
+    return ('СПРАВКА 1С:ФРЕШ (официальная, 1cfresh.com; платформа 8.5):\n\n'
+            + '\n\n---\n\n'.join(parts))[:12000]
+
+
 MAX_ATTACH = 3
 MAX_ATTACH_BYTES = 20 * 1024 * 1024
 MAX_DOC_CHARS = 40000
@@ -1454,11 +1510,22 @@ ACCOUNTANT_SYSTEM_PROMPT = """Ты — МЕГАБУХ, живой бухгалт
 1) Бухгалтерский учёт РФ: УСН, НДС, взносы, НДФЛ, касса, первичка, ЭДО, договоры.
 2) Кадровый учёт для бухгалтерии: приём, перевод, увольнение, отпуск, больничный,
    трудовой / ГПХ / самозанятый, ЕФС-1, РСВ, 6-НДФЛ, воинский учёт в части отчётности.
-3) Программы и кнопки. 1С — текущая линейка, не «старая восьмёрка»:
-   - «1С:Бухгалтерия 8.3» = платформа «1С:Предприятие 8.3» + конфигурация
-     «Бухгалтерия предприятия» редакция 3.0 (ПРОФ, КОРП, базовая, облако 1С:Фреш).
-     Отдельно «Бухгалтерии 8.4» нет: новые — релизы 3.0.20x и платформа 8.3.2x
-     (смотри «Что нового», не выдумывай номер).
+3) Программы и кнопки. МЫ РАБОТАЕМ В ОБЛАКЕ 1С:ФРЕШ (1cfresh.com) на платформе
+   «1С:Предприятие 8.5» (в сервисе сейчас 8.5.1 / 8.5.4) — это наша основная 1С.
+   - Конфигурация — «Бухгалтерия предприятия» редакция 3.0 в облаке 1С:Фреш
+     (релизы 3.0.20x). Не путай номер платформы (8.5) с редакцией конфигурации (3.0).
+     Интерфейс и кнопки — как в «коробочной» версии, отличия только в сервисной части:
+     личный кабинет, абонент, приложения, пользователи, резервные копии, тарифы.
+   - Обновления платформы и конфигурации во Фреше ставит сам сервис — бухгалтеру
+     не нужно ничего скачивать и обновлять. Версию смотри: «Сервис и настройки» (☰
+     в правом верхнем углу) → «О программе».
+   - Вопросы про сервис 1С:Фреш (вход, тонкий клиент, браузер, сеансы, блокировки,
+     пользователи и права, резервные копии, выгрузка/загрузка базы, 1С-Отчетность
+     и код абонента, синхронизация, ДиректБанк, 1С-ЭДО, тарифы, поддержка) —
+     СНАЧАЛА вызови fresh_help: там официальная справка 1cfresh.com/articles/faq.
+     Отвечай по ней пошагово и давай ссылку на статью.
+   - Если человек называет «8.3» — для учёта это та же Бухгалтерия 3.0; у нас она
+     во Фреше на 8.5. «Бухгалтерии 8.4/8.5» как отдельной программы нет.
    - Ещё: 1С:ЗУП 3.1, 1С-Отчётность, СБИС/Saby, Контур.Экстерн, Контур.Диадок,
      Астрал, Такском.
    Как заполнить, подписать, отправить отчёт, загрузить требование ФНС, провести УПД,
@@ -1501,7 +1568,7 @@ MEGABUH_WIKI = """
 ОФИЦИАЛЬНЫЕ СПРАВКИ (документация, не блоги). Сначала открой нужный адрес.
 
 1С — «бухгалтерия 8.3» и все новые релизы (это ОДНА линейка)
-Платформа: 1С:Предприятие 8.3 (актуально 8.3.27). Конфигурация: 1С:Бухгалтерия 8,
+Платформа: 1С:Предприятие 8.3 в «коробке»; у НАС — облако 1С:Фреш на платформе 8.5. Конфигурация: 1С:Бухгалтерия 8,
 редакция 3.0 — ПРОФ, КОРП, базовая, 1С:Фреш. Релизы вида 3.0.204, 3.0.205 — это
 «все новые», не другая программа. Сначала открой руководство, потом «Что нового».
 - Руководство по учёту (БП 8.3 / ред. 3.0, в т.ч. КОРП глава 14): https://its.1c.ru/db/bp8doc
@@ -1514,6 +1581,19 @@ MEGABUH_WIKI = """
 - Дистрибутивы и патчи: https://releases.1c.ru
 - 1С-Отчётность, подключить и отправить: https://its.1c.ru/db/elreps
 - 1С:Фреш, документация приложений (Бухгалтерия 8 в облаке): https://1cfresh.com/articles/app_doc
+
+1С:Фреш (НАША 1С, облако 1cfresh.com, платформа 8.5). Сначала fresh_help, потом эти страницы.
+Поддержка Фреша: 8 (800) 333-72-27 (круглосуточно, бесплатно), support@1cfresh.com.
+- FAQ, актуальное: https://1cfresh.com/articles/faq
+- Хочу подключиться: https://1cfresh.com/articles/faq_begin
+- Рекомендации по работе (вход, браузер, тонкий клиент, 1С-Отчетность): https://1cfresh.com/articles/faq_work
+- Приложения (запуск, права, версии, блокировки, расширения): https://1cfresh.com/articles/faq_app
+- Данные (выгрузка/загрузка, резервные копии, синхронизация, банки, ЭДО): https://1cfresh.com/articles/faq_data
+- Пользователи и абонент: https://1cfresh.com/articles/faq_user
+- Тарифы и подписки, сеансы: https://1cfresh.com/articles/faq_plan
+- Служба поддержки: https://1cfresh.com/articles/faq_support
+- Получение сведений: https://1cfresh.com/articles/faq_info
+- Алфавитный перечень всех статей: https://1cfresh.com/articles/faq_all
 - Кадры и зарплата в программах 1С (ЗУП 3.1): https://its.1c.ru/db/staff1c
 
 Точка Банк (счёт Мегатюли, https://tochka.com — не http). Не копируй тарифы из памяти.
@@ -1658,13 +1738,40 @@ ACCOUNTANT_TOOLS = [
     {
         'type': 'function',
         'function': {
+            'name': 'fresh_help',
+            'description': (
+                'Официальная справка сервиса 1С:Фреш (1cfresh.com/articles/faq) — наша 1С '
+                'работает в облаке Фреш на платформе 8.5. Вызывай ПЕРВЫМ на любой вопрос о '
+                'сервисе: вход, браузер, тонкий клиент, сеансы, блокировка объекта, '
+                'пользователи и права, абонент и код абонента, резервные копии, выгрузка и '
+                'загрузка базы, синхронизация, 1С-Отчетность, ЭДО, ДиректБанк, тарифы, '
+                'версия программы, расширения, поддержка.'
+            ),
+            'parameters': {
+                'type': 'object',
+                'properties': {
+                    'query': {
+                        'type': 'string',
+                        'description': (
+                            'Вопрос своими словами, например: "создать резервную копию", '
+                            '"завершить сеанс пользователя", "подключить 1С-Отчетность".'
+                        ),
+                    },
+                },
+                'required': ['query'],
+            },
+        },
+    },
+    {
+        'type': 'function',
+        'function': {
             'name': 'web_search',
             'description': (
                 'Поиск в последнюю очередь — после контекста чата и read_page по каталогу '
                 'ОФИЦИАЛЬНЫЕ СПРАВКИ. Ищет нормы и справки: НК РФ, 402-ФЗ, ПБУ/ФСБУ, Минфин, ФНС '
                 '(nalog.gov.ru, pb.nalog.ru, egrul.nalog.ru, rmsp.nalog.ru, fias.nalog.ru, '
                 'service.nalog.ru, minfin.gov.ru, consultant.ru, publication.pravo.gov.ru), '
-                '1С:ИТС, Точка Банк, Saby/СБИС, Диадок, Экстерн, OZON, WB, Яндекс Маркет. '
+                '1С:ИТС, 1С:Фреш (1cfresh.com), Точка Банк, Saby/СБИС, Диадок, Экстерн, OZON, WB, Яндекс Маркет. '
                 'Всегда добавляй site: нужного домена. Не опирайся на блоги и форумы.'
             ),
             'parameters': {
@@ -1700,7 +1807,7 @@ ACCOUNTANT_TOOLS = [
             'description': (
                 'Открывает страницу официальной справки и возвращает текст. '
                 'Бери адрес из каталога ОФИЦИАЛЬНЫЕ СПРАВКИ или из поиска: '
-                'its.1c.ru, minfin.gov.ru, nalog.gov.ru, pb.nalog.ru, egrul.nalog.ru, '
+                'its.1c.ru, 1cfresh.com, minfin.gov.ru, nalog.gov.ru, pb.nalog.ru, egrul.nalog.ru, '
                 'rmsp.nalog.ru, fias.nalog.ru, service.nalog.ru, consultant.ru, publication.pravo.gov.ru, '
                 'tochka.com, allo.tochka.com, developers.tochka.com, rel.tochka.com, '
                 'saby.ru, support.kontur.ru, kontur.ru, seller-edu.ozon.ru, '
@@ -2096,6 +2203,10 @@ def handler(event: dict, context) -> dict:
                     sql = (args.get('sql') or '').strip()
                     result = _run_select(dsn, schema, sql)
                     slot['q'] = sql
+            elif name == 'fresh_help' and scope == 'accountant':
+                q = (args.get('query') or '').strip()
+                slot['q'] = 'fresh: ' + q
+                result = _fresh_help(q)
             elif name == 'web_search' and scope == 'accountant':
                 q = (args.get('query') or '').strip()
                 slot['q'] = 'search: ' + q
