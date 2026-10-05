@@ -22,6 +22,7 @@ from shared import (
     apply_penalty,
     cancelled_sql,
     cut_queue_order_sql,
+    expand_material_names,
     award_variki,
     can_work_as,
     format_wait,
@@ -226,7 +227,7 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
             cur.execute(
                 "SELECT name FROM materials WHERE id IN (" + allowed_ids_csv + ")"
             )
-            allowed_names = [r[0] for r in cur.fetchall()]
+            allowed_names = expand_material_names([r[0] for r in cur.fetchall()])
 
             if not allowed_names:
                 return {

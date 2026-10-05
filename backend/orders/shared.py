@@ -542,6 +542,30 @@ def write_off_materials_once(cur, order_id, material, width, height, workshop_id
     return None
 
 
+# СИНОНИМЫ НАЗВАНИЙ ТКАНЕЙ.
+#
+# В справочнике материалов ткань называется «Вуаль без утяжелителя», а в карточках
+# товаров (marketplace_items.material) и, следом, в заказах — сокращённо
+# «Вуаль (без ут)». Цех выбирает разрешённые ткани по справочнику, а заказы
+# фильтруются по тексту — и заказы на вуаль без утяжелителя никогда не попадали
+# закройщику: висели в «Новом», хотя ткань цеху разрешена.
+MATERIAL_NAME_ALIASES = {
+    'Вуаль без утяжелителя': ['Вуаль (без ут)'],
+}
+
+
+def expand_material_names(names):
+    """Добавляет к названиям материалов из справочника их синонимы в заказах."""
+    result = []
+    for n in names:
+        if n not in result:
+            result.append(n)
+        for alias in MATERIAL_NAME_ALIASES.get(n, []):
+            if alias not in result:
+                result.append(alias)
+    return result
+
+
 def fabric_uses_4cm_tape(fabric_name, requires_overlock) -> bool:
     """Шьётся ли эта вещь тесьмой 4 см вместо обычной 6 см.
 

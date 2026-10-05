@@ -15,6 +15,7 @@ from shared import (
     CLOSED_ORDERS_LIMIT,
     _fit_orders_body,
     cut_queue_order_sql,
+    expand_material_names,
     get_setting_int,
     overlock_holder,
     overlock_wait_for_order,
@@ -391,7 +392,7 @@ def handle_get(event: dict, headers: dict, dsn: str) -> dict:
                 }
             p_ids_csv = ','.join(str(int(i)) for i in p_allowed)
             cur.execute("SELECT name FROM materials WHERE id IN (" + p_ids_csv + ")")
-            p_names = [r[0] for r in cur.fetchall()]
+            p_names = expand_material_names([r[0] for r in cur.fetchall()])
             if not p_names:
                 return {
                     'statusCode': 200,
