@@ -344,7 +344,8 @@ def handle_get(event: dict, headers: dict, dsn: str) -> dict:
                 'body': json.dumps({
                     'waits': waits,
                     'shiftOpen': ws_row is not None,
-                    'inWork': in_work_count,
+                    # Лимит общий: обычные «В работе» + вещи на оверлоке вместе.
+                    'inWork': in_work_count + overlock_in_work,
                     'maxOrders': max_orders,
                     'overlockWaits': overlock_waits,
                     'overlockInWork': overlock_in_work,

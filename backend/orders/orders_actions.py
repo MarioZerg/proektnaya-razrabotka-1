@@ -1829,12 +1829,17 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
             # вставала из-за очереди на чужом участке — она физически освободила
             # руки, а система держала её закрытой. Теперь ограничение отражает
             # ровно то, что швея реально шьёт прямо сейчас.
+            # ЛИМИТ ОБЩИЙ НА ВСЕ АКТИВНЫЕ ВЕЩИ: «В работе» + взятые на оверлок и ещё
+            # не сданные. Не может быть 2 обычных и параллельно 2 оверлочных —
+            # только 2 активных заказа в сумме.
             max_orders = get_setting_int(cur, session_workshop_id, 'max_quantity_orders_to_seamstress', 0)
             if max_orders > 0 and not finishing_group:
                 cur.execute(
                     "SELECT COUNT(*) FROM orders "
-                    "WHERE assigned_user_id = %s AND sewing_status = 'В работе'",
-                    (int(user_id),),
+                    "WHERE (assigned_user_id = %s AND sewing_status = 'В работе') "
+                    "   OR (overlock_user_id = %s AND overlocked_at IS NULL "
+                    "       AND requires_overlock = true AND sewing_status = 'Раскроено')",
+                    (int(user_id), int(user_id)),
                 )
                 in_work = int(cur.fetchone()[0])
                 if in_work >= max_orders:
@@ -1926,7 +1931,47 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
             # длиннее: сначала оверлок, потом прямострочка. Без этого условия
             # кнопка «Взять заказ» выдала бы швее необмётанный крой, и этап,
             # ради которого всё затевалось, оказался бы пропущен.
-            where_parts.append("(requires_overlock = false OR overlocked_at IS NOT NULL)")
+            overlock_strict_sql = "(requires_overlock = false OR overlocked_at IS NOT NULL)"
+            where_parts.append(overlock_strict_sql)
+
+            # ОВЕРЛОЧНЫЕ ВЕЩИ ИДУТ ПО ОБЩЕЙ ОЧЕРЕДИ — НО ТОЛЬКО ТОЙ, КТО МОЖЕТ СЕСТЬ ЗА МАШИНУ.
+            #
+            # Оверлок в цехе один. Необмётанную вещь выдаём швее, только если:
+            #   · у неё есть допуск к оверлоку;
+            #   · машину сейчас не держит другая швея;
+            #   · у неё на оверлоке меньше лимита (max_overlock_orders_to_seamstress, 2).
+            # Всем остальным очередь отдаёт следующую обычную вещь, пропуская
+            # оверлочные: никто не стоит и не ждёт, пока освободится машина.
+            overlock_ok = False
+            own_overlock_count = 0
+            cur.execute(
+                "SELECT COALESCE(can_overlock, false) FROM users WHERE id = %s",
+                (int(user_id),),
+            )
+            can_ov_row = cur.fetchone()
+            if can_ov_row and can_ov_row[0]:
+                # Две швеи жмут «Получить заказ» одновременно — без блокировки обе
+                # увидели бы свободную машину и получили по оверлочной вещи.
+                cur.execute(
+                    "SELECT pg_advisory_xact_lock(hashtext(%s))",
+                    (f'overlock_ws_{session_workshop_id or 0}',),
+                )
+                holder_id, _holder_name, _hc = overlock_holder(
+                    cur, session_workshop_id, exclude_user_id=user_id
+                )
+                if not holder_id:
+                    max_ov = get_setting_int(
+                        cur, session_workshop_id, 'max_overlock_orders_to_seamstress', 2
+                    )
+                    cur.execute(
+                        "SELECT COUNT(*) FROM orders "
+                        "WHERE overlock_user_id = %s AND overlocked_at IS NULL "
+                        "  AND requires_overlock = true AND sewing_status = 'Раскроено'",
+                        (int(user_id),),
+                    )
+                    own_overlock_count = int(cur.fetchone()[0])
+                    overlock_ok = max_ov <= 0 or own_overlock_count < max_ov
+
             if orders_filter_setting == 'fbo':
                 where_parts.append("order_type = 'FBO'")
             elif orders_filter_setting == 'fbs':
@@ -2007,12 +2052,84 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
             row = cur.fetchone()
 
             if not row:
+                # Швее, которая может сесть за оверлок, в общую очередь добавляем
+                # необмётанные вещи, которые ещё никто не взял. Связки Яндекса сюда
+                # не подмешиваем: их шьёт одна швея целиком, и рвать связку обмёткой
+                # отдельной вещи нельзя — их берут на оверлок вручную.
+                queue_where = list(where_parts)
+                if overlock_ok:
+                    queue_where = [
+                        "(requires_overlock = false OR overlocked_at IS NOT NULL "
+                        " OR (overlock_user_id IS NULL AND group_key IS NULL))"
+                        if p == overlock_strict_sql else p
+                        for p in where_parts
+                    ]
+
+                # ВЕЩЬ, КОТОРУЮ ШВЕЯ ОБМЕТАЛА И ОТДАЛА НА ПОШИВ, ЕЙ ЖЕ НЕ ВОЗВРАЩАЕМ.
+                #
+                # «Передать на пошив» — это её отказ дошивать вещь самой. Если тут же
+                # выдать вещь ей обратно, кнопка теряет смысл. Поэтому такая вещь
+                # достаётся ей снова только после 10 других заказов из очереди,
+                # взятых после обмётки, или когда другой работы в цехе нет.
+                declined_sql = (
+                    f"NOT (overlock_user_id = {int(user_id)} "
+                    "  AND overlocked_at IS NOT NULL "
+                    "  AND (SELECT COUNT(*) FROM orders t "
+                    "       WHERE t.id <> orders.id AND ("
+                    f"         ((t.assigned_user_id = {int(user_id)} "
+                    f"           OR t.sewer_user_id = {int(user_id)}) "
+                    "          AND t.taken_at > orders.overlocked_at) "
+                    f"         OR (t.overlock_user_id = {int(user_id)} "
+                    "          AND t.overlock_taken_at > orders.overlocked_at)"
+                    "       )) < 10)"
+                )
                 cur.execute(
-                    f"SELECT id FROM orders WHERE {' AND '.join(where_parts)} "
+                    f"SELECT id FROM orders WHERE {' AND '.join(queue_where + [declined_sql])} "
                     f"ORDER BY {', '.join(order_parts)} "
                     f"LIMIT 1 FOR UPDATE SKIP LOCKED"
                 )
                 row = cur.fetchone()
+                if not row:
+                    # Другой работы нет — лучше дошить свою же вещь, чем стоять.
+                    cur.execute(
+                        f"SELECT id FROM orders WHERE {' AND '.join(queue_where)} "
+                        f"ORDER BY {', '.join(order_parts)} "
+                        f"LIMIT 1 FOR UPDATE SKIP LOCKED"
+                    )
+                    row = cur.fetchone()
+
+            # По очереди выпала необмётанная вещь — выдаём её НА ОВЕРЛОК, а не в
+            # пошив: статус остаётся «Раскроено», лимит прямострочки не занимается.
+            if row and overlock_ok:
+                cur.execute(
+                    "SELECT requires_overlock, overlocked_at, order_number "
+                    "FROM orders WHERE id = %s",
+                    (row[0],),
+                )
+                ov_pick = cur.fetchone()
+                if ov_pick and ov_pick[0] and ov_pick[1] is None:
+                    cur.execute(
+                        "UPDATE orders SET overlock_user_id = %s, "
+                        "  overlock_taken_at = now(), overlock_stagger_index = %s, "
+                        "  workshop_id = COALESCE(workshop_id, %s) "
+                        "WHERE id = %s",
+                        (int(user_id), own_overlock_count, int(session_workshop_id), row[0]),
+                    )
+                    log_action(
+                        cur, actor_id, actor_name, 'take_overlock', 'order', row[0],
+                        f'Получила заказ #{ov_pick[2] or row[0]} на оверлок по очереди',
+                    )
+                    conn.commit()
+                    return {
+                        'statusCode': 200,
+                        'headers': headers,
+                        'body': json.dumps({
+                            'success': True,
+                            'orderId': row[0],
+                            'takenCount': 1,
+                            'overlock': True,
+                        }, ensure_ascii=False),
+                    }
             if not row:
                 # Объясняем ПОЧЕМУ пусто, иначе швея видит «нет заказов» и не понимает,
                 # что делать. Самая частая причина — смена открыта не в том цехе:
@@ -2620,15 +2737,22 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                         ),
                     }
                 # Вещь уже взял кто-то другой: очередь общая, и два человека могли
-                # нажать кнопку почти одновременно.
+                # нажать кнопку почти одновременно. Исключение — швея ушла со смены,
+                # не сдав вещь: тогда вещь ничья, иначе она зависла бы навсегда.
                 if ov_user and int(ov_user) != int(actor_id or 0):
-                    return {
-                        'statusCode': 409,
-                        'headers': headers,
-                        'body': json.dumps(
-                            {'error': 'Заказ уже взят другой швеёй'}, ensure_ascii=False
-                        ),
-                    }
+                    cur.execute(
+                        "SELECT 1 FROM shift_sessions "
+                        "WHERE user_id = %s AND closed_at IS NULL LIMIT 1",
+                        (int(ov_user),),
+                    )
+                    if cur.fetchone():
+                        return {
+                            'statusCode': 409,
+                            'headers': headers,
+                            'body': json.dumps(
+                                {'error': 'Заказ уже взят другой швеёй'}, ensure_ascii=False
+                            ),
+                        }
 
                 # ОВЕРЛОК ЗАНИМАЕТ ОДНА ШВЕЯ, И НЕ БОЛЬШЕ ДВУХ ВЕЩЕЙ ЗА РАЗ.
                 #
@@ -2653,6 +2777,14 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                     )
                     ws_row = cur.fetchone()
                     ov_queue_workshop = ws_row[0] if ws_row else None
+
+                # Две швеи жмут «Взять на оверлок» в одну секунду: без блокировки обе
+                # проходят проверку «оверлок свободен» и садятся за одну машину.
+                # Блокировка на цех держится до конца транзакции.
+                cur.execute(
+                    "SELECT pg_advisory_xact_lock(hashtext(%s))",
+                    (f'overlock_ws_{ov_queue_workshop or 0}',),
+                )
 
                 holder_id, holder_name, _holder_count = overlock_holder(
                     cur, ov_queue_workshop, exclude_user_id=actor_id
@@ -2684,6 +2816,31 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                     (int(actor_id), int(item_id)),
                 )
                 ov_in_work = int(cur.fetchone()[0])
+
+                # Общий лимит активных вещей: обычные «В работе» + оверлок вместе.
+                max_active = get_setting_int(
+                    cur, ov_queue_workshop, 'max_quantity_orders_to_seamstress', 0
+                )
+                if max_active > 0:
+                    cur.execute(
+                        "SELECT COUNT(*) FROM orders "
+                        "WHERE assigned_user_id = %s AND sewing_status = 'В работе'",
+                        (int(actor_id),),
+                    )
+                    regular_in_work = int(cur.fetchone()[0])
+                    if regular_in_work + ov_in_work >= max_active:
+                        return {
+                            'statusCode': 409,
+                            'headers': headers,
+                            'body': json.dumps({
+                                'error': f'У вас уже {regular_in_work + ov_in_work} активных '
+                                         f'заказа (лимит {max_active}, обычные и оверлок вместе) — '
+                                         f'сначала сдайте их',
+                                'inWork': regular_in_work + ov_in_work,
+                                'maxOrders': max_active,
+                            }, ensure_ascii=False),
+                        }
+
                 if max_ov > 0 and ov_in_work >= max_ov:
                     return {
                         'statusCode': 409,
@@ -2729,6 +2886,27 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                         ensure_ascii=False,
                     ),
                 }
+            # Сдать обмётку может только та, кто взяла вещь на оверлок (или админ).
+            # Иначе соседка «сдавала» чужую вещь: оплата за обмётку уходила ей, а
+            # лимит в две вещи у швеи за машиной не освобождался.
+            if actor_row[0] != 'admin':
+                if not ov_user:
+                    return {
+                        'statusCode': 409,
+                        'headers': headers,
+                        'body': json.dumps(
+                            {'error': 'Сначала возьмите вещь на оверлок'}, ensure_ascii=False
+                        ),
+                    }
+                if int(ov_user) != int(actor_id or 0):
+                    return {
+                        'statusCode': 409,
+                        'headers': headers,
+                        'body': json.dumps(
+                            {'error': 'Эту вещь обмётывает другая швея — сдать её может только она'},
+                            ensure_ascii=False,
+                        ),
+                    }
 
             # ВЕЩЬ НЕЛЬЗЯ СДАТЬ РАНЬШЕ, ЧЕМ ЕЁ РЕАЛЬНО МОЖНО ОБМЕТАТЬ.
             #

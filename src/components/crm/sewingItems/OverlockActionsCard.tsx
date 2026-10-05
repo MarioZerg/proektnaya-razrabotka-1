@@ -39,6 +39,8 @@ interface OverlockActionsCardProps {
   /** Вещей на оверлоке у этой швеи и предел цеха — для замочка на кнопке. */
   overlockInWork?: number;
   maxOverlockOrders?: number;
+  /** Админ может сдать обмётку за любую швею. */
+  isAdmin?: boolean;
 }
 
 /**
@@ -63,12 +65,14 @@ const OverlockActionsCard = ({
   overlockBusyBy = null,
   overlockInWork = 0,
   maxOverlockOrders = 0,
+  isAdmin = false,
 }: OverlockActionsCardProps) => {
   const { toast } = useToast();
   const [busy, setBusy] = useState(false);
   const [selectedRollId, setSelectedRollId] = useState('');
 
   const taken = order.overlockUserId != null;
+  const takenByOther = taken && !isAdmin && order.overlockUserId !== actorId;
   const meters = order.width ? (order.width / 100).toFixed(2) : null;
   const limitReached = maxOverlockOrders > 0 && overlockInWork >= maxOverlockOrders;
   const takeBlocked = !taken && (Boolean(overlockBusyBy) || limitReached);
@@ -142,6 +146,22 @@ const OverlockActionsCard = ({
             )}
             {takeBlocked ? 'Оверлок занят' : 'Взять на оверлок'}
           </Button>
+        ) : takenByOther ? (
+          <div className="space-y-2">
+            <div className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+              Эту вещь обмётывает другая швея — сдать её может только она. Если она
+              закрыла смену, не сдав вещь, её можно забрать себе.
+            </div>
+            <Button
+              variant="outline"
+              className="w-full"
+              disabled={busy}
+              onClick={() => run(() => takeOverlock(order.id, actorId), 'Заказ взят на оверлок')}
+            >
+              <Icon name="Hand" size={16} className="mr-2" />
+              Забрать себе
+            </Button>
+          </div>
         ) : (
           <div className="space-y-3">
             {overlockWaitSec > 0 && (

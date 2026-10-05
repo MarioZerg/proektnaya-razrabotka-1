@@ -534,6 +534,8 @@ export interface TakeOrderResult {
   groupKey?: string | null;
   /** Сколько вещей выдано одним нажатием: связка приходит целиком. */
   takenCount?: number;
+  /** Вещь выдана на оверлок (обмётка края), а не в пошив. */
+  overlock?: boolean;
 }
 
 export const takeOrder = (userId: number): Promise<TakeOrderResult> =>

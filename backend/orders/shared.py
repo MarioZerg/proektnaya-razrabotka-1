@@ -1168,6 +1168,10 @@ def overlock_holder(cur, workshop_id, exclude_user_id=None):
         # Вещь ещё в цехе: отменённую или ушедшую дальше по конвейеру не считаем —
         # иначе оверлок остался бы «занят» навсегда из-за брошенной вещи.
         "  AND o.sewing_status = 'Раскроено' "
+        # Держит машину только тот, кто сейчас на смене. Ушла домой, не сдав
+        # вещи, — оверлок свободен, её вещи может забрать следующая швея.
+        "  AND EXISTS (SELECT 1 FROM shift_sessions ss "
+        "              WHERE ss.user_id = o.overlock_user_id AND ss.closed_at IS NULL) "
         f"  {ws_cond}{exclude_cond}"
         "GROUP BY o.overlock_user_id, u.full_name "
         # Если из-за старых данных оверлок держат двое, берём того, у кого больше

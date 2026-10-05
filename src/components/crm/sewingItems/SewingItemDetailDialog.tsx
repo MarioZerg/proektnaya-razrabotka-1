@@ -323,6 +323,7 @@ const SewingItemDetailDialog = ({
                   overlockBusyBy={overlockBusyBy}
                   overlockInWork={overlockInWork}
                   maxOverlockOrders={maxOverlockOrders}
+                  isAdmin={isAdminView}
                   onDone={() => {
                     setDialogOpen(false);
                     onOrderUpdated?.();

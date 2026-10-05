@@ -9,6 +9,7 @@ import {
   type TakenOrder,
 } from '@/lib/ordersApi';
 import { printCuttingSheet } from '@/lib/printCuttingSheet';
+import { OVERLOCK_TAB } from '@/components/crm/sewingItems/sewingItemsShared';
 
 const STACK_STORAGE_KEY = 'megatul_last_taken_stack';
 
@@ -314,6 +315,16 @@ export const useSewingItemsQueueActions = ({
     setTakeOrderCooldown(true);
     try {
       const res = await takeOrder(userId);
+      // По очереди выпала вещь под обмётку — она ждёт на вкладке «Оверлок».
+      if (res?.overlock) {
+        toast({
+          title: 'Получен заказ на оверлок',
+          description: 'Обметайте край — вещь на вкладке «Оверлок»',
+        });
+        setActiveTab(OVERLOCK_TAB as SewingStatus);
+        load();
+        return;
+      }
       // Связка Яндекса прилетает швее целиком одним нажатием — сообщаем, сколько вещей
       // пришло, чтобы она сразу понимала объём работы.
       if (res?.takenCount && res.takenCount > 1) {
