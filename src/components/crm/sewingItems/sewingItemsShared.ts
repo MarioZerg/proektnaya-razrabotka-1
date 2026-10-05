@@ -181,6 +181,27 @@ export const formatWait = (totalSec: number): string => {
 };
 
 export { formatDateTime as formatDate, timeAgo } from '@/lib/dateUtils';
+
+/**
+ * Синонимы названий тканей: в справочнике «Вуаль без утяжелителя», в заказах
+ * с маркетплейса часто «Вуаль (без ут)». Без этого фильтр конвейера по материалу
+ * из справочника прятал все заказы с сокращённым названием.
+ */
+export const MATERIAL_NAME_ALIASES: Record<string, string[]> = {
+  'Вуаль без утяжелителя': ['Вуаль (без ут)'],
+  'Вуаль (без ут)': ['Вуаль без утяжелителя'],
+};
+
+/** Совпадают ли названия ткани с учётом синонимов. */
+export const materialNamesMatch = (a?: string | null, b?: string | null): boolean => {
+  if (!a || !b) return false;
+  if (a === b) return true;
+  return (
+    (MATERIAL_NAME_ALIASES[a] || []).includes(b) ||
+    (MATERIAL_NAME_ALIASES[b] || []).includes(a)
+  );
+};
+
 /**
  * Подпись сотрудника в списке назначения: «Беляева Наталия · Цех №1, см. 1 · …86».
  *

@@ -1,5 +1,4 @@
 import AdminNotifications from '@/components/crm/dashboard/AdminNotifications';
-import EtrnToSignCard from '@/components/crm/dashboard/EtrnToSignCard';
 import VarikiPurchasesCard from '@/components/crm/variki/VarikiPurchasesCard';
 import MyShiftCard from '@/components/crm/dashboard/MyShiftCard';
 import AwardCard from '@/components/crm/dashboard/AwardCard';
@@ -69,11 +68,6 @@ const CrmDashboardHeader = ({
     {/* Решения склада, которые стоят денег, — сразу перед виджетами: админ видит их
         первыми, ещё до сводки по цеху. */}
     {userRole === 'admin' && <AdminNotifications />}
-    {/* ЭТрН на подпись — только администратору. Кладовщик и менеджер карточку
-        не видят: накладную оформляет перевозчик, а подпись в Диадоке ставит
-        тот, у кого Рутокен. Без подписи машина не выедет, документ лежит в
-        поставке, куда руководитель не заходит — очередь держим на главной. */}
-    {userRole === 'admin' && <EtrnToSignCard />}
     {/* Покупки за варики: сотрудник заплатил и ждёт купон — заявка не должна
         потеряться, поэтому висит на панели, пока админ не прикрепит PDF. */}
     {userRole === 'admin' && <VarikiPurchasesCard />}

@@ -340,6 +340,19 @@ export class CancelledOrderError extends Error {
   }
 }
 
+/** Недокомплект FBO: админ может подтвердить отгрузку закрытых коробов. */
+export class FboUnderfillError extends Error {
+  constructor(
+    message: string,
+    public readonly collected: number,
+    public readonly planned: number,
+    public readonly canForceUnderfill: boolean,
+  ) {
+    super(message);
+    this.name = 'FboUnderfillError';
+  }
+}
+
 const postAction = async (payload: Record<string, unknown>) => {
   const res = await fetch(SUPPLIES_URL, {
     method: 'POST',
@@ -352,6 +365,14 @@ const postAction = async (payload: Record<string, unknown>) => {
     // кладовщику размер и штрихкод для полки хранения.
     if (data.cancelled) {
       throw new CancelledOrderError(data.error || 'Заказ отменён', data);
+    }
+    if (data.canForceUnderfill || (data.collected != null && data.planned != null)) {
+      throw new FboUnderfillError(
+        data.error || 'Поставка собрана не полностью',
+        Number(data.collected) || 0,
+        Number(data.planned) || 0,
+        !!data.canForceUnderfill,
+      );
     }
     throw new Error(data.error || 'Ошибка запроса');
   }
@@ -566,10 +587,25 @@ export interface OzonShipResult {
   ozonShipped?: number;
   ozonProblems?: string[];
   ozonRemaining?: number;
+  underfillCleanup?: {
+    deletedNew: number;
+    releasedStock: number;
+    toShelf: number;
+    total: number;
+  } | null;
 }
 
-export const moveSupplyStatus = (supplyId: number, status: SupplyStatus) =>
-  postAction({ action: 'move_status', supplyId, status }) as Promise<OzonShipResult>;
+export const moveSupplyStatus = (
+  supplyId: number,
+  status: SupplyStatus,
+  opts?: { forceUnderfill?: boolean },
+) =>
+  postAction({
+    action: 'move_status',
+    supplyId,
+    status,
+    ...(opts?.forceUnderfill ? { forceUnderfill: true } : {}),
+  }) as Promise<OzonShipResult>;
 
 /**
  * Досылает в OZON отправления, не влезшие в закрытие поставки.

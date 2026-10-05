@@ -1,12 +1,25 @@
 import { useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
+import { Label } from '@/components/ui/label';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import Icon from '@/components/ui/icon';
 import { useToast } from '@/hooks/use-toast';
-import { takeOverlock, overlockDone, type Order } from '@/lib/ordersApi';
+import { takeOverlock, overlockDone, type Order, type OrderDetail } from '@/lib/ordersApi';
+import type { Roll } from '@/lib/rollsApi';
+import { formatQuantity } from '@/lib/formatQuantity';
 
 interface OverlockActionsCardProps {
   order: Order;
+  orderDetail?: OrderDetail | null;
+  /** Рулоны тесьмы, подходящие этому товару (4 см для оверлока / вуали без ут). */
+  trimRolls?: Roll[];
   /** Кто нажимает: по нему сервер проверяет допуск и начисляет оплату за обмётку. */
   actorId?: number;
   /** Перезагрузить список после действия — вещь уходит на другую вкладку. */
@@ -14,7 +27,7 @@ interface OverlockActionsCardProps {
   /**
    * Сколько ещё секунд обмётывать ЭТУ вещь. Пока идёт отсчёт, сдать её нельзя:
    * иначе швея за секунду «сдала» бы обе вещи и разобрала всю очередь обмётки,
-   * а оверлок простаивал бы. 0 — можно сдавать.
+   * а оверлок простаивал. 0 — можно сдавать.
    */
   overlockWaitSec?: number;
   /**
@@ -34,16 +47,16 @@ interface OverlockActionsCardProps {
  * Вещь из ткани с осыпающимся краем сначала обмётывают и только потом отдают на
  * прямострочку. Отсюда два пути, и выбирает их сама швея за машинкой:
  *
- *  · «Передать на пошив» — обычный случай. Вещь возвращается в общую очередь
- *    «Раскроено» с отметкой «Обработан на оверлоке», и её разбирает следующая
- *    свободная швея в порядке очереди.
- *  · «Завершить полностью» — работы по вещи больше нет. Тогда она минует
- *    прямострочку и уходит сразу на стикеровку.
- *
- * Оплата за обмётку считается сама, по ширине вещи, — швее ничего указывать не нужно.
+ *  · «Передать на пошив» — частичная работа. Вещь возвращается в «Раскроено» с
+ *    отметкой «Обработан на оверлоке», тесьму НЕ списываем — её укажет швея на
+ *    прямострочке. Расход материала после обмётки не нужен.
+ *  · «Завершить полностью» — швея дошила вещь сама. Тогда выбирает коробку с
+ *    тесьмой и сдаёт сразу на стикеровку: тесьма списывается с рулона.
  */
 const OverlockActionsCard = ({
   order,
+  orderDetail = null,
+  trimRolls = [],
   actorId,
   onDone,
   overlockWaitSec = 0,
@@ -53,17 +66,24 @@ const OverlockActionsCard = ({
 }: OverlockActionsCardProps) => {
   const { toast } = useToast();
   const [busy, setBusy] = useState(false);
+  const [selectedRollId, setSelectedRollId] = useState('');
 
   const taken = order.overlockUserId != null;
   const meters = order.width ? (order.width / 100).toFixed(2) : null;
-  // Замочек на взятии: либо за машиной уже кто-то сидит, либо у самой швеи
-  // на руках предельное число вещей.
   const limitReached = maxOverlockOrders > 0 && overlockInWork >= maxOverlockOrders;
   const takeBlocked = !taken && (Boolean(overlockBusyBy) || limitReached);
   const waitLabel =
     overlockWaitSec >= 60
       ? `${Math.floor(overlockWaitSec / 60)} мин. ${overlockWaitSec % 60} сек.`
       : `${overlockWaitSec} сек.`;
+
+  // Пока деталь грузится — не даём завершить без тесьмы: иначе уедет без списания.
+  const detailReady = orderDetail != null;
+  const trimNeeded = !detailReady || orderDetail?.requiredTrimMaterialId != null;
+  const matchingRolls =
+    orderDetail?.requiredTrimMaterialId != null
+      ? trimRolls.filter((r) => r.materialId === orderDetail.requiredTrimMaterialId)
+      : trimRolls;
 
   const run = async (fn: () => Promise<unknown>, okText: string) => {
     setBusy(true);
@@ -96,9 +116,6 @@ const OverlockActionsCard = ({
           {meters && ` Оплата за ${meters} пог.м.`}
         </p>
 
-        {/* ОВЕРЛОК В ЦЕХЕ ОДИН — И ЭТО ВИДНО ДО НАЖАТИЯ.
-            Раньше швея жала кнопку и получала отказ; теперь сразу понимает, что
-            машина занята, и спокойно берёт обычный заказ вместо ожидания. */}
         {!taken && overlockBusyBy && (
           <div className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900">
             За оверлоком работает <b>{overlockBusyBy}</b> — машина в цехе одна.
@@ -126,17 +143,15 @@ const OverlockActionsCard = ({
             {takeBlocked ? 'Оверлок занят' : 'Взять на оверлок'}
           </Button>
         ) : (
-          <div className="space-y-2">
-            {/* Таймер обмётки: пока он идёт, сдать вещь нельзя. Свой, отдельный от
-                таймера пошива, — это разные этапы одной вещи. */}
+          <div className="space-y-3">
             {overlockWaitSec > 0 && (
               <div className="flex items-center gap-2 rounded-md border border-fuchsia-300 bg-white px-3 py-2 text-xs text-fuchsia-900">
                 <Icon name="Clock" size={14} />
                 Можно сдать через <b>{waitLabel}</b>
               </div>
             )}
-            {/* Обычный путь стоит первым и выделен цветом: почти всегда вещь после
-                обмётки уходит другой швее на прямострочку. */}
+
+            {/* Частичная работа: только обмётка, тесьму не трогаем. */}
             <Button
               className="w-full bg-fuchsia-600 hover:bg-fuchsia-700"
               disabled={busy || overlockWaitSec > 0}
@@ -154,24 +169,83 @@ const OverlockActionsCard = ({
               )}
               Передать на пошив
             </Button>
-            <Button
-              variant="outline"
-              className="w-full"
-              disabled={busy || overlockWaitSec > 0}
-              onClick={() =>
-                run(
-                  () => overlockDone(order.id, 'finish', actorId),
-                  'Заказ завершён и отправлен на стикеровку'
-                )
-              }
-            >
-              <Icon name="CheckCheck" size={16} className="mr-2" />
-              Завершить полностью — на стикеровку
-            </Button>
             <p className="text-xs text-muted-foreground">
-              «Передать на пошив» — вещь вернётся в общую очередь, её дошьёт следующая
-              швея. «Завершить полностью» — если по вещи работы больше нет.
+              Частично: вещь вернётся в очередь «Раскроено», тесьму укажет швея на
+              прямострочке. Расход материала после обмётки не нужен.
             </p>
+
+            {/* Полное завершение: выбрать коробку с тесьмой и сдать на стикеровку. */}
+            <div className="space-y-2 rounded-md border border-border bg-white p-3">
+              <p className="text-xs font-medium">Завершить полностью — на стикеровку</p>
+              {trimNeeded ? (
+                <div className="space-y-1.5">
+                  <Label className="text-xs">
+                    Рулон тесьмы
+                    {orderDetail?.requiredTrimMaterialName
+                      ? ` «${orderDetail.requiredTrimMaterialName}»`
+                      : ''}
+                  </Label>
+                  <Select
+                    value={selectedRollId}
+                    onValueChange={setSelectedRollId}
+                    disabled={busy || overlockWaitSec > 0}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Выберите коробку с тесьмой" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {matchingRolls.length === 0 ? (
+                        <div className="px-2 py-1.5 text-sm text-muted-foreground">
+                          Нет доступных рулонов
+                        </div>
+                      ) : (
+                        matchingRolls.map((r) => (
+                          <SelectItem key={r.id} value={String(r.id)}>
+                            {r.materialName} #{r.barcode} — {formatQuantity(r.remainingQuantity)}{' '}
+                            {r.unit}
+                            {r.foreignShift ? ' · материал чужой смены' : ''}
+                          </SelectItem>
+                        ))
+                      )}
+                    </SelectContent>
+                  </Select>
+                  {matchingRolls.length === 0 && (
+                    <p className="text-xs text-amber-700">
+                      В цехе нет рулонов нужной тесьмы. Попросите кладовщика передать
+                      коробку — или передайте заказ на пошив без тесьмы.
+                    </p>
+                  )}
+                </div>
+              ) : (
+                <p className="text-xs text-muted-foreground">
+                  Для этого товара тесьма не требуется.
+                </p>
+              )}
+              <Button
+                variant="outline"
+                className="w-full"
+                disabled={
+                  busy ||
+                  overlockWaitSec > 0 ||
+                  (trimNeeded && !selectedRollId)
+                }
+                onClick={() =>
+                  run(
+                    () =>
+                      overlockDone(
+                        order.id,
+                        'finish',
+                        actorId,
+                        selectedRollId ? Number(selectedRollId) : undefined,
+                      ),
+                    'Заказ завершён и отправлен на стикеровку'
+                  )
+                }
+              >
+                <Icon name="CheckCheck" size={16} className="mr-2" />
+                Завершить полностью
+              </Button>
+            </div>
           </div>
         )}
       </CardContent>

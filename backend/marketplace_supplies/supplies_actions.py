@@ -2,7 +2,7 @@
 
 Вынесено из index.py без изменений — те же действия, тот же порядок проверок.
 Здесь всё, что МЕНЯЕТ поставку, поэтому предохранители (блокировка сборки, запрет
-FBS менеджеру, проверка ЭТрН перед отгрузкой) собраны в одном месте.
+FBS менеджеру) собраны в одном месте.
 """
 
 import json
@@ -34,6 +34,7 @@ from shared import (
     ozon_posting_status_live,
     ozon_ship_postings,
     release_cancelled_item,
+    release_fbo_underfill_leftovers,
     release_stale_supply_locks,
     resolve_ozon_barcode,
     restore_missing_workshop_goods,
@@ -2386,6 +2387,8 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
             if not supply_id or new_status not in VALID_STATUSES:
                 return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Некорректный статус'})}
 
+            underfill_cleanup = None
+
             # Тип забираем сразу: от него зависит, ставить ли отметку о
             # Газельке — она возит только FBO.
             cur.execute("SELECT status, type FROM marketplace_supplies WHERE id = %s",
@@ -2407,11 +2410,9 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
             extra_sql = ""
             ozon_shipped, ozon_problems, ozon_remaining = 0, [], 0
             if new_status == 'Отгрузка':
-                # ЭТрН по FBO оформляет перевозчик (Газелька) у себя, наша карточка —
-                # задел под кросс-докинг. Закрытие поставки от неё не зависит:
-                # иначе уже уехавшая заявка висела бы на сборке, а на дашборде
-                # требовали бы заполнить накладную, которая к этой перевозке
-                # уже не относится.
+                # Отгрузка FBO не зависит от ЭТрН: пользуемся бумажной транспортной
+                # накладной. Электронную накладную при необходимости оформляет
+                # перевозчик у себя.
                 #
                 # Отменённые заказы отгружать нельзя: на маркетплейсе их больше нет.
                 # Кладовщик должен сначала отправить такие вещи на полку хранения —
@@ -2464,31 +2465,14 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                         }, ensure_ascii=False),
                     }
 
-                # Поставка FBO едет по заявке: привезти меньше обещанного нельзя —
-                # маркетплейс засчитает недовоз, а остаток зависнет на складе.
-                underfilled = check_fbo_underfilled(cur, supply_id)
-                if underfilled:
-                    collected, planned = underfilled
-                    return {
-                        'statusCode': 409,
-                        'headers': headers,
-                        'body': json.dumps({
-                            'error': f'Поставка собрана не полностью: {collected} из '
-                                     f'{planned} шт. по заявке. Дособерите товар или '
-                                     f'уменьшите количество в заявке.',
-                            'collected': collected,
-                            'planned': planned,
-                        }, ensure_ascii=False),
-                    }
-
-                # НЕЗАКЛЕЕННЫЙ КОРОБ = НЕЗАКОНЧЕННАЯ РАБОТА.
+                # НЕЗАКРЫТЫЙ КОРОБ = НЕЗАКОНЧЕННАЯ РАБОТА.
                 #
                 # У FBO короб становится грузоместом на площадке только при
                 # закрытии: пока он открыт, OZON о нём не знает, этикетки нет и
                 # на приёмке такой короб окажется лишним.
                 #
-                # Проверку держим и на сервере, а не только кнопкой на экране:
-                # статус можно сменить из списка поставок и прямым запросом.
+                # Проверку держим ДО недокомплекта: админ может закрыть поставку
+                # с недобором штук, но только когда все грузоместа уже закрыты.
                 if (supply_type or '').upper() == 'FBO':
                     cur.execute(
                         "SELECT b.box_number, COUNT(msi.id) AS items "
@@ -2509,6 +2493,66 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                                 'error': f'Не закрыты короба: {nums}. Закройте их — '
                                          f'на OZON грузоместо создаётся только при '
                                          f'закрытии короба',
+                            }, ensure_ascii=False),
+                        }
+
+                # Поставка FBO едет по заявке: обычным людям привезти меньше
+                # обещанного нельзя. Админ может принудительно отгрузить
+                # недокомплект (forceUnderfill), если все короба закрыты: хвосты
+                # разберём — «Новый» удалим, «Со склада» вернём на полку, остальное
+                # доведут до стикеровки со стикером хранения GW.
+                underfilled = check_fbo_underfilled(cur, supply_id)
+                if underfilled:
+                    collected, planned = underfilled
+                    force_underfill = bool(body_data.get('forceUnderfill'))
+                    if force_underfill:
+                        if (supply_type or '').upper() != 'FBO':
+                            return {
+                                'statusCode': 409,
+                                'headers': headers,
+                                'body': json.dumps({
+                                    'error': 'Принудительная отгрузка недокомплекта '
+                                             'только для FBO',
+                                }, ensure_ascii=False),
+                            }
+                        # Права только из токена — actorRole из тела не доверяем.
+                        actor = require_role(cur, event, 'admin')
+                        if collected <= 0:
+                            return {
+                                'statusCode': 409,
+                                'headers': headers,
+                                'body': json.dumps({
+                                    'error': 'Нечего отгружать: нет товара в закрытых '
+                                             'коробах. Сначала закройте хотя бы один '
+                                             'короб с вещами',
+                                }, ensure_ascii=False),
+                            }
+                        underfill_cleanup = release_fbo_underfill_leftovers(
+                            cur, supply_id,
+                        )
+                        log_action(
+                            cur, actor['realUserId'], actor['name'],
+                            'force_underfill_ship', 'marketplace_supply',
+                            int(supply_id),
+                            f'Принудительная отгрузка недокомплекта FBO: '
+                            f'{collected} из {planned} шт. '
+                            f'(удалено новых {underfill_cleanup["deletedNew"]}, '
+                            f'возвращено со склада {underfill_cleanup["releasedStock"]}, '
+                            f'на полку/конвейер {underfill_cleanup["toShelf"]})',
+                        )
+                    else:
+                        return {
+                            'statusCode': 409,
+                            'headers': headers,
+                            'body': json.dumps({
+                                'error': f'Поставка собрана не полностью: {collected} из '
+                                         f'{planned} шт. по заявке. Дособерите товар или '
+                                         f'уменьшите количество в заявке.',
+                                'collected': collected,
+                                'planned': planned,
+                                # Админ на экране увидит confirm и повторит с
+                                # forceUnderfill — только когда короба уже закрыты.
+                                'canForceUnderfill': (supply_type or '').upper() == 'FBO',
                             }, ensure_ascii=False),
                         }
 
@@ -2734,6 +2778,8 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                     'ozonRemaining': ozon_remaining,
                     # Скольким менеджерам ушло уведомление о готовой поставке.
                     'managersNotified': notified,
+                    # Разбор хвостов при принудительной отгрузке недокомплекта FBO.
+                    'underfillCleanup': underfill_cleanup,
                 }, ensure_ascii=False),
             }
 

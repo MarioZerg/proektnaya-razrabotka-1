@@ -6,6 +6,7 @@ import boto3
 import psycopg2
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Border, Font, Side
+from openpyxl.worksheet.page import PageMargins
 
 CORS_HEADERS = {
     'Access-Control-Allow-Origin': '*',
@@ -234,73 +235,88 @@ def _build_xlsx(doc, path):
     размазаны по объединённым ячейкам на 95 колонок, и любое изменение формы
     ломало бы привязку. Здесь же структура читается сверху вниз — раздел,
     значение, пояснение под ним мелким шрифтом, как в бумажной форме.
+
+    Печать: лист А4, масштаб по ширине на 1 страницу, по высоте — сколько
+    нужно (fitToHeight=0). Раньше fitToPage без нулевой высоты сжимал весь
+    документ на одну страницу — шрифт становился нечитаемым.
     """
     wb = Workbook()
     ws = wb.active
     ws.title = 'Транспортная накладная'
 
-    # Две колонки: слева значения, справа — парные поля формы (даты, места).
-    ws.column_dimensions['A'].width = 58
-    ws.column_dimensions['B'].width = 58
+    # Две колонки под поля формы; ширина подобрана под печать А4 с полями ~1 см.
+    ws.column_dimensions['A'].width = 48
+    ws.column_dimensions['B'].width = 48
+    ws.page_setup.paperSize = 9  # A4
     ws.page_setup.orientation = 'portrait'
+    ws.page_setup.fitToPage = True
     ws.page_setup.fitToWidth = 1
+    # 0 = не ограничивать число страниц по высоте — иначе Excel втискивает
+    # всю накладную на один лист и уменьшает шрифт до нечитаемого.
+    ws.page_setup.fitToHeight = 0
     ws.sheet_properties.pageSetUpPr.fitToPage = True
+    ws.page_margins = PageMargins(
+        left=0.4, right=0.4, top=0.5, bottom=0.5, header=0.2, footer=0.2,
+    )
+    ws.print_options.horizontalCentered = True
 
     row = 1
 
-    def head(text, size=9, bold=False, align=CENTER):
+    def head(text, size=10, bold=False, align=CENTER):
         nonlocal row
         ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=2)
         c = ws.cell(row=row, column=1, value=text)
         c.font = Font(name='Arial', size=size, bold=bold)
         c.alignment = align
+        ws.row_dimensions[row].height = max(18, size + 8)
         row += 1
 
     def section(title):
         nonlocal row
         ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=2)
         c = ws.cell(row=row, column=1, value=title)
-        c.font = Font(name='Arial', size=9, bold=True)
+        c.font = Font(name='Arial', size=12, bold=True)
         c.alignment = Alignment(horizontal='left', vertical='center')
+        ws.row_dimensions[row].height = 22
         row += 1
 
     def field(value, caption, value2=None, caption2=None):
         """Значение крупно, пояснение формы под ним мелко — как в бумаге."""
         nonlocal row
         left = ws.cell(row=row, column=1, value=value or '-')
-        left.font = Font(name='Arial', size=10)
+        left.font = Font(name='Arial', size=12)
         left.alignment = WRAP
         left.border = BOX
         if caption2 is not None or value2 is not None:
             right = ws.cell(row=row, column=2, value=value2 or '-')
-            right.font = Font(name='Arial', size=10)
+            right.font = Font(name='Arial', size=12)
             right.alignment = WRAP
             right.border = BOX
         else:
             ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=2)
-        ws.row_dimensions[row].height = 28
+        ws.row_dimensions[row].height = 36
         row += 1
 
         cl = ws.cell(row=row, column=1, value=caption)
-        cl.font = Font(name='Arial', size=7, italic=True, color='555555')
+        cl.font = Font(name='Arial', size=9, italic=True, color='555555')
         cl.alignment = WRAP
         if caption2 is not None:
             cr = ws.cell(row=row, column=2, value=caption2)
-            cr.font = Font(name='Arial', size=7, italic=True, color='555555')
+            cr.font = Font(name='Arial', size=9, italic=True, color='555555')
             cr.alignment = WRAP
         else:
             ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=2)
-        ws.row_dimensions[row].height = 22
+        ws.row_dimensions[row].height = 26
         row += 1
 
-    head('Приложение № 4', size=8, align=Alignment(horizontal='right'))
+    head('Приложение № 4', size=9, align=Alignment(horizontal='right'))
     head('к Правилам перевозок грузов автомобильным транспортом',
-         size=8, align=Alignment(horizontal='right'))
+         size=9, align=Alignment(horizontal='right'))
     head('(в ред. Постановления Правительства РФ от 30.11.2021 № 2116)',
-         size=8, align=Alignment(horizontal='right'))
+         size=9, align=Alignment(horizontal='right'))
     row += 1
 
-    head('ТРАНСПОРТНАЯ НАКЛАДНАЯ', size=14, bold=True)
+    head('ТРАНСПОРТНАЯ НАКЛАДНАЯ', size=16, bold=True)
     field(
         f"№ {doc.get('number') or '—'}   от {_fmt_date(doc.get('docDate'))}",
         'Дата и номер транспортной накладной',
@@ -453,9 +469,6 @@ def handler(event: dict, context) -> dict:
     (в ред. ПП РФ от 30.11.2021 № 2116). Порядок работы: менеджер заполняет
     карточку и подтверждает готовность, система собирает файл XLSX, кладовщик
     скачивает его, отдаёт водителю и отгружает поставку.
-
-    ЭТрН здесь не участвует: перевозчик (Газелька) оформляет электронную
-    накладную в своём контуре, а этот документ едет с машиной на бумаге.
 
     GET  /?supplyId=12               - накладная поставки (null, если не заводили)
     POST /  { action: 'create', supplyId }

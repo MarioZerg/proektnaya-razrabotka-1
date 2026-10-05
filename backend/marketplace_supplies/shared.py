@@ -1165,6 +1165,157 @@ def check_fbo_underfilled(cur, supply_id):
     return collected, int(planned)
 
 
+def release_fbo_underfill_leftovers(cur, supply_id):
+    """Разбирает хвосты FBO при принудительной отгрузке недокомплекта админом.
+
+    В закрытых коробах остаётся только то, что реально едет. Остальное по составу
+    поставки (заказы на пошив / со склада, не попавшие в закрытый короб):
+
+      · «Со склада» — снимаем бронь, вещь снова in_stock на полке, заказ удаляем;
+      · «Новый» — никто не начинал шить, заказ удаляем из системы;
+      · любой другой статус — отвязываем от поставки и помечаем cancelled_at:
+        конвейер доводит вещь до стикеровки, там дают GW-стикер хранения
+        (awaiting_shelf). Если вещь уже «Готовые» / awaiting_supply — сразу
+        переводим на полку хранения.
+
+    Возвращает dict со счётчиками для журнала и ответа.
+    """
+    sid = int(supply_id)
+
+    # Заказы поставки, которых нет ни в одном ЗАКРЫТОМ коробе.
+    cur.execute(
+        "SELECT o.id, COALESCE(o.sewing_status, 'Новый'), o.order_number, "
+        "       o.fulfilled_from_stock_id "
+        "FROM orders o "
+        "WHERE o.supply_id = %s "
+        "  AND NOT EXISTS ("
+        "    SELECT 1 FROM marketplace_supply_items msi "
+        "    JOIN marketplace_supply_boxes b ON b.id = msi.box_id "
+        "      AND b.closed_at IS NOT NULL "
+        "    JOIN goods_warehouse gw ON gw.id = msi.goods_warehouse_id "
+        "    WHERE msi.supply_id = %s "
+        "      AND (gw.order_id = o.id OR gw.reserved_order_id = o.id)"
+        "  ) "
+        "ORDER BY o.id",
+        (sid, sid),
+    )
+    leftovers = cur.fetchall()
+
+    deleted_new = 0
+    released_stock = 0
+    to_shelf = 0
+
+    for order_id, sewing_status, order_number, from_stock_id in leftovers:
+        oid = int(order_id)
+
+        # Строки состава вне закрытых коробов — убираем: иначе после отгрузки
+        # хвост висел бы в «собранном» не закрытом виде.
+        cur.execute(
+            "DELETE FROM marketplace_supply_items msi "
+            "WHERE msi.supply_id = %s "
+            "  AND msi.goods_warehouse_id IN ("
+            "    SELECT id FROM goods_warehouse "
+            "    WHERE order_id = %s OR reserved_order_id = %s"
+            "  ) "
+            "  AND NOT EXISTS ("
+            "    SELECT 1 FROM marketplace_supply_boxes b "
+            "    WHERE b.id = msi.box_id AND b.closed_at IS NOT NULL"
+            "  )",
+            (sid, oid, oid),
+        )
+
+        if sewing_status == 'Со склада':
+            # Вещь с полки: бронь снимаем, статус обратно в свободный остаток.
+            if from_stock_id:
+                cur.execute(
+                    "UPDATE goods_warehouse SET status = 'in_stock', "
+                    "  reserved_order_id = NULL, matched_at = NULL "
+                    "WHERE id = %s AND status <> 'shipped'",
+                    (int(from_stock_id),),
+                )
+            cur.execute(
+                "UPDATE goods_warehouse SET status = 'in_stock', "
+                "  reserved_order_id = NULL, matched_at = NULL "
+                "WHERE reserved_order_id = %s AND status <> 'shipped'",
+                (oid,),
+            )
+            cur.execute("DELETE FROM orders WHERE id = %s", (oid,))
+            released_stock += 1
+            continue
+
+        if sewing_status == 'Новый':
+            cur.execute("DELETE FROM orders WHERE id = %s", (oid,))
+            deleted_new += 1
+            continue
+
+        # В работе / на стикеровке / готовые: доводят до конца и кладут на полку.
+        cur.execute(
+            "UPDATE orders SET supply_id = NULL, "
+            "  cancelled_at = COALESCE(cancelled_at, now()) "
+            "WHERE id = %s",
+            (oid,),
+        )
+
+        # Уже есть складская запись «на поставку» — переводим на хранение.
+        cur.execute(
+            "UPDATE goods_warehouse SET status = 'awaiting_shelf', "
+            "  reserved_order_id = NULL, matched_at = NULL, "
+            "  receive_reason = CASE "
+            "    WHEN COALESCE(receive_reason, '') IN ('', 'fbs_ready') "
+            "    THEN 'fbo_underfill' ELSE receive_reason END "
+            "WHERE (order_id = %s OR reserved_order_id = %s) "
+            "  AND status IN ('awaiting_supply', 'awaiting_shelf', 'in_stock') "
+            "RETURNING id, storage_barcode",
+            (oid, oid),
+        )
+        moved = cur.fetchall()
+        if moved:
+            to_shelf += 1
+            continue
+
+        # «Готовые» без складской записи — заводим GW со стикером хранения сразу,
+        # иначе вещь пропадёт: в поставку уже не поедет, а на полку некому взять.
+        if sewing_status == 'Готовые':
+            cur.execute(
+                "INSERT INTO goods_warehouse (order_id, status, storage_barcode, "
+                "  receive_reason) "
+                "VALUES (%s, 'awaiting_shelf', "
+                "  'GW-' || lpad(nextval('goods_warehouse_storage_seq')::text, 6, '0'), "
+                "  'fbo_underfill') "
+                "ON CONFLICT (order_id) DO UPDATE SET "
+                "  status = 'awaiting_shelf', "
+                "  reserved_order_id = NULL, "
+                "  receive_reason = COALESCE(NULLIF(goods_warehouse.receive_reason, ''), "
+                "                            'fbo_underfill') "
+                "RETURNING id",
+                (oid,),
+            )
+            if cur.fetchone():
+                to_shelf += 1
+        else:
+            # На раскрое / в работе / стикеровка — конвейер доведёт сам;
+            # cancelled_at на стикеровке даст GW хранения.
+            to_shelf += 1
+
+    # Пустые незакрытые короба без товара — мелочь после разбора, убираем,
+    # чтобы не висели «открытыми» у уехавшей заявки.
+    cur.execute(
+        "DELETE FROM marketplace_supply_boxes b "
+        "WHERE b.supply_id = %s AND b.closed_at IS NULL "
+        "  AND NOT EXISTS ("
+        "    SELECT 1 FROM marketplace_supply_items msi WHERE msi.box_id = b.id"
+        "  )",
+        (sid,),
+    )
+
+    return {
+        'deletedNew': deleted_new,
+        'releasedStock': released_stock,
+        'toShelf': to_shelf,
+        'total': len(leftovers),
+    }
+
+
 def check_incomplete_groups(cur, supply_id):
     """Ищет в поставке заказы Яндекса, собранные не полностью.
 

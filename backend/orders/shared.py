@@ -549,8 +549,12 @@ def write_off_materials_once(cur, order_id, material, width, height, workshop_id
 # «Вуаль (без ут)». Цех выбирает разрешённые ткани по справочнику, а заказы
 # фильтруются по тексту — и заказы на вуаль без утяжелителя никогда не попадали
 # закройщику: висели в «Новом», хотя ткань цеху разрешена.
+#
+# Словарь двусторонний: и справочник→заказ, и заказ→справочник. Иначе фильтр
+# конвейера (имя из справочника) не находил заказы с сокращённым названием.
 MATERIAL_NAME_ALIASES = {
     'Вуаль без утяжелителя': ['Вуаль (без ут)'],
+    'Вуаль (без ут)': ['Вуаль без утяжелителя'],
 }
 
 
@@ -564,6 +568,156 @@ def expand_material_names(names):
             if alias not in result:
                 result.append(alias)
     return result
+
+
+def material_names_match(a, b) -> bool:
+    """Одно ли это название ткани с учётом синонимов."""
+    if not a or not b:
+        return False
+    if a == b:
+        return True
+    return b in MATERIAL_NAME_ALIASES.get(a, []) or a in MATERIAL_NAME_ALIASES.get(b, [])
+
+
+def consume_trim_roll(
+    cur,
+    *,
+    order_id,
+    roll_id,
+    material,
+    width,
+    height,
+    requires_overlock,
+    check_workshop_id,
+    actor_shift_number,
+    sewer_user_id,
+):
+    """Списывает тесьму с выбранного рулона перед сдачей на стикеровку.
+
+    Возвращает None при успехе или dict {'error': str, 'status': int}.
+    sewing_status не меняет — вызывающий сам переводит заказ на стикеровку.
+
+    Если товару тесьма не нужна — сразу None, roll_id можно не передавать.
+    Если нужна, а рулон не выбран — ошибка 400.
+    """
+    cur.execute(
+        "SELECT id FROM marketplace_items WHERE material = %s AND width = %s AND height = %s LIMIT 1",
+        (material, width, height),
+    )
+    item_row = cur.fetchone()
+    if not item_row:
+        return {
+            'error': 'Не найден товар маркетплейса для этого материала/размера',
+            'status': 404,
+        }
+    marketplace_item_id = item_row[0]
+
+    cur.execute(
+        "SELECT m.id, m.name, mim.quantity "
+        "FROM marketplace_item_materials mim "
+        "JOIN materials m ON m.id = mim.material_id "
+        "JOIN material_types mt ON mt.id = m.type_id "
+        "WHERE mim.marketplace_item_id = %s AND mt.name = 'Аксессуары'",
+        (marketplace_item_id,),
+    )
+    accessories = cur.fetchall()
+
+    trim_material_id, _trim_name, trim_qty_needed = pick_order_trim(
+        cur, accessories, material, bool(requires_overlock), width
+    )
+    if trim_qty_needed is not None:
+        try:
+            trim_qty_needed = float(trim_qty_needed)
+        except (TypeError, ValueError):
+            trim_qty_needed = None
+        if trim_qty_needed is not None and trim_qty_needed <= 0:
+            trim_qty_needed = None
+
+    # Тесьма не нужна — списывать нечего.
+    if not trim_material_id:
+        return None
+
+    if trim_qty_needed is None:
+        return {
+            'error': 'Нельзя списать тесьму: у заказа не указана ширина, '
+                     'а в составе товара нет нормы расхода. Укажите размер '
+                     'или норму тесьмы и повторите',
+            'status': 409,
+        }
+
+    if not roll_id:
+        return {'error': 'Выберите рулон тесьмы', 'status': 400}
+
+    cur.execute(
+        "SELECT id, remaining_quantity, workshop_id, shift_number, accepted_at, "
+        "defect_flagged_at FROM rolls WHERE id = %s "
+        "AND material_id = %s AND status = 'in_workshop'",
+        (int(roll_id), trim_material_id),
+    )
+    roll_row = cur.fetchone()
+    if not roll_row:
+        return {
+            'error': 'Выбранный рулон тесьмы не найден или недоступен',
+            'status': 404,
+        }
+    if roll_row[4] is None:
+        return {
+            'error': 'Рулон тесьмы ещё не принят сменой. Подтвердите приёмку, '
+                     'потом сдавайте',
+            'status': 409,
+        }
+    if roll_row[5] is not None:
+        return {
+            'error': 'Рулон тесьмы отставлен как бракованный — работать с ним нельзя',
+            'status': 409,
+        }
+    if check_workshop_id and roll_row[2] != check_workshop_id:
+        return {'error': 'Рулон не принадлежит вашему цеху/смене', 'status': 409}
+
+    is_foreign_shift = bool(
+        actor_shift_number and roll_row[3] is not None
+        and roll_row[3] != actor_shift_number
+    )
+    roll_remaining = float(roll_row[1])
+    if roll_remaining < trim_qty_needed:
+        cur.execute("SELECT name, unit FROM materials WHERE id = %s", (trim_material_id,))
+        mat_name, mat_unit = cur.fetchone()
+        return {
+            'error': f'{mat_name}: нужно {round(trim_qty_needed, 2)} {mat_unit}, '
+                     f'в рулоне осталось {round(roll_remaining, 2)} {mat_unit}',
+            'status': 409,
+        }
+
+    cur.execute(
+        "UPDATE rolls SET remaining_quantity = round(remaining_quantity - %s, 3), "
+        "status = CASE WHEN remaining_quantity - %s <= 0 THEN 'completed' ELSE status END, "
+        "completed_at = CASE WHEN remaining_quantity - %s <= 0 THEN now() ELSE completed_at END "
+        "WHERE id = %s AND remaining_quantity >= %s "
+        "RETURNING remaining_quantity",
+        (trim_qty_needed, trim_qty_needed, trim_qty_needed,
+         roll_row[0], trim_qty_needed - 0.001),
+    )
+    if not cur.fetchone():
+        cur.execute("SELECT name, unit FROM materials WHERE id = %s", (trim_material_id,))
+        t_row = cur.fetchone()
+        return {
+            'error': f'{t_row[0] if t_row else "Тесьма"}: материал разобрали, пока '
+                     f'шла сдача — нужно {round(trim_qty_needed, 2)} '
+                     f'{t_row[1] if t_row else ""}, столько уже нет. '
+                     f'Обновите экран и повторите',
+            'status': 409,
+        }
+
+    actor_ws_sql = int(check_workshop_id) if check_workshop_id else 'NULL'
+    actor_shift_sql = int(actor_shift_number) if actor_shift_number else 'NULL'
+    actor_user_sql = int(sewer_user_id) if sewer_user_id else 'NULL'
+    cur.execute(
+        f"INSERT INTO order_material_usage (order_id, material_id, roll_id, quantity, "
+        f"actor_user_id, actor_workshop_id, actor_shift_number, is_foreign_shift) "
+        f"VALUES ({int(order_id)}, {trim_material_id}, {roll_row[0]}, {trim_qty_needed}, "
+        f"{actor_user_sql}, {actor_ws_sql}, {actor_shift_sql}, {str(is_foreign_shift).lower()})"
+    )
+    return None
 
 
 def fabric_uses_4cm_tape(fabric_name, requires_overlock) -> bool:

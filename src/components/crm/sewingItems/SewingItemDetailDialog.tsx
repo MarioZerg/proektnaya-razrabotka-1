@@ -58,6 +58,8 @@ interface SewingItemDetailDialogProps {
   /** Блок «Действия» со сменой статуса, назначением сотрудника/цеха доступен только админу. */
   isAdminView?: boolean;
   availableRolls?: Roll[];
+  /** Рулоны тесьмы для полного завершения оверлока (отдельно от ткани закройщика). */
+  trimRolls?: Roll[];
   onSendToStickering?: (rollId?: number) => void;
   /** Сколько ещё шить эту вещь — по нему блокируется отправка на стикеровку. */
   sewWaitSec?: number;
@@ -104,6 +106,7 @@ const SewingItemDetailDialog = ({
   isSewerView = false,
   isAdminView = false,
   availableRolls = [],
+  trimRolls = [],
   onSendToStickering,
   sewWaitSec = 0,
   overlockWaitSec = 0,
@@ -313,6 +316,8 @@ const SewingItemDetailDialog = ({
               selectedOrder.sewingStatus === 'Раскроено' && (
                 <OverlockActionsCard
                   order={selectedOrder}
+                  orderDetail={orderDetail}
+                  trimRolls={trimRolls.length ? trimRolls : availableRolls}
                   actorId={user?.id}
                   overlockWaitSec={overlockWaitSec}
                   overlockBusyBy={overlockBusyBy}

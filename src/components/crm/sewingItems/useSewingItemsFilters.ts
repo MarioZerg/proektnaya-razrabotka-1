@@ -7,6 +7,7 @@ import {
   CANCELLED_CUT_TAB,
   isOrderCancelled,
   isCancelledWithCut,
+  materialNamesMatch,
   type StatusTab,
   type TabValue,
 } from '@/components/crm/sewingItems/sewingItemsShared';
@@ -164,7 +165,11 @@ export const useSewingItemsFilters = ({
     if (typeFilter === 'legal' && !o.isLegalEntity) return false;
     if (typeFilter !== 'all' && typeFilter !== 'legal' && o.orderType !== typeFilter) return false;
     if (employeeFilter !== 'all' && String(o.assignedUserId) !== employeeFilter) return false;
-    if (materialFilter !== 'all' && o.material !== materials.find((m) => String(m.id) === materialFilter)?.name) return false;
+    if (materialFilter !== 'all') {
+      const selectedName = materials.find((m) => String(m.id) === materialFilter)?.name;
+      // Синонимы: «Вуаль без утяжелителя» в справочнике = «Вуаль (без ут)» в заказе.
+      if (!materialNamesMatch(o.material, selectedName)) return false;
+    }
     if (widthFilter !== 'all' && String(o.width) !== widthFilter) return false;
     if (heightFilter !== 'all' && String(o.height) !== heightFilter) return false;
     if (marketplaceFilter !== 'all' && o.marketplace !== marketplaceFilter) return false;

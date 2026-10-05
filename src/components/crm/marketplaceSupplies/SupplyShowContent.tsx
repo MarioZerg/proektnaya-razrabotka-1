@@ -16,7 +16,6 @@ import AddSewingOrdersDialog from '@/components/crm/marketplaceSupplies/AddSewin
 import SupplyGroupsPanel from '@/components/crm/marketplaceSupplies/SupplyGroupsPanel';
 import WbFbsSupplyCard from '@/components/crm/marketplaceSupplies/WbFbsSupplyCard';
 import WbFboSupplyCard from '@/components/crm/marketplaceSupplies/WbFboSupplyCard';
-import EtrnCard from '@/components/crm/marketplaceSupplies/EtrnCard';
 import WaybillCard from '@/components/crm/marketplaceSupplies/WaybillCard';
 
 interface SupplyShowContentProps {
@@ -44,8 +43,6 @@ interface SupplyShowContentProps {
     nextStatus: SupplyStatus | undefined;
     isManagerRole: boolean;
     isManager: boolean;
-    /** ЭТрН оставлена только администратору — перевозчик оформляет её сам. */
-    isAdmin: boolean;
     canEditItems: boolean;
     canRemoveItems: boolean;
     isOzonFbo: boolean;
@@ -165,19 +162,10 @@ const SupplyShowContent = ({
         />
       )}
 
-      {/* Транспортная накладная: ставим сразу под перевозкой — водитель, машина и
-          сдача груза относятся к одному и тому же выезду. Менеджер заполняет и
-          подтверждает, кладовщик скачивает файл и отгружает. */}
+      {/* Транспортная накладная: единственный документ перевозки по FBO.
+          Ставим сразу под перевозкой — водитель, машина и сдача груза к одному выезду.
+          Менеджер заполняет и подтверждает, кладовщик скачивает файл и отгружает. */}
       {supply.type === 'FBO' && <WaybillCard supply={supply} isManager={flags.isManager} />}
-
-      {/* ЭТрН — только администратору.
-          Электронную накладную оформляет сам перевозчик (Газелька) в своём контуре,
-          и наша карточка дублировала его работу: менеджер с кладовщиком заполняли
-          документ, который никуда не уходил. Блок оставлен как задел под кросс-докинг,
-          где перевозчиком выступаем мы. */}
-      {supply.type === 'FBO' && flags.isAdmin && (
-        <EtrnCard supply={supply} isManager={flags.isManager} />
-      )}
 
       {/* Пошив по поставке: менеджер видит, что уже сшито, и догружает недостающее.
           Показываем НАД товарным составом — сначала производство, потом сборка. */}

@@ -13,6 +13,8 @@ import {
   addSewingOrdersToSupply,
   removeSewingOrderFromSupply,
   supplyStatusFlow,
+  CancelledOrderError,
+  FboUnderfillError,
   type SupplyDetail,
   type WbSupplyOrder,
 } from '@/lib/marketplaceSuppliesApi';
@@ -27,7 +29,6 @@ import {
   playCancelSound,
   primeScanSounds,
 } from '@/lib/scanSound';
-import { CancelledOrderError } from '@/lib/marketplaceSuppliesApi';
 import type { CancelledScanInfo } from '@/components/crm/marketplaceSupplies/CancelledScanDialog';
 
 interface UseSupplyActionsArgs {
@@ -318,8 +319,8 @@ export const useSupplyActions = ({
     const next = supplyStatusFlow[idx + 1];
     if (!next) return;
     void run(async () => {
-      try {
-        const res = await moveSupplyStatus(supplyId, next);
+      const runMove = async (forceUnderfill = false) => {
+        const res = await moveSupplyStatus(supplyId, next, { forceUnderfill });
 
         // Отправления OZON уходят порциями: площадка принимает их строго по одному,
         // и сотня отправлений в одно нажатие не проходит — раньше запрос обрывался,
@@ -350,6 +351,14 @@ export const useSupplyActions = ({
 
         const parts = [`Статус изменён на «${next}»`];
         if (shipped) parts.push(`в доставку на OZON передано ${shipped}`);
+        const cleanup = res?.underfillCleanup;
+        if (cleanup && cleanup.total > 0) {
+          const bits: string[] = [];
+          if (cleanup.deletedNew) bits.push(`удалено новых ${cleanup.deletedNew}`);
+          if (cleanup.releasedStock) bits.push(`возвращено на полку ${cleanup.releasedStock}`);
+          if (cleanup.toShelf) bits.push(`на хранение/конвейер ${cleanup.toShelf}`);
+          if (bits.length) parts.push(bits.join(', '));
+        }
         toast({
           title: parts.join(', '),
           description: problems.length
@@ -358,8 +367,43 @@ export const useSupplyActions = ({
           variant: problems.length ? 'destructive' : undefined,
         });
         load(true);
+      };
+
+      try {
+        await runMove(false);
       } catch (e) {
-        toast({ title: 'Ошибка', description: e instanceof Error ? e.message : undefined, variant: 'destructive' });
+        // Админ закрывает недокомплект FBO: короба уже закрыты, хвосты разберём
+        // на сервере (новый → удалить, со склада → на полку, в работе → до стикеровки).
+        if (
+          e instanceof FboUnderfillError &&
+          e.canForceUnderfill &&
+          user?.role === 'admin' &&
+          supply.type === 'FBO'
+        ) {
+          const ok = window.confirm(
+            `Поставка собрана не полностью: ${e.collected} из ${e.planned} шт.\n\n` +
+              'Отгрузить закрытые короба принудительно?\n' +
+              '• «Со склада» — бронь снимется, вещи вернутся на хранение\n' +
+              '• «Новый» — заказы удалятся из системы\n' +
+              '• В работе — доведут до стикеровки и дадут GW-стикер на полку',
+          );
+          if (!ok) return;
+          try {
+            await runMove(true);
+          } catch (e2) {
+            toast({
+              title: 'Ошибка',
+              description: e2 instanceof Error ? e2.message : undefined,
+              variant: 'destructive',
+            });
+          }
+          return;
+        }
+        toast({
+          title: 'Ошибка',
+          description: e instanceof Error ? e.message : undefined,
+          variant: 'destructive',
+        });
       } finally {
         setOzonShipping(0);
       }

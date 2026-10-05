@@ -37,6 +37,7 @@ from shared import (
     overlock_wait_for_order,
     pick_order_trim,
     sewing_wait_for_order,
+    consume_trim_roll,
     write_off_materials_once,
 )
 
@@ -2810,8 +2811,66 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
             next_step = body_data.get('next') or 'to_sewing'
             if next_step == 'finish':
                 # Работы по вещи больше нет: оверлочница закончила её целиком.
-                # Отправляем сразу на стикеровку, минуя очередь прямострочки, и
-                # проставляем её же швеёй — вещь отшила она.
+                # Отправляем сразу на стикеровку, минуя очередь прямострочки.
+                # Тесьму списываем здесь же — иначе вещь уезжала на стикеровку
+                # без указания коробки, и расход тесьмы пропадал.
+                #
+                # «Передать на пошив» (to_sewing) тесьму НЕ списывает: там только
+                # обмётка края, расход укажет швея на прямострочке при сдаче.
+                cur.execute(
+                    "SELECT material, width, height, workshop_id FROM orders WHERE id = %s",
+                    (int(item_id),),
+                )
+                mat_row = cur.fetchone()
+                ov_material = mat_row[0] if mat_row else None
+                ov_w = mat_row[1] if mat_row else ov_width
+                ov_h = mat_row[2] if mat_row else None
+                ov_ws = mat_row[3] if mat_row else ov_workshop
+
+                # Цех/смена швеи сейчас — как при обычной сдаче на стикеровку.
+                actor_shift_number = None
+                sewer_workshop_id = None
+                if actor_id:
+                    cur.execute(
+                        "SELECT workshop_id, shift_number FROM shift_sessions "
+                        "WHERE user_id = %s AND closed_at IS NULL "
+                        "ORDER BY opened_at DESC LIMIT 1",
+                        (int(actor_id),),
+                    )
+                    session_row = cur.fetchone()
+                    if session_row:
+                        sewer_workshop_id = session_row[0]
+                        actor_shift_number = session_row[1]
+                    if actor_shift_number is None:
+                        cur.execute(
+                            "SELECT shift_number FROM users WHERE id = %s", (int(actor_id),)
+                        )
+                        u_row = cur.fetchone()
+                        actor_shift_number = u_row[0] if u_row else None
+                check_workshop_id = sewer_workshop_id or ov_ws
+
+                trim_err = consume_trim_roll(
+                    cur,
+                    order_id=int(item_id),
+                    roll_id=body_data.get('rollId'),
+                    material=ov_material,
+                    width=ov_w,
+                    height=ov_h,
+                    requires_overlock=True,
+                    check_workshop_id=check_workshop_id,
+                    actor_shift_number=actor_shift_number,
+                    sewer_user_id=actor_id,
+                )
+                if trim_err:
+                    conn.rollback()
+                    return {
+                        'statusCode': trim_err['status'],
+                        'headers': headers,
+                        'body': json.dumps(
+                            {'error': trim_err['error']}, ensure_ascii=False
+                        ),
+                    }
+
                 cur.execute(
                     f"UPDATE orders SET overlocked_at = now(), "
                     f"overlock_user_id = {int(actor_id)}, sewing_status = 'Стикеровка', "
@@ -2822,12 +2881,15 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                 award_variki(cur, actor_id)
                 log_action(
                     cur, actor_id, actor_name, 'overlock_done', 'order', item_id,
-                    f'Обметал заказ #{ov_number or item_id} и сдал на стикеровку',
+                    f'Обметал заказ #{ov_number or item_id} и сдал на стикеровку'
+                    + (f' (тесьма с рулона {body_data.get("rollId")})'
+                       if body_data.get('rollId') else ''),
                 )
             else:
                 # Обычный путь: вещь возвращается в общую очередь «Раскроено» с
                 # отметкой об оверлоке. assigned_user_id снимаем — вещь снова
                 # ничья, её берёт следующая свободная швея в порядке очереди.
+                # Расход тесьмы здесь НЕ пишем: обмётка края, не пошив.
                 cur.execute(
                     f"UPDATE orders SET overlocked_at = now(), "
                     f"overlock_user_id = {int(actor_id)}, sewing_status = 'Раскроено', "

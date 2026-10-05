@@ -620,8 +620,9 @@ export const sendToStickering = (id: number, rollId?: number, actorId?: number) 
  * takeOverlock — швея с допуском берёт вещь из очереди «Оверлок» себе.
  * overlockDone — край обметан. Куда вещь пойдёт дальше, решает она сама:
  *   'to_sewing' — вернуть в общую очередь «Раскроено» с отметкой «Обработан»,
- *                 дальше её разберут швеи на прямострочку;
+ *                 дальше её разберут швеи на прямострочку (тесьму не списываем);
  *   'finish'    — работы больше нет, отправить сразу на стикеровку.
+ *                 rollId — рулон тесьмы: обязателен, если товару нужна тесьма.
  */
 export const takeOverlock = (id: number, actorId?: number) =>
   postAction({ action: 'take_overlock', id, actorId });
@@ -629,8 +630,16 @@ export const takeOverlock = (id: number, actorId?: number) =>
 export const overlockDone = (
   id: number,
   next: 'to_sewing' | 'finish',
-  actorId?: number
-) => postAction({ action: 'overlock_done', id, next, actorId });
+  actorId?: number,
+  rollId?: number,
+) =>
+  postAction({
+    action: 'overlock_done',
+    id,
+    next,
+    actorId,
+    ...(rollId != null ? { rollId } : {}),
+  });
 
 export const cancelOrder = (id: number) => postAction({ action: 'cancel_order', id });
 

@@ -294,6 +294,7 @@ const SewingItems = () => {
           isSewerView={isSewer}
           isAdminView={user?.role === 'admin'}
           availableRolls={isSewer ? myTrimRolls : myFabricRolls}
+          trimRolls={myTrimRolls}
           onSendToStickering={async (rollId) => {
             await handleSendToStickering(rollId);
             // Место в работе освободилось — перечитываем таймеры остальных вещей.
