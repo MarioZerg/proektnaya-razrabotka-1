@@ -55,6 +55,8 @@ const CutterActionsCard = ({
   onCutGroup,
   repairPieceTaken = false,
 }: CutterActionsCardProps) => {
+  const selectedRoll = matchingRolls.find((r) => String(r.id) === selectedRollId);
+
   // Заказ уже ушёл дальше по конвейеру — раскраивать нечего, показываем причину,
   // а не молча заблокированные поля.
   if (!canCut) {
@@ -120,16 +122,30 @@ const CutterActionsCard = ({
           <div className="w-full space-y-1.5 sm:w-64">
             <Label>Рулон в вашем цехе/смене</Label>
             <Select value={selectedRollId} onValueChange={setSelectedRollId} disabled={cutting || isAlreadyCut}>
-              <SelectTrigger>
-                <SelectValue placeholder="Выберите рулон" />
+              {/* НОМЕР РУЛОНА — ПЕРВЫМ. Длинное название ткани на телефоне
+                  обрезалось и уносило номер за край экрана: закройщица не видела,
+                  какой рулон выбран. Теперь в поле номер и остаток, а название —
+                  второй строкой; в списке пункты переносятся, а не уезжают. */}
+              <SelectTrigger className="h-auto min-h-10 py-1.5 text-left [&>span]:line-clamp-none [&>span]:whitespace-normal">
+                <SelectValue placeholder="Выберите рулон">
+                  {selectedRoll ? (
+                    <span className="flex min-w-0 flex-col">
+                      <span className="font-semibold">
+                        #{selectedRoll.barcode} — {formatQuantity(selectedRoll.remainingQuantity)} {selectedRoll.unit}
+                      </span>
+                      <span className="truncate text-xs text-muted-foreground">{selectedRoll.materialName}</span>
+                    </span>
+                  ) : undefined}
+                </SelectValue>
               </SelectTrigger>
-              <SelectContent>
+              <SelectContent className="max-w-[calc(100vw-1rem)]">
                 {matchingRolls.length === 0 ? (
                   <div className="px-2 py-1.5 text-sm text-muted-foreground">Нет доступных рулонов</div>
                 ) : (
                   matchingRolls.map((r) => (
-                    <SelectItem key={r.id} value={String(r.id)}>
-                      {r.materialName} #{r.barcode} — {formatQuantity(r.remainingQuantity)} {r.unit}
+                    <SelectItem key={r.id} value={String(r.id)} className="whitespace-normal break-words">
+                      <span className="font-semibold">#{r.barcode}</span> — {formatQuantity(r.remainingQuantity)} {r.unit}
+                      <span className="block text-xs text-muted-foreground">{r.materialName}</span>
                     </SelectItem>
                   ))
                 )}
