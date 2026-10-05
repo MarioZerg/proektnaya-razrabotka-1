@@ -1952,9 +1952,12 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
             if can_ov_row and can_ov_row[0]:
                 # Две швеи жмут «Получить заказ» одновременно — без блокировки обе
                 # увидели бы свободную машину и получили по оверлочной вещи.
+                # Замок — строка цеха (FOR UPDATE). pg_advisory_xact_lock в нашей БД
+                # запрещён: запрос падал, и швея с допуском к оверлоку получала
+                # ошибку вместо заказа.
                 cur.execute(
-                    "SELECT pg_advisory_xact_lock(hashtext(%s))",
-                    (f'overlock_ws_{session_workshop_id or 0}',),
+                    "SELECT id FROM workshops WHERE id = %s FOR UPDATE",
+                    (int(session_workshop_id or 0),),
                 )
                 holder_id, _holder_name, _hc = overlock_holder(
                     cur, session_workshop_id, exclude_user_id=user_id
@@ -2781,9 +2784,10 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                 # Две швеи жмут «Взять на оверлок» в одну секунду: без блокировки обе
                 # проходят проверку «оверлок свободен» и садятся за одну машину.
                 # Блокировка на цех держится до конца транзакции.
+                # Замок — строка цеха (FOR UPDATE): pg_advisory_xact_lock в БД запрещён.
                 cur.execute(
-                    "SELECT pg_advisory_xact_lock(hashtext(%s))",
-                    (f'overlock_ws_{ov_queue_workshop or 0}',),
+                    "SELECT id FROM workshops WHERE id = %s FOR UPDATE",
+                    (int(ov_queue_workshop or 0),),
                 )
 
                 holder_id, holder_name, _holder_count = overlock_holder(

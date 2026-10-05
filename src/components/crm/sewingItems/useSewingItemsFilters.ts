@@ -125,7 +125,10 @@ export const useSewingItemsFilters = ({
       }
       // В обычные вкладки отменённый крой не подмешиваем: он уже собран в своей
       // вкладке, а в очереди «Раскроено» смотрят живую работу.
-      if (isCancelledWithCut(o)) return false;
+      // Исключение — уже сшитая вещь на стикеровке: её закрывает упаковщица, и
+      // смена упаковщицы не закроется, пока вещь висит. Прятать её из вкладки
+      // «Стикеровка» нельзя — иначе «1 заказ на стикеровке», а вкладка пустая.
+      if (isCancelledWithCut(o) && o.sewingStatus !== 'Стикеровка') return false;
 
       // ВКЛАДКА «ОВЕРЛОК» — СРЕЗ ОЧЕРЕДИ «РАСКРОЕНО», А НЕ ОТДЕЛЬНЫЙ СТАТУС.
       //
@@ -257,7 +260,9 @@ export const useSewingItemsFilters = ({
     if (status === CANCELLED_CUT_TAB) {
       return activeOrders.filter(isCancelledWithCut);
     }
-    const workOrders = activeOrders.filter((o) => !isCancelledWithCut(o));
+    const workOrders = activeOrders.filter(
+      (o) => !isCancelledWithCut(o) || o.sewingStatus === 'Стикеровка'
+    );
 
     if (status === OVERLOCK_TAB) {
       return workOrders.filter(

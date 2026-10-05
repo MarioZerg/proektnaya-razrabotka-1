@@ -1326,6 +1326,38 @@ def handler(event: dict, context) -> dict:
                     orders_left = count_orders_in_work(
                         cur, user_id, sess_role, session_workshop_id,
                     )
+                    if orders_left > 0 and sess_role == 'packer':
+                        # Называем конкретные заказы. Отменённый покупателем заказ
+                        # конвейер прячет из вкладки «Стикеровка» во вкладку
+                        # «Отменённые с кроем», и упаковщица видела «1 заказ в
+                        # стикеровке» при пустой вкладке — не понимая, что закрывать.
+                        cur.execute(
+                            "SELECT order_number, "
+                            f"  ({CANCELLED_SQL}) AS is_cancelled "
+                            "FROM orders o "
+                            "WHERE o.sewing_status = 'Стикеровка' AND o.workshop_id = %s "
+                            "AND COALESCE(o.status, '') <> 'Отменён' "
+                            "ORDER BY o.id LIMIT 10",
+                            (int(session_workshop_id),),
+                        )
+                        left_rows = cur.fetchall()
+                        parts = [
+                            f"№{r[0]}" + (' (отменён — закройте со стикером хранения GW)' if r[1] else '')
+                            for r in left_rows
+                        ]
+                        return {
+                            'statusCode': 409,
+                            'headers': headers,
+                            'body': json.dumps(
+                                {
+                                    'error': f'В вашем цехе {orders_left} заказов в стикеровке: '
+                                             f'{", ".join(parts)}. Отсканируйте их на терминале '
+                                             f'стикеровки, потом закрывайте смену',
+                                    'ordersInWork': orders_left,
+                                },
+                                ensure_ascii=False,
+                            ),
+                        }
                     if orders_left > 0:
                         stage = {
                             'cutter': 'на раскрое',
