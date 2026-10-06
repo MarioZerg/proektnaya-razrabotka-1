@@ -6,6 +6,7 @@ import AdminPeoplePanel from '@/components/crm/dashboard/AdminPeoplePanel';
 import ShortagePenaltyCard from '@/components/crm/dashboard/ShortagePenaltyCard';
 import FboShipmentsCard from '@/components/crm/dashboard/FboShipmentsCard';
 import StalledShipmentsCard from '@/components/crm/dashboard/StalledShipmentsCard';
+import LiveFloorCard from '@/components/crm/dashboard/liveFloor/LiveFloorCard';
 import { type DashboardWidgetData } from '@/components/crm/dashboard/dashboardShared';
 import {
   type EmployeeShiftStatus,
@@ -81,6 +82,8 @@ const CrmDashboardSections = ({
     )}
 
     {widgets.length > 0 && <DashboardWidgetsGrid widgets={widgets} loading={dataLoading} />}
+
+    {isAdmin && <LiveFloorCard />}
 
     {canSeeWorkingToday && <WorkingTodayCard />}
 

@@ -182,6 +182,36 @@ export default {
 				'megabuh-flip': {
 					'0%, 92%': { transform: 'rotateY(0deg)' },
 					'100%': { transform: 'rotateY(360deg)' }
+				},
+				// ЖИВОЙ ЦЕХ: точка бежит по ленте между этапами.
+				'flow-dot': {
+					'0%': { left: '-6px', opacity: '0' },
+					'12%, 88%': { opacity: '1' },
+					'100%': { left: '100%', opacity: '0' }
+				},
+				// Полосы ленты конвейера едут вправо.
+				'belt': {
+					from: { backgroundPosition: '0 0' },
+					to: { backgroundPosition: '24px 0' }
+				},
+				// Вещь перешла на следующий этап — фишка вспыхивает.
+				'moved-glow': {
+					'0%': { boxShadow: '0 0 0 0 rgba(16, 185, 129, 0)', transform: 'scale(1)' },
+					'25%': { boxShadow: '0 0 0 5px rgba(16, 185, 129, 0.45)', transform: 'scale(1.06)' },
+					'100%': { boxShadow: '0 0 0 0 rgba(16, 185, 129, 0)', transform: 'scale(1)' }
+				},
+				'feed-in': {
+					from: { opacity: '0', transform: 'translateY(-10px)' },
+					to: { opacity: '1', transform: 'translateY(0)' }
+				},
+				'count-bump': {
+					'0%': { transform: 'scale(1)' },
+					'35%': { transform: 'scale(1.3)' },
+					'100%': { transform: 'scale(1)' }
+				},
+				'breathe': {
+					'0%, 100%': { opacity: '0.55' },
+					'50%': { opacity: '1' }
 				}
 			},
 			animation: {
@@ -204,7 +234,13 @@ export default {
 				// даже боковым зрением, без сравнивания плиток между собой.
 				'tile-alert': 'tile-alert 1.4s ease-in-out infinite',
 				'megabuh-bob': 'megabuh-bob 2.4s ease-in-out infinite',
-				'megabuh-flip': 'megabuh-flip 10s ease-in-out infinite'
+				'megabuh-flip': 'megabuh-flip 10s ease-in-out infinite',
+				'flow-dot': 'flow-dot 2.6s linear infinite',
+				'belt': 'belt 1s linear infinite',
+				'moved-glow': 'moved-glow 1.6s ease-out 2',
+				'feed-in': 'feed-in 0.5s ease-out both',
+				'count-bump': 'count-bump 0.6s ease-out',
+				'breathe': 'breathe 3s ease-in-out infinite'
 			}
 		}
 	},

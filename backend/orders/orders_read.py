@@ -231,6 +231,188 @@ def _handle_search(cur, headers: dict, query: str) -> dict:
     }
 
 
+def _iso(v):
+    return (v.isoformat() + 'Z') if v else None
+
+
+# Начало сегодняшнего дня по Москве в тех же «наивных UTC», в которых хранятся
+# отметки времени заказов.
+_MSK_TODAY_START = "((now() + interval '3 hours')::date - interval '3 hours')"
+
+# Окно ленты событий и «недавно проехавших» вещей.
+_LIVE_WINDOW = "interval '3 hours'"
+
+
+def _handle_live_floor(cur, headers: dict) -> dict:
+    """ЖИВОЙ ЦЕХ для администратора: кто на смене, что у кого в руках, что только что сдвинулось.
+
+    Общий список конвейера для этого не годится — он весит мегабайты. Здесь только
+    то, что движется: вещи в руках у людей, очередь на стикеровку, крой и упаковка
+    за последние часы, счётчики по этапам и лента переходов.
+    """
+    cur.execute("SELECT now()")
+    now_ts = cur.fetchone()[0]
+
+    # Кто сейчас на смене. Последняя открытая смена человека — на случай, если
+    # их по ошибке открыто две.
+    cur.execute(
+        "SELECT DISTINCT ON (u.id) u.id, u.full_name, COALESCE(ss.role, u.role), "
+        "       ss.workshop_id, w.name, ss.opened_at, COALESCE(u.can_overlock, false) "
+        "FROM shift_sessions ss "
+        "JOIN users u ON u.id = ss.user_id "
+        "LEFT JOIN workshops w ON w.id = ss.workshop_id "
+        "WHERE ss.closed_at IS NULL "
+        "  AND COALESCE(ss.role, u.role) IN ('cutter', 'sewer', 'packer') "
+        "ORDER BY u.id, ss.opened_at DESC"
+    )
+    people = [
+        {
+            'id': r[0], 'name': r[1], 'role': r[2], 'workshopId': r[3],
+            'workshopName': r[4], 'shiftOpenedAt': _iso(r[5]), 'canOverlock': bool(r[6]),
+        }
+        for r in cur.fetchall()
+    ]
+
+    # Вещи, которые сейчас движутся. Длинную очередь «крой готов» целиком не
+    # везём — только то, что раскроили недавно или держат на оверлоке.
+    cur.execute(
+        "SELECT o.id, o.order_number, o.marketplace, o.order_type, o.material, "
+        "       o.width, o.height, o.sewing_status, COALESCE(o.requires_overlock, false), "
+        "       o.overlocked_at, o.overlock_user_id, o.overlock_taken_at, "
+        "       o.assigned_user_id, o.cutter_user_id, o.sewer_user_id, o.packer_user_id, "
+        "       o.cut_at, o.taken_at, o.sewn_at, o.packed_at, o.workshop_id, "
+        "       o.group_key, o.group_size, o.group_position, "
+        f"      ({CANCELLED_SQL}) "
+        "FROM orders o "
+        "WHERE o.sewing_status IN ('На раскрое', 'В работе', 'Стикеровка') "
+        "   OR (o.sewing_status = 'Раскроено' AND ("
+        "         (o.overlock_user_id IS NOT NULL AND o.overlocked_at IS NULL) "
+        f"        OR o.cut_at >= now() - {_LIVE_WINDOW} "
+        f"        OR o.overlocked_at >= now() - {_LIVE_WINDOW})) "
+        f"   OR (o.sewing_status = 'Готовые' AND o.packed_at >= now() - {_LIVE_WINDOW}) "
+        "ORDER BY o.id DESC "
+        "LIMIT 600"
+    )
+    orders = []
+    for r in cur.fetchall():
+        orders.append({
+            'id': r[0], 'orderNumber': r[1], 'marketplace': r[2], 'orderType': r[3],
+            'material': r[4], 'width': r[5], 'height': r[6], 'sewingStatus': r[7],
+            'requiresOverlock': bool(r[8]), 'overlockedAt': _iso(r[9]),
+            'overlockUserId': r[10], 'overlockTakenAt': _iso(r[11]),
+            'assignedUserId': r[12], 'cutterUserId': r[13], 'sewerUserId': r[14],
+            'packerUserId': r[15], 'cutAt': _iso(r[16]), 'takenAt': _iso(r[17]),
+            'sewnAt': _iso(r[18]), 'packedAt': _iso(r[19]), 'workshopId': r[20],
+            'groupKey': r[21], 'groupSize': r[22], 'groupPosition': r[23],
+            'isCancelled': bool(r[24]),
+        })
+
+    # Счётчики по этапам — по всему конвейеру, а не по выборке выше.
+    cur.execute(
+        "SELECT "
+        "  COUNT(*) FILTER (WHERE o.sewing_status = 'Новый' "
+        f"                   AND o.fulfilled_from_stock_id IS NULL AND NOT ({CANCELLED_SQL})), "
+        "  COUNT(*) FILTER (WHERE o.sewing_status = 'На раскрое'), "
+        "  COUNT(*) FILTER (WHERE o.sewing_status = 'Раскроено' "
+        "                   AND NOT (COALESCE(o.requires_overlock, false) AND o.overlocked_at IS NULL)), "
+        "  COUNT(*) FILTER (WHERE o.sewing_status = 'Раскроено' "
+        "                   AND COALESCE(o.requires_overlock, false) AND o.overlocked_at IS NULL), "
+        "  COUNT(*) FILTER (WHERE o.sewing_status = 'В работе'), "
+        "  COUNT(*) FILTER (WHERE o.sewing_status = 'Стикеровка'), "
+        f" COUNT(*) FILTER (WHERE o.packed_at >= {_MSK_TODAY_START}) "
+        "FROM orders o "
+        "WHERE o.sewing_status IN ('Новый', 'На раскрое', 'Раскроено', 'В работе', 'Стикеровка') "
+        f"   OR o.packed_at >= {_MSK_TODAY_START}"
+    )
+    c = cur.fetchone()
+    counts = {
+        'new': int(c[0] or 0), 'cutting': int(c[1] or 0), 'cutReady': int(c[2] or 0),
+        'overlock': int(c[3] or 0), 'sewing': int(c[4] or 0),
+        'stickering': int(c[5] or 0), 'doneToday': int(c[6] or 0),
+    }
+
+    # Лента переходов: каждая отметка времени заказа — это шаг по цепочке.
+    cur.execute(
+        "SELECT kind, ts, id, order_number, uid, workshop_id FROM ("
+        "  SELECT 'cut' AS kind, o.cut_at AS ts, o.id, o.order_number, "
+        "         o.cutter_user_id AS uid, o.workshop_id FROM orders o "
+        f"  WHERE o.cut_at >= now() - {_LIVE_WINDOW} "
+        "  UNION ALL "
+        "  SELECT 'overlock', o.overlocked_at, o.id, o.order_number, o.overlock_user_id, "
+        "         o.workshop_id FROM orders o "
+        f"  WHERE o.overlocked_at >= now() - {_LIVE_WINDOW} "
+        "  UNION ALL "
+        "  SELECT 'taken', o.taken_at, o.id, o.order_number, "
+        "         COALESCE(o.sewer_user_id, o.assigned_user_id), o.workshop_id FROM orders o "
+        f"  WHERE o.taken_at >= now() - {_LIVE_WINDOW} "
+        "    AND o.sewing_status IN ('В работе', 'Стикеровка', 'Готовые') "
+        "  UNION ALL "
+        "  SELECT 'sewn', o.sewn_at, o.id, o.order_number, o.sewer_user_id, "
+        "         o.workshop_id FROM orders o "
+        f"  WHERE o.sewn_at >= now() - {_LIVE_WINDOW} "
+        "  UNION ALL "
+        "  SELECT 'packed', o.packed_at, o.id, o.order_number, o.packer_user_id, "
+        "         o.workshop_id FROM orders o "
+        f"  WHERE o.packed_at >= now() - {_LIVE_WINDOW} "
+        ") e WHERE ts IS NOT NULL "
+        "ORDER BY ts DESC LIMIT 80"
+    )
+    events = [
+        {
+            'kind': r[0], 'at': _iso(r[1]), 'orderId': r[2], 'orderNumber': r[3],
+            'userId': r[4], 'workshopId': r[5],
+        }
+        for r in cur.fetchall()
+    ]
+
+    # Сделано за сегодня каждым — для подписи на карточке человека.
+    cur.execute(
+        "SELECT kind, uid, COUNT(*) FROM ("
+        f"  SELECT 'cut' AS kind, cutter_user_id AS uid FROM orders WHERE cut_at >= {_MSK_TODAY_START} "
+        "  UNION ALL "
+        f"  SELECT 'overlock', overlock_user_id FROM orders WHERE overlocked_at >= {_MSK_TODAY_START} "
+        "  UNION ALL "
+        f"  SELECT 'sewn', sewer_user_id FROM orders WHERE sewn_at >= {_MSK_TODAY_START} "
+        "  UNION ALL "
+        f"  SELECT 'packed', packer_user_id FROM orders WHERE packed_at >= {_MSK_TODAY_START} "
+        ") t WHERE uid IS NOT NULL GROUP BY kind, uid"
+    )
+    today = {}
+    for kind, uid, cnt in cur.fetchall():
+        today.setdefault(str(uid), {})[kind] = int(cnt)
+
+    # Имена всех, кто упомянут в заказах и ленте, — одной выборкой.
+    user_ids = {p['id'] for p in people}
+    for o in orders:
+        for k in ('overlockUserId', 'assignedUserId', 'cutterUserId', 'sewerUserId', 'packerUserId'):
+            if o[k]:
+                user_ids.add(o[k])
+    for e in events:
+        if e['userId']:
+            user_ids.add(e['userId'])
+    names = {}
+    if user_ids:
+        cur.execute(
+            "SELECT id, full_name FROM users WHERE id = ANY(%s)",
+            (list(user_ids),),
+        )
+        names = {str(r[0]): r[1] for r in cur.fetchall()}
+
+    return {
+        'statusCode': 200,
+        'headers': headers,
+        'body': json.dumps({
+            'now': _iso(now_ts),
+            'people': people,
+            'orders': orders,
+            'counts': counts,
+            'events': events,
+            'today': today,
+            'names': names,
+        }, ensure_ascii=False, default=str),
+    }
+
+
 def handle_get(event: dict, headers: dict, dsn: str) -> dict:
     """Читающая часть конвейера: что показать цеху и менеджеру."""
     params = event.get('queryStringParameters') or {}
@@ -262,6 +444,9 @@ def handle_get(event: dict, headers: dict, dsn: str) -> dict:
                     'body': json.dumps({'orders': [], 'search': search}),
                 }
             return _handle_search(cur, headers, search)
+
+        if params.get('liveFloor'):
+            return _handle_live_floor(cur, headers)
 
         # Сколько ещё шить каждую вещь, взятую швеёй в работу.
         #
