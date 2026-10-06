@@ -71,15 +71,31 @@ export interface LiveFloorData {
   names: Record<string, string>;
 }
 
+const EMPTY_COUNTS: LiveCounts = {
+  new: 0,
+  cutting: 0,
+  cutReady: 0,
+  overlock: 0,
+  sewing: 0,
+  stickering: 0,
+  doneToday: 0,
+};
+
 export const fetchLiveFloor = async (): Promise<LiveFloorData> => {
   const res = await fetch(`${ORDERS_URL}?liveFloor=1`);
   const data = await res.json();
   if (!res.ok) throw new Error(data.error || 'Не удалось загрузить живой цех');
+  // Ответ без снимка цеха (например, отвечала старая копия сервера сразу после
+  // выкладки — она отдаёт обычный список заказов) считаем сбоем: иначе блок
+  // получал пустые счётчики, падал и пропадал с главной целиком.
+  if (!data || !data.counts || !Array.isArray(data.people)) {
+    throw new Error('Сервер прислал неполные данные — повторим через несколько секунд');
+  }
   return {
-    now: data.now,
+    now: data.now || new Date().toISOString(),
     people: data.people || [],
     orders: data.orders || [],
-    counts: data.counts,
+    counts: { ...EMPTY_COUNTS, ...data.counts },
     events: data.events || [],
     today: data.today || {},
     names: data.names || {},

@@ -133,7 +133,7 @@ const LiveFloorPipeline = ({
 
       <div className="relative z-10 grid" style={{ gridTemplateColumns: `repeat(${STAGES.length}, minmax(0, 1fr))` }}>
         {STAGES.map((s) => {
-          const value = counts[COUNT_BY_STAGE[s.key]] ?? 0;
+          const value = counts?.[COUNT_BY_STAGE[s.key]] ?? 0;
           const active = activeStages.has(s.key);
           return (
             <div key={s.key} className="flex flex-col items-center gap-1 text-center">
