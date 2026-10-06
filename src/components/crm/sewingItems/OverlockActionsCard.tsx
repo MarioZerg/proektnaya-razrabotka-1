@@ -115,10 +115,7 @@ const OverlockActionsCard = ({
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-3">
-        <p className="text-xs text-muted-foreground">
-          У этой ткани осыпается край: сначала обмётка, потом прямострочка.
-          {meters && ` Оплата за ${meters} пог.м.`}
-        </p>
+        <p className="text-xs text-muted-foreground"></p>
 
         {!taken && overlockBusyBy && (
           <div className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900">
