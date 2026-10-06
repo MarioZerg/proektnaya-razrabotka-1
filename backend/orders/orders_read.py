@@ -6,6 +6,7 @@
 """
 
 import json
+from datetime import timezone
 
 import psycopg2
 
@@ -250,8 +251,12 @@ def _handle_live_floor(cur, headers: dict) -> dict:
     то, что движется: вещи в руках у людей, очередь на стикеровку, крой и упаковка
     за последние часы, счётчики по этапам и лента переходов.
     """
+    # Наивное UTC, как и остальные отметки: now() с часовым поясом давал
+    # «+00:00Z», а такую дату браузер не разбирает — часы карточки сбивались.
     cur.execute("SELECT now()")
     now_ts = cur.fetchone()[0]
+    if getattr(now_ts, 'tzinfo', None) is not None:
+        now_ts = now_ts.astimezone(timezone.utc).replace(tzinfo=None)
 
     # Кто сейчас на смене. Последняя открытая смена человека — на случай, если
     # их по ошибке открыто две.
