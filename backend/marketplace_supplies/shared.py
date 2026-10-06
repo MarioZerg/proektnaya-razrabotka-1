@@ -5,6 +5,7 @@
 пользуются и чтение списка поставок, и все действия по сборке.
 """
 
+import re
 import base64
 import json
 import os
@@ -714,7 +715,17 @@ def resolve_ozon_barcode(cur, barcode):
 
     Возвращает номер отправления или None, если это не штрихкод OZON.
     """
-    if not barcode.isdigit() or len(barcode) < 12:
+    # С осени 2026 OZON печатает на ярлыке FBS код вида ii50022356409
+    # (буквы ii + цифры) вместо длинного числа. Его тоже понимает
+    # get-by-barcode — без этого вещь с новым ярлыком «не находилась».
+    barcode = (barcode or '').strip()
+    # Сканер в русской раскладке отдаёт «шш» вместо «ii».
+    if barcode[:2].lower() == 'шш':
+        barcode = 'ii' + barcode[2:]
+    is_ii = bool(re.fullmatch(r'(?i)ii\d{6,}', barcode))
+    if is_ii:
+        barcode = 'ii' + barcode[2:]
+    elif not barcode.isdigit() or len(barcode) < 12:
         return None
     cur.execute(
         "SELECT is_enabled, credentials FROM marketplace_integrations "

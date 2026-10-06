@@ -82,7 +82,17 @@ def resolve_ozon_barcode(cur, barcode):
     На ярлыке OZON крупно печатает свой штрихкод, а не номер отправления — сканер
     считывает именно его, и в нашей базе такого кода нет. Спрашиваем номер у OZON.
     """
-    if not barcode.isdigit() or len(barcode) < 12:
+    # С осени 2026 OZON печатает на ярлыке FBS код вида ii50022356409
+    # (буквы ii + цифры) вместо длинного числа. Его тоже понимает
+    # get-by-barcode — без этого вещь с новым ярлыком «не находилась».
+    barcode = (barcode or '').strip()
+    # Сканер в русской раскладке отдаёт «шш» вместо «ii».
+    if barcode[:2].lower() == 'шш':
+        barcode = 'ii' + barcode[2:]
+    is_ii = bool(re.fullmatch(r'(?i)ii\d{6,}', barcode))
+    if is_ii:
+        barcode = 'ii' + barcode[2:]
+    elif not barcode.isdigit() or len(barcode) < 12:
         return None
     cur.execute(
         "SELECT is_enabled, credentials FROM marketplace_integrations "
