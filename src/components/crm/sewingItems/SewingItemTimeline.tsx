@@ -89,7 +89,7 @@ const buildSteps = (o: Order): Step[] => {
         icon: 'Zap',
         hex: '#c026d3',
         at: o.overlockedAt || o.overlockTakenAt || null,
-        who: o.overlockUserName,
+        who: o.overlockUserName ?? null,
         state: ovDone
           ? 'done'
           : ovWork
