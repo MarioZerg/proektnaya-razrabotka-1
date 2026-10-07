@@ -10,7 +10,7 @@ import boto3
 import psycopg2
 
 from authz import AuthError, auth_error_response, require_admin
-from onec_flush import flush_onec_outbox
+from onec_flush import enqueue_onec_entity, flush_onec_outbox
 
 
 ROLES = {'sewer', 'cutter', 'packer', 'storekeeper', 'senior_storekeeper', 'cleaner',
@@ -379,6 +379,7 @@ def handler(event: dict, context) -> dict:
                     "AND personal_data_verified = false",
                     (new_id,),
                 )
+                enqueue_onec_entity(cur, 'employee', new_id)
                 flush_onec_outbox(cur)
                 conn.commit()
                 return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'id': new_id, 'login': login})}
@@ -474,6 +475,8 @@ def handler(event: dict, context) -> dict:
                     return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Нет полей для обновления'})}
 
                 cur.execute(f"UPDATE users SET {', '.join(fields)} WHERE id = {int(user_id)}")
+                enqueue_onec_entity(cur, 'employee', user_id)
+                flush_onec_outbox(cur)
                 conn.commit()
                 return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True})}
 
@@ -624,6 +627,7 @@ def handler(event: dict, context) -> dict:
 
                 cur.execute('SELECT login FROM users WHERE id = %s', (int(user_id),))
                 login_row = cur.fetchone()
+                enqueue_onec_entity(cur, 'employee', user_id)
                 flush_onec_outbox(cur)
                 conn.commit()
                 return {

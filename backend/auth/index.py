@@ -6,7 +6,7 @@ import secrets
 
 import psycopg2
 
-from onec_flush import flush_onec_outbox
+from onec_flush import enqueue_onec_entity, flush_onec_outbox
 
 
 ROLES = {'sewer', 'cutter', 'packer', 'storekeeper', 'senior_storekeeper', 'cleaner',
@@ -523,6 +523,7 @@ def handler(event: dict, context) -> dict:
                 'INSERT INTO user_roles (user_id, role, is_approved) VALUES (%s, %s, false)',
                 (user_id, role),
             )
+            enqueue_onec_entity(cur, 'employee', user_id)
             flush_onec_outbox(cur)
             conn.commit()
         finally:

@@ -90,9 +90,10 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
             # Двойное нажатие на планшете отправляет два запроса подряд. Без блокировки
             # оба видели «на руках 0» и выдавали по стеку — закройщица получала 40.
             # Блокировка на человека держится до конца транзакции.
+            # Замок — строка сотрудника (FOR UPDATE): pg_advisory_xact_lock в нашей БД запрещён.
             cur.execute(
-                "SELECT pg_advisory_xact_lock(hashtext(%s))",
-                (f'take_stack_user_{int(user_id)}',),
+                "SELECT id FROM users WHERE id = %s FOR UPDATE",
+                (int(user_id),),
             )
 
             # Брать работу с конвейера можно только на открытой смене — иначе выработка

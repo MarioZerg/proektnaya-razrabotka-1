@@ -3,7 +3,7 @@ import os
 
 import psycopg2
 
-from onec_flush import flush_onec_outbox
+from onec_flush import enqueue_onec_entity, flush_onec_outbox
 
 
 def handler(event: dict, context) -> dict:
@@ -129,6 +129,7 @@ def handler(event: dict, context) -> dict:
                     f"RETURNING id"
                 )
                 new_id = cur.fetchone()[0]
+                enqueue_onec_entity(cur, 'supplier', new_id)
                 flush_onec_outbox(cur)
                 conn.commit()
                 return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'id': new_id})}
@@ -173,6 +174,7 @@ def handler(event: dict, context) -> dict:
                     return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Нет полей для обновления'})}
 
                 cur.execute(f"UPDATE suppliers SET {', '.join(fields)} WHERE id = {int(supplier_id)}")
+                enqueue_onec_entity(cur, 'supplier', supplier_id)
 
                 # НОВАЯ НОРМА ПРОТЯГИВАЕТСЯ В НЕРЕШЁННЫЕ РУЛОНЫ.
                 #
@@ -199,6 +201,7 @@ def handler(event: dict, context) -> dict:
                     )
                     rolls_updated = cur.rowcount or 0
 
+                flush_onec_outbox(cur)
                 conn.commit()
                 return {
                     'statusCode': 200,

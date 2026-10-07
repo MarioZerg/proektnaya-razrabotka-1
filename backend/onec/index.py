@@ -39,8 +39,10 @@ def handler(event: dict, context) -> dict:
     try:
         cur = conn.cursor()
         if method == 'GET':
+            sync_salary_accruals(cur)
+            conn.commit()
             cur.execute(
-                "SELECT status, COUNT(*) FROM onec_outbox GROUP BY status"
+                "SELECT status, COUNT(*) FROM onec_outbox WHERE status <> 'baseline' GROUP BY status"
             )
             counts = {r[0]: int(r[1]) for r in cur.fetchall()}
             return {
@@ -119,6 +121,7 @@ def post_to_onec(creds, entity, entity_id, payload):
 
 
 def flush_onec_outbox(cur, limit=20):
+    sync_salary_accruals(cur)
     creds = load_onec_creds(cur)
     if not creds:
         return {'sent': 0, 'failed': 0, 'error': '1С не подключена: включите интеграцию и укажите URL'}
@@ -161,3 +164,24 @@ def flush_onec_outbox(cur, limit=20):
                 )
             failed += 1
     return {'sent': sent, 'failed': failed, 'error': last_error}
+
+
+def sync_salary_accruals(cur, limit=500):
+    """Начисления пишут многие функции (киоск, конвейер, рулоны…). Вместо триггера
+    догоняем очередь: всё, что новее последнего salary_accrual в onec_outbox
+    (история до запуска отсечена строкой status='baseline')."""
+    try:
+        cur.execute(
+            "INSERT INTO onec_outbox (entity, entity_id, payload) "
+            "SELECT 'salary_accrual', a.id, jsonb_build_object("
+            "  'id', a.id, 'userId', a.user_id, 'fullName', u.full_name, 'type', a.type, "
+            "  'amount', a.amount, 'description', a.description, "
+            "  'accruedFor', a.accrued_for, 'orderId', a.order_id) "
+            "FROM salary_accruals a LEFT JOIN users u ON u.id = a.user_id "
+            "WHERE a.id > (SELECT COALESCE(MAX(entity_id), 0) FROM onec_outbox WHERE entity = 'salary_accrual') "
+            "ORDER BY a.id LIMIT %s "
+            "ON CONFLICT (entity, entity_id) WHERE entity = 'salary_accrual' DO NOTHING",
+            (limit,),
+        )
+    except Exception:
+        pass

@@ -1,6 +1,3 @@
--- Виджет 1С:Бухгалтерия на странице интеграций: URL HTTP-сервиса и пользователь API.
--- У каждого магазина своя строка — у МЕГАТЮЛЬ и ДЮНЫ могут быть разные базы.
-
 INSERT INTO marketplace_integrations (marketplace_code, shop_id, is_enabled, credentials)
 SELECT 'onec_buh', s.id, false, '{}'::jsonb
 FROM shops s

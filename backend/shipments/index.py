@@ -24,15 +24,34 @@ KEEP_WORKSHOP_NAME = 'Цех №1'
 
 def enqueue_onec(cur, entity, entity_id, payload):
     """Кладём документ в очередь 1С. Если миграции ещё нет — не роняем приёмку."""
-    cur.execute('SAVEPOINT onec_enq')
     try:
         cur.execute(
             "INSERT INTO onec_outbox (entity, entity_id, payload) VALUES (%s, %s, %s::jsonb)",
             (entity, int(entity_id), json.dumps(payload, ensure_ascii=False, default=str)),
         )
-        cur.execute('RELEASE SAVEPOINT onec_enq')
     except Exception:
-        cur.execute('ROLLBACK TO SAVEPOINT onec_enq')
+        pass
+
+
+def sync_salary_accruals(cur, limit=500):
+    """Начисления пишут многие функции (киоск, конвейер, рулоны…). Вместо триггера
+    догоняем очередь: всё, что новее последнего salary_accrual в onec_outbox
+    (история до запуска отсечена строкой status='baseline')."""
+    try:
+        cur.execute(
+            "INSERT INTO onec_outbox (entity, entity_id, payload) "
+            "SELECT 'salary_accrual', a.id, jsonb_build_object("
+            "  'id', a.id, 'userId', a.user_id, 'fullName', u.full_name, 'type', a.type, "
+            "  'amount', a.amount, 'description', a.description, "
+            "  'accruedFor', a.accrued_for, 'orderId', a.order_id) "
+            "FROM salary_accruals a LEFT JOIN users u ON u.id = a.user_id "
+            "WHERE a.id > (SELECT COALESCE(MAX(entity_id), 0) FROM onec_outbox WHERE entity = 'salary_accrual') "
+            "ORDER BY a.id LIMIT %s "
+            "ON CONFLICT (entity, entity_id) WHERE entity = 'salary_accrual' DO NOTHING",
+            (limit,),
+        )
+    except Exception:
+        pass
 
 
 def _load_onec_creds(cur):
@@ -57,11 +76,10 @@ def _load_onec_creds(cur):
 
 def flush_onec_outbox(cur, limit=20):
     """Отправляем пачку очереди на URL из виджета 1С. Ошибки 1С не откатывают приёмку."""
-    cur.execute('SAVEPOINT onec_flush')
+    sync_salary_accruals(cur)
     try:
         creds = _load_onec_creds(cur)
         if not creds:
-            cur.execute('RELEASE SAVEPOINT onec_flush')
             return {'sent': 0, 'failed': 0, 'error': '1С не подключена: включите интеграцию и укажите URL'}
         cur.execute(
             "SELECT id, entity, entity_id, payload FROM onec_outbox "
@@ -124,10 +142,9 @@ def flush_onec_outbox(cur, limit=20):
                         (err, int(entity_id)),
                     )
                 failed += 1
-        cur.execute('RELEASE SAVEPOINT onec_flush')
         return {'sent': sent, 'failed': failed, 'error': last_error}
     except Exception as e:
-        cur.execute('ROLLBACK TO SAVEPOINT onec_flush')
+        pass
         return {'sent': 0, 'failed': 0, 'error': str(e)[:400]}
 
 
@@ -212,7 +229,6 @@ def build_supply_onec_payload(cur, shipment_id):
 
 def attach_accountant_fields(cur, shipments=None, detail=None):
     """Поля сверки бухгалтера. Пока миграции нет — список приёмок всё равно открывается."""
-    cur.execute('SAVEPOINT onec_acc')
     try:
         if detail is not None:
             cur.execute(
@@ -248,9 +264,8 @@ def attach_accountant_fields(cur, shipments=None, detail=None):
                 s['accountantConfirmedAt'] = (row[3].isoformat() + 'Z') if row[3] else None
                 s['onecSyncedAt'] = (row[4].isoformat() + 'Z') if row[4] else None
                 s['onecError'] = row[5]
-        cur.execute('RELEASE SAVEPOINT onec_acc')
     except Exception:
-        cur.execute('ROLLBACK TO SAVEPOINT onec_acc')
+        pass
 
 
 def remap_closed_workshop_id(cur, workshop_id):
