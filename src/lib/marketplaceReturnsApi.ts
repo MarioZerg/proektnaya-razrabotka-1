@@ -143,6 +143,18 @@ export const scanPickupReturn = (
     alreadyPicked: boolean;
   }>;
 
+/** Кладовщик вскрыл пакет: внутри не тот товар, покупатель подменил на ПВЗ. */
+export const markPvzSubstitution = (
+  barcode: string,
+  actorId?: number,
+  actorName?: string
+): Promise<{ success: true; already: boolean; storageBarcode: string | null }> =>
+  postAction({ action: 'mark_pvz_substitution', barcode, actorId, actorName }) as Promise<{
+    success: true;
+    already: boolean;
+    storageBarcode: string | null;
+  }>;
+
 /** Загрузить свежие заявки на возврат с OZON и Wildberries. */
 /** auto — фоновая загрузка при открытии страницы: сервер пропустит её, если возвраты
  * обновляли меньше 10 минут назад, чтобы не жечь лимиты маркетплейсов. */

@@ -12,6 +12,82 @@ from shared import GOODS_IN_LIVE_SUPPLY_SQL, RESERVE_ALIVE_SQL
 from exports import export_stock_ozon_xlsx, export_stock_wb_xlsx, export_stock_xlsx
 
 
+def _iso_z(value):
+    """Дата в том же виде, что и остальные поля склада: ISO + Z."""
+    if value is None:
+        return None
+    if hasattr(value, 'isoformat'):
+        return value.isoformat() + 'Z'
+    text = str(value).replace(' ', 'T')
+    return text if text.endswith('Z') else text + 'Z'
+
+
+def _date_s(value):
+    """Календарный день поставки: YYYY-MM-DD, без времени."""
+    if value is None:
+        return None
+    if hasattr(value, 'isoformat'):
+        return value.isoformat()[:10]
+    return str(value)[:10]
+
+
+def _as_json_list(raw):
+    if not raw:
+        return []
+    if isinstance(raw, str):
+        raw = json.loads(raw)
+    return raw if isinstance(raw, list) else []
+
+
+def _is_sold(ozon_status, ym_status, order_status):
+    """Клиент забрал вещь: площадка сказала delivered / Доставлен."""
+    if (order_status or '') == 'Доставлен':
+        return True
+    if (ozon_status or '').lower() == 'delivered':
+        return True
+    ym = (ym_status or '').upper()
+    return ym == 'DELIVERED' or ym.endswith('_DELIVERED')
+
+
+def _life_events(audit_ev, returned_ats, supply_ev=None, sold=None):
+    """Точки таймлайна для строки склада: отгрузки, возвраты, поставки, выкуп.
+
+    После возврата shipped_at на вещи обнуляется — без журнала в строке осталась
+    бы одна точка «Вернули». Пустой список не кладём в ответ: фильтр пустых
+    полей его не выкинет, а фронт умеет собрать таймлайн из дат самой вещи.
+    """
+    events = []
+    for item in _as_json_list(audit_ev):
+        if not isinstance(item, dict):
+            continue
+        kind = item.get('k')
+        at = _iso_z(item.get('t'))
+        if kind in ('labeled', 'shipped', 'picked', 'returned') and at:
+            events.append({'kind': kind, 'at': at})
+    for stamp in returned_ats or []:
+        at = _iso_z(stamp)
+        if at:
+            events.append({'kind': 'returned', 'at': at})
+    for item in _as_json_list(supply_ev):
+        if not isinstance(item, dict):
+            continue
+        at = _iso_z(item.get('t'))
+        if not at:
+            continue
+        point = {'kind': 'supply', 'at': at}
+        if item.get('n'):
+            point['number'] = item['n']
+        if item.get('s'):
+            point['scheme'] = item['s']
+        day = _date_s(item.get('d'))
+        if day:
+            point['date'] = day
+        events.append(point)
+    if sold and sold.get('at'):
+        events.append(sold)
+    return events or None
+
+
 def handle_get(event: dict, headers: dict, dsn: str) -> dict:
     """Читающая часть склада: что показать кладовщику и менеджеру."""
     params = event.get('queryStringParameters') or {}
@@ -1043,7 +1119,11 @@ def handle_get(event: dict, headers: dict, dsn: str) -> dict:
                 "       res.id, res.order_number, res.marketplace, res.order_type, "
                 # Причина утилизации — рядом с причиной списания: у вещи в
                 # карточке должно быть видно, за что её отправили в утиль.
-                "       gw.lost_reason, gw.dispose_reason "
+                "       gw.lost_reason, gw.dispose_reason, "
+                # history_lost — вещь завели руками, прошлых возвратов система
+                # не видела. lost_at — когда списали: без даты на таймлайне
+                # утеря появляется только если она есть в журнале.
+                "       gw.history_lost, gw.lost_at "
                 "FROM goods_warehouse gw "
                 "LEFT JOIN shelves sh ON sh.id = gw.shelf_id "
                 "LEFT JOIN orders src ON src.id = gw.order_id "
@@ -1162,6 +1242,101 @@ def handle_get(event: dict, headers: dict, dsn: str) -> dict:
             # Самое свежее сверху — как и было.
             history.sort(key=lambda x: x['createdAt'] or '', reverse=True)
 
+            # Возвраты этой вещи — отдельная таблица, не журнал. На таймлайне
+            # карточки они становятся точками «Вернули», иначе после обнуления
+            # shipped_at цикл «уехала → приехала» из дат карточки не собрать.
+            cur.execute(
+                "SELECT return_number, order_number, posting_number, marketplace, "
+                "       return_reason, outcome, returned_at, received_by_name, order_id "
+                "FROM goods_return_history WHERE goods_warehouse_id = %s "
+                "ORDER BY return_number",
+                (card_id,),
+            )
+            returns = [
+                {
+                    'returnNumber': x[0],
+                    'orderNumber': x[1],
+                    'postingNumber': x[2],
+                    'marketplace': x[3],
+                    'returnReason': x[4],
+                    'outcome': x[5],
+                    'returnedAt': (x[6].isoformat() + 'Z') if x[6] else None,
+                    'receivedByName': x[7],
+                    'orderId': x[8],
+                }
+                for x in cur.fetchall()
+            ]
+
+            # ВСЕ поставки этой вещи, в том числе уже уехавшие. Активную
+            # мы и так отдаём отдельно (кнопка «открыть отгрузку»), а на
+            # таймлайне нужна история: в какой FBS/FBO сканировали и какой
+            # датой поставка числилась.
+            cur.execute(
+                "SELECT s.id, s.type, s.status, "
+                "       COALESCE(s.supply_number, s.wb_supply_id, "
+                "                s.ozon_application_number), "
+                "       s.supply_date, s.ship_to_marketplace_at, "
+                "       s.completed_at, s.created_at, NULL::timestamp "
+                "FROM marketplace_supply_items msi "
+                "JOIN marketplace_supplies s ON s.id = msi.supply_id "
+                "WHERE msi.goods_warehouse_id = %s "
+                "UNION ALL "
+                "SELECT ws.id, ws.type, ws.status, "
+                "       COALESCE(ws.supply_number, ws.wb_supply_id, "
+                "                ws.ozon_application_number), "
+                "       ws.supply_date, ws.ship_to_marketplace_at, "
+                "       ws.completed_at, ws.created_at, wso.scanned_at "
+                "FROM wb_supply_orders wso "
+                "JOIN marketplace_supplies ws ON ws.id = wso.supply_id "
+                "WHERE wso.order_id IN ("
+                f"  SELECT unnest(ARRAY[{ids_csv}]::int[])"
+                ")",
+                (card_id,),
+            )
+            supplies_by_id = {}
+            for s in cur.fetchall():
+                scanned, created = s[8], s[7]
+                at = scanned or s[5] or s[6] or created
+                supplies_by_id[s[0]] = {
+                    'id': s[0],
+                    'type': s[1],
+                    'status': s[2],
+                    'number': s[3],
+                    'supplyDate': _date_s(s[4]),
+                    'shippedAt': _iso_z(s[5]),
+                    'completedAt': _iso_z(s[6]),
+                    'scannedAt': _iso_z(scanned),
+                    'at': _iso_z(at),
+                }
+            supplies = list(supplies_by_id.values())
+            supplies.sort(key=lambda x: x.get('at') or '')
+
+            # Заказы, с которыми вещь ездила: свой, бронь и те, что в возвратах.
+            # По ним видно конечный статус на площадке — выкуплен или нет.
+            extra_ids = [x.get('orderId') for x in returns if x.get('orderId')]
+            all_ids = set(int(i) for i in ids_csv.split(',') if i and i != '0')
+            all_ids.update(int(i) for i in extra_ids if i)
+            outcomes_csv = ','.join(str(i) for i in all_ids) or '0'
+            cur.execute(
+                "SELECT o.id, o.order_number, o.marketplace, o.order_type, "
+                "       o.status, o.ozon_status, o.ym_status, o.completed_at "
+                f"FROM orders o WHERE o.id IN ({outcomes_csv})"
+            )
+            order_outcomes = [
+                {
+                    'orderId': o[0],
+                    'orderNumber': o[1],
+                    'marketplace': o[2],
+                    'orderType': o[3],
+                    'status': o[4],
+                    'ozonStatus': o[5],
+                    'ymStatus': o[6],
+                    'completedAt': _iso_z(o[7]),
+                    'sold': _is_sold(o[5], o[6], o[4]),
+                }
+                for o in cur.fetchall()
+            ]
+
             return {
                 'statusCode': 200,
                 'headers': headers,
@@ -1189,6 +1364,8 @@ def handle_get(event: dict, headers: dict, dsn: str) -> dict:
                     'reservedOrderType': r[20],
                     'lostReason': r[21],
                     'disposeReason': r[22],
+                    'historyLost': bool(r[23]),
+                    'lostAt': (r[24].isoformat() + 'Z') if r[24] else None,
                     'supplyId': sup[0] if sup else None,
                     'supplyStatus': sup[1] if sup else None,
                     # Номер поставки и её схема — по ним с карточки делается
@@ -1196,6 +1373,9 @@ def handle_get(event: dict, headers: dict, dsn: str) -> dict:
                     'supplyNumber': sup[2] if sup else None,
                     'supplyType': sup[3] if sup else None,
                     'history': history,
+                    'returns': returns,
+                    'supplies': supplies,
+                    'orderOutcomes': order_outcomes,
                 }, ensure_ascii=False),
             }
 
@@ -1377,7 +1557,25 @@ def handle_get(event: dict, headers: dict, dsn: str) -> dict:
             # Номер #1307 кладовщику ничего не говорит: в списке отгрузок он
             # ищет «2000065880431» или «WB-GI-281233116». Отдаём и подпись, и
             # схему — по ним строка в складе превращается в готовую ссылку.
-            f"supid.label, supid.supply_type "
+            f"supid.label, supid.supply_type, "
+            # Когда вещь попала в подбор — точка «В подбор» на таймлайне.
+            # После возврата matched_at живёт своей жизнью и не обязан
+            # совпадать с shipped_at.
+            f"gw.matched_at, "
+            # Цикл жизни для строки склада. Даты на самой вещи после возврата
+            # обнуляются (shipped_at, shipping_labeled_at), поэтому «когда
+            # уехала» берём из журнала, а «когда вернулась» — из истории
+            # возвратов. Иначе в строке осталась бы одна точка «Вернули».
+            f"life.ev, rets.ats, "
+            # Поставки, в которые кладовщик сканировал вещь — в том числе
+            # уже выполненные. Активную supid выше специально не берёт
+            # закрытые, а таймлайну они как раз нужны: номер и дата.
+            f"life_sup.ev, "
+            # Выкуп: площадка сказала delivered / Доставлен.
+            f"COALESCE(ro.ozon_status, o.ozon_status), "
+            f"COALESCE(ro.ym_status, o.ym_status), "
+            f"COALESCE(ro.status, o.status), "
+            f"COALESCE(ro.completed_at, o.completed_at) "
             f"FROM goods_warehouse gw "
             f"LEFT JOIN orders o ON o.id = gw.order_id "
             f"LEFT JOIN orders ro ON ro.id = gw.reserved_order_id "
@@ -1414,6 +1612,59 @@ def handle_get(event: dict, headers: dict, dsn: str) -> dict:
             f"    AND COALESCE(wms.status, '') NOT IN ('Выполнена', 'Отменена') "
             f"  ORDER BY 1 DESC LIMIT 1"
             f") supid ON true "
+            f"LEFT JOIN LATERAL ("
+            f"  SELECT COALESCE(json_agg(json_build_object("
+            f"           'k', CASE a.action "
+            f"             WHEN 'ship_label' THEN 'labeled' "
+            f"             WHEN 'close_shipped' THEN 'shipped' "
+            f"             WHEN 'close_shipped_stuck' THEN 'shipped' "
+            f"             WHEN 'start_picking' THEN 'picked' "
+            f"             WHEN 'scan_picking' THEN 'picked' "
+            f"             WHEN 'receive_return' THEN 'returned' "
+            f"             ELSE a.action END, "
+            f"           't', a.created_at"
+            f"         ) ORDER BY a.created_at), '[]'::json) AS ev "
+            f"  FROM audit_log a "
+            f"  WHERE a.entity_type = 'goods_warehouse' AND a.entity_id = gw.id "
+            f"    AND a.action IN ("
+            f"      'ship_label', 'close_shipped', 'close_shipped_stuck', "
+            f"      'start_picking', 'scan_picking', 'receive_return'"
+            f"    )"
+            f") life ON true "
+            f"LEFT JOIN LATERAL ("
+            f"  SELECT array_agg(h.returned_at ORDER BY h.returned_at) AS ats "
+            f"  FROM goods_return_history h "
+            f"  WHERE h.goods_warehouse_id = gw.id"
+            f") rets ON true "
+            f"LEFT JOIN LATERAL ("
+            f"  SELECT COALESCE(json_agg(json_build_object("
+            f"           'k', 'supply', "
+            f"           't', COALESCE(q.scanned_at, q.ship_at, q.done_at, q.created_at), "
+            f"           'n', q.label, "
+            f"           's', q.scheme, "
+            f"           'd', q.supply_date"
+            f"         ) ORDER BY q.id), '[]'::json) AS ev "
+            f"  FROM ("
+            f"    SELECT s.id, s.type AS scheme, "
+            f"           COALESCE(s.supply_number, s.wb_supply_id, "
+            f"                    s.ozon_application_number) AS label, "
+            f"           s.supply_date, s.ship_to_marketplace_at AS ship_at, "
+            f"           s.completed_at AS done_at, s.created_at, "
+            f"           NULL::timestamp AS scanned_at "
+            f"    FROM marketplace_supply_items msi "
+            f"    JOIN marketplace_supplies s ON s.id = msi.supply_id "
+            f"    WHERE msi.goods_warehouse_id = gw.id "
+            f"    UNION ALL "
+            f"    SELECT wms.id, wms.type, "
+            f"           COALESCE(wms.supply_number, wms.wb_supply_id, "
+            f"                    wms.ozon_application_number), "
+            f"           wms.supply_date, wms.ship_to_marketplace_at, "
+            f"           wms.completed_at, wms.created_at, wso.scanned_at "
+            f"    FROM wb_supply_orders wso "
+            f"    JOIN marketplace_supplies wms ON wms.id = wso.supply_id "
+            f"    WHERE wso.order_id = COALESCE(gw.reserved_order_id, gw.order_id)"
+            f"  ) q"
+            f") life_sup ON true "
             f"{where_clause} "
             f"ORDER BY gw.received_at DESC, gw.id DESC{limit_clause}"
         )
@@ -1460,6 +1711,21 @@ def handle_get(event: dict, headers: dict, dsn: str) -> dict:
                 # ссылку «FBS 2000065880431» прямо на нужную отгрузку.
                 'supplyNumber': r[29],
                 'supplyType': r[30],
+                'matchedAt': (r[31].isoformat() + 'Z') if r[31] else None,
+                'life': _life_events(
+                    r[32],
+                    r[33],
+                    r[34],
+                    (
+                        {
+                            'kind': 'sold',
+                            'at': _iso_z(r[38]) or ((r[11].isoformat() + 'Z') if r[11] else None),
+                        }
+                        if _is_sold(r[35], r[36], r[37])
+                        and (_iso_z(r[38]) or r[11])
+                        else None
+                    ),
+                ),
             }
             for r in cur.fetchall()
         ]

@@ -1398,11 +1398,18 @@ def seal_closed_box(cur, box_id):
         "UPDATE marketplace_supply_boxes SET packed_qty = %s WHERE id = %s",
         (qty, int(box_id)),
     )
+    # Только вещи, которые СЕЙЧАС едут в этом коробе. Строка состава у
+    # закрытого грузоместа живёт как история отгрузки: вещь могла уже
+    # вернуться с ПВЗ (mp_return) и лежать у кладовщика, а короб на OZON
+    # по-прежнему ссылается на тот же goods_warehouse_id. Без фильтра
+    # повторная заклейка / дожим поставки снова ставил «Отгружен» —
+    # возврат GW пропадал, кнопки удаления не было.
     cur.execute(
         "UPDATE goods_warehouse gw SET status = 'shipped', "
         "  shipped_at = COALESCE(gw.shipped_at, now()) "
         "FROM marketplace_supply_items msi "
-        "WHERE msi.goods_warehouse_id = gw.id AND msi.box_id = %s",
+        "WHERE msi.goods_warehouse_id = gw.id AND msi.box_id = %s "
+        "  AND gw.status IN ('picking', 'awaiting_supply')",
         (int(box_id),),
     )
 

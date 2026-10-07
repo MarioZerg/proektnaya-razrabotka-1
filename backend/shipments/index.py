@@ -285,6 +285,102 @@ def remap_closed_workshop_id(cur, workshop_id):
     return keep[0] if keep else wid
 
 
+RETURN_SCAN_ROLES = ('storekeeper', 'senior_storekeeper', 'admin')
+
+
+def roll_return_price(cur, roll_id, purchase_price=None, purchase_currency=None):
+    """Цена возврата — та, что зафиксировали на рулоне в приёмке. Живой прайс не берём."""
+    if purchase_price is not None:
+        return float(purchase_price), (purchase_currency or 'RUB')
+    cur.execute(
+        "SELECT si.price, si.currency FROM shipment_items si "
+        "JOIN shipments s ON s.id = si.shipment_id "
+        "WHERE si.roll_id = %s AND s.type = 'from_supplier' AND si.price IS NOT NULL "
+        "ORDER BY si.id DESC LIMIT 1",
+        (int(roll_id),),
+    )
+    row = cur.fetchone()
+    if row and row[0] is not None:
+        return float(row[0]), (row[1] or 'RUB')
+    return None, None
+
+
+def open_return_for_origin(cur, supplier_id, origin_shipment_id):
+    """Черновик возврата по той же приёмке, из которой рулон приехал на склад."""
+    cur.execute(
+        "SELECT s.id FROM shipments s "
+        "WHERE s.type = 'return_to_supplier' AND s.status = 'Новый' "
+        "AND s.supplier_id = %s "
+        "AND EXISTS ("
+        "  SELECT 1 FROM shipment_items si "
+        "  JOIN rolls r ON r.id = si.roll_id "
+        "  WHERE si.shipment_id = s.id "
+        "    AND r.shipment_id IS NOT DISTINCT FROM %s"
+        ") "
+        "ORDER BY s.id DESC LIMIT 1",
+        (int(supplier_id), origin_shipment_id),
+    )
+    row = cur.fetchone()
+    return int(row[0]) if row else None
+
+
+def resolve_roll_supplier(cur, roll_supplier_id, roll_shipment_id, roll_id):
+    """Поставщик рулона: свой, иначе из приёмки, в которой его завели."""
+    if roll_supplier_id:
+        return int(roll_supplier_id)
+    if roll_shipment_id:
+        cur.execute(
+            "SELECT COALESCE(si.supplier_id, s.supplier_id) "
+            "FROM shipments s "
+            "LEFT JOIN shipment_items si ON si.shipment_id = s.id AND si.roll_id = %s "
+            "WHERE s.id = %s ORDER BY si.id LIMIT 1",
+            (int(roll_id), int(roll_shipment_id)),
+        )
+        row = cur.fetchone()
+        if row and row[0]:
+            return int(row[0])
+        cur.execute(
+            "SELECT supplier_id FROM shipments WHERE id = %s",
+            (int(roll_shipment_id),),
+        )
+        row = cur.fetchone()
+        if row and row[0]:
+            return int(row[0])
+    return None
+
+
+def write_off_return_quantity(cur, roll_id, quantity):
+    """Списывает метраж с рулона при подтверждении возврата. Рулон держим FOR UPDATE."""
+    cur.execute(
+        "SELECT remaining_quantity, barcode FROM rolls WHERE id = %s FOR UPDATE",
+        (int(roll_id),),
+    )
+    row = cur.fetchone()
+    if not row:
+        raise ValueError(f'Рулон #{roll_id} не найден')
+    remaining = float(row[0] or 0)
+    qty = float(quantity)
+    barcode = row[1] or f'#{roll_id}'
+    if qty <= 0:
+        raise ValueError(f'Количество по рулону {barcode} должно быть больше нуля')
+    if qty > remaining + 1e-9:
+        raise ValueError(
+            f'На рулоне {barcode} остаток {remaining}, нельзя вернуть {qty}'
+        )
+    new_remaining = remaining - qty
+    if new_remaining <= 1e-9:
+        cur.execute(
+            "UPDATE rolls SET remaining_quantity = 0, status = 'completed', "
+            "completed_at = COALESCE(completed_at, now()) WHERE id = %s",
+            (int(roll_id),),
+        )
+    else:
+        cur.execute(
+            "UPDATE rolls SET remaining_quantity = %s WHERE id = %s",
+            (new_remaining, int(roll_id)),
+        )
+
+
 def log_action(cur, actor_id, actor_name, action, entity_type, entity_id, description, details=None):
     """Пишет запись в журнал действий (audit_log) в той же транзакции перед commit()."""
     cur.execute(
@@ -446,7 +542,10 @@ def handler(event: dict, context) -> dict:
     Типы документов:
       - from_supplier      — приёмка от поставщика: требует подтверждения админом (см. ниже)
       - to_workshop         — заявка на отгрузку в цех, двухстадийный процесс со сканированием (см. ниже)
-      - return_to_supplier  — возврат поставщику: списывает количество с рулона
+      - return_to_supplier  — возврат поставщику: кладовщик/админ сканирует рулон
+        в черновик (статус «Новый»), цены берутся из прайса поставщика.
+        Списание с рулона — только после подтверждения администратором
+        (action 'approve_return'). Логистику указывают, если везли сами за свой счёт.
       - defect_writeoff     — списание брака: списывает количество с рулона
 
     GET  /                          - список документов (можно ?type=from_supplier)
@@ -459,8 +558,22 @@ def handler(event: dict, context) -> dict:
               ЕЩЁ НЕ создаются и материал НЕ появляется на складе, пока админ не подтвердит
               (action 'approve_supply')
             - createdBy — id кладовщика, оформившего приёмку (опционально)
-        items для return_to_supplier / defect_writeoff: [{rollId, quantity}]
+        items для return_to_supplier: [{rollId, quantity}] — черновик, без списания
+        items для defect_writeoff: [{rollId, quantity}]
         (для to_workshop используйте action 'request_to_workshop')
+    POST /  { action: 'return_scan', barcode, shipmentId? }
+        - кладовщик или админ сканирует рулон в черновик возврата.
+          Цена — та, что зафиксирована на рулоне в приёмке (не текущий прайс).
+          Один черновик — рулоны одной исходной приёмки. Нет shipmentId —
+          открывается или создаётся черновик этой приёмки.
+    POST /  { action: 'return_remove_item', itemId }
+        - убрать рулон из неподтверждённого возврата
+    POST /  { action: 'update_return_item', itemId, quantity }
+        - поправить метраж в черновике (не больше остатка на рулоне)
+    POST /  { action: 'approve_return', id, ourLogistics?, logisticsCost?, comment? }
+        - только админ: списывает метраж с рулонов, статус «Завершено».
+          ourLogistics=true — возврат везли сами, в листе будет сумма логистики.
+          Иначе логистику в документе не пишем.
     POST /  { action: 'delete', id }
         - запрещено, если документ уже изменил остатки безвозвратно.
           Для to_workshop разрешено только в статусах "Новый"/"Отправлено" (админ);
@@ -602,7 +715,8 @@ def handler(event: dict, context) -> dict:
                     # приёмки остаётся — это первичный документ, по нему считали объём
                     # поставки и расчёты с поставщиком. Но позицию подписываем, иначе
                     # приёмка обещает рулон, которого на складе нет.
-                    "r.removed_at, r.removed_by_name, r.removed_reason "
+                    "r.removed_at, r.removed_by_name, r.removed_reason, "
+                    "r.shipment_id, r.purchase_price, r.purchase_currency "
                     "FROM shipment_items si "
                     "LEFT JOIN materials m ON m.id = si.material_id "
                     "LEFT JOIN rolls r ON r.id = si.roll_id "
@@ -656,6 +770,10 @@ def handler(event: dict, context) -> dict:
                         'removedAt': (r[21].isoformat() + 'Z') if r[21] else None,
                         'removedByName': r[22],
                         'removedReason': r[23],
+                        # Приёмка, в которой рулон завели на склад — возврат идёт по ней.
+                        'originShipmentId': int(r[24]) if r[24] is not None else None,
+                        'rollPurchasePrice': float(r[25]) if r[25] is not None else None,
+                        'rollPurchaseCurrency': r[26],
                     }
                     for r in cur.fetchall()
                 ]
@@ -686,6 +804,10 @@ def handler(event: dict, context) -> dict:
                     # должно быть видно, иначе кладовщик не поймёт, откуда взялся запрос.
                     'requestedByAdmin': row[19] == 'admin',
                     'items': items,
+                    'originShipmentId': next(
+                        (it.get('originShipmentId') for it in items if it.get('originShipmentId')),
+                        None,
+                    ),
                 }
                 attach_accountant_fields(cur, detail=detail)
 
@@ -750,7 +872,10 @@ def handler(event: dict, context) -> dict:
                 f"COALESCE(s.logistics_cost, 0) as logistics_cost, "
                 # Роль автора заявки: заявку в цех может оформить администратор, и в списке
                 # это подписывается отдельно — кладовщик видит, что запрос не от смены.
-                f"u.role "
+                f"u.role, "
+                # Для возврата: из какой приёмки эти рулоны. Цена и претензия привязаны к ней.
+                f"(SELECT MIN(r.shipment_id) FROM shipment_items si "
+                f" JOIN rolls r ON r.id = si.roll_id WHERE si.shipment_id = s.id) "
                 f"FROM shipments s "
                 f"LEFT JOIN suppliers sup ON sup.id = s.supplier_id "
                 f"LEFT JOIN workshops w ON w.id = s.workshop_id "
@@ -786,6 +911,7 @@ def handler(event: dict, context) -> dict:
                     'logisticsCost': float(r[20]) if r[20] is not None else 0.0,
                     # Заявку оформил администратор за цех, а не сотрудник смены.
                     'requestedByAdmin': r[21] == 'admin',
+                    'originShipmentId': int(r[22]) if r[22] is not None else None,
                 }
                 for r in cur.fetchall()
             ]
@@ -1071,6 +1197,146 @@ def handler(event: dict, context) -> dict:
                                                  f'сотрудник этого цеха — позовите его отсканировать свой штрихкод'
                                     }),
                                 }
+
+                # Возврат поставщику больше не списывает сразу: кладовщик собирает
+                # черновик сканером, цены подставляет прайс, админ подтверждает.
+                if doc_type == 'return_to_supplier':
+                    require_role(cur, event, *RETURN_SCAN_ROLES)
+                    prepared = []
+                    for item in items:
+                        roll_id = item.get('rollId')
+                        quantity = item.get('quantity')
+                        if not roll_id or quantity in (None, ''):
+                            return {
+                                'statusCode': 400,
+                                'headers': headers,
+                                'body': json.dumps({'error': 'Укажите рулон и количество'}),
+                            }
+                        cur.execute(
+                            "SELECT r.id, r.barcode, r.material_id, r.remaining_quantity, "
+                            "r.supplier_id, r.shipment_id, r.purchase_price, r.purchase_currency, "
+                            "r.removed_at "
+                            "FROM rolls r WHERE r.id = %s",
+                            (int(roll_id),),
+                        )
+                        roll_row = cur.fetchone()
+                        if not roll_row:
+                            return {
+                                'statusCode': 404,
+                                'headers': headers,
+                                'body': json.dumps({'error': f'Рулон #{roll_id} не найден'}),
+                            }
+                        if roll_row[8]:
+                            return {
+                                'statusCode': 409,
+                                'headers': headers,
+                                'body': json.dumps({'error': f'Рулон {roll_row[1]} убран из работы'}),
+                            }
+                        remaining = float(roll_row[3] or 0)
+                        qty = float(quantity)
+                        if qty <= 0:
+                            return {
+                                'statusCode': 400,
+                                'headers': headers,
+                                'body': json.dumps({'error': 'Количество должно быть больше нуля'}),
+                            }
+                        if qty > remaining + 1e-9:
+                            return {
+                                'statusCode': 409,
+                                'headers': headers,
+                                'body': json.dumps({
+                                    'error': f'На рулоне {roll_row[1]} остаток {remaining}, '
+                                             f'нельзя вернуть {qty}'
+                                }, ensure_ascii=False),
+                            }
+                        roll_supplier = resolve_roll_supplier(
+                            cur, roll_row[4], roll_row[5], roll_row[0],
+                        )
+                        if not roll_supplier:
+                            return {
+                                'statusCode': 409,
+                                'headers': headers,
+                                'body': json.dumps({
+                                    'error': f'У рулона {roll_row[1]} нет поставщика — вернуть нельзя'
+                                }, ensure_ascii=False),
+                            }
+                        prepared.append({
+                            'rollId': int(roll_row[0]),
+                            'barcode': roll_row[1],
+                            'materialId': int(roll_row[2]),
+                            'quantity': qty,
+                            'supplierId': roll_supplier,
+                            'originShipmentId': int(roll_row[5]) if roll_row[5] is not None else None,
+                            'purchasePrice': roll_row[6],
+                            'purchaseCurrency': roll_row[7],
+                        })
+
+                    suppliers_in_items = {p['supplierId'] for p in prepared}
+                    if len(suppliers_in_items) > 1:
+                        return {
+                            'statusCode': 409,
+                            'headers': headers,
+                            'body': json.dumps({
+                                'error': 'В одном возврате рулоны только одного поставщика. '
+                                         'Оформите отдельный документ на каждого'
+                            }, ensure_ascii=False),
+                        }
+                    doc_supplier = (
+                        int(supplier_id) if supplier_id not in (None, '')
+                        else prepared[0]['supplierId']
+                    )
+                    if doc_supplier != prepared[0]['supplierId']:
+                        return {
+                            'statusCode': 409,
+                            'headers': headers,
+                            'body': json.dumps({
+                                'error': 'Поставщик документа не совпадает с поставщиком рулона'
+                            }, ensure_ascii=False),
+                        }
+                    origins = {p['originShipmentId'] for p in prepared}
+                    if len(origins) > 1:
+                        return {
+                            'statusCode': 409,
+                            'headers': headers,
+                            'body': json.dumps({
+                                'error': 'В одном возврате рулоны только из одной приёмки. '
+                                         'Отсканируйте рулоны той поставки, с которой их приняли'
+                            }, ensure_ascii=False),
+                        }
+
+                    cur.execute(
+                        "INSERT INTO shipments (type, status, supplier_id, comment, created_by) "
+                        "VALUES ('return_to_supplier', 'Новый', %s, %s, %s) RETURNING id",
+                        (doc_supplier, comment or None, created_by),
+                    )
+                    shipment_id = cur.fetchone()[0]
+                    for row in prepared:
+                        price, currency = roll_return_price(
+                            cur, row['rollId'],
+                            row['purchasePrice'], row['purchaseCurrency'],
+                        )
+                        cur.execute(
+                            "INSERT INTO shipment_items "
+                            "(shipment_id, material_id, roll_id, quantity, price, currency, "
+                            " supplier_id, barcode) "
+                            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+                            (
+                                shipment_id, row['materialId'], row['rollId'], row['quantity'],
+                                price, currency, row['supplierId'], row['barcode'],
+                            ),
+                        )
+                    log_action(
+                        cur, actor_id, actor_name, 'create_return_to_supplier',
+                        'shipment', shipment_id,
+                        f'Собрал черновик возврата поставщику #{shipment_id} '
+                        f'из {len(prepared)} рулонов — ждёт подтверждения',
+                    )
+                    conn.commit()
+                    return {
+                        'statusCode': 200,
+                        'headers': headers,
+                        'body': json.dumps({'id': shipment_id, 'status': 'Новый'}),
+                    }
 
                 cur.execute(
                     f"INSERT INTO shipments (type, status, supplier_id, comment, completed_at, created_by) "
@@ -2109,10 +2375,21 @@ def handler(event: dict, context) -> dict:
 
             if action == 'accountant_confirm':
                 # Бухгалтер сверила лист приёмки с фактом — документ уходит в 1С.
-                require_role(cur, event, 'accountant', 'admin')
+                # Админ может подтвердить без отправки: sendToOnec=false.
+                doer = require_role(cur, event, 'accountant', 'admin')
                 shipment_id = body_data.get('id')
+                send_raw = body_data.get('sendToOnec')
+                send_to_onec = send_raw not in (False, 0, '0', 'false', 'False')
                 if not shipment_id:
                     return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите id'})}
+                if not send_to_onec and doer['role'] != 'admin':
+                    return {
+                        'statusCode': 403,
+                        'headers': headers,
+                        'body': json.dumps({
+                            'error': 'Подтвердить приёмку без 1С может только администратор'
+                        }, ensure_ascii=False),
+                    }
                 cur.execute(
                     "SELECT type, accountant_status FROM shipments WHERE id = %s",
                     (int(shipment_id),),
@@ -2125,23 +2402,31 @@ def handler(event: dict, context) -> dict:
                 if sh_row[1] == 'confirmed':
                     return {'statusCode': 409, 'headers': headers, 'body': json.dumps({'error': 'Приёмка уже подтверждена бухгалтером'})}
 
-                payload = build_supply_onec_payload(cur, shipment_id)
+                payload = build_supply_onec_payload(cur, shipment_id) if send_to_onec else None
                 cur.execute(
                     "UPDATE shipments SET accountant_status = 'confirmed', "
                     "accountant_comment = NULL, accountant_confirmed_at = now(), "
-                    "accountant_confirmed_by = %s, onec_error = NULL "
+                    "accountant_confirmed_by = %s, onec_error = %s "
                     "WHERE id = %s",
-                    (int(actor_id) if actor_id else None, int(shipment_id)),
+                    (
+                        int(actor_id) if actor_id else None,
+                        None if send_to_onec else 'skipped',
+                        int(shipment_id),
+                    ),
                 )
-                if payload:
+                if send_to_onec and payload:
                     enqueue_onec(cur, 'supplier_supply', shipment_id, payload)
                     for stock_row in payload.get('warehouseStock') or []:
                         enqueue_onec(cur, 'warehouse_stock', stock_row['materialId'], stock_row)
                 log_action(
                     cur, actor_id, actor_name, 'accountant_confirm', 'shipment', shipment_id,
-                    f'Бухгалтер подтвердила приёмку #{shipment_id} — документ в 1С',
+                    (
+                        f'Подтвердил приёмку #{shipment_id} без отправки в 1С'
+                        if not send_to_onec
+                        else f'Бухгалтер подтвердила приёмку #{shipment_id} — документ в 1С'
+                    ),
                 )
-                onec = flush_onec_outbox(cur)
+                onec = flush_onec_outbox(cur) if send_to_onec else {'skipped': True, 'sent': 0, 'failed': 0}
                 conn.commit()
                 return {
                     'statusCode': 200,
@@ -2806,11 +3091,453 @@ def handler(event: dict, context) -> dict:
                 conn.commit()
                 return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'id': shipment_id})}
 
-            if action == 'delete':
-                # Удаление документа движения материала — только администратор.
-                # Раньше прав не спрашивали вовсе, а вместе с подтверждённой
-                # приёмкой удаляются и созданные ею рулоны.
+            if action == 'return_scan':
+                # Кладовщик или админ пикает рулон с браком: он попадает в черновик
+                # возврата этого поставщика. Склад ещё не списываем — до подтверждения
+                # админом метраж остаётся на рулоне.
+                require_role(cur, event, *RETURN_SCAN_ROLES)
+                barcode = (body_data.get('barcode') or '').strip()
+                shipment_id = body_data.get('shipmentId')
+                quantity = body_data.get('quantity')
+                if not barcode:
+                    return {
+                        'statusCode': 400,
+                        'headers': headers,
+                        'body': json.dumps({'error': 'Отсканируйте штрихкод рулона'}),
+                    }
+
+                cur.execute(
+                    "SELECT r.id, r.barcode, r.material_id, m.name, m.unit, "
+                    "r.remaining_quantity, r.status, r.supplier_id, r.shipment_id, "
+                    "r.purchase_price, r.purchase_currency, r.removed_at "
+                    "FROM rolls r LEFT JOIN materials m ON m.id = r.material_id "
+                    "WHERE r.barcode = %s",
+                    (barcode,),
+                )
+                roll_row = cur.fetchone()
+                if not roll_row:
+                    return {
+                        'statusCode': 404,
+                        'headers': headers,
+                        'body': json.dumps(
+                            {'error': f'Рулон {barcode} не найден'},
+                            ensure_ascii=False,
+                        ),
+                    }
+                (
+                    roll_id, roll_barcode, material_id, material_name, unit,
+                    remaining, roll_status, roll_supplier_id, roll_shipment_id,
+                    purchase_price, purchase_currency, removed_at,
+                ) = roll_row
+                if removed_at:
+                    return {
+                        'statusCode': 409,
+                        'headers': headers,
+                        'body': json.dumps({'error': f'Рулон {roll_barcode} убран из работы'}),
+                    }
+                remaining = float(remaining or 0)
+                if remaining <= 0:
+                    return {
+                        'statusCode': 409,
+                        'headers': headers,
+                        'body': json.dumps({
+                            'error': f'На рулоне {roll_barcode} ничего не осталось'
+                        }, ensure_ascii=False),
+                    }
+                supplier_id = resolve_roll_supplier(
+                    cur, roll_supplier_id, roll_shipment_id, roll_id,
+                )
+                if not supplier_id:
+                    return {
+                        'statusCode': 409,
+                        'headers': headers,
+                        'body': json.dumps({
+                            'error': f'У рулона {roll_barcode} нет поставщика — '
+                                     f'вернуть его нельзя'
+                        }, ensure_ascii=False),
+                    }
+
+                qty = remaining
+                if quantity not in (None, ''):
+                    try:
+                        qty = float(str(quantity).replace(',', '.'))
+                    except (TypeError, ValueError):
+                        return {
+                            'statusCode': 400,
+                            'headers': headers,
+                            'body': json.dumps({'error': 'Количество записано не числом'}),
+                        }
+                    if qty <= 0:
+                        return {
+                            'statusCode': 400,
+                            'headers': headers,
+                            'body': json.dumps({'error': 'Количество должно быть больше нуля'}),
+                        }
+                    if qty > remaining + 1e-9:
+                        return {
+                            'statusCode': 409,
+                            'headers': headers,
+                            'body': json.dumps({
+                                'error': f'На рулоне {roll_barcode} остаток {remaining}'
+                            }, ensure_ascii=False),
+                        }
+
+                origin_shipment_id = int(roll_shipment_id) if roll_shipment_id else None
+                price, currency = roll_return_price(
+                    cur, roll_id, purchase_price, purchase_currency,
+                )
+                cur.execute("SELECT name FROM suppliers WHERE id = %s", (int(supplier_id),))
+                sup_row = cur.fetchone()
+                supplier_name = sup_row[0] if sup_row else None
+
+                if shipment_id:
+                    cur.execute(
+                        "SELECT type, status, supplier_id FROM shipments WHERE id = %s",
+                        (int(shipment_id),),
+                    )
+                    sh_row = cur.fetchone()
+                    if not sh_row:
+                        return {
+                            'statusCode': 404,
+                            'headers': headers,
+                            'body': json.dumps({'error': 'Возврат не найден'}),
+                        }
+                    if sh_row[0] != 'return_to_supplier' or sh_row[1] != 'Новый':
+                        return {
+                            'statusCode': 409,
+                            'headers': headers,
+                            'body': json.dumps({
+                                'error': 'Добавлять рулоны можно только в неподтверждённый возврат'
+                            }, ensure_ascii=False),
+                        }
+                    if sh_row[2] and int(sh_row[2]) != int(supplier_id):
+                        return {
+                            'statusCode': 409,
+                            'headers': headers,
+                            'body': json.dumps({
+                                'error': f'Рулон {roll_barcode} от другого поставщика. '
+                                         f'Закройте текущий возврат или начните новый'
+                            }, ensure_ascii=False),
+                        }
+                    cur.execute(
+                        "SELECT r.shipment_id FROM shipment_items si "
+                        "JOIN rolls r ON r.id = si.roll_id "
+                        "WHERE si.shipment_id = %s AND r.shipment_id IS NOT NULL LIMIT 1",
+                        (int(shipment_id),),
+                    )
+                    origin_row = cur.fetchone()
+                    if origin_row and origin_shipment_id and int(origin_row[0]) != origin_shipment_id:
+                        return {
+                            'statusCode': 409,
+                            'headers': headers,
+                            'body': json.dumps({
+                                'error': f'Рулон {roll_barcode} из приёмки #{origin_shipment_id}, '
+                                         f'а этот возврат — по приёмке #{origin_row[0]}. '
+                                         f'Соберите отдельный документ'
+                            }, ensure_ascii=False),
+                        }
+                    shipment_id = int(shipment_id)
+                else:
+                    found_id = open_return_for_origin(cur, supplier_id, origin_shipment_id)
+                    if found_id:
+                        shipment_id = found_id
+                    else:
+                        cur.execute(
+                            "INSERT INTO shipments "
+                            "(type, status, supplier_id, created_by) "
+                            "VALUES ('return_to_supplier', 'Новый', %s, %s) RETURNING id",
+                            (int(supplier_id), int(actor_id) if actor_id else None),
+                        )
+                        shipment_id = int(cur.fetchone()[0])
+
+                cur.execute(
+                    "SELECT s.id FROM shipment_items si "
+                    "JOIN shipments s ON s.id = si.shipment_id "
+                    "WHERE si.roll_id = %s AND s.type = 'return_to_supplier' "
+                    "AND s.status = 'Новый'",
+                    (int(roll_id),),
+                )
+                already = cur.fetchone()
+                if already:
+                    if int(already[0]) == shipment_id:
+                        return {
+                            'statusCode': 409,
+                            'headers': headers,
+                            'body': json.dumps({
+                                'error': f'Рулон {roll_barcode} уже в этом возврате'
+                            }, ensure_ascii=False),
+                        }
+                    return {
+                        'statusCode': 409,
+                        'headers': headers,
+                        'body': json.dumps({
+                            'error': f'Рулон {roll_barcode} уже в возврате #{already[0]}'
+                        }, ensure_ascii=False),
+                    }
+
+                cur.execute(
+                    "INSERT INTO shipment_items "
+                    "(shipment_id, material_id, roll_id, quantity, price, currency, "
+                    " supplier_id, barcode) "
+                    "VALUES (%s, %s, %s, %s, %s, %s, %s, %s) RETURNING id",
+                    (
+                        shipment_id, int(material_id), int(roll_id), qty,
+                        price, currency, int(supplier_id), roll_barcode,
+                    ),
+                )
+                item_id = cur.fetchone()[0]
+                log_action(
+                    cur, actor_id, actor_name, 'return_scan', 'shipment', shipment_id,
+                    f'Добавил рулон {roll_barcode} в возврат поставщику #{shipment_id}',
+                )
+                conn.commit()
+                return {
+                    'statusCode': 200,
+                    'headers': headers,
+                    'body': json.dumps({
+                        'success': True,
+                        'shipmentId': shipment_id,
+                        'supplierId': int(supplier_id),
+                        'supplierName': supplier_name,
+                        'item': {
+                            'id': item_id,
+                            'rollId': int(roll_id),
+                            'rollBarcode': roll_barcode,
+                            'materialId': int(material_id),
+                            'materialName': material_name,
+                            'unit': unit,
+                            'quantity': qty,
+                            'rollRemainingQuantity': remaining,
+                            'price': price,
+                            'currency': currency,
+                            'supplierId': int(supplier_id),
+                            'supplierName': supplier_name,
+                            'originShipmentId': origin_shipment_id,
+                            'priceSource': 'receipt' if price is not None else 'none',
+                        },
+                    }, ensure_ascii=False),
+                }
+
+            if action == 'return_remove_item':
+                require_role(cur, event, *RETURN_SCAN_ROLES)
+                item_id = body_data.get('itemId')
+                if not item_id:
+                    return {
+                        'statusCode': 400,
+                        'headers': headers,
+                        'body': json.dumps({'error': 'Укажите позицию'}),
+                    }
+                cur.execute(
+                    "SELECT si.shipment_id, s.type, s.status, r.barcode "
+                    "FROM shipment_items si "
+                    "JOIN shipments s ON s.id = si.shipment_id "
+                    "LEFT JOIN rolls r ON r.id = si.roll_id "
+                    "WHERE si.id = %s",
+                    (int(item_id),),
+                )
+                row = cur.fetchone()
+                if not row:
+                    return {
+                        'statusCode': 404,
+                        'headers': headers,
+                        'body': json.dumps({'error': 'Позиция не найдена'}),
+                    }
+                if row[1] != 'return_to_supplier' or row[2] != 'Новый':
+                    return {
+                        'statusCode': 409,
+                        'headers': headers,
+                        'body': json.dumps({
+                            'error': 'Убрать рулон можно только из неподтверждённого возврата'
+                        }, ensure_ascii=False),
+                    }
+                shipment_id = int(row[0])
+                cur.execute("DELETE FROM shipment_items WHERE id = %s", (int(item_id),))
+                log_action(
+                    cur, actor_id, actor_name, 'return_remove_item', 'shipment', shipment_id,
+                    f'Убрал рулон {row[3] or item_id} из черновика возврата #{shipment_id}',
+                )
+                conn.commit()
+                return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True})}
+
+            if action == 'update_return_item':
+                require_role(cur, event, *RETURN_SCAN_ROLES)
+                item_id = body_data.get('itemId')
+                quantity = body_data.get('quantity')
+                if not item_id or quantity in (None, ''):
+                    return {
+                        'statusCode': 400,
+                        'headers': headers,
+                        'body': json.dumps({'error': 'Укажите позицию и количество'}),
+                    }
+                try:
+                    qty = float(str(quantity).replace(',', '.'))
+                except (TypeError, ValueError):
+                    return {
+                        'statusCode': 400,
+                        'headers': headers,
+                        'body': json.dumps({'error': 'Количество записано не числом'}),
+                    }
+                if qty <= 0:
+                    return {
+                        'statusCode': 400,
+                        'headers': headers,
+                        'body': json.dumps({'error': 'Количество должно быть больше нуля'}),
+                    }
+                cur.execute(
+                    "SELECT si.shipment_id, s.type, s.status, si.roll_id, "
+                    "r.remaining_quantity, r.barcode "
+                    "FROM shipment_items si "
+                    "JOIN shipments s ON s.id = si.shipment_id "
+                    "LEFT JOIN rolls r ON r.id = si.roll_id "
+                    "WHERE si.id = %s",
+                    (int(item_id),),
+                )
+                row = cur.fetchone()
+                if not row:
+                    return {
+                        'statusCode': 404,
+                        'headers': headers,
+                        'body': json.dumps({'error': 'Позиция не найдена'}),
+                    }
+                if row[1] != 'return_to_supplier' or row[2] != 'Новый':
+                    return {
+                        'statusCode': 409,
+                        'headers': headers,
+                        'body': json.dumps({
+                            'error': 'Метраж можно менять только в неподтверждённом возврате'
+                        }, ensure_ascii=False),
+                    }
+                remaining = float(row[4] or 0)
+                if qty > remaining + 1e-9:
+                    return {
+                        'statusCode': 409,
+                        'headers': headers,
+                        'body': json.dumps({
+                            'error': f'На рулоне {row[5] or row[3]} остаток {remaining}'
+                        }, ensure_ascii=False),
+                    }
+                cur.execute(
+                    "UPDATE shipment_items SET quantity = %s WHERE id = %s",
+                    (qty, int(item_id)),
+                )
+                conn.commit()
+                return {
+                    'statusCode': 200,
+                    'headers': headers,
+                    'body': json.dumps({'success': True, 'quantity': qty}),
+                }
+
+            if action == 'approve_return':
+                # Списываем метраж только здесь: до этого рулон ещё на складе/в цехе.
                 require_admin(cur, event)
+                shipment_id = body_data.get('id')
+                comment = (body_data.get('comment') or '').strip()
+                our_logistics = bool(body_data.get('ourLogistics'))
+                logistics_raw = body_data.get('logisticsCost')
+                if not shipment_id:
+                    return {
+                        'statusCode': 400,
+                        'headers': headers,
+                        'body': json.dumps({'error': 'Укажите id возврата'}),
+                    }
+
+                logistics_cost = 0.0
+                if our_logistics:
+                    if logistics_raw in (None, ''):
+                        return {
+                            'statusCode': 400,
+                            'headers': headers,
+                            'body': json.dumps({
+                                'error': 'Укажите стоимость логистики — возврат везли своими силами'
+                            }, ensure_ascii=False),
+                        }
+                    try:
+                        logistics_cost = float(str(logistics_raw).replace(',', '.'))
+                    except (TypeError, ValueError):
+                        return {
+                            'statusCode': 400,
+                            'headers': headers,
+                            'body': json.dumps({'error': 'Стоимость логистики записана не числом'}),
+                        }
+                    if logistics_cost <= 0:
+                        return {
+                            'statusCode': 400,
+                            'headers': headers,
+                            'body': json.dumps({
+                                'error': 'Стоимость логистики должна быть больше нуля'
+                            }, ensure_ascii=False),
+                        }
+
+                cur.execute(
+                    "SELECT type, status, comment FROM shipments WHERE id = %s",
+                    (int(shipment_id),),
+                )
+                sh_row = cur.fetchone()
+                if not sh_row:
+                    return {
+                        'statusCode': 404,
+                        'headers': headers,
+                        'body': json.dumps({'error': 'Возврат не найден'}),
+                    }
+                if sh_row[0] != 'return_to_supplier' or sh_row[1] != 'Новый':
+                    return {
+                        'statusCode': 409,
+                        'headers': headers,
+                        'body': json.dumps({'error': 'Возврат уже обработан'}),
+                    }
+
+                cur.execute(
+                    "SELECT id, roll_id, quantity FROM shipment_items "
+                    "WHERE shipment_id = %s AND roll_id IS NOT NULL ORDER BY id",
+                    (int(shipment_id),),
+                )
+                pending_items = cur.fetchall()
+                if not pending_items:
+                    return {
+                        'statusCode': 400,
+                        'headers': headers,
+                        'body': json.dumps({'error': 'В возврате нет рулонов'}),
+                    }
+                try:
+                    for _item_id, roll_id, qty in pending_items:
+                        write_off_return_quantity(cur, roll_id, qty)
+                except ValueError as err:
+                    conn.rollback()
+                    return {
+                        'statusCode': 409,
+                        'headers': headers,
+                        'body': json.dumps({'error': str(err)}, ensure_ascii=False),
+                    }
+
+                final_comment = comment or (sh_row[2] or '')
+                cur.execute(
+                    "UPDATE shipments SET status = 'Завершено', completed_at = now(), "
+                    "logistics_cost = %s, comment = %s WHERE id = %s",
+                    (
+                        logistics_cost if our_logistics else 0,
+                        final_comment or None,
+                        int(shipment_id),
+                    ),
+                )
+                log_action(
+                    cur, actor_id, actor_name, 'approve_return', 'shipment', shipment_id,
+                    f'Подтвердил возврат поставщику #{shipment_id}'
+                    + (f', логистика {logistics_cost:g} ₽ за наш счёт' if our_logistics else ''),
+                )
+                conn.commit()
+                return {
+                    'statusCode': 200,
+                    'headers': headers,
+                    'body': json.dumps({
+                        'success': True,
+                        'logisticsCost': logistics_cost if our_logistics else 0,
+                    }),
+                }
+
+            if action == 'delete':
+                # Удаление документа движения материала — только администратор,
+                # кроме черновика возврата: его может убрать и кладовщик, рулоны
+                # ещё не списаны.
                 item_id = body_data.get('id')
                 if not item_id:
                     return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите id'})}
@@ -2823,6 +3550,20 @@ def handler(event: dict, context) -> dict:
                 if not sh_row:
                     return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': 'Документ не найден'})}
                 sh_type, sh_status, sh_workshop_id, sh_shift_number, sh_is_auto = sh_row
+
+                if sh_type == 'return_to_supplier' and sh_status == 'Завершено':
+                    return {
+                        'statusCode': 409,
+                        'headers': headers,
+                        'body': json.dumps({
+                            'error': f'Возврат #{item_id} уже подтверждён, метраж списан. '
+                                     f'Удалить его нельзя — иначе со склада пропадёт след возврата'
+                        }, ensure_ascii=False),
+                    }
+                if sh_type == 'return_to_supplier' and sh_status == 'Новый':
+                    require_role(cur, event, *RETURN_SCAN_ROLES)
+                else:
+                    require_admin(cur, event)
 
                 if sh_type == 'to_workshop' and sh_status not in ('Новый', 'Отправлено'):
                     return {

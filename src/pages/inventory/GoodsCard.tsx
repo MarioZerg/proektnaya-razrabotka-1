@@ -26,8 +26,7 @@ import {
 } from '@/components/crm/goodsWarehouse/goodsWarehouseShared';
 import GoodsCardActions from '@/components/crm/goodsCard/GoodsCardActions';
 import GoodsCardDetails from '@/components/crm/goodsCard/GoodsCardDetails';
-import GoodsCardHistory from '@/components/crm/goodsCard/GoodsCardHistory';
-import GoodsReturnHistory from '@/components/crm/goodsCard/GoodsReturnHistory';
+import GoodsCardLife from '@/components/crm/goodsCard/GoodsCardLife';
 import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
 
 /**
@@ -337,11 +336,8 @@ const GoodsCard = () => {
           }}
         />
 
-        {/* Сколько раз вещь возвращали — по этому кладовщик решает,
-            осматривать её или можно сразу на полку. */}
-        <GoodsReturnHistory goodsId={Number(id)} />
-
-        <GoodsCardHistory history={card.history} />
+        {/* Когда отгрузили, вернули, оформили снова — сразу лентой, не журналом. */}
+        <GoodsCardLife card={card} />
       </div>
     </CrmLayout>
   );

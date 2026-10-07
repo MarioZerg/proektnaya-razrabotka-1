@@ -1,4 +1,5 @@
 import { memo } from 'react';
+import { Link } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { TableCell, TableRow } from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
@@ -12,7 +13,6 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { printStorageSticker } from '@/lib/printStorageSticker';
 import { printIndividualSticker } from '@/lib/printIndividualSticker';
 import {
-  formatDate,
   statusLabels,
   statusVariant,
   statusZone,
@@ -20,6 +20,8 @@ import {
   canPrintMarketplaceLabel,
   canPrintStorageSticker,
 } from '@/components/crm/goodsWarehouse/goodsWarehouseShared';
+import { lifeFromWarehouseItem } from '@/lib/goodsLifeTimeline';
+import GoodsLifeTimeline from '@/components/crm/goodsWarehouse/GoodsLifeTimeline';
 
 interface GoodsWarehouseTableRowProps {
   i: GoodsWarehouseItem;
@@ -38,7 +40,7 @@ interface GoodsWarehouseTableRowProps {
   onRequestDelete: (id: number) => void;
 }
 
-/** Одна строка таблицы склада: галочки, товар, статус, стикеры, полка и даты. */
+/** Одна строка таблицы склада: галочки, товар, статус, стикеры, полка и таймлайн. */
 const GoodsWarehouseTableRow = ({
   i,
   isAdmin,
@@ -101,11 +103,18 @@ const GoodsWarehouseTableRow = ({
                     {/* Чья вещь: короба магазинов стоят рядом, а вещь примут
                         только в поставку своего кабинета. */}
                     <ShopBadge name={i.shopName} color={i.shopColor} />
-                    <span className="font-medium" title={i.product || ''}>
+                    <Link
+                      to={`/crm/inventory/goods/${i.id}`}
+                      className="font-medium underline-offset-2 hover:underline"
+                      title={i.product || ''}
+                    >
                       {shortProductName(i)}
-                    </span>
+                    </Link>
                   </div>
                   <div className="text-xs text-muted-foreground">{i.orderNumber || '—'}</div>
+                  <div className="mt-1.5">
+                    <GoodsLifeTimeline events={lifeFromWarehouseItem(i)} compact />
+                  </div>
                   {i.status === 'lost' && i.lostReason && (
                     <div className="text-xs text-destructive">
                       {/* Отправленную в пошив вещь называем своими словами: для админа
@@ -192,9 +201,6 @@ const GoodsWarehouseTableRow = ({
                   </div>
                 </TableCell>
                 <TableCell>{i.shelfName || '—'}</TableCell>
-                <TableCell>{i.shippedAt ? formatDate(i.shippedAt) : '—'}</TableCell>
-                {/* Дата возврата: когда вещь приехала обратно и легла на склад. */}
-                <TableCell>{formatDate(i.receivedAt)}</TableCell>
                 {/* Удаление доступно только администратору: для вещей на хранении и на
                     разборе с производства. Во втором случае это ошибочные приёмки и вещи,
                     которых по факту нет, — без удаления они висят вечно и кладовщик каждый

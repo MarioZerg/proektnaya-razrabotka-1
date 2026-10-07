@@ -456,7 +456,7 @@ export const useGoodsWarehouseState = () => {
 
   const handleReturn = async (id: number) => {
     try {
-      await returnGoodsToWorkshop(id);
+      await returnGoodsToWorkshop(id, user?.id, user?.name);
       toast({ title: 'Товар возвращён в цех' });
       load();
     } catch (e) {

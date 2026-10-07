@@ -60,6 +60,8 @@ export interface Shipment {
   accountantConfirmedByName?: string | null;
   onecSyncedAt?: string | null;
   onecError?: string | null;
+  /** Для возврата: приёмка, с которой эти рулоны завели на склад. */
+  originShipmentId?: number | null;
 }
 
 export interface ShipmentItem {
@@ -106,6 +108,10 @@ export interface ShipmentItem {
   removedAt?: string | null;
   removedByName?: string | null;
   removedReason?: string | null;
+  /** Приёмка, в которой рулон приняли. Цена возврата берётся из неё. */
+  originShipmentId?: number | null;
+  rollPurchasePrice?: number | null;
+  rollPurchaseCurrency?: string | null;
 }
 
 export interface ShipmentDetail extends Shipment {
@@ -293,6 +299,61 @@ export const createShipmentReturnToSupplier = (payload: {
   items: Array<{ rollId: number; quantity: number }>;
 }) => postAction({ action: 'create', type: 'return_to_supplier', ...payload });
 
+export interface ReturnScanItem {
+  id: number;
+  rollId: number;
+  rollBarcode: string;
+  materialId: number;
+  materialName: string | null;
+  unit: string | null;
+  quantity: number;
+  rollRemainingQuantity: number;
+  price: number | null;
+  currency: string | null;
+  supplierId: number;
+  supplierName: string | null;
+  originShipmentId?: number | null;
+  priceSource: 'receipt' | 'none';
+}
+
+export interface ReturnScanResult {
+  success: true;
+  shipmentId: number;
+  supplierId: number;
+  supplierName: string | null;
+  item: ReturnScanItem;
+}
+
+/** Кладовщик/админ сканирует рулон в черновик возврата. Цена — с рулона из приёмки. */
+export const scanReturnToSupplier = (
+  barcode: string,
+  shipmentId?: number
+): Promise<ReturnScanResult> =>
+  postAction({
+    action: 'return_scan',
+    barcode,
+    ...(shipmentId ? { shipmentId } : {}),
+  }) as Promise<ReturnScanResult>;
+
+export const removeReturnItem = (itemId: number) =>
+  postAction({ action: 'return_remove_item', itemId });
+
+export const updateReturnItemQuantity = (itemId: number, quantity: number) =>
+  postAction({ action: 'update_return_item', itemId, quantity }) as Promise<{
+    success: true;
+    quantity: number;
+  }>;
+
+/** Админ подтверждает возврат: только тогда списывается метраж. */
+export const approveReturnToSupplier = (
+  id: number,
+  payload?: { ourLogistics?: boolean; logisticsCost?: number; comment?: string }
+) =>
+  postAction({ action: 'approve_return', id, ...(payload || {}) }) as Promise<{
+    success: true;
+    logisticsCost: number;
+  }>;
+
 export const createShipmentDefectWriteoff = (payload: {
   comment?: string;
   items: Array<{ rollId: number; quantity: number }>;
@@ -346,12 +407,16 @@ export const deleteShipment = (id: number) => postAction({ action: 'delete', id 
 
 export interface AccountantConfirmResult {
   success: true;
-  onec?: { sent: number; failed: number; error?: string | null };
+  onec?: { sent: number; failed: number; error?: string | null; skipped?: boolean };
 }
 
-/** Бухгалтер сверила лист с фактом — поставка уходит в 1С. */
-export const accountantConfirmSupply = (id: number): Promise<AccountantConfirmResult> =>
-  postAction({ action: 'accountant_confirm', id });
+/** Бухгалтер сверила лист с фактом — поставка уходит в 1С.
+ * Админ может передать sendToOnec: false и закрыть сверку без выгрузки. */
+export const accountantConfirmSupply = (
+  id: number,
+  payload?: { sendToOnec?: boolean }
+): Promise<AccountantConfirmResult> =>
+  postAction({ action: 'accountant_confirm', id, ...(payload || {}) });
 
 /** Вернуть кладовщику: подтверждения нет, в карточке видна причина. */
 export const accountantCorrectionSupply = (id: number, comment: string) =>

@@ -202,6 +202,7 @@ const GoodsCardActions = ({
                     </Button>
                   </DropdownMenuTrigger>
                   <DropdownMenuContent align="start" className="w-64">
+                    {isAdmin && (
                     <DropdownMenuItem
                       onClick={() =>
                         onSendToSewing({
@@ -215,6 +216,7 @@ const GoodsCardActions = ({
                       <Icon name="Shirt" size={16} className="mr-2" />
                       Отправить в пошив
                     </DropdownMenuItem>
+                    )}
                     <DropdownMenuItem
                       onClick={() =>
                         onNotFound({
@@ -232,7 +234,9 @@ const GoodsCardActions = ({
                   </DropdownMenuContent>
                 </DropdownMenu>
                 <p className="mt-1.5 text-xs text-muted-foreground">
-                  В обоих случаях вещь спишется со склада, а заказ вернётся на конвейер
+                  {isAdmin
+                    ? 'В обоих случаях вещь спишется со склада, а заказ вернётся на конвейер'
+                    : 'Вещь спишется со склада. Если пакета нет — «Товар не найден»'}
                 </p>
               </div>
               )}

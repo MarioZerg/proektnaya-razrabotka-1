@@ -46,6 +46,13 @@ export { formatDateTime as formatDate } from '@/lib/dateUtils';
 export const moneyRub = (n: number) =>
   `${n.toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ₽`;
 
+/** Сумма в валюте прайса: рубли со знаком ₽, остальное — код валюты. */
+export const moneyAmount = (n: number, currency?: string | null) => {
+  const cur = (currency || 'RUB').toUpperCase();
+  if (cur === 'RUB') return moneyRub(n);
+  return `${n.toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${cur}`;
+};
+
 /** Полная себестоимость рулона: цена единицы × метраж в строке приёмки. */
 export const rollTotalCost = (
   costPerUnit: number | null | undefined,

@@ -90,6 +90,7 @@ import Index from "./pages/Index";
 import NotFoundRedirect from "./pages/NotFoundRedirect";
 
 import KioskTerminal from "./pages/KioskTerminal";
+import LiderTv from "./pages/LiderTv";
 import { AuthProvider } from "@/context/AuthContext";
 import ImpersonationBar from "@/components/crm/users/ImpersonationBar";
 
@@ -121,6 +122,8 @@ const App = () => (
             <Route path="/login/code" element={<LoginCode />} />
             {/* Терминал цеха: вход по личному QR-коду сотрудника, без пароля. */}
             <Route path="/kiosk/:workshopId" element={<KioskTerminal />} />
+            {/* Телевизор в цехе: живой конвейер на весь экран, без входа. */}
+            <Route path="/lider" element={<LiderTv />} />
             <Route path="/crm" element={<Crm />} />
             <Route path="/crm/chat" element={<AssistantChat />} />
             <Route path="/crm/shop-chat" element={<ShopAssistant />} />

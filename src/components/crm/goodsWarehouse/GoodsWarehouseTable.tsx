@@ -132,8 +132,6 @@ const GoodsWarehouseTable = ({
               <TableHead className="text-primary-foreground">Статус</TableHead>
               <TableHead className="text-primary-foreground">Стикеры</TableHead>
               <TableHead className="text-primary-foreground">№ полки</TableHead>
-              <TableHead className="text-primary-foreground">Дата отгрузки</TableHead>
-              <TableHead className="text-primary-foreground">Дата возврата</TableHead>
               {isAdmin && <TableHead className="text-primary-foreground">Действия</TableHead>}
             </TableRow>
           </TableHeader>

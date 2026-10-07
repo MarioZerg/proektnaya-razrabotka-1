@@ -55,11 +55,15 @@ def seal_closed_box(cur, box_id):
         "UPDATE marketplace_supply_boxes SET packed_qty = %s WHERE id = %s",
         (qty, int(box_id)),
     )
+    # Не трогаем уже вернувшиеся вещи: состав закрытого короба — история
+    # отгрузки, а не текущее место. Иначе повторное закрытие грузоместа
+    # снова ставит «Отгружен» карточке, которую кладовщик принял как возврат.
     cur.execute(
         "UPDATE goods_warehouse gw SET status = 'shipped', "
         "  shipped_at = COALESCE(gw.shipped_at, now()) "
         "FROM marketplace_supply_items msi "
-        "WHERE msi.goods_warehouse_id = gw.id AND msi.box_id = %s",
+        "WHERE msi.goods_warehouse_id = gw.id AND msi.box_id = %s "
+        "  AND gw.status IN ('picking', 'awaiting_supply')",
         (int(box_id),),
     )
 

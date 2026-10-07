@@ -117,6 +117,52 @@ export interface GoodsWarehouseItem {
   /** Магазин вещи: у МЕГАТЮЛЬ и ДЮНЫ разные поставки и упаковка. */
   shopName?: string | null;
   shopColor?: string | null;
+  /** Когда кладовщик забрал вещь в подбор. */
+  matchedAt?: string | null;
+  /**
+   * Точки жизни вещи для таймлайна в строке: отгрузили / оформили / забрали /
+   * вернули. После возврата shipped_at на карточке обнуляется, поэтому эти
+   * события едут отдельно из журнала и истории возвратов.
+   */
+  life?: GoodsLifePoint[];
+}
+
+/** Одна точка на таймлайне вещи в списке склада. */
+export interface GoodsLifePoint {
+  kind: 'labeled' | 'shipped' | 'picked' | 'returned' | 'supply' | 'sold';
+  at: string;
+  /** Номер поставки, в которую сканировали вещь. */
+  number?: string | null;
+  /** FBS / FBO. */
+  scheme?: string | null;
+  /** Дата поставки в кабинете маркетплейса. */
+  date?: string | null;
+}
+
+/** Поставка, через которую вещь уже проезжала — для таймлайна карточки. */
+export interface GoodsSupplyLife {
+  id: number;
+  type?: string | null;
+  status?: string | null;
+  number?: string | null;
+  supplyDate?: string | null;
+  shippedAt?: string | null;
+  completedAt?: string | null;
+  scannedAt?: string | null;
+  at?: string | null;
+}
+
+/** Конечный статус заказа на площадке: выкуплен или нет. */
+export interface GoodsOrderOutcome {
+  orderId: number;
+  orderNumber?: string | null;
+  marketplace?: string | null;
+  orderType?: string | null;
+  status?: string | null;
+  ozonStatus?: string | null;
+  ymStatus?: string | null;
+  completedAt?: string | null;
+  sold?: boolean;
 }
 
 export interface GoodsWarehouseFilters {
@@ -299,7 +345,8 @@ export const moveGoodsShelfByBarcode = (
     storageBarcode: string;
   }>;
 
-export const returnGoodsToWorkshop = (id: number) => postAction({ action: 'return_to_workshop', id });
+export const returnGoodsToWorkshop = (id: number, actorId?: number, actorName?: string) =>
+  postAction({ action: 'return_to_workshop', id, actorId, actorName });
 
 // Сканер подбора: отмечает товар (по штрихкоду хранения) как нужный для будущей поставки FBS.
 /** Сколько вещей уже подобрано под заказы и ждёт стикера отправления у кладовщика. */
@@ -761,6 +808,15 @@ export interface GoodsCard {
   /** Схема поставки (FBS/FBO). */
   supplyType?: string | null;
   history: GoodsHistoryEntry[];
+  /** Возвраты этой вещи — точки «Вернули» на таймлайне карточки. */
+  returns?: ReturnHistoryEntry[];
+  /** Вещь заведена вручную: сколько её возвращали раньше, система не знает. */
+  historyLost?: boolean;
+  lostAt?: string | null;
+  /** Все поставки, в которые вещь сканировали — и открытые, и уже уехавшие. */
+  supplies?: GoodsSupplyLife[];
+  /** Заказы, с которыми вещь ездила: по ним видно, выкупил ли клиент. */
+  orderOutcomes?: GoodsOrderOutcome[];
 }
 
 /** Карточка вещи со всей историей её движения по складу. */

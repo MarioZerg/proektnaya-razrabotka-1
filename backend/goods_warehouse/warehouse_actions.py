@@ -1409,6 +1409,51 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
             if not order_number:
                 return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите номер заказа'})}
 
+            # Стикер хранения на пакете. Кладовщик уже принял возврат по коду
+            # площадки, а карточка со старым GW осталась «Отгружен»: либо
+            # завели вторую, либо закрытие короба вернуло статус. Скан GW
+            # возвращает ИМЕННО эту вещь в разбор возвратов.
+            gw_scan = order_number.strip().upper()
+            if gw_scan.startswith('GW-') or (
+                gw_scan.startswith('GW') and gw_scan[2:].isdigit()
+            ):
+                cur.execute(
+                    "SELECT id, storage_barcode, order_id FROM goods_warehouse "
+                    "WHERE upper(storage_barcode) = %s",
+                    (gw_scan if '-' in gw_scan else f'GW-{gw_scan[2:].zfill(6)}',),
+                )
+                gw_by_sticker = cur.fetchone()
+                if gw_by_sticker:
+                    gw_id, storage_barcode, order_id = gw_by_sticker
+                    cur.execute(
+                        "UPDATE goods_warehouse SET status = 'mp_return', shelf_id = NULL, "
+                        "shipped_at = NULL, lost_reason = NULL, lost_at = NULL, "
+                        "reserved_order_id = NULL, shipping_labeled_at = NULL, "
+                        "shipping_labeled_by = NULL, shipping_labeled_by_name = NULL, "
+                        "receive_reason = 'return', received_at = now() WHERE id = %s",
+                        (gw_id,),
+                    )
+                    times = log_return_history(
+                        cur, gw_id, order_id, actor_id, actor_name,
+                        mp_return_id=body_data.get('marketplaceReturnId'),
+                        return_reason=body_data.get('returnReason'),
+                    )
+                    log_action(
+                        cur, actor_id, actor_name, 'receive_return',
+                        'goods_warehouse', gw_id,
+                        f'Принял возврат по стикеру {storage_barcode} '
+                        f'(заказ #{order_number}, возврат №{times})',
+                    )
+                    conn.commit()
+                    return {
+                        'statusCode': 200, 'headers': headers,
+                        'body': json.dumps({
+                            'id': gw_id,
+                            'storageBarcode': storage_barcode,
+                            'returnCount': times,
+                        }),
+                    }
+
             order_number_esc = order_number.replace("'", "''")
             # Тот же код без ведущей «*»: на стикере WB штрихкод печатается со
             # звёздочкой (*DWto4dQG), а сканеры в разных режимах отдают его то с
@@ -1652,6 +1697,17 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
             item_id = body_data.get('id')
             if not item_id:
                 return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите id'})}
+            # Кладовщик с полки в цех не отправляет: вещь сама уходит в подбор,
+            # а пропажу оформляют «Утерян». Повторный пошив — решение администратора.
+            if not is_admin(cur, actor_id):
+                return {
+                    'statusCode': 403,
+                    'headers': headers,
+                    'body': json.dumps(
+                        {'error': 'Вернуть товар в пошив может только администратор'},
+                        ensure_ascii=False,
+                    ),
+                }
             cur.execute(
                 "SELECT gw.order_id, gw.status, "
                 "       (COALESCE(o.ozon_status, '') = 'cancelled' OR o.cancelled_at IS NOT NULL) "
@@ -2895,6 +2951,17 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
             # Списываем вещь со склада и возвращаем заказ в производство: его сошьют заново.
             # Если вещь была подобрана под заказ, заказ снимается с подбора и уходит в цех,
             # иначе он завис бы в ожидании стикеровки навсегда.
+            # Кладовщику этого действия нет: свободный товар сам идёт в подбор,
+            # пропажу закрывают «Утерян». Повторный пошив — только администратор.
+            if not is_admin(cur, actor_id):
+                return {
+                    'statusCode': 403,
+                    'headers': headers,
+                    'body': json.dumps(
+                        {'error': 'Отправить в пошив может только администратор'},
+                        ensure_ascii=False,
+                    ),
+                }
             item_id = body_data.get('id')
             reason = (body_data.get('reason') or '').strip()
             if not item_id:

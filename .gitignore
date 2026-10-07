@@ -38,6 +38,11 @@ public/ocr/tesseract.esm.min.js
 public/ocr/tesseract-core-lstm.*
 public/ocr/tesseract-core-simd*
 
+# Сборка C#-оболочки телевизора цеха
+desktop-kiosk/bin/
+desktop-kiosk/obj/
+desktop-kiosk/publish/
+
 # Python (страховка: разовые Bash-скрипты должны класть venv в /tmp, но если
 # venv/кэш всё же оказался в проекте — не коммитить его через end-of-turn git add -A)
 .venv/

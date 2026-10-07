@@ -32,6 +32,7 @@ const AccountantSupplies = () => {
   const { toast } = useToast();
   const navigate = useNavigate();
   const canConfirm = user?.role === 'accountant' || user?.role === 'admin';
+  const isAdmin = user?.role === 'admin';
 
   const [shipments, setShipments] = useState<Shipment[]>([]);
   const [loading, setLoading] = useState(true);
@@ -72,17 +73,18 @@ const AccountantSupplies = () => {
     }
   };
 
-  const confirm = async (id: number) => {
+  const confirm = async (id: number, sendToOnec = true) => {
     setBusyId(id);
     try {
-      const res = await accountantConfirmSupply(id);
+      const res = await accountantConfirmSupply(id, { sendToOnec });
       const onec = res.onec;
       toast({
-        title: 'Приёмка подтверждена',
-        description:
-          onec?.sent
+        title: sendToOnec ? 'Приёмка подтверждена' : 'Приёмка подтверждена без 1С',
+        description: sendToOnec
+          ? onec?.sent
             ? 'Документ ушёл в 1С'
-            : onec?.error || 'Документ в очереди на отправку в 1С',
+            : onec?.error || 'Документ в очереди на отправку в 1С'
+          : 'В 1С не отправляли — сверка в CRM закрыта',
       });
       load();
     } catch (e) {
@@ -122,7 +124,8 @@ const AccountantSupplies = () => {
         <div>
           <h1 className="text-xl font-bold">Приёмки от поставщика</h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            Сверьте лист приёмки с количеством в системе. Подтверждение отправляет поставку в 1С.
+            Сверьте лист приёмки с количеством в системе. Подтверждение обычно отправляет поставку в 1С.
+            Администратор может закрыть сверку без выгрузки.
           </p>
         </div>
 
@@ -171,7 +174,9 @@ const AccountantSupplies = () => {
                   <h2 className="text-base font-semibold">Приёмка #{s.id}</h2>
                   {s.accountantStatus && (
                     <Badge variant={accountantStatusVariant[s.accountantStatus] || 'outline'}>
-                      {accountantStatusLabel[s.accountantStatus] || s.accountantStatus}
+                      {s.accountantStatus === 'confirmed' && s.onecError === 'skipped'
+                        ? 'Подтверждена без 1С'
+                        : accountantStatusLabel[s.accountantStatus] || s.accountantStatus}
                     </Badge>
                   )}
                 </div>
@@ -186,9 +191,11 @@ const AccountantSupplies = () => {
                     Причина: {s.accountantComment}
                   </p>
                 )}
-                {s.onecError && (
+                {s.onecError === 'skipped' ? (
+                  <p className="text-xs text-muted-foreground">Подтверждена без отправки в 1С</p>
+                ) : s.onecError ? (
                   <p className="text-xs text-destructive">1С: {s.onecError}</p>
-                )}
+                ) : null}
                 {s.onecSyncedAt && (
                   <p className="text-xs text-muted-foreground">Ушло в 1С {formatDate(s.onecSyncedAt)}</p>
                 )}
@@ -225,10 +232,20 @@ const AccountantSupplies = () => {
                     </Button>
                     {canConfirm && s.accountantStatus !== 'confirmed' && (
                       <>
-                        <Button size="sm" onClick={() => confirm(s.id)} disabled={busyId === s.id}>
+                        <Button size="sm" onClick={() => confirm(s.id, true)} disabled={busyId === s.id}>
                           <Icon name="ClipboardCheck" size={14} className="mr-1.5" />
                           Подтвердить в 1С
                         </Button>
+                        {isAdmin && (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => confirm(s.id, false)}
+                            disabled={busyId === s.id}
+                          >
+                            Без 1С
+                          </Button>
+                        )}
                         <Button
                           size="sm"
                           variant="outline"

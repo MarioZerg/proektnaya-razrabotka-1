@@ -1,3 +1,4 @@
+import { Link } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -12,7 +13,6 @@ import { getAccessZone } from '@/lib/roles';
 import { printStorageSticker } from '@/lib/printStorageSticker';
 import { printIndividualSticker } from '@/lib/printIndividualSticker';
 import {
-  formatDate,
   statusLabels,
   statusVariant,
   statusZone,
@@ -22,6 +22,8 @@ import {
   canPrintMarketplaceLabel,
   canPrintStorageSticker,
 } from '@/components/crm/goodsWarehouse/goodsWarehouseShared';
+import { lifeFromWarehouseItem } from '@/lib/goodsLifeTimeline';
+import GoodsLifeTimeline from '@/components/crm/goodsWarehouse/GoodsLifeTimeline';
 
 interface GoodsWarehouseCardsProps {
   items: GoodsWarehouseItem[];
@@ -61,6 +63,10 @@ const GoodsWarehouseCards = ({
   // Ярлык отправления — любому кладовщику: это перепечатка того же кода, когда
   // порвался пакет и вещь перекладывают в новый.
   const canPrintMpLabels = getAccessZone(user?.role) === 'warehouse' || user?.role === 'admin';
+  // В пошив с полки — только администратор. Кладовщику кнопка не нужна: свободная
+  // вещь сама уходит в подбор, а если её нет — «Утерян». Отправка в цех сбрасывала
+  // заказ в работу и запускала повторный пошив без нужды.
+  const canSendToWorkshop = user?.role === 'admin';
 
   return (
     <div className="space-y-3">
@@ -96,9 +102,13 @@ const GoodsWarehouseCards = ({
                 <div className="flex items-center gap-1.5">
                   {/* Чья вещь — видно до того, как её понесут к коробу. */}
                   <ShopBadge name={i.shopName} color={i.shopColor} />
-                  <span className="font-semibold" title={i.product || ''}>
+                  <Link
+                    to={`/crm/inventory/goods/${i.id}`}
+                    className="font-semibold underline-offset-2 hover:underline"
+                    title={i.product || ''}
+                  >
                     {shortProductName(i)}
-                  </span>
+                  </Link>
                 </div>
                 <div className="text-xs text-muted-foreground">
                   {i.orderNumber || 'без заказа'} · #{i.id}
@@ -181,19 +191,17 @@ const GoodsWarehouseCards = ({
               </p>
             )}
 
-            <div className="mt-2 text-xs text-muted-foreground">
-              Принят {formatDate(i.receivedAt)}
-              {i.shippedAt ? ` · отгружен ${formatDate(i.shippedAt)}` : ''}
+            <div className="mt-3">
+              <GoodsLifeTimeline events={lifeFromWarehouseItem(i)} compact />
             </div>
 
             {canAct && (
               <div className="mt-3 flex flex-wrap justify-end gap-2">
-                {/* «В цех» — это возврат на ПЕРЕДЕЛКУ: вещь с браком уходит обратно
-                    в пошив. Для отменённого заказа кнопку убираем: она сбрасывала
-                    заказ в работу, и цех начинал шить для покупателя, который уже
-                    отказался. Такую вещь оставляют на полке — она уйдёт следующему
-                    заказу с теми же размерами. */}
-                {!i.orderCancelled && (
+                {/* «В цех» — только админ: свободная вещь с полки сама идёт в подбор,
+                    кладовщику достаточно «Утерян», если пакета нет. Для отменённого
+                    заказа кнопку не показываем даже админу: возврат сбрасывал заказ
+                    в работу, и цех шил для покупателя, который уже отказался. */}
+                {canSendToWorkshop && !i.orderCancelled && (
                   <Button variant="outline" size="sm" onClick={() => onReturnToWorkshop(i.id)}>
                     <Icon name="Undo2" size={14} className="mr-1.5" />В цех
                   </Button>

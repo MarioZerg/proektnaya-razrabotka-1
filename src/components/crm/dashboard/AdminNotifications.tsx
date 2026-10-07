@@ -29,6 +29,8 @@ const KINDS: Record<string, { icon: string; label: string }> = {
   roll_shortage: { icon: 'Scissors', label: 'Недостача рулона' },
   // Кусок брака оформили в цехе, но до склада он не доехал.
   defect_missing: { icon: 'PackageX', label: 'Брак не доехал' },
+  // Кладовщик при приёмке с ПВЗ увидел в пакете не тот товар.
+  pvz_substitution: { icon: 'ArrowLeftRight', label: 'Подмена на ПВЗ' },
 };
 
 const kindOf = (kind: string) => KINDS[kind] || { icon: 'Info', label: 'Прочее' };

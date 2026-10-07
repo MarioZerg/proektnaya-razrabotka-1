@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Button } from '@/components/ui/button';
 import {
   Dialog,
   DialogContent,
@@ -9,8 +10,9 @@ import {
 } from '@/components/ui/dialog';
 import Icon from '@/components/ui/icon';
 import { useAuth } from '@/context/AuthContext';
+import { useToast } from '@/hooks/use-toast';
 import { useScannerAutoSubmit } from '@/hooks/useScannerAutoSubmit';
-import { scanPickupReturn } from '@/lib/marketplaceReturnsApi';
+import { scanPickupReturn, markPvzSubstitution } from '@/lib/marketplaceReturnsApi';
 import { playScanSound, playScanErrorSound, primeScanSounds } from '@/lib/scanSound';
 
 interface PickupReturnsDialogProps {
@@ -28,6 +30,8 @@ interface ScanRow {
   storageBarcode?: string | null;
   /** Эту вещь уже принимали — повторный скан не считается. */
   already?: boolean;
+  /** Кладовщик отметил подмену товара на пункте выдачи. */
+  substituted?: boolean;
   error?: string;
 }
 
@@ -48,8 +52,10 @@ interface ScanRow {
  */
 const PickupReturnsDialog = ({ open, onOpenChange, onDone }: PickupReturnsDialogProps) => {
   const { user } = useAuth();
+  const { toast } = useToast();
   const [barcode, setBarcode] = useState('');
   const [busy, setBusy] = useState(false);
+  const [flagging, setFlagging] = useState<number | null>(null);
   const [rows, setRows] = useState<ScanRow[]>([]);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -111,7 +117,31 @@ const PickupReturnsDialog = ({ open, onOpenChange, onDone }: PickupReturnsDialog
     }
   };
 
-  useScannerAutoSubmit(barcode, handleScan, !busy);
+  const handleSubstitution = async (row: ScanRow) => {
+    if (flagging != null) return;
+    setFlagging(row.key);
+    try {
+      const res = await markPvzSubstitution(row.barcode, user?.id, user?.name);
+      setRows((prev) =>
+        prev.map((r) => (r.key === row.key ? { ...r, substituted: true } : r))
+      );
+      toast({
+        title: res.already ? 'Подмена уже отмечена' : 'Подмена отмечена',
+        description: 'Администратор получил уведомление на панель',
+      });
+    } catch (e) {
+      toast({
+        title: 'Не удалось отметить подмену',
+        description: e instanceof Error ? e.message : undefined,
+        variant: 'destructive',
+      });
+    } finally {
+      setFlagging(null);
+      focusInput();
+    }
+  };
+
+  useScannerAutoSubmit(barcode, handleScan, !busy && flagging == null);
 
   const okCount = rows.filter((r) => r.ok && !r.already).length;
 
@@ -128,6 +158,8 @@ const PickupReturnsDialog = ({ open, onOpenChange, onDone }: PickupReturnsDialog
             Маркет. Подойдёт наклейка возврата OZON, стикер WB (со звёздочкой, номер
             задания или srid) и номер заказа Яндекса с клиентского стикера. Каждая
             вещь сразу встаёт на склад: дальше разберёте, в цех на осмотр или на полку.
+            Если в пакете не то, что заказывали — нажмите «Подмена на ПВЗ»: админ
+            увидит это на панели.
           </p>
 
           <div className="space-y-1.5">
@@ -169,6 +201,27 @@ const PickupReturnsDialog = ({ open, onOpenChange, onDone }: PickupReturnsDialog
                             {r.already ? 'Уже принята ранее · ' : ''}
                             {r.storageBarcode || r.barcode}
                           </p>
+                          {r.substituted ? (
+                            <p className="mt-1 text-xs font-medium text-amber-800">
+                              Подмена отмечена · админ уведомлён
+                            </p>
+                          ) : (
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              className="mt-1.5 h-8"
+                              disabled={flagging != null}
+                              onClick={() => handleSubstitution(r)}
+                            >
+                              <Icon
+                                name={flagging === r.key ? 'Loader2' : 'ArrowLeftRight'}
+                                size={14}
+                                className={`mr-1.5 ${flagging === r.key ? 'animate-spin' : ''}`}
+                              />
+                              Подмена на ПВЗ
+                            </Button>
+                          )}
                         </>
                       ) : (
                         <>

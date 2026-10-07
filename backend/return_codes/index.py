@@ -435,6 +435,11 @@ def stock_picked_up_returns(cur, ids=None):
         )
         gw_row = cur.fetchone()
         if not gw_row:
+            # Уехавшая поставка строку состава не отпускает — это история
+            # короба на площадке. Раньше любой marketplace_supply_items
+            # блокировал карточку: возврат заводил новый GW, а стикер на
+            # пакете (GW-729905) так и висел «Отгружен». Живая поставка
+            # по-прежнему неприкасаема.
             cur.execute(
                 "SELECT id, storage_barcode FROM goods_warehouse "
                 "WHERE order_id = %s "
@@ -442,6 +447,7 @@ def stock_picked_up_returns(cur, ids=None):
                 "    SELECT 1 FROM marketplace_supply_items msi "
                 "    JOIN marketplace_supplies ms ON ms.id = msi.supply_id "
                 "    WHERE msi.goods_warehouse_id = goods_warehouse.id"
+                "      AND COALESCE(ms.status, '') NOT IN ('Выполнена', 'Отменена')"
                 "  )",
                 (order_id,),
             )

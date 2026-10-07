@@ -891,9 +891,12 @@ def _close_finished_supplies(cur, conn, api_key, use_sandbox, shop_id=None):
         # лежит у нас в коробе — объявлять её отгруженной нельзя.
         if ids:
             ids_csv = ','.join(str(int(i)) for i in ids)
+            # Только вещи в сборке этой поставки. После возврата бронь снимается,
+            # order_id остаётся заказом покупателя — условие «не shipped» цепляло
+            # mp_return и снова ставило «Отгружен» в тот же день.
             cur.execute(
                 f"UPDATE goods_warehouse SET status = 'shipped', shipped_at = now() "
-                f"WHERE status <> 'shipped' "
+                f"WHERE status IN ('picking', 'awaiting_supply') "
                 f"  AND (CASE WHEN reserved_order_id IS NOT NULL "
                 f"            THEN reserved_order_id IN ({ids_csv}) "
                 f"            ELSE order_id IN ({ids_csv}) END)"

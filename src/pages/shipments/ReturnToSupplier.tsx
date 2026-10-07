@@ -1,80 +1,80 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import CrmLayout from '@/components/crm/CrmLayout';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Textarea } from '@/components/ui/textarea';
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from '@/components/ui/dialog';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table';
 import { Badge } from '@/components/ui/badge';
+import { Card, CardContent } from '@/components/ui/card';
 import Icon from '@/components/ui/icon';
 import { useToast } from '@/hooks/use-toast';
-import { useSubmitGuard } from '@/hooks/useSubmitGuard';
-import { fetchShipments, createShipmentReturnToSupplier, type Shipment } from '@/lib/shipmentsApi';
-import { fetchSuppliers, type Supplier } from '@/lib/suppliersApi';
-import { fetchRolls, type Roll } from '@/lib/rollsApi';
+import { useAuth } from '@/context/AuthContext';
+import { isStorekeeperRole } from '@/lib/roles';
+import { useSubmitGuard, useIdSubmitGuard } from '@/hooks/useSubmitGuard';
+import {
+  approveReturnToSupplier,
+  deleteShipment,
+  fetchShipmentDetail,
+  fetchShipments,
+  removeReturnItem,
+  scanReturnToSupplier,
+  updateReturnItemQuantity,
+  type Shipment,
+  type ShipmentDetail,
+  type ShipmentItem,
+} from '@/lib/shipmentsApi';
 import { formatDateTime as formatDate } from '@/lib/dateUtils';
 import { formatQuantity } from '@/lib/formatQuantity';
+import {
+  moneyAmount,
+  moneyRub,
+  statusVariant,
+} from '@/components/crm/shipments/fromSupplierShared';
+import { printReturnToSupplierSheet } from '@/lib/printReturnToSupplierSheet';
+import { playScanSound, playScanErrorSound, primeScanSounds } from '@/lib/scanSound';
 import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
+import ReturnToSupplierScanner from '@/components/crm/shipments/ReturnToSupplierScanner';
+import ReturnConfirmDialog from '@/components/crm/shipments/ReturnConfirmDialog';
 
-interface ItemRow {
-  rollId: string;
-  quantity: string;
-}
+const itemPrice = (item: ShipmentItem) =>
+  item.price ?? item.rollPurchasePrice ?? null;
 
-const emptyRow: ItemRow = { rollId: '', quantity: '' };
+const itemSum = (item: ShipmentItem) => {
+  const price = itemPrice(item);
+  if (price == null) return null;
+  return price * Number(item.quantity || 0);
+};
 
 const ReturnToSupplier = () => {
   const { toast } = useToast();
+  const { user } = useAuth();
+  const isAdmin = user?.role === 'admin';
+  const canScan = isAdmin || isStorekeeperRole(user?.role);
+
   const [shipments, setShipments] = useState<Shipment[]>([]);
-  const [suppliers, setSuppliers] = useState<Supplier[]>([]);
-  const [rolls, setRolls] = useState<Roll[]>([]);
+  const [drafts, setDrafts] = useState<ShipmentDetail[]>([]);
   const [loading, setLoading] = useState(true);
   const [listError, setListError] = useState<string | null>(null);
 
-  const [dialogOpen, setDialogOpen] = useState(false);
-  const { busy: saving, run } = useSubmitGuard();
-  const [supplierId, setSupplierId] = useState('');
-  const [comment, setComment] = useState('');
-  const [rows, setRows] = useState<ItemRow[]>([{ ...emptyRow }]);
+  const [scanCode, setScanCode] = useState('');
+  const [scanning, setScanning] = useState(false);
+  const scanInputRef = useRef<HTMLInputElement>(null);
+  const { busy: confirming, run: runConfirm } = useSubmitGuard();
+  const { busyId, run: runRow } = useIdSubmitGuard();
+
+  const [confirmId, setConfirmId] = useState<number | null>(null);
+
+  const focusScan = () => setTimeout(() => scanInputRef.current?.focus(), 0);
 
   const load = () => {
     setLoading(true);
-    // Справочники для формы возврата идут каждый сам по себе: если связь моргнула и один
-    // не дошёл, список отгрузок всё равно покажется. Раньше сбой оставлял страницу пустой.
-    fetchSuppliers().then(setSuppliers).catch(() => {
-      // FRONTEND-ONLY: справочник для формы, не для списка.
-    });
-    fetchRolls()
-      .then((rollsData) => setRolls(rollsData.filter((r) => r.status !== 'completed')))
-      .catch(() => {
-        // FRONTEND-ONLY: рулоны нужны только при создании возврата.
-      });
-    // Кружок загрузки снимаем по главному запросу страницы.
     fetchShipments('return_to_supplier')
-      .then((list) => {
+      .then(async (list) => {
         setListError(null);
         setShipments(list);
+        const open = list.filter((s) => s.status === 'Новый');
+        const details = await Promise.all(
+          open.map((s) => fetchShipmentDetail(s.id).catch(() => null))
+        );
+        setDrafts(details.filter((d): d is ShipmentDetail => Boolean(d)));
       })
       .catch((e) => {
         setListError(e instanceof Error ? e.message : 'Не удалось загрузить возвраты');
@@ -83,137 +83,157 @@ const ReturnToSupplier = () => {
   };
 
   useEffect(() => {
+    primeScanSounds();
     load();
   }, []);
 
-  const openCreate = () => {
-    setSupplierId('');
-    setComment('');
-    setRows([{ ...emptyRow }]);
-    setDialogOpen(true);
+  const doneShipments = shipments.filter((s) => s.status !== 'Новый');
+  const confirmDetail = drafts.find((d) => d.id === confirmId) || null;
+  const activeDraft = drafts[0] || null;
+
+  const handleScan = async () => {
+    const code = scanCode.trim();
+    if (!code || scanning || !canScan) return;
+    setScanCode('');
+    setScanning(true);
+    try {
+      const res = await scanReturnToSupplier(code);
+      playScanSound();
+      toast({
+        title: `${res.item.rollBarcode} · ${res.item.materialName || 'материал'}`,
+        description:
+          res.item.price != null
+            ? `${res.supplierName || 'Поставщик'}${res.item.originShipmentId ? ` · приёмка #${res.item.originShipmentId}` : ''} · ${moneyAmount(res.item.price, res.item.currency)} из приёмки`
+            : `${res.supplierName || 'Поставщик'} · на рулоне нет цены приёмки`,
+      });
+      load();
+    } catch (e) {
+      playScanErrorSound();
+      toast({
+        title: 'Рулон не принят',
+        description: e instanceof Error ? e.message : undefined,
+        variant: 'destructive',
+      });
+    } finally {
+      setScanning(false);
+      focusScan();
+    }
   };
 
-  const addRow = () => setRows((r) => [...r, { ...emptyRow }]);
-  const removeRow = (idx: number) => setRows((r) => r.filter((_, i) => i !== idx));
-  const updateRow = (idx: number, field: keyof ItemRow, value: string) =>
-    setRows((r) => r.map((row, i) => (i === idx ? { ...row, [field]: value } : row)));
-
-  const handleSave = () => {
-    const items = rows
-      .filter((r) => r.rollId && r.quantity)
-      .map((r) => ({ rollId: Number(r.rollId), quantity: Number(r.quantity) }));
-    if (items.length === 0) {
-      toast({ title: 'Добавьте хотя бы одну позицию', variant: 'destructive' });
-      return;
-    }
-    void run(async () => {
+  const handleQtyBlur = (item: ShipmentItem, raw: string) => {
+    const qty = Number(String(raw).replace(',', '.'));
+    if (!item.id || !Number.isFinite(qty) || qty === Number(item.quantity)) return;
+    void runRow(item.id, async () => {
       try {
-        await createShipmentReturnToSupplier({
-          supplierId: supplierId ? Number(supplierId) : undefined,
-          comment: comment.trim() || undefined,
-          items,
-        });
-        toast({ title: 'Возврат поставщику оформлен' });
-        setDialogOpen(false);
+        await updateReturnItemQuantity(item.id, qty);
         load();
       } catch (e) {
-        toast({ title: 'Ошибка', description: e instanceof Error ? e.message : undefined, variant: 'destructive' });
+        toast({
+          title: 'Не удалось поправить метраж',
+          description: e instanceof Error ? e.message : undefined,
+          variant: 'destructive',
+        });
+        load();
       }
     });
+  };
+
+  const handleRemove = (itemId: number) => {
+    void runRow(itemId, async () => {
+      try {
+        await removeReturnItem(itemId);
+        load();
+      } catch (e) {
+        toast({
+          title: 'Не удалось убрать рулон',
+          description: e instanceof Error ? e.message : undefined,
+          variant: 'destructive',
+        });
+      }
+    });
+  };
+
+  const handleDeleteDraft = (id: number) => {
+    void runRow(id, async () => {
+      try {
+        await deleteShipment(id);
+        toast({ title: 'Черновик возврата удалён' });
+        load();
+      } catch (e) {
+        toast({
+          title: 'Не удалось удалить',
+          description: e instanceof Error ? e.message : undefined,
+          variant: 'destructive',
+        });
+      }
+    });
+  };
+
+  const handleConfirm = (payload: {
+    ourLogistics: boolean;
+    logisticsCost?: number;
+    comment?: string;
+  }) => {
+    if (!confirmId) return;
+    if (payload.ourLogistics && !(payload.logisticsCost && payload.logisticsCost > 0)) {
+      toast({
+        title: 'Укажите стоимость логистики',
+        variant: 'destructive',
+      });
+      return;
+    }
+    void runConfirm(async () => {
+      try {
+        await approveReturnToSupplier(confirmId, payload);
+        toast({ title: 'Возврат подтверждён — напечатайте лист для бухгалтера' });
+        const detail = await fetchShipmentDetail(confirmId);
+        printReturnToSupplierSheet(detail);
+        setConfirmId(null);
+        load();
+      } catch (e) {
+        toast({
+          title: 'Не удалось подтвердить',
+          description: e instanceof Error ? e.message : undefined,
+          variant: 'destructive',
+        });
+      }
+    });
+  };
+
+  const handlePrint = async (id: number) => {
+    try {
+      const detail = await fetchShipmentDetail(id);
+      printReturnToSupplierSheet(detail);
+    } catch (e) {
+      toast({
+        title: 'Не удалось напечатать лист',
+        description: e instanceof Error ? e.message : undefined,
+        variant: 'destructive',
+      });
+    }
   };
 
   return (
     <CrmLayout>
       <div className="space-y-6">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <h1 className="text-xl font-bold">Возврат поставщику</h1>
-            <p className="mt-1 text-sm text-muted-foreground">
-              Списание материала с рулонов при возврате поставщику
-            </p>
-          </div>
-          <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-            <DialogTrigger asChild>
-              <Button onClick={openCreate}>
-                <Icon name="Plus" size={16} className="mr-2" />
-                Новый возврат
-              </Button>
-            </DialogTrigger>
-            <DialogContent className="max-h-[90vh] max-w-2xl overflow-y-auto">
-              <DialogHeader>
-                <DialogTitle>Возврат поставщику</DialogTitle>
-              </DialogHeader>
-              <div className="space-y-4">
-                <div className="space-y-1.5">
-                  <Label>Поставщик</Label>
-                  <Select value={supplierId} onValueChange={setSupplierId}>
-                    <SelectTrigger>
-                      <SelectValue placeholder="Выберите поставщика" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {suppliers.map((s) => (
-                        <SelectItem key={s.id} value={String(s.id)}>
-                          {s.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-
-                <div className="space-y-2">
-                  <div className="flex flex-wrap items-center justify-between gap-3">
-                    <Label>Позиции</Label>
-                    <Button type="button" size="sm" variant="outline" onClick={addRow}>
-                      <Icon name="Plus" size={14} className="mr-1" />
-                      Добавить
-                    </Button>
-                  </div>
-                  {rows.map((row, idx) => (
-                    <div key={idx} className="grid grid-cols-[1fr_100px_auto] gap-2">
-                      <Select value={row.rollId} onValueChange={(v) => updateRow(idx, 'rollId', v)}>
-                        <SelectTrigger>
-                          <SelectValue placeholder="Рулон" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {rolls.map((r) => (
-                            <SelectItem key={r.id} value={String(r.id)}>
-                              {r.barcode} · {r.materialName} (ост. {formatQuantity(r.remainingQuantity)} {r.unit})
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                      <Input
-                        type="number"
-                        step="0.01"
-                        placeholder="Кол-во"
-                        value={row.quantity}
-                        onChange={(e) => updateRow(idx, 'quantity', e.target.value)}
-                      />
-                      <Button
-                        type="button"
-                        size="icon"
-                        variant="ghost"
-                        onClick={() => removeRow(idx)}
-                        disabled={rows.length === 1}
-                      >
-                        <Icon name="Trash2" size={16} />
-                      </Button>
-                    </div>
-                  ))}
-                </div>
-
-                <div className="space-y-1.5">
-                  <Label>Комментарий</Label>
-                  <Textarea value={comment} onChange={(e) => setComment(e.target.value)} rows={2} />
-                </div>
-
-                <Button className="w-full" onClick={handleSave} disabled={saving}>
-                  {saving ? 'Сохранение...' : 'Оформить возврат'}
-                </Button>
-              </div>
-            </DialogContent>
-          </Dialog>
+        <div>
+          <h1 className="text-xl font-bold">Возврат поставщику</h1>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Отсканируйте рулон с браком. Цена — та, что зафиксировали на нём
+            в приёмке. Рулоны одной поставки собираются в один возврат.
+          </p>
         </div>
+
+        {canScan && (
+          <ReturnToSupplierScanner
+            scanCode={scanCode}
+            setScanCode={setScanCode}
+            scanning={scanning}
+            scanInputRef={scanInputRef}
+            onScan={handleScan}
+            supplierHint={activeDraft?.supplierName}
+          />
+        )}
 
         {listError && (
           <WarehouseFetchError
@@ -223,46 +243,162 @@ const ReturnToSupplier = () => {
           />
         )}
 
+        {drafts.map((draft) => {
+          const items = draft.items.filter((item) => item.rollId && !item.removedAt);
+          return (
+            <Card key={draft.id} className="shadow-none">
+              <CardContent className="space-y-4 pt-6">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <h2 className="text-base font-semibold">Черновик #{draft.id}</h2>
+                      <Badge variant="secondary">Ждёт подтверждения</Badge>
+                    </div>
+                    <p className="mt-1 text-sm text-foreground">
+                      {draft.supplierName || 'Поставщик не указан'}
+                      {draft.originShipmentId ? ` · приёмка #${draft.originShipmentId}` : ''}
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      {items.length} рул.
+                      {draft.createdByName ? ` · ${draft.createdByName}` : ''}
+                    </p>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {isAdmin && (
+                      <Button size="sm" onClick={() => setConfirmId(draft.id)} disabled={items.length === 0}>
+                        <Icon name="ClipboardCheck" size={14} className="mr-1.5" />
+                        Подтвердить
+                      </Button>
+                    )}
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => handleDeleteDraft(draft.id)}
+                      disabled={busyId === draft.id}
+                    >
+                      <Icon name="Trash2" size={14} className="mr-1.5" />
+                      Удалить
+                    </Button>
+                  </div>
+                </div>
+
+                {items.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">Отсканируйте рулон — он появится здесь</p>
+                ) : (
+                  <div className="space-y-2">
+                    {items.map((item) => {
+                      const price = itemPrice(item);
+                      const sum = itemSum(item);
+                      const currency = item.currency || item.supplierCurrency;
+                      return (
+                        <div
+                          key={item.id}
+                          className="flex flex-col gap-2 rounded-lg border border-border px-3 py-2 sm:flex-row sm:items-center"
+                        >
+                          <div className="min-w-0 flex-1">
+                            <p className="font-mono-tech text-sm font-medium">{item.rollBarcode}</p>
+                            <p className="text-sm text-muted-foreground">{item.materialName}</p>
+                            <p className="text-xs text-muted-foreground">
+                              {price != null
+                                ? `${moneyAmount(price, currency)} за ${item.unit || 'ед.'} · из приёмки${item.originShipmentId ? ` #${item.originShipmentId}` : ''}`
+                                : 'На рулоне нет цены из приёмки'}
+                              {sum != null ? ` · ${moneyAmount(sum, currency)}` : ''}
+                            </p>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <Input
+                              type="number"
+                              step="0.01"
+                              min="0"
+                              defaultValue={item.quantity ?? ''}
+                              className="w-24"
+                              disabled={busyId === item.id}
+                              onBlur={(e) => handleQtyBlur(item, e.target.value)}
+                            />
+                            <span className="w-10 text-xs text-muted-foreground">{item.unit || ''}</span>
+                            <Button
+                              type="button"
+                              size="icon"
+                              variant="ghost"
+                              disabled={busyId === item.id}
+                              onClick={() => handleRemove(item.id)}
+                            >
+                              <Icon name="Trash2" size={16} />
+                            </Button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+
+                {!isAdmin && items.length > 0 && (
+                  <p className="text-sm text-muted-foreground">
+                    Дальше подтверждает администратор. После этого напечатайте лист и отнесите бухгалтеру.
+                  </p>
+                )}
+              </CardContent>
+            </Card>
+          );
+        })}
+
         {loading && shipments.length === 0 ? (
           <div className="flex items-center gap-2 text-sm text-muted-foreground">
             <Icon name="Loader2" size={16} className="animate-spin" />
             Загрузка...
           </div>
-        ) : shipments.length === 0 ? (
+        ) : doneShipments.length === 0 && drafts.length === 0 ? (
           listError ? null : (
-          <p className="text-sm text-muted-foreground">Возвратов пока нет</p>
+            <p className="text-sm text-muted-foreground">
+              Возвратов пока нет. Отсканируйте рулон, чтобы собрать первый документ.
+            </p>
           )
-        ) : (
-          <div className="rounded-md border border-border">
-            <Table>
-              <TableHeader>
-                <TableRow className="bg-primary hover:bg-primary">
-                  <TableHead className="text-primary-foreground">#</TableHead>
-                  <TableHead className="text-primary-foreground">Статус</TableHead>
-                  <TableHead className="text-primary-foreground">Поставщик</TableHead>
-                  <TableHead className="text-primary-foreground">Позиций</TableHead>
-                  <TableHead className="text-primary-foreground">Комментарий</TableHead>
-                  <TableHead className="text-primary-foreground">Создано</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {shipments.map((s) => (
-                  <TableRow key={s.id}>
-                    <TableCell>{s.id}</TableCell>
-                    <TableCell>
-                      <Badge variant="secondary">{s.status}</Badge>
-                    </TableCell>
-                    <TableCell>{s.supplierName || '—'}</TableCell>
-                    <TableCell>{s.itemsCount}</TableCell>
-                    <TableCell>{s.comment || '—'}</TableCell>
-                    <TableCell>{formatDate(s.createdAt)}</TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
+        ) : doneShipments.length > 0 ? (
+          <div className="space-y-3">
+            <h2 className="text-sm font-semibold text-muted-foreground">Подтверждённые</h2>
+            {doneShipments.map((s) => (
+              <article key={s.id} className="rounded-xl border border-border bg-card p-4 sm:p-5">
+                <div className="flex flex-wrap items-center gap-2">
+                  <h3 className="text-base font-semibold">Возврат #{s.id}</h3>
+                  <Badge variant={statusVariant[s.status] || 'secondary'}>{s.status}</Badge>
+                </div>
+                <p className="mt-2 text-sm text-foreground">
+                  {s.supplierName || '—'}
+                  {s.originShipmentId ? ` · приёмка #${s.originShipmentId}` : ''}
+                </p>
+                <p className="text-sm text-muted-foreground">
+                  {s.itemsCount} поз. · {formatQuantity(s.totalQuantity)} метр/шт
+                  {s.createdByName ? ` · ${s.createdByName}` : ''}
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  Создан {formatDate(s.createdAt)}
+                  {s.completedAt ? ` · подтверждён ${formatDate(s.completedAt)}` : ''}
+                </p>
+                {(s.logisticsCost || 0) > 0 && (
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Логистика за наш счёт: {moneyRub(s.logisticsCost || 0)}
+                  </p>
+                )}
+                {s.comment && <p className="mt-1 max-w-2xl text-xs text-muted-foreground">{s.comment}</p>}
+                <div className="mt-3">
+                  <Button size="sm" variant="outline" onClick={() => handlePrint(s.id)}>
+                    <Icon name="Printer" size={14} className="mr-1.5" />
+                    Лист для бухгалтера
+                  </Button>
+                </div>
+              </article>
+            ))}
           </div>
-        )}
+        ) : null}
       </div>
+
+      <ReturnConfirmDialog
+        open={confirmId != null}
+        detail={confirmDetail}
+        busy={confirming}
+        onClose={() => setConfirmId(null)}
+        onConfirm={handleConfirm}
+      />
     </CrmLayout>
   );
 };

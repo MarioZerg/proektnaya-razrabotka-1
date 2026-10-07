@@ -46,6 +46,22 @@ def log_action(cur, actor_id, actor_name, action, description, details=None):
     )
 
 
+def notify_admin(cur, kind, title, message, actor_id, actor_name, link=None,
+                 entity_type=None, entity_id=None):
+    """Кладёт событие на панель администратора — ту же, что списания со склада."""
+    cur.execute(
+        "INSERT INTO admin_notifications (kind, title, message, actor_id, actor_name, "
+        "link, entity_type, entity_id) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+        (
+            kind, title, message,
+            int(actor_id) if actor_id not in (None, '') else None,
+            actor_name or None,
+            link, entity_type,
+            int(entity_id) if entity_id not in (None, '') else None,
+        ),
+    )
+
+
 def get_credentials(cur, code, shop_id=None):
     """Учётные данные кабинета конкретного магазина.
 
@@ -627,6 +643,46 @@ def _scan_aliases(code):
         head = body.split('-')[0]
         aliases.update({body, head, f'YM-{body}', f'YM-{head}'})
     return [a for a in aliases if a]
+
+
+def _storage_code(code):
+    """Стикер хранения GW-XXXXXX из того, что отдал сканер."""
+    raw = (code or '').strip().upper()
+    if not raw.startswith('GW'):
+        return raw
+    if '-' in raw:
+        return raw
+    digits = raw[2:]
+    if digits.isdigit():
+        return f'GW-{digits.zfill(6)}'
+    return raw
+
+
+def _find_return_for_flag(cur, code):
+    """Заявка, которую кладовщик только что пикнул — по наклейке ii или стикеру GW.
+
+    Подмену отмечают на уже принятой вещи: ищем свежую заявку, а не первую
+    попавшуюся по номеру отправления (в одном отправлении бывает несколько вещей).
+    """
+    aliases = _scan_aliases(code)
+    gw = _storage_code(code)
+    cur.execute(
+        "SELECT r.id, r.goods_warehouse_id, r.product_name, r.posting_number, "
+        "       r.marketplace, r.return_barcode, COALESCE(r.pvz_substitution, false), "
+        "       gw.storage_barcode, o.material, o.width, o.height, o.order_number "
+        "FROM marketplace_returns r "
+        "LEFT JOIN goods_warehouse gw ON gw.id = r.goods_warehouse_id "
+        "LEFT JOIN orders o ON o.id = COALESCE(r.order_id, gw.order_id) "
+        "WHERE r.return_barcode = ANY(%s) "
+        "   OR r.posting_number = ANY(%s) "
+        "   OR r.external_id = ANY(%s) "
+        "   OR UPPER(COALESCE(gw.storage_barcode, '')) = %s "
+        "ORDER BY CASE WHEN COALESCE(r.status, '') = 'picked_up' THEN 0 ELSE 1 END, "
+        "         r.picked_up_at DESC NULLS LAST, r.id DESC "
+        "LIMIT 1",
+        (aliases, aliases, aliases, gw),
+    )
+    return cur.fetchone()
 
 
 def _pick_wb_yandex_order(cur, code, marketplace=None):
@@ -1385,6 +1441,9 @@ def handler(event: dict, context) -> dict:
     POST /  { action: 'scan', code }           - кладовщик сканирует стикер возврата.
                                                  Код вида TR{id} — внутренний стикер из
                                                  пакета: показывает, кто шил эту штуку
+    POST /  { action: 'mark_pvz_substitution', barcode }
+                                               - в пакете не тот товар (подмена на ПВЗ):
+                                                 отметка на заявке и уведомление админу
     POST /  { action: 'process', id, outcome } - судьба вещи: utilized (утилизация),
                                                  repack (на перепаковку), stored (на полку)
 
@@ -2539,6 +2598,64 @@ def handler(event: dict, context) -> dict:
                     'shelfName': shelf_name,
                     'placedOnShelf': place_now,
                     'needsManualOrder': order_id is None and outcome != 'utilized',
+                })
+
+            if action == 'mark_pvz_substitution':
+                # Кладовщик вскрыл пакет и увидел не тот товар: покупатель подменил
+                # вещь на пункте выдачи. Саму вещь он не утилизирует — решение за
+                # админом. Здесь только отметка и уведомление на панель.
+                code = (body_data.get('barcode') or body_data.get('storageBarcode') or '').strip()
+                if not code:
+                    return _resp(400, {'error': 'Отсканируйте вещь, затем отметьте подмену'})
+                found = _find_return_for_flag(cur, code)
+                if not found:
+                    return _resp(404, {'error': 'Сначала примите вещь сканером возврата'})
+                (r_id, gw_id, product_name, posting, marketplace, return_barcode,
+                 already, storage_barcode, material, width, height, order_number) = found
+                if already:
+                    return _resp(200, {
+                        'success': True,
+                        'already': True,
+                        'storageBarcode': storage_barcode,
+                    })
+                cur.execute(
+                    "UPDATE marketplace_returns SET pvz_substitution = true, "
+                    "pvz_substitution_at = now(), pvz_substitution_by = %s, "
+                    "damage_note = COALESCE(NULLIF(TRIM(damage_note), ''), "
+                    "                       'Подмена товара на ПВЗ') "
+                    "WHERE id = %s",
+                    (int(actor_id) if actor_id else None, int(r_id)),
+                )
+                item_txt = ' '.join(str(x) for x in [
+                    material,
+                    f'{width}×{height}' if width and height else None,
+                    product_name,
+                ] if x) or (order_number or 'Возврат')
+                codes = ' · '.join(x for x in (
+                    storage_barcode,
+                    return_barcode or code,
+                    posting,
+                ) if x)
+                log_action(
+                    cur, actor_id, actor_name, 'pvz_substitution',
+                    f'Подмена на ПВЗ: {item_txt} ({codes})',
+                    {'returnId': int(r_id), 'goodsWarehouseId': gw_id},
+                )
+                notify_admin(
+                    cur, 'pvz_substitution',
+                    'Подмена товара на ПВЗ',
+                    f'{item_txt}. {codes}. '
+                    f'Кладовщик отметил: в пакете не тот товар',
+                    actor_id, actor_name,
+                    link=(f'/crm/inventory/goods/{int(gw_id)}' if gw_id
+                          else '/crm/inventory/goods-warehouse'),
+                    entity_type='marketplace_return', entity_id=r_id,
+                )
+                conn.commit()
+                return _resp(200, {
+                    'success': True,
+                    'already': False,
+                    'storageBarcode': storage_barcode,
                 })
 
             return _resp(400, {'error': 'Неизвестное действие'})
