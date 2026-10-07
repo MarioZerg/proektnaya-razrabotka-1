@@ -2957,3 +2957,5 @@ def handler(event: dict, context) -> dict:
 
     return {'statusCode': 405, 'headers': headers, 'body': json.dumps({'error': 'Method not allowed'})}
 # release: packer_returns
+
+# redeploy: role switch

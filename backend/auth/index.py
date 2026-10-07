@@ -791,3 +791,4 @@ def handler(event: dict, context) -> dict:
         }
 
     return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Неизвестное действие'})}
+# redeploy: role switch

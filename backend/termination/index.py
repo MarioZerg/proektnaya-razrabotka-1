@@ -585,3 +585,4 @@ def handler(event: dict, context) -> dict:
         return _resp(400, {'error': 'Неизвестное действие'})
     finally:
         conn.close()
+# redeploy: role switch
