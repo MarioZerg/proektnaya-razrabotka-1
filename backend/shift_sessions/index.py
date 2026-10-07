@@ -759,7 +759,7 @@ def handler(event: dict, context) -> dict:
             employee_rows = cur.fetchall()
 
             cur.execute(
-                "SELECT DISTINCT ON (ss.user_id) ss.user_id, ss.opened_at, ss.closed_at, "
+                "SELECT DISTINCT ON (ss.user_id) ss.user_id, COALESCE(ss.day_started_at, ss.opened_at), ss.closed_at, "
                 "ss.workshop_id, ss.shift_number, ss.role, w.name "
                 "FROM shift_sessions ss LEFT JOIN workshops w ON w.id = ss.workshop_id "
                 "ORDER BY ss.user_id, ss.opened_at DESC"
@@ -1267,13 +1267,113 @@ def handler(event: dict, context) -> dict:
                     }),
                 }
 
+            if action == 'switch_role':
+                # ПЕРЕКЛЮЧЕНИЕ ДОЛЖНОСТИ ПОСРЕДИ ДНЯ ПРЯМО НА ТЕРМИНАЛЕ.
+                #
+                # Многие совмещают: Антипина открыла смену швеёй, а потом встала на
+                # раскрой — терминал продолжал показывать ей швейный функционал, и
+                # переключиться было нельзя, только ждать конца смены. Теперь работа в
+                # прежней должности закрывается (её смена закрывается), и тут же
+                # открывается смена в новой должности — в том же цеху и номере смены.
+                # Это продолжение рабочего дня: без опоздания и без штрафа, а закрыть
+                # смену можно в то же время, что и раньше (отсчёт от начала дня).
+                user_id = body_data.get('userId')
+                new_role = (body_data.get('role') or '').strip()
+                switch_roles = ('sewer', 'cutter', 'packer', 'packer_returns')
+                if not user_id or not new_role:
+                    return {'statusCode': 400, 'headers': headers, 'body': json.dumps(
+                        {'error': 'Укажите userId и role'}, ensure_ascii=False)}
+                if new_role not in switch_roles:
+                    return {'statusCode': 400, 'headers': headers, 'body': json.dumps(
+                        {'error': 'На эту должность нельзя переключиться с терминала'}, ensure_ascii=False)}
+
+                cur.execute(
+                    "SELECT 1 FROM user_roles WHERE user_id = %s AND role = %s AND is_approved = true "
+                    "UNION SELECT 1 FROM users WHERE id = %s AND role = %s",
+                    (int(user_id), new_role, int(user_id), new_role),
+                )
+                if not cur.fetchone():
+                    return {'statusCode': 403, 'headers': headers, 'body': json.dumps(
+                        {'error': 'Эта должность вам не разрешена администратором'}, ensure_ascii=False)}
+
+                cur.execute(
+                    "SELECT ss.id, ss.workshop_id, ss.shift_number, ss.opened_at, "
+                    "COALESCE(ss.day_started_at, ss.opened_at), COALESCE(ss.role, u.role) "
+                    "FROM shift_sessions ss JOIN users u ON u.id = ss.user_id "
+                    "WHERE ss.user_id = %s AND ss.closed_at IS NULL "
+                    "ORDER BY ss.opened_at DESC LIMIT 1 FOR UPDATE OF ss",
+                    (int(user_id),),
+                )
+                sess = cur.fetchone()
+                if not sess:
+                    return {'statusCode': 409, 'headers': headers, 'body': json.dumps(
+                        {'error': 'Смена не открыта — откройте смену в нужной должности'}, ensure_ascii=False)}
+                old_id, ws_id, sh_num, _old_opened, day_started, old_role = sess
+
+                if old_role == new_role:
+                    close_at = shift_close_allowed_at(cur, user_id, day_started)
+                    conn.commit()
+                    return {'statusCode': 200, 'headers': headers, 'body': json.dumps({
+                        'switched': False, 'role': new_role, 'workshopId': ws_id, 'shiftNumber': sh_num,
+                        'openedAt': day_started.isoformat() + 'Z',
+                        'canCloseAt': (close_at.isoformat() + 'Z') if close_at else None,
+                    })}
+                if old_role not in switch_roles:
+                    return {'statusCode': 409, 'headers': headers, 'body': json.dumps(
+                        {'error': 'Из текущей должности переключиться нельзя — закройте смену'},
+                        ensure_ascii=False)}
+
+                # Личная незавершённая работа в прежней должности держит переключение:
+                # иначе заказы «на раскрое» или «в работе» зависнут за человеком, который
+                # уже работает по-другому, и их никто не подхватит. Общая очередь
+                # стикеровки/перепаковки — не личная работа, её не проверяем.
+                if old_role in ('cutter', 'sewer'):
+                    left = count_orders_in_work(cur, user_id, old_role, ws_id)
+                    if left > 0:
+                        stage = 'на раскрое' if old_role == 'cutter' else 'в работе'
+                        return {'statusCode': 409, 'headers': headers, 'body': json.dumps({
+                            'error': f'У вас {left} заказов {stage} — сначала завершите их, '
+                                     f'потом переключайтесь на другую должность',
+                            'ordersInWork': left,
+                        }, ensure_ascii=False)}
+
+                cur.execute("UPDATE shift_sessions SET closed_at = now() WHERE id = %s", (old_id,))
+                accrue_shift_salary(cur, user_id, old_id, ws_id)
+
+                cur.execute(
+                    "INSERT INTO shift_sessions (user_id, workshop_id, shift_number, is_late, role, "
+                    "day_started_at, switched_from_session_id) "
+                    "VALUES (%s, %s, %s, false, %s, %s, %s) RETURNING id, opened_at",
+                    (int(user_id), ws_id, sh_num, new_role, day_started, old_id),
+                )
+                new_id, _ = cur.fetchone()
+
+                # Права следуют за должностью: ключ терминала переписываем на новую роль,
+                # иначе сервер продолжил бы пускать к ткани вместо тесьмы и наоборот.
+                cur.execute(
+                    "UPDATE auth_sessions SET role = %s WHERE user_id = %s AND expires_at > now()",
+                    (new_role, int(user_id)),
+                )
+                close_at = shift_close_allowed_at(cur, user_id, day_started)
+                conn.commit()
+                return {'statusCode': 200, 'headers': headers, 'body': json.dumps({
+                    'switched': True,
+                    'id': new_id,
+                    'role': new_role,
+                    'previousRole': old_role,
+                    'workshopId': ws_id,
+                    'shiftNumber': sh_num,
+                    'openedAt': day_started.isoformat() + 'Z',
+                    'canCloseAt': (close_at.isoformat() + 'Z') if close_at else None,
+                })}
+
             if action == 'close':
                 user_id = body_data.get('userId')
                 if not user_id:
                     return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите userId'})}
 
                 cur.execute(
-                    "SELECT id, workshop_id, opened_at FROM shift_sessions "
+                    "SELECT id, workshop_id, COALESCE(day_started_at, opened_at) FROM shift_sessions "
                     "WHERE user_id = %s AND closed_at IS NULL "
                     "ORDER BY opened_at DESC LIMIT 1",
                     (int(user_id),),

@@ -16,21 +16,36 @@
       "name": "Open shift without userId fails",
       "method": "POST",
       "path": "/",
-      "body": { "action": "open" },
+      "body": {
+        "action": "open"
+      },
       "expectedStatus": 400
     },
     {
       "name": "Close shift without userId fails",
       "method": "POST",
       "path": "/",
-      "body": { "action": "close" },
+      "body": {
+        "action": "close"
+      },
       "expectedStatus": 400
     },
     {
       "name": "Admin close task without required fields fails",
       "method": "POST",
       "path": "/",
-      "body": { "action": "admin_close_task" },
+      "body": {
+        "action": "admin_close_task"
+      },
+      "expectedStatus": 400
+    },
+    {
+      "name": "Switch role without userId fails",
+      "method": "POST",
+      "path": "/",
+      "body": {
+        "action": "switch_role"
+      },
       "expectedStatus": 400
     }
   ]

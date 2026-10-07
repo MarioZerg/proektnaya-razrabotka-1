@@ -98,8 +98,10 @@ const KioskTerminal = () => {
     setTimeout(() => inputRef.current?.focus(), 0);
   };
 
-  const { shiftSaving, handleOpenShift, handleCloseShift, handleCloseShiftClick } = useKioskShift({
+  const { shiftSaving, handleOpenShift, handleCloseShift, handleCloseShiftClick, handleSwitchRole } =
+    useKioskShift({
     user,
+    shift,
     workshopId,
     isPreview,
     setShift,
@@ -174,6 +176,7 @@ const KioskTerminal = () => {
           onOpenShift={handleOpenShift}
           onCloseShift={handleCloseShift}
           onCloseShiftClick={handleCloseShiftClick}
+          onSwitchRole={handleSwitchRole}
         />
       </>
     );

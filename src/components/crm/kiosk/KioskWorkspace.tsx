@@ -34,6 +34,8 @@ interface KioskWorkspaceProps {
   onOpenShift: (workshopId: number | null, shiftNumber: number | null) => void;
   onCloseShift: () => void;
   onCloseShiftClick: () => void;
+  /** Переключить должность посреди дня — для тех, кому разрешено несколько. */
+  onSwitchRole: (role: string) => void;
 }
 
 /** Рабочая область терминала после входа: шапка с данными сотрудника и содержимое
@@ -58,6 +60,7 @@ const KioskWorkspace = ({
   onOpenShift,
   onCloseShift,
   onCloseShiftClick,
+  onSwitchRole,
 }: KioskWorkspaceProps) => {
   // Раз в полминуты сверяем текущее время с разрешённым: как только смена отработана,
   // кнопка закрытия включается сама — сотруднику не нужно перезаходить в терминал.
@@ -140,6 +143,8 @@ const KioskWorkspace = ({
         screen={screen}
         setScreen={setScreen}
         onLogout={onLogout}
+        shiftSaving={shiftSaving}
+        onSwitchRole={onSwitchRole}
       />
 
       {/* Плашка перехвата стоит НАД содержимым и видна на любом экране: напечатать

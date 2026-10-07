@@ -187,6 +187,21 @@ export const moveShiftToWorkshop = (
 ): Promise<{ success: boolean; moved: boolean; workshopId?: number; shiftNumber?: number }> =>
   postAction({ action: 'move_workshop', userId, workshopId });
 
+export interface SwitchRoleResult {
+  switched: boolean;
+  role: string;
+  previousRole?: string;
+  workshopId: number | null;
+  shiftNumber: number | null;
+  openedAt: string;
+  canCloseAt: string | null;
+}
+
+/** Переключает должность посреди дня: работа в прежней должности закрывается,
+ * и сразу открывается смена в новой — в том же цехе, без опоздания. */
+export const switchShiftRole = (userId: number, role: string): Promise<SwitchRoleResult> =>
+  postAction({ action: 'switch_role', userId, role });
+
 /** Закрывает смену. Швее, закройщику и упаковщице нельзя, пока за ними числится
  * незавершённая работа — придёт ошибка с её количеством.
  *

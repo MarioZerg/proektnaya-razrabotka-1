@@ -1128,7 +1128,10 @@ def handler(event: dict, context) -> dict:
                         ensure_ascii=False)}
 
                 cur.execute(
-                    "SELECT id, opened_at, workshop_id, shift_number, role FROM shift_sessions "
+                    # После переключения должности смена открыта заново, но рабочий
+                    # день начался раньше — время закрытия считаем от начала дня.
+                    "SELECT id, COALESCE(day_started_at, opened_at), workshop_id, shift_number, role "
+                    "FROM shift_sessions "
                     "WHERE user_id = %s AND closed_at IS NULL ORDER BY opened_at DESC LIMIT 1",
                     (user_id,),
                 )

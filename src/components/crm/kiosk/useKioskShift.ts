@@ -4,6 +4,7 @@ import {
   openShift,
   closeShift,
   checkShiftDefects,
+  switchShiftRole,
   type DefectCheck,
 } from '@/lib/shiftSessionsApi';
 import { playScanErrorSound, playShiftOpenSound, playShiftCloseSound } from '@/lib/scanSound';
@@ -20,6 +21,7 @@ type Toast = (opts: {
 
 interface Params {
   user: KioskUser | null;
+  shift?: KioskShift | null;
   workshopId: string | undefined;
   isPreview: boolean;
   setShift: (s: KioskShift | null) => void;
@@ -43,6 +45,7 @@ interface Params {
  */
 export const useKioskShift = ({
   user,
+  shift,
   workshopId,
   isPreview,
   setShift,
@@ -169,6 +172,45 @@ export const useKioskShift = ({
     }
   };
 
+  // Переключение должности посреди дня (швея ↔ закройщик и т.п.). Работа в прежней
+  // должности закрывается на сервере, и сразу открывается смена в новой — терминал
+  // перестраивает плитки и материалы под новую роль без повторного скана бейджа.
+  const handleSwitchRole = async (role: string) => {
+    if (!user || !shift?.isOpen) return;
+    const current = shift.role || user.role;
+    if (role === current) return;
+    if (isPreview) {
+      setShift({ ...shift, role });
+      setScreen('menu');
+      return;
+    }
+    setShiftSaving(true);
+    try {
+      const res = await switchShiftRole(user.id, role);
+      setShift({
+        isOpen: true,
+        openedAt: res.openedAt,
+        workshopId: res.workshopId,
+        shiftNumber: res.shiftNumber,
+        canCloseAt: res.canCloseAt ?? null,
+        role: res.role,
+      });
+      setScreen('menu');
+      playShiftOpenSound();
+      toast({ title: 'Должность переключена', description: 'Работа в прежней должности закрыта' });
+    } catch (e) {
+      playScanErrorSound();
+      const message = e instanceof Error ? e.message : 'Попробуйте ещё раз';
+      if (message.includes('заказ')) {
+        setCloseBlocked(message);
+      } else {
+        toast({ title: 'Не удалось переключить должность', description: message, variant: 'destructive' });
+      }
+    } finally {
+      setShiftSaving(false);
+    }
+  };
+
   // Перед закрытием смены напоминаем про брак: если сотрудник за смену не оформил ни одной
   // записи, скорее всего он про это забыл. Спрашиваем один раз — закрыть смену не мешаем.
   const handleCloseShiftClick = async () => {
@@ -184,5 +226,5 @@ export const useKioskShift = ({
     handleCloseShift();
   };
 
-  return { shiftSaving, handleOpenShift, handleCloseShift, handleCloseShiftClick };
+  return { shiftSaving, handleOpenShift, handleCloseShift, handleCloseShiftClick, handleSwitchRole };
 };
