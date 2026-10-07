@@ -55,7 +55,7 @@ const CometPill = ({ comet, onDone }: { comet: Comet; onDone: (id: string) => vo
 
   return (
     <div
-      className="pointer-events-none absolute top-[20px] z-20 -translate-x-1/2"
+      className="pointer-events-none absolute top-[36px] z-20 -translate-x-1/2"
       style={{
         left: `${go ? center(comet.to) : center(comet.from)}%`,
         opacity: go ? 0 : 1,
@@ -87,8 +87,8 @@ const LiveFloorPipeline = ({
   comets,
   onCometDone,
 }: LiveFloorPipelineProps) => (
-  <div className="-mx-2 overflow-x-auto px-2 pb-1">
-    <div className="relative min-w-[560px] pt-1">
+  <div className="-mx-1 overflow-x-auto px-6 pb-2 pt-8">
+    <div className="relative min-w-[560px]">
       {/* Отрезки ленты между этапами. Чем больше вещей проехало за час, тем
           гуще бегут точки; пустой отрезок стоит серым. */}
       {STAGES.slice(0, -1).map((s, i) => {
@@ -98,7 +98,7 @@ const LiveFloorPipeline = ({
         return (
           <div
             key={s.key}
-            className="absolute top-[26px] h-2"
+            className="absolute top-[36px] h-2"
             style={{
               left: `${center(s.key)}%`,
               width: `${100 / STAGES.length}%`,
@@ -137,10 +137,11 @@ const LiveFloorPipeline = ({
           const active = activeStages.has(s.key);
           return (
             <div key={s.key} className="flex flex-col items-center gap-1 text-center">
-              <div className="relative">
+              <div className="relative flex h-[80px] w-[80px] items-center justify-center">
+                <div className="relative h-[52px] w-[52px]">
                 {active && (
                   <span
-                    className="absolute inset-0 animate-ping rounded-full opacity-30"
+                    className="absolute inset-0 animate-widget-pulse rounded-full opacity-40"
                     style={{ background: s.hex }}
                   />
                 )}
@@ -149,6 +150,7 @@ const LiveFloorPipeline = ({
                   style={{ boxShadow: active ? `0 0 18px ${s.hex}66` : undefined }}
                 >
                   <Icon name={s.icon} size={22} />
+                </div>
                 </div>
               </div>
               <span key={value} className="inline-block animate-count-bump text-2xl font-bold tabular-nums">

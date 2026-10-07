@@ -13,6 +13,7 @@ import LiveOrderChain from '@/components/crm/dashboard/liveFloor/LiveOrderChain'
 import LiveOrderChip from '@/components/crm/dashboard/liveFloor/LiveOrderChip';
 import {
   STAGES,
+  inOverlockWork,
   personState,
   shortName,
   stageIndex,
@@ -82,6 +83,10 @@ const LiveFloorCard = () => {
   const [freshKeys, setFreshKeys] = useState<Set<string>>(new Set());
   const [clockOffset, setClockOffset] = useState(0);
   const [updatedAt, setUpdatedAt] = useState<number | null>(null);
+  // Лента короткой: при движении чуть раскрывается и через 10 с снова сжимается.
+  const [feedOpen, setFeedOpen] = useState(false);
+  const feedPinned = useRef(false);
+  const feedCollapseTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const prevStages = useRef<Map<number, StageKey> | null>(null);
   const prevEvents = useRef<Set<string> | null>(null);
@@ -92,7 +97,10 @@ const LiveFloorCard = () => {
 
   useEffect(() => {
     const pending = timers.current;
-    return () => pending.forEach(clearTimeout);
+    return () => {
+      pending.forEach(clearTimeout);
+      if (feedCollapseTimer.current) clearTimeout(feedCollapseTimer.current);
+    };
   }, []);
 
   const load = useCallback(async () => {
@@ -142,6 +150,11 @@ const LiveFloorCard = () => {
         if (fresh.size) {
           setFreshKeys(fresh);
           later(() => setFreshKeys(new Set()), 5000);
+          setFeedOpen(true);
+          if (feedCollapseTimer.current) clearTimeout(feedCollapseTimer.current);
+          feedCollapseTimer.current = setTimeout(() => {
+            if (!feedPinned.current) setFeedOpen(false);
+          }, 10000);
         }
       }
       prevEvents.current = keys;
@@ -226,12 +239,23 @@ const LiveFloorCard = () => {
     const nowMs = Date.now() + clockOffset;
     const states = people.map((p) => personState(p, orders, events, nowMs));
 
+    // В работе на оверлоке — все такие вещи есть в снимке. Старый сервер
+    // ещё кладёт в «Оверлок» всю очередь; перекладываем её в крой готов.
+    const overlockBusy = data.orders.filter(inOverlockWork).length;
+    const overlockQueued = Math.max(0, data.counts.overlock - overlockBusy);
+    const counts = {
+      ...data.counts,
+      overlock: overlockBusy,
+      cutReady: data.counts.cutReady + overlockQueued,
+    };
+
     return {
       people,
       orders,
       events,
       flows,
       active,
+      counts,
       holderName: holder?.overlockUserId ? shortName(data.names[String(holder.overlockUserId)]) : null,
       stickeringQueue,
       workshops,
@@ -248,8 +272,8 @@ const LiveFloorCard = () => {
   const highlightIds = useMemo(() => new Set(matches.map((o) => o.id)), [matches]);
 
   const body = (
-    <Card className={`overflow-hidden border-border shadow-none ${big ? 'min-h-full rounded-none border-0' : ''}`}>
-      <CardContent className={`px-3 sm:px-6 ${expanded ? 'space-y-5 pt-5' : 'space-y-3 py-4'}`}>
+    <Card className={`overflow-visible border-border shadow-none ${big ? 'min-h-full rounded-none border-0' : ''}`}>
+      <CardContent className={`px-3 sm:px-6 ${expanded ? 'space-y-5 pt-6' : 'space-y-3 py-4'}`}>
         <div className="flex items-start gap-2">
           <button
             type="button"
@@ -307,7 +331,7 @@ const LiveFloorCard = () => {
                     className="inline-flex shrink-0 items-center gap-1.5 rounded-full border bg-card px-2.5 py-1 text-xs"
                   >
                     <span className="h-2 w-2 rounded-full" style={{ background: s.hex }} />
-                    <span className="font-semibold tabular-nums">{data.counts[COUNT_KEYS[s.key]] ?? 0}</span>
+                    <span className="font-semibold tabular-nums">{view.counts[COUNT_KEYS[s.key]] ?? 0}</span>
                     <span className="text-muted-foreground">{s.label}</span>
                   </span>
                 ))}
@@ -392,9 +416,9 @@ const LiveFloorCard = () => {
           </div>
         ) : (
           <>
-            <div className="rounded-2xl border bg-gradient-to-b from-muted/40 to-transparent px-3 pb-3 pt-5">
+            <div className="overflow-visible rounded-2xl border bg-gradient-to-b from-muted/40 to-transparent px-3 pb-3 pt-4">
               <LiveFloorPipeline
-                counts={data.counts}
+                counts={view.counts}
                 flows={view.flows}
                 activeStages={view.active}
                 overlockHolder={view.holderName}
@@ -470,21 +494,51 @@ const LiveFloorCard = () => {
               </div>
 
               <aside className="min-w-0 rounded-2xl border p-3 xl:sticky xl:top-4 xl:self-start">
-                <div className="mb-2 flex items-center gap-2 text-sm">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setFeedOpen((v) => {
+                      const next = !v;
+                      feedPinned.current = next;
+                      return next;
+                    });
+                  }}
+                  aria-expanded={feedOpen}
+                  className="mb-2 flex w-full items-center gap-2 text-left text-sm"
+                >
                   <Icon name="TrendingUp" size={15} className="text-muted-foreground" />
                   <span className="font-semibold">Что только что случилось</span>
-                </div>
+                  {freshKeys.size > 0 && (
+                    <span className="rounded-full bg-emerald-100 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-800">
+                      +{freshKeys.size}
+                    </span>
+                  )}
+                  <Icon
+                    name="ChevronDown"
+                    size={16}
+                    className={`ml-auto shrink-0 text-muted-foreground transition-transform ${
+                      feedOpen ? 'rotate-180' : ''
+                    }`}
+                  />
+                </button>
                 <div
-                  className={`overflow-y-auto pr-1 ${
-                    big ? 'max-h-[calc(100vh-200px)]' : 'max-h-[420px] xl:max-h-[640px]'
+                  className={`overflow-hidden transition-[max-height] duration-500 ease-out ${
+                    feedOpen
+                      ? big
+                        ? 'max-h-[calc(100vh-220px)]'
+                        : 'max-h-[320px]'
+                      : 'max-h-[7.25rem]'
                   }`}
                 >
-                  <LiveFloorFeed
-                    events={view.events}
-                    names={data.names}
-                    freshKeys={freshKeys}
-                    onPickOrder={setQuery}
-                  />
+                  <div className={`overflow-y-auto pr-1 ${feedOpen ? 'max-h-[inherit]' : 'max-h-[7.25rem]'}`}>
+                    <LiveFloorFeed
+                      events={view.events}
+                      names={data.names}
+                      freshKeys={freshKeys}
+                      onPickOrder={setQuery}
+                      limit={feedOpen ? 12 : 3}
+                    />
+                  </div>
                 </div>
               </aside>
             </div>

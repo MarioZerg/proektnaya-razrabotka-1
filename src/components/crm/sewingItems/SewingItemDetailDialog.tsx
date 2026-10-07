@@ -35,6 +35,8 @@ import SewingItemInfoCards from '@/components/crm/sewingItems/SewingItemInfoCard
 import SewingItemTimeline from '@/components/crm/sewingItems/SewingItemTimeline';
 import SewingItemCancelConfirm from '@/components/crm/sewingItems/SewingItemCancelConfirm';
 import OverlockActionsCard from '@/components/crm/sewingItems/OverlockActionsCard';
+import SewingItemFold from '@/components/crm/sewingItems/SewingItemFold';
+import { orderHangerLabel } from '@/lib/hangersApi';
 
 interface SewingItemDetailDialogProps {
   dialogOpen: boolean;
@@ -181,6 +183,9 @@ const SewingItemDetailDialog = ({
 
   // Швея на «Раскроено» смотрит очередь, но заказ оттуда не берёт.
   const cancelTargetLabel = isCutterView ? 'во вкладку «Новый»' : 'в общую очередь';
+  // Швее и закройщику карточка нужна короткой: номер, материал, рулон.
+  // Справку и таймлайн открывают сами, если понадобится.
+  const compactCard = isCutterView || isSewerView;
 
   return (
     <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
@@ -189,6 +194,30 @@ const SewingItemDetailDialog = ({
           за оба края — заголовок обрезается слева, номер заказа уходит вправо. */}
       <DialogContent className="max-h-[90vh] w-[calc(100vw-1.5rem)] max-w-lg overflow-y-auto overflow-x-hidden p-4 sm:max-w-4xl sm:p-6">
         <DialogHeader>
+          {compactCard && selectedOrder ? (
+            <div className="pr-8">
+              <div className="flex flex-wrap items-center gap-2">
+                <DialogTitle className="break-all font-mono-tech text-base">
+                  {selectedOrder.orderNumber}
+                </DialogTitle>
+                <Badge className={statusBadgeClass[selectedOrder.sewingStatus] || ''}>
+                  {selectedOrder.sewingStatus}
+                </Badge>
+              </div>
+              <p className="mt-1 text-lg font-extrabold leading-tight">
+                {selectedOrder.material || '—'}
+                {selectedOrder.width && selectedOrder.height
+                  ? ` ${selectedOrder.width}×${selectedOrder.height}`
+                  : ''}
+              </p>
+              {selectedOrder.hangerNumber > 0 && (
+                <p className="text-sm text-muted-foreground">
+                  вешалка {orderHangerLabel(selectedOrder)}
+                </p>
+              )}
+            </div>
+          ) : (
+            <>
           <div className="flex flex-wrap items-center gap-2 pr-8">
             <DialogTitle>Товар #{selectedOrder?.id}</DialogTitle>
             {selectedOrder && (
@@ -223,6 +252,8 @@ const SewingItemDetailDialog = ({
                 {selectedOrder.orderNumber}
               </span>
             </div>
+          )}
+            </>
           )}
           <div className="mt-1 flex flex-wrap gap-2">
             {canCancel && (
@@ -376,16 +407,26 @@ const SewingItemDetailDialog = ({
               />
             )}
 
-            <SewingItemInfoCards
-              selectedOrder={selectedOrder}
-              orderDetail={orderDetail}
-              detailLoading={detailLoading}
-            />
+            {compactCard ? (
+              <SewingItemFold title="Подробнее" hint="магазин, материалы, сотрудники">
+                <SewingItemInfoCards
+                  selectedOrder={selectedOrder}
+                  orderDetail={orderDetail}
+                  detailLoading={detailLoading}
+                />
+              </SewingItemFold>
+            ) : (
+              <SewingItemInfoCards
+                selectedOrder={selectedOrder}
+                orderDetail={orderDetail}
+                detailLoading={detailLoading}
+              />
+            )}
 
             {/* Привязка стикера FBO — задача администратора и кладовщика. Упаковщик
                 печатает стикер на терминале в цехе, а менеджер заказами не занимается:
                 обоим эта плашка в карточке только мешает. */}
-            {selectedOrder.orderType === 'FBO' && !isPackerView && !isManager && (
+            {selectedOrder.orderType === 'FBO' && !isPackerView && !isManager && !compactCard && (
               <FboStickerCard
                 order={selectedOrder}
                 orderDetail={orderDetail}
@@ -393,7 +434,13 @@ const SewingItemDetailDialog = ({
               />
             )}
 
-            <SewingItemTimeline selectedOrder={selectedOrder} />
+            {compactCard ? (
+              <SewingItemFold title="Таймлайн">
+                <SewingItemTimeline selectedOrder={selectedOrder} bare />
+              </SewingItemFold>
+            ) : (
+              <SewingItemTimeline selectedOrder={selectedOrder} />
+            )}
           </div>
         )}
       </DialogContent>

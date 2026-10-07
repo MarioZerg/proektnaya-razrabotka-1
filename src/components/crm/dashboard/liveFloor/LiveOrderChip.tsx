@@ -4,6 +4,7 @@ import LiveOrderChain from '@/components/crm/dashboard/liveFloor/LiveOrderChain'
 import {
   chainOf,
   formatElapsed,
+  shortName,
   stageDef,
   stageOf,
   stageSince,
@@ -39,6 +40,14 @@ const LiveOrderChip = ({
   const elapsedMs = since ? now - new Date(since).getTime() : 0;
   const slow = since && elapsedMs > slowAfterMin * 60000;
   const steps = chainOf(order);
+  const current = steps.find((s) => s.state === 'current' || s.state === 'waiting');
+  const currentWho = current?.userId ? shortName(names[String(current.userId)]) : null;
+  const currentText =
+    current?.state === 'current'
+      ? `${current.label} · ${currentWho || 'в работе'}`
+      : current
+        ? `${current.label} · ждёт`
+        : stage.label;
 
   const details = (
     <PopoverContent className="w-80" align="start">
@@ -73,14 +82,13 @@ const LiveOrderChip = ({
         <button
           type="button"
           data-order-id={order.id}
-          className={`group relative flex w-full min-w-0 flex-col gap-1 overflow-hidden rounded-lg border bg-card px-2.5 py-1.5 text-left transition hover:-translate-y-0.5 hover:shadow-md ${
+          className={`group relative flex w-full min-w-0 flex-col gap-1 overflow-visible rounded-lg border bg-card px-2.5 py-1.5 text-left transition hover:-translate-y-0.5 hover:shadow-md ${
             moved ? 'animate-moved-glow' : ''
           } ${highlighted ? 'ring-2 ring-primary ring-offset-1' : ''}`}
           style={{ borderLeft: `4px solid ${stage.hex}` }}
         >
           <span className="truncate font-mono text-[11px] font-semibold">{order.orderNumber}</span>
-          {/* Мини-цепочка: пройденные этапы закрашены, текущий пульсирует. */}
-          <div className="flex items-center gap-0.5">
+          <div className="flex items-center gap-0.5 overflow-visible">
             {steps.map((s, i) => {
               const def = stageDef(s.key);
               return (
@@ -91,15 +99,15 @@ const LiveOrderChip = ({
                       style={{ background: s.state === 'done' || s.state === 'current' ? def.hex : 'hsl(var(--border))' }}
                     />
                   )}
-                  <span className="relative flex h-2 w-2">
+                  <span className="relative flex h-2.5 w-2.5 overflow-visible">
                     {s.state === 'current' && (
                       <span
-                        className="absolute inset-0 animate-ping rounded-full"
+                        className="absolute -inset-0.5 animate-ping rounded-full"
                         style={{ background: def.hex }}
                       />
                     )}
                     <span
-                      className="relative h-2 w-2 rounded-full border"
+                      className="relative m-auto h-2 w-2 rounded-full border"
                       style={{
                         borderColor: s.state === 'pending' ? 'hsl(var(--border))' : def.hex,
                         background: s.state === 'done' || s.state === 'current' ? def.hex : 'transparent',
@@ -122,6 +130,9 @@ const LiveOrderChip = ({
               </span>
             )}
           </div>
+          <span className="truncate text-[10px] font-medium" style={{ color: stage.hex }}>
+            {currentText}
+          </span>
         </button>
       </PopoverTrigger>
       {details}

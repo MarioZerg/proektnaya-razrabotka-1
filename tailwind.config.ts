@@ -212,6 +212,11 @@ export default {
 				'breathe': {
 					'0%, 100%': { opacity: '0.55' },
 					'50%': { opacity: '1' }
+				},
+				// Пульс виджета цеха слабее стандартного ping (scale 2),
+				// чтобы свечение не обрезалось краем карточки.
+				'widget-pulse': {
+					'75%, 100%': { transform: 'scale(1.45)', opacity: '0' }
 				}
 			},
 			animation: {
@@ -240,7 +245,8 @@ export default {
 				'moved-glow': 'moved-glow 1.6s ease-out 2',
 				'feed-in': 'feed-in 0.5s ease-out both',
 				'count-bump': 'count-bump 0.6s ease-out',
-				'breathe': 'breathe 3s ease-in-out infinite'
+				'breathe': 'breathe 3s ease-in-out infinite',
+				'widget-pulse': 'widget-pulse 1.5s cubic-bezier(0, 0, 0.2, 1) infinite'
 			}
 		}
 	},

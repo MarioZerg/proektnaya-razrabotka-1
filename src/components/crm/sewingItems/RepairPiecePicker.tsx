@@ -78,6 +78,7 @@ const RepairPiecePicker = ({
   const [loading, setLoading] = useState(true);
   const [takingId, setTakingId] = useState<number | null>(null);
   const [releasing, setReleasing] = useState(false);
+  const [open, setOpen] = useState(false);
   const [orderInfo, setOrderInfo] = useState<{
     material: string | null;
     width: number | null;
@@ -174,7 +175,25 @@ const RepairPiecePicker = ({
     const cut = reserved.status === 'used' || !canTake;
     return (
       <Card className="border-violet-400 bg-violet-50 shadow-none">
-        <CardContent className="flex flex-wrap items-center justify-between gap-3 pt-6">
+        <button
+          type="button"
+          onClick={() => setOpen((v) => !v)}
+          aria-expanded={open}
+          className="flex w-full items-center gap-2 px-4 py-3 text-left"
+        >
+          <Icon name="Scissors" size={16} className="shrink-0 text-violet-900" />
+          <span className="min-w-0 flex-1 font-semibold text-violet-900">
+            Кусок с перешива
+            {reserved.barcode ? ` · ${reserved.barcode}` : ''}
+          </span>
+          <Icon
+            name="ChevronDown"
+            size={16}
+            className={`shrink-0 text-violet-800 transition-transform ${open ? 'rotate-180' : ''}`}
+          />
+        </button>
+        {open && (
+        <CardContent className="flex flex-wrap items-center justify-between gap-3 border-t border-violet-200 pt-4">
           <div className="min-w-0">
             <p className="flex items-center gap-2 font-semibold text-violet-900">
               <Icon name="Scissors" size={16} />
@@ -227,6 +246,7 @@ const RepairPiecePicker = ({
             </Button>
           )}
         </CardContent>
+        )}
       </Card>
     );
   }
@@ -237,12 +257,27 @@ const RepairPiecePicker = ({
 
   return (
     <Card className="border-violet-300 bg-violet-50/60 shadow-none">
-      <CardContent className="space-y-3 pt-6">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        className="flex w-full items-center gap-2 px-4 py-3 text-left"
+      >
+        <Icon name="Scissors" size={16} className="shrink-0 text-violet-900" />
+        <span className="min-w-0 flex-1 font-semibold text-violet-900">
+          Куски на перешив
+          {!loading && pieces.length > 0 ? ` · ${pieces.length}` : ''}
+        </span>
+        <span className="text-xs text-violet-800/80">можно не брать рулон</span>
+        <Icon
+          name="ChevronDown"
+          size={16}
+          className={`shrink-0 text-violet-800 transition-transform ${open ? 'rotate-180' : ''}`}
+        />
+      </button>
+      {open && (
+      <CardContent className="space-y-3 border-t border-violet-200 pt-4">
         <div>
-          <p className="flex items-center gap-2 font-semibold text-violet-900">
-            <Icon name="Scissors" size={16} />
-            Есть куски на перешив — можно не брать рулон
-          </p>
           <p className="text-sm text-violet-900/80">
             {orderInfo?.material} {orderInfo?.width}×{orderInfo?.height} — показаны
             только куски, которых хватит на этот заказ
@@ -321,6 +356,7 @@ const RepairPiecePicker = ({
           </div>
         )}
       </CardContent>
+      )}
     </Card>
   );
 };

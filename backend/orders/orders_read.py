@@ -61,6 +61,10 @@ ORDER_LIST_COLUMNS = (
     # сверяют свою выработку за смену или неделю: дата заказа покупателя для
     # этого не годится — заказ мог пролежать в очереди неделю.
     "o.cut_at, o.sewn_at, "
+    # Когда швея взяла вещь, когда упаковали и когда сели за оверлок —
+    # для таймлайна в карточке товара. Стоят сразу после cut/sewn, чтобы
+    # хвост колонок (вешалка, магазин, оверлок, отмена) остался с конца.
+    "o.taken_at, o.packed_at, o.overlock_taken_at, "
     # Название вешалки — последним полем, чтобы не сдвигать индексы
     # остальных колонок (их читают по номерам).
     "(SELECT h.name FROM hangers h WHERE h.number = o.hanger_number), "
@@ -174,6 +178,9 @@ def _row_to_order(r) -> dict:
         'fabricPerItem': float(r[37]) if r[37] is not None else None,
         'cutAt': (r[38].isoformat() + 'Z') if r[38] else None,
         'sewnAt': (r[39].isoformat() + 'Z') if r[39] else None,
+        'takenAt': (r[40].isoformat() + 'Z') if r[40] else None,
+        'packedAt': (r[41].isoformat() + 'Z') if r[41] else None,
+        'overlockTakenAt': (r[42].isoformat() + 'Z') if r[42] else None,
     }
 
 
@@ -318,10 +325,16 @@ def _handle_live_floor(cur, headers: dict) -> dict:
         "  COUNT(*) FILTER (WHERE o.sewing_status = 'Новый' "
         f"                   AND o.fulfilled_from_stock_id IS NULL AND NOT ({CANCELLED_SQL})), "
         "  COUNT(*) FILTER (WHERE o.sewing_status = 'На раскрое'), "
+        # Крой готов — вся раскроенная очередь, включая тех, кому оверлок
+        # ещё нужен, но за машину никто не сел. В «Оверлок» только взятые.
         "  COUNT(*) FILTER (WHERE o.sewing_status = 'Раскроено' "
-        "                   AND NOT (COALESCE(o.requires_overlock, false) AND o.overlocked_at IS NULL)), "
+        "                   AND NOT (COALESCE(o.requires_overlock, false) "
+        "                            AND o.overlocked_at IS NULL "
+        "                            AND o.overlock_user_id IS NOT NULL)), "
         "  COUNT(*) FILTER (WHERE o.sewing_status = 'Раскроено' "
-        "                   AND COALESCE(o.requires_overlock, false) AND o.overlocked_at IS NULL), "
+        "                   AND COALESCE(o.requires_overlock, false) "
+        "                   AND o.overlocked_at IS NULL "
+        "                   AND o.overlock_user_id IS NOT NULL), "
         "  COUNT(*) FILTER (WHERE o.sewing_status = 'В работе'), "
         "  COUNT(*) FILTER (WHERE o.sewing_status = 'Стикеровка'), "
         f" COUNT(*) FILTER (WHERE o.packed_at >= {_MSK_TODAY_START}) "

@@ -36,6 +36,14 @@ export const STAGES: StageDef[] = [
 export const stageDef = (key: StageKey): StageDef => STAGES.find((s) => s.key === key) || STAGES[0];
 export const stageIndex = (key: StageKey) => STAGES.findIndex((s) => s.key === key);
 
+/** Раскроена и ждёт оверлок — ещё общая очередь кроя, за машину не садились. */
+export const waitingOverlock = (o: LiveOrder) =>
+  o.sewingStatus === 'Раскроено' && o.requiresOverlock && !o.overlockedAt && !o.overlockUserId;
+
+/** Край обмётывают прямо сейчас: вещь взяли в работу. */
+export const inOverlockWork = (o: LiveOrder) =>
+  o.sewingStatus === 'Раскроено' && o.requiresOverlock && !o.overlockedAt && !!o.overlockUserId;
+
 export const stageOf = (o: LiveOrder): StageKey => {
   switch (o.sewingStatus) {
     case 'Готовые':
@@ -45,7 +53,9 @@ export const stageOf = (o: LiveOrder): StageKey => {
     case 'В работе':
       return 'sewing';
     case 'Раскроено':
-      return o.requiresOverlock && !o.overlockedAt ? 'overlock' : 'cutReady';
+      // В «Оверлок» только то, что уже взяли. Очередь без исполнителя
+      // остаётся в общем крое — иначе виджет копится сотнями «висящих».
+      return inOverlockWork(o) ? 'overlock' : 'cutReady';
     case 'На раскрое':
       return 'cutting';
     default:
@@ -263,8 +273,15 @@ export const chainOf = (o: LiveOrder): ChainStep[] => {
       working = !!o.overlockUserId;
       break;
     case 'cutReady':
-      currentKey = 'sewing';
-      working = false;
+      // Крой готов, но оверлок ещё не начат — на таймлайне это ожидание
+      // оверлока, а не пошива. На конвейере вещь при этом в общем крое.
+      if (waitingOverlock(o)) {
+        currentKey = 'overlock';
+        working = false;
+      } else {
+        currentKey = 'sewing';
+        working = false;
+      }
       break;
     case 'sewing':
       currentKey = 'sewing';

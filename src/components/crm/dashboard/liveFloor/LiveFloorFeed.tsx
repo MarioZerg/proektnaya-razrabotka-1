@@ -12,6 +12,8 @@ interface LiveFloorFeedProps {
   names: Record<string, string>;
   freshKeys: Set<string>;
   onPickOrder: (orderNumber: string) => void;
+  /** Сколько строк показать. Свёрнутая лента держит 3, раскрытая — пачку. */
+  limit?: number;
 }
 
 export const eventKey = (e: LiveEvent) => `${e.kind}-${e.orderId}-${e.at}`;
@@ -19,7 +21,7 @@ export const eventKey = (e: LiveEvent) => `${e.kind}-${e.orderId}-${e.at}`;
 const FEED_VISIBLE = 30;
 
 /** Лента «что только что произошло»: новые события въезжают сверху. */
-const LiveFloorFeed = ({ events, names, freshKeys, onPickOrder }: LiveFloorFeedProps) => {
+const LiveFloorFeed = ({ events, names, freshKeys, onPickOrder, limit = FEED_VISIBLE }: LiveFloorFeedProps) => {
   if (events.length === 0) {
     return (
       <p className="rounded-lg border border-dashed p-4 text-center text-xs text-muted-foreground">
@@ -30,7 +32,7 @@ const LiveFloorFeed = ({ events, names, freshKeys, onPickOrder }: LiveFloorFeedP
 
   return (
     <ol className="space-y-1">
-      {events.slice(0, FEED_VISIBLE).map((e) => {
+      {events.slice(0, limit).map((e) => {
         const meta = EVENT_META[e.kind];
         const stage = stageDef(meta.stage);
         const fresh = freshKeys.has(eventKey(e));

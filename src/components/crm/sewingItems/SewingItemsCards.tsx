@@ -38,6 +38,63 @@ const ribbonClass: Record<string, string> = {
   Yandex: 'bg-[#FFCC00]',
 };
 
+/** Водяной знак площадки: слово-логотип боком в правой белой полосе. */
+const marketplaceWatermark: Record<string, { color: string; full: string; short?: string }> = {
+  OZON: { color: '#005BFF', full: 'OZON', short: 'OZ' },
+  WB: { color: '#CB11AB', full: 'WB' },
+  Yandex: { color: '#1a1a1a', full: 'Яндекс' },
+};
+
+const MarketplaceCardWatermark = ({
+  marketplace,
+  sewingStatus,
+}: {
+  marketplace: string;
+  sewingStatus: string;
+}) => {
+  const mark = marketplaceWatermark[marketplace];
+  if (!mark) return null;
+  // Короткая карточка «Новый»: полное OZON не помещается — оставляем OZ.
+  const compactOzon = marketplace === 'OZON' && sewingStatus === 'Новый';
+  const label = compactOzon && mark.short ? mark.short : mark.full;
+  const letters = label.length;
+  const fontSize = letters <= 2 ? 52 : letters <= 4 ? 40 : 32;
+  // viewBox чуть больше слова: SVG с meet впишет знак в слот любой высоты,
+  // поэтому на узком и широком экране он не вылезает за край карточки.
+  const viewW = fontSize + 16;
+  const viewH = Math.round(fontSize * 0.78 * letters) + 20;
+  const cx = viewW / 2;
+  const cy = viewH / 2;
+  return (
+    <span
+      aria-hidden
+      className="pointer-events-none absolute inset-y-3 right-1 w-[36%] overflow-hidden"
+    >
+      <svg
+        viewBox={`0 0 ${viewW} ${viewH}`}
+        className="h-full w-full"
+        preserveAspectRatio="xMidYMid meet"
+      >
+        <text
+          x={cx}
+          y={cy}
+          fill={mark.color}
+          fillOpacity="0.11"
+          fontSize={fontSize}
+          fontWeight="900"
+          fontFamily="Arial, Helvetica, sans-serif"
+          letterSpacing={letters <= 2 ? -3 : -1.5}
+          textAnchor="middle"
+          dominantBaseline="central"
+          transform={`rotate(-90 ${cx} ${cy})`}
+        >
+          {label}
+        </text>
+      </svg>
+    </span>
+  );
+};
+
 const SewingItemsCards = ({
   loading,
   error = null,
@@ -76,77 +133,86 @@ const SewingItemsCards = ({
           return (
           <Card
             key={o.id}
-            className={`relative cursor-pointer overflow-hidden shadow-none transition-colors ${
+            className={`relative flex h-full cursor-pointer flex-col overflow-hidden shadow-none transition-colors ${
               urgent
                 ? 'border-2 border-red-500 bg-red-50 hover:bg-red-100'
                 : 'border-border hover:bg-muted/40'
             }`}
             onClick={() => onOpenDetail(o)}
           >
+            {/* Логотип площадки — задний фон плашки: боком, на всю карточку,
+                прозрачный, чтобы сразу читалось «чей заказ», но не спорил с текстом. */}
+            <MarketplaceCardWatermark
+              marketplace={o.marketplace}
+              sewingStatus={o.sewingStatus}
+            />
             {/* Цветная полоса слева — маркетплейс заказа, не занимает места в контенте. */}
             <span
               className={`absolute inset-y-0 left-0 w-1 ${ribbonClass[o.marketplace] || 'bg-muted-foreground'}`}
             />
+            {/* FBS/FBO — в правом верхнем углу, вне потока: на узкой карточке
+                не делит строку с маркетплейсом и таймером и никуда не уезжает. */}
+            {o.orderType && (
+              <span
+                className={`absolute right-0 top-0 z-10 rounded-bl-md px-2 py-1 text-[11px] font-bold leading-none ${
+                  o.orderType === 'FBS'
+                    ? 'bg-emerald-600 text-white'
+                    : 'bg-sky-600 text-white'
+                }`}
+              >
+                {o.orderType}
+              </span>
+            )}
 
-            <CardContent className="space-y-2 p-3 pl-4">
+            <CardContent className="relative z-10 flex min-h-0 min-w-0 flex-1 flex-col gap-2 p-3 pl-4 pr-12">
               {/* Срочность объявляем строкой во всю ширину, а не значком: маленький
                   бейдж среди прочих терялся, и просроченная вещь лежала в общей куче. */}
               {urgent && (
-                <p className="flex items-center gap-1.5 text-sm font-extrabold uppercase text-red-700">
+                <p className="flex items-center gap-1.5 pr-1 text-sm font-extrabold uppercase leading-tight text-red-700">
                   <Icon name="Zap" size={18} className="shrink-0 fill-red-600 text-red-600" />
                   Срочно! Шить вне очереди
                 </p>
               )}
-              <div className="flex items-start justify-between gap-2">
-                <div className="min-w-0 flex-1">
-                  <p className="flex flex-wrap items-center gap-1.5 text-xs">
-                    <span
-                      className={marketplaceLogo[o.marketplace]?.className || 'font-bold'}
-                    >
-                      {marketplaceLogo[o.marketplace]?.label || o.marketplace}
-                    </span>
-                    {/* FBS/FBO определяет, куда вещь поедет и как срочно — выделяем. */}
-                    <Badge
-                      variant="outline"
-                      className={`px-2 py-0 text-xs font-bold ${
-                        o.orderType === 'FBS'
-                          ? 'border-emerald-500 text-emerald-700'
-                          : 'border-sky-500 text-sky-700'
-                      }`}
-                    >
-                      {o.orderType}
+              <div className="flex min-w-0 flex-wrap items-start justify-between gap-x-2 gap-y-1">
+                <p className="flex min-w-0 flex-wrap items-center gap-1.5 text-xs">
+                  <span
+                    className={marketplaceLogo[o.marketplace]?.className || 'font-bold'}
+                  >
+                    {marketplaceLogo[o.marketplace]?.label || o.marketplace}
+                  </span>
+                  {/* Чей заказ: упаковка и вложения у магазинов разные.
+                      В шапке рядом с площадкой — не отдельной строкой под номером. */}
+                  <ShopBadge name={o.shopName} color={o.shopColor} />
+                  {/* Заказ покупателя из нескольких вещей едет по одному общему ярлыку —
+                      предупреждаем, что вещь нельзя отправлять отдельно от остальных. */}
+                  {o.groupSize && o.groupSize > 1 && (
+                    <Badge className="bg-violet-600 px-1.5 py-0 text-[10px] text-white hover:bg-violet-600">
+                      Заказ {o.groupPosition} из {o.groupSize}
                     </Badge>
-                    {/* Заказ покупателя из нескольких вещей едет по одному общему ярлыку —
-                        предупреждаем, что вещь нельзя отправлять отдельно от остальных. */}
-                    {o.groupSize && o.groupSize > 1 && (
-                      <Badge className="bg-violet-600 px-1.5 py-0 text-[10px] text-white hover:bg-violet-600">
-                        Заказ {o.groupPosition} из {o.groupSize}
-                      </Badge>
-                    )}
-                    {/* ЭТАП ОВЕРЛОКА. Закройщик по этой метке понимает, что вещь
-                        пойдёт не сразу швеям, а сначала на обмётку края; швея
-                        видит, что вещь уже обмётана и её можно шить. */}
-                    {o.requiresOverlock && (
-                      <Badge
-                        className={
-                          o.overlockedAt
-                            ? 'bg-emerald-600 px-1.5 py-0 text-[10px] text-white hover:bg-emerald-600'
-                            : 'bg-fuchsia-600 px-1.5 py-0 text-[10px] text-white hover:bg-fuchsia-600'
-                        }
-                      >
-                        {o.overlockedAt ? 'Обработан на оверлоке' : 'Оверлок'}
-                      </Badge>
-                    )}
-                    {/* Заказ юридического лица (B2B с OZON): такие заказы шьются так же,
-                        но цех должен видеть, что покупатель — компания. */}
-                    {o.isLegalEntity && (
-                      <Badge className="bg-indigo-600 px-1.5 py-0 text-[10px] text-white hover:bg-indigo-600">
-                        Юр. лицо
-                      </Badge>
-                    )}
-                  </p>
-                </div>
-                <div className="flex shrink-0 items-center gap-1.5">
+                  )}
+                  {/* ЭТАП ОВЕРЛОКА. Закройщик по этой метке понимает, что вещь
+                      пойдёт не сразу швеям, а сначала на обмётку края; швея
+                      видит, что вещь уже обмётана и её можно шить. */}
+                  {o.requiresOverlock && (
+                    <Badge
+                      className={
+                        o.overlockedAt
+                          ? 'bg-emerald-600 px-1.5 py-0 text-[10px] text-white hover:bg-emerald-600'
+                          : 'bg-fuchsia-600 px-1.5 py-0 text-[10px] text-white hover:bg-fuchsia-600'
+                      }
+                    >
+                      {o.overlockedAt ? 'Обработан на оверлоке' : 'Оверлок'}
+                    </Badge>
+                  )}
+                  {/* Заказ юридического лица (B2B с OZON): такие заказы шьются так же,
+                      но цех должен видеть, что покупатель — компания. */}
+                  {o.isLegalEntity && (
+                    <Badge className="bg-indigo-600 px-1.5 py-0 text-[10px] text-white hover:bg-indigo-600">
+                      Юр. лицо
+                    </Badge>
+                  )}
+                </p>
+                <div className="flex min-w-0 flex-wrap items-center justify-end gap-1.5">
                   {/* Печать стикера готовой вещи — обе схемы. Для FBS ярлык
                       запрашивается у маркетплейса: если наклейка потерялась,
                       кладовщик печатает её прямо отсюда, не уходя со списка. */}
@@ -173,19 +239,19 @@ const SewingItemsCards = ({
                     </button>
                   )}
                   <OrderWaitTimer order={o} compact />
-                  <Badge className={`${statusBadgeClass[o.sewingStatus] || ''} shrink-0 text-[11px]`}>
+                  <Badge className={`${statusBadgeClass[o.sewingStatus] || ''} max-w-full whitespace-normal text-[11px]`}>
                     {o.sewingStatus}
                   </Badge>
-                  {/* Вещь отменена покупателем уже ПОСЛЕ раскроя: ткань разрезана,
-                      поэтому вещь дошивают, но она поедет не покупателю, а на склад
-                      хранения — терминал стикеровки выдаст на неё стикер GW. */}
-                  {isOrderCancelled(o) && (
-                    <Badge className="shrink-0 bg-red-600 text-[11px] text-white hover:bg-red-600">
-                      Отменён → склад
-                    </Badge>
-                  )}
                 </div>
               </div>
+
+              {/* Материал и размер — сразу под маркетплейсом: по ним швея берёт
+                  ткань, это главный текст карточки. break-words — длинное имя
+                  ткани не раздувает карточку шире экрана. */}
+              <p className="break-words text-lg font-extrabold leading-tight">
+                {o.material || '—'}
+                {o.width && o.height ? ` ${o.width} x ${o.height}` : ''}
+              </p>
 
               {/* Номер заказа — главный опознавательный признак вещи, по нему её ищут и
                   сверяют. Стоит отдельной строкой во всю ширину карточки: в шапке он делил
@@ -194,17 +260,6 @@ const SewingItemsCards = ({
                   (text-sm) — зато он всегда читается одной строкой. */}
               <p className="overflow-hidden text-ellipsis whitespace-nowrap font-mono-tech text-sm font-bold leading-tight tracking-tight sm:text-base">
                 {o.orderNumber}
-              </p>
-
-              {/* Чей это заказ. Цех общий, но упаковка и вложения у магазинов
-                  разные — швея должна видеть метку, не открывая карточку. */}
-              <ShopBadge name={o.shopName} color={o.shopColor} />
-
-              {/* Материал и размер — то, по чему швея берёт ткань в работу. Самый
-                  крупный текст карточки: видно с вытянутой руки, не наклоняясь. */}
-              <p className="text-lg font-extrabold leading-tight">
-                {o.material || '—'}
-                {o.width && o.height ? ` ${o.width} x ${o.height}` : ''}
               </p>
 
               {/* Кластер — город, куда поедет вещь. Есть только у FBO. */}
@@ -250,6 +305,16 @@ const SewingItemsCards = ({
 
               {(o.cutterUserName || o.sewerUserName || o.packerUserName) && (
                 <OrderStagesDiagram order={o} />
+              )}
+
+              {/* Вещь отменена покупателем уже ПОСЛЕ раскроя: ткань разрезана,
+                  поэтому вещь дошивают, но она поедет не покупателю, а на склад
+                  хранения — терминал стикеровки выдаст на неё стикер GW.
+                  Внизу карточки: в шапке бейдж боролся за место и вылезал за край. */}
+              {isOrderCancelled(o) && (
+                <Badge className="mt-auto w-fit max-w-full self-start whitespace-normal bg-red-600 text-[11px] text-white hover:bg-red-600">
+                  Отменён → склад
+                </Badge>
               )}
             </CardContent>
           </Card>

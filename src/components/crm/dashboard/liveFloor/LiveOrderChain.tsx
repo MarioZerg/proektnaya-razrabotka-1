@@ -9,6 +9,7 @@ import {
   stageDef,
   stageSince,
   useTicker,
+  type ChainStep,
 } from '@/components/crm/dashboard/liveFloor/liveFloorShared';
 
 interface LiveOrderChainProps {
@@ -28,6 +29,31 @@ const minutesBetween = (a: string | null, b: string | null) => {
   if (!a || !b) return null;
   const diff = Math.round((new Date(b).getTime() - new Date(a).getTime()) / 60000);
   return diff >= 0 ? diff : null;
+};
+
+const stepCaption = (
+  step: ChainStep,
+  who: string | null,
+  now: number,
+  since: string | null,
+) => {
+  if (step.state === 'done') {
+    const took = minutesBetween(step.startedAt, step.at);
+    const parts = [who || '—'];
+    if (took != null) parts.push(`${took} мин`);
+    return parts.join(' · ');
+  }
+  if (step.state === 'current') {
+    const start = step.startedAt || since;
+    const elapsed = start ? ` · ${formatElapsed(now - new Date(start).getTime())}` : '';
+    const from = step.startedAt ? ` с ${formatClock(step.startedAt)}` : '';
+    return `сейчас у ${who || 'сотрудника'}${from}${elapsed}`;
+  }
+  if (step.state === 'waiting') {
+    const elapsed = since ? ` · ${formatElapsed(now - new Date(since).getTime())}` : '';
+    return `${WAITING_FOR[step.key] || 'ждёт'}${elapsed}`;
+  }
+  return 'ещё не начат';
 };
 
 /** Полный путь вещи по цеху: кто, когда и сколько держал её на каждом этапе. */
@@ -61,7 +87,6 @@ const LiveOrderChain = ({ order, names, clockOffset }: LiveOrderChainProps) => {
       <ol className="relative space-y-0">
         {steps.map((step, i) => {
           const def = stageDef(step.key);
-          const took = step.state === 'done' ? minutesBetween(step.startedAt, step.at) : null;
           const who = step.userId ? names[String(step.userId)] : null;
           const last = i === steps.length - 1;
           return (
@@ -70,12 +95,11 @@ const LiveOrderChain = ({ order, names, clockOffset }: LiveOrderChainProps) => {
                 <span
                   className="absolute left-[11px] top-6 h-[calc(100%-18px)] w-0.5 rounded-full"
                   style={{
-                    background:
-                      step.state === 'done' ? def.hex : 'hsl(var(--border))',
+                    background: step.state === 'done' ? def.hex : 'hsl(var(--border))',
                   }}
                 />
               )}
-              <span className="relative mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center">
+              <span className="relative mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center overflow-visible">
                 {step.state === 'current' && (
                   <span
                     className="absolute inset-0 animate-ping rounded-full opacity-40"
@@ -110,20 +134,22 @@ const LiveOrderChain = ({ order, names, clockOffset }: LiveOrderChainProps) => {
                     <span className="tabular-nums text-muted-foreground">{formatClock(step.at)}</span>
                   )}
                 </div>
-                {step.state === 'done' && (
-                  <p className="text-muted-foreground">
-                    {who ? shortName(who) : '—'}
-                    {took != null && ` · ${took} мин`}
-                  </p>
-                )}
-                {(step.state === 'current' || step.state === 'waiting') && (
-                  <p style={{ color: def.hex }} className="font-medium">
-                    {step.state === 'current'
-                      ? `сейчас у ${who ? shortName(who) : 'сотрудника'}`
-                      : WAITING_FOR[step.key] || 'ждёт'}
-                    {since && ` · ${formatElapsed(now - new Date(since).getTime())}`}
-                  </p>
-                )}
+                <p
+                  className={
+                    step.state === 'pending'
+                      ? 'text-muted-foreground'
+                      : step.state === 'done'
+                        ? 'text-muted-foreground'
+                        : 'font-medium'
+                  }
+                  style={
+                    step.state === 'current' || step.state === 'waiting'
+                      ? { color: def.hex }
+                      : undefined
+                  }
+                >
+                  {stepCaption(step, who ? shortName(who) : null, now, since)}
+                </p>
               </div>
             </li>
           );
