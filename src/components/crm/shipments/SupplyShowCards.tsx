@@ -4,6 +4,7 @@ import { Input } from '@/components/ui/input';
 import Icon from '@/components/ui/icon';
 import { formatQuantity } from '@/lib/formatQuantity';
 import type { ShipmentDetail, ShipmentItem } from '@/lib/shipmentsApi';
+import { moneyRub, rollTotalCost } from '@/components/crm/shipments/fromSupplierShared';
 
 /**
  * Мобильный список рулонов приёмки (карточками).
@@ -41,6 +42,7 @@ const SupplyShowCards = ({
     {filtered.map((item) => {
       const code = item.barcode || item.reservedBarcodes?.[0];
       const editing = editItemId === item.id;
+      const totalCost = rollTotalCost(item.costPerUnit, item.quantity);
       return (
         <div
           key={item.id}
@@ -130,11 +132,18 @@ const SupplyShowCards = ({
               </span>
             )}
             <div className="flex items-center gap-2">
-              <span className="text-sm text-muted-foreground">
-                {item.costPerUnit != null
-                  ? `${item.costPerUnit.toFixed(2)} ₽`
-                  : '—'}
-              </span>
+              {item.costPerUnit != null ? (
+                <div className="text-right text-sm">
+                  <div className="text-muted-foreground">
+                    {moneyRub(item.costPerUnit)} / {item.unit || 'ед.'}
+                  </div>
+                  {totalCost != null && (
+                    <div className="font-medium">{moneyRub(totalCost)}</div>
+                  )}
+                </div>
+              ) : (
+                <span className="text-sm text-muted-foreground">—</span>
+              )}
               <Button
                 variant="outline"
                 size="icon"

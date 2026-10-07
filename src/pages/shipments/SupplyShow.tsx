@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import CrmLayout from '@/components/crm/CrmLayout';
+import { Badge } from '@/components/ui/badge';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/context/AuthContext';
 import { isStorekeeperRole } from '@/lib/roles';
@@ -12,6 +13,11 @@ import {
   type ShipmentItem,
 } from '@/lib/shipmentsApi';
 import { printBarcodes } from '@/lib/printBarcodes';
+import { printAcceptanceSheet } from '@/lib/printAcceptanceSheet';
+import {
+  accountantStatusLabel,
+  accountantStatusVariant,
+} from '@/components/crm/shipments/fromSupplierShared';
 import { formatQuantity } from '@/lib/formatQuantity';
 import SupplyShowHeader, {
   SupplyShowSearch,
@@ -39,7 +45,7 @@ const SupplyShow = () => {
   const { toast } = useToast();
   const { user } = useAuth();
   const isAdmin = user?.role === 'admin';
-  const canView = isAdmin || isStorekeeperRole(user?.role);
+  const canView = isAdmin || isStorekeeperRole(user?.role) || user?.role === 'accountant';
 
   const [detail, setDetail] = useState<ShipmentDetail | null>(null);
   const [loading, setLoading] = useState(true);
@@ -206,6 +212,7 @@ const SupplyShow = () => {
           filteredCount={filtered.length}
           onBack={() => navigate(-1)}
           onPrintAllFound={printAllFound}
+          onPrintAcceptanceSheet={detail ? () => printAcceptanceSheet(detail) : undefined}
         />
 
         {listError && !detail && (
@@ -220,6 +227,18 @@ const SupplyShow = () => {
 
         {detail && (
           <>
+            {detail.accountantStatus && (
+              <div className="space-y-2">
+                <Badge variant={accountantStatusVariant[detail.accountantStatus] || 'outline'}>
+                  {accountantStatusLabel[detail.accountantStatus] || detail.accountantStatus}
+                </Badge>
+                {detail.accountantStatus === 'correction' && detail.accountantComment && (
+                  <p className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
+                    Бухгалтер не подтвердила. Причина: {detail.accountantComment}
+                  </p>
+                )}
+              </div>
+            )}
             <SupplyShowSummary
               detail={detail}
               totals={totals}

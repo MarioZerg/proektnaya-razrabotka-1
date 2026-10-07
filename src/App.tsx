@@ -17,6 +17,7 @@ const Rolls = lazy(() => import("./pages/inventory/Rolls"));
 const RepairFabric = lazy(() => import("./pages/inventory/RepairFabric"));
 const RollShow = lazy(() => import("./pages/inventory/RollShow"));
 const FromSupplier = lazy(() => import("./pages/shipments/FromSupplier"));
+const AccountantSupplies = lazy(() => import("./pages/shipments/AccountantSupplies"));
 const SupplyShow = lazy(() => import("./pages/shipments/SupplyShow"));
 const ToWorkshop = lazy(() => import("./pages/shipments/ToWorkshop"));
 const ReturnToSupplier = lazy(() => import("./pages/shipments/ReturnToSupplier"));
@@ -138,6 +139,7 @@ const App = () => (
             <Route path="/crm/inventory/repair-fabric" element={<RepairFabric />} />
             <Route path="/crm/inventory/rolls/:id" element={<RollShow />} />
             <Route path="/crm/shipments/from-supplier" element={<FromSupplier />} />
+            <Route path="/crm/shipments/accountant-supplies" element={<AccountantSupplies />} />
             <Route path="/crm/shipments/from-supplier/:id" element={<SupplyShow />} />
             <Route path="/crm/shipments/to-workshop" element={<ToWorkshop />} />
             <Route path="/crm/shipments/return-to-supplier" element={<ReturnToSupplier />} />

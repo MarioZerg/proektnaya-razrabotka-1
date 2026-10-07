@@ -313,7 +313,8 @@ const SewingItemDetailDialog = ({
               canOverlockThis &&
               selectedOrder.requiresOverlock &&
               !selectedOrder.overlockedAt &&
-              selectedOrder.sewingStatus === 'Раскроено' && (
+              selectedOrder.sewingStatus === 'Раскроено' &&
+              (isAdminView || selectedOrder.overlockUserId === user?.id) && (
                 <OverlockActionsCard
                   order={selectedOrder}
                   orderDetail={orderDetail}

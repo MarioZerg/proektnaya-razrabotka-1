@@ -10,7 +10,13 @@ import CostSettingsPanel from '@/components/crm/cost/CostSettingsPanel';
 import ExtraExpensesPanel from '@/components/crm/cost/ExtraExpensesPanel';
 import ManagerCommissionPanel from '@/components/crm/cost/ManagerCommissionPanel';
 import ManagerAccrualsPanel from '@/components/crm/finance/ManagerAccrualsPanel';
-import { fetchProductCosts, type CostResponse, type CostGroup } from '@/lib/productCostApi';
+import {
+  fetchProductCosts,
+  loadRecentSupplyPrices,
+  type CostResponse,
+  type CostGroup,
+  type MaterialSupplyPrice,
+} from '@/lib/productCostApi';
 import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
 
 const money = (v: number) =>
@@ -24,9 +30,9 @@ const money = (v: number) =>
  * по ширине, тесьму пришивают по ширине, пакет берут по ширине. Поэтому вместо 875
  * карточек товара здесь 8 плашек по тканям с переключением ширин внутри.
  *
- * Цифры живые: цены берутся из прайсов поставщиков с их курсом валют, расход — из
- * карточки товара, оплата работ — из тарифов цеха. Подняли цену в прайсе —
- * себестоимость пересчиталась сама.
+ * Цифры живые: по умолчанию цены из прайсов поставщиков. В карточке можно
+ * подставить цену метра из последних пяти поставок — себестоимость пересчитается
+ * на экране, без записи в прайс.
  */
 const ProductCost = () => {
   const { user } = useAuth();
@@ -37,6 +43,7 @@ const ProductCost = () => {
   const [loading, setLoading] = useState(true);
   const [listError, setListError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
+  const [supplyMap, setSupplyMap] = useState<Record<string, MaterialSupplyPrice[]> | null>(null);
 
   const load = () => {
     setLoading(true);
@@ -55,6 +62,17 @@ const ProductCost = () => {
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    if (!data) return;
+    if (data.suppliesByMaterial) {
+      setSupplyMap(data.suppliesByMaterial);
+      return;
+    }
+    loadRecentSupplyPrices()
+      .then(setSupplyMap)
+      .catch(() => setSupplyMap({}));
+  }, [data]);
 
   const groups = useMemo(() => data?.groups || [], [data]);
 
@@ -214,9 +232,22 @@ const ProductCost = () => {
         ) : (
           /* Плашка на каждую ткань, внутри — переключение по ширинам. */
           <div className="grid grid-cols-1 gap-3 lg:grid-cols-2 2xl:grid-cols-3">
-            {visible.map((f) => (
-              <FabricCostCard key={f.material} material={f.material} widths={f.widths} />
-            ))}
+            {visible.map((f) => {
+              const fabricId = f.widths[0]?.materials.find((m) => m.typeName === 'Тюль')?.materialId;
+              const supplies = !supplyMap
+                ? null
+                : fabricId != null
+                  ? supplyMap[String(fabricId)] || []
+                  : [];
+              return (
+                <FabricCostCard
+                  key={f.material}
+                  material={f.material}
+                  widths={f.widths}
+                  supplies={supplies}
+                />
+              );
+            })}
           </div>
         )}
       </div>

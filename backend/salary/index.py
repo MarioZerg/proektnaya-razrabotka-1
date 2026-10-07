@@ -10,11 +10,35 @@ from authz import (
     auth_error_response,
     require_admin,
 )
+from onec_flush import flush_onec_outbox
 
 # Бонусная программа швей: сколько метров нужно сдать на стикеровку за календарный
 # месяц и сколько за это платим. Первый расчётный период — сентябрь 2026.
 BONUS_METERS_TARGET = 5000
 BONUS_AMOUNT = 10000
+
+
+# В справочнике ткань «Вуаль без утяжелителя», в заказах с площадки часто
+# «Вуаль (без ут)». Ставка закройщика висит на id из справочника. Точное
+# совпадение имени не находило материал — раскрой такой вуали молча не
+# начислялся, а «Доначислить» его же пропускало как «нет ставки».
+_MATERIAL_NAME_ALIASES = {
+    'Вуаль без утяжелителя': ['Вуаль (без ут)'],
+    'Вуаль (без ут)': ['Вуаль без утяжелителя'],
+}
+
+
+def _material_id_by_order_name(cur, name):
+    """id ткани по имени заказа, с учётом сокращений вроде «Вуаль (без ут)»."""
+    if not name:
+        return None
+    names = [name]
+    for alias in _MATERIAL_NAME_ALIASES.get(name, []):
+        if alias not in names:
+            names.append(alias)
+    cur.execute("SELECT id FROM materials WHERE name = ANY(%s) LIMIT 1", (names,))
+    row = cur.fetchone()
+    return row[0] if row else None
 
 
 def _esc_date(value: str) -> str:
@@ -616,13 +640,19 @@ def handler(event: dict, context) -> dict:
                 #  - раскрой заказов, перенесённых из старой системы (source='import'):
                 #    их кроили до переезда, деньги за них уже выплачены;
                 #  - вещи, взятые готовыми со склада (sewing_status='Со склада'):
-                #    их никто не шил в этот раз.
+                #    их никто не шил в этот раз;
+                #  - передача кроя с отменённого заказа на новый того же размера:
+                #    закройщику уже начислили на СТАРОМ заказе, а новый только
+                #    наследует cut_at. Без этой оговорки блок предлагал доначислить
+                #    ещё раз — и «Доначислить» платило дважды за один рез.
                 missed = []
 
                 cur.execute(
                     "SELECT u.id, u.full_name, count(*), min(o.cut_at)::date, max(o.cut_at)::date "
                     "FROM orders o JOIN users u ON u.id = o.cutter_user_id "
                     "WHERE o.cut_at IS NOT NULL AND COALESCE(o.source, '') <> 'import' "
+                    "  AND o.cut_from_order_id IS NULL "
+                    "  AND o.cut_given_to_order_id IS NULL "
                     "  AND NOT EXISTS (SELECT 1 FROM salary_accruals a "
                     "                  WHERE a.order_id = o.id AND a.type = 'cutter_cut') "
                     "GROUP BY u.id, u.full_name ORDER BY count(*) DESC LIMIT 50"
@@ -639,11 +669,17 @@ def handler(event: dict, context) -> dict:
                 # assigned ещё закройщик: если вещь закрыли без пошива (отмена,
                 # старый обход очереди), доначисление вешало пошив на закройщика.
                 # Платим только тем, кто реально сдал вещь (sewn_at).
+                # sewn_at ставится уже на сдаче в стикеровку, а деньги швея
+                # получает при закрытии в «Готовые». Пока вещь висит на
+                # стикеровке — это не дыра, а ещё не закрытый этап.
+                # Донор переданного кроя тоже «Готовые», но пошив по нему
+                # либо уже оплачен, либо уехал на новый номер.
                 cur.execute(
                     "SELECT u.id, u.full_name, count(*), min(o.sewn_at)::date, max(o.sewn_at)::date "
                     "FROM orders o JOIN users u ON u.id = o.sewer_user_id "
                     "WHERE o.sewn_at IS NOT NULL "
-                    "  AND COALESCE(o.sewing_status, '') <> 'Со склада' "
+                    "  AND o.sewing_status = 'Готовые' "
+                    "  AND o.cut_given_to_order_id IS NULL "
                     "  AND NOT EXISTS (SELECT 1 FROM salary_accruals a "
                     "                  WHERE a.order_id = o.id AND a.type = 'sewer_piece') "
                     "GROUP BY u.id, u.full_name ORDER BY count(*) DESC LIMIT 50"
@@ -656,10 +692,14 @@ def handler(event: dict, context) -> dict:
                         'dateTo': (r[4].isoformat() + 'Z') if r[4] else None,
                     })
 
+                # «Готовые» без packed_at — донор отдал крой и вышел из работы,
+                # упаковщица его не стикеровала. Считать это дырой нельзя.
                 cur.execute(
-                    "SELECT u.id, u.full_name, count(*), min(o.created_at)::date, max(o.created_at)::date "
+                    "SELECT u.id, u.full_name, count(*), min(o.packed_at)::date, max(o.packed_at)::date "
                     "FROM orders o JOIN users u ON u.id = o.packer_user_id "
                     "WHERE o.sewing_status = 'Готовые' "
+                    "  AND o.packed_at IS NOT NULL "
+                    "  AND o.cut_given_to_order_id IS NULL "
                     "  AND NOT EXISTS (SELECT 1 FROM salary_accruals a "
                     "                  WHERE a.order_id = o.id AND a.type = 'packer_stickering') "
                     "GROUP BY u.id, u.full_name ORDER BY count(*) DESC LIMIT 50"
@@ -1176,16 +1216,19 @@ def handler(event: dict, context) -> dict:
                     # Ставка закройщика заведена на КОНКРЕТНУЮ ткань, а у заказа
                     # хранится её название — поэтому подтягиваем материал по имени.
                     cur.execute(
-                        "SELECT o.id, o.order_number, o.width, o.workshop_id, m.id "
-                        "FROM orders o LEFT JOIN materials m ON m.name = o.material "
+                        "SELECT o.id, o.order_number, o.width, o.workshop_id, o.material "
+                        "FROM orders o "
                         "WHERE o.cutter_user_id = %s AND o.cut_at IS NOT NULL "
                         "  AND COALESCE(o.source, '') <> 'import' "
+                        "  AND o.cut_from_order_id IS NULL "
+                        "  AND o.cut_given_to_order_id IS NULL "
                         "  AND NOT EXISTS (SELECT 1 FROM salary_accruals a "
                         "                  WHERE a.order_id = o.id AND a.type = 'cutter_cut')",
                         (m_user_id,),
                     )
-                    for oid, onum, width, ows, mat_id in cur.fetchall():
+                    for oid, onum, width, ows, mat_name in cur.fetchall():
                         ws = ows or user_ws
+                        mat_id = _material_id_by_order_name(cur, mat_name)
                         if not (ws and width and mat_id):
                             skipped += 1
                             continue
@@ -1219,7 +1262,8 @@ def handler(event: dict, context) -> dict:
                     cur.execute(
                         "SELECT o.id, o.order_number, o.width, o.workshop_id, o.overlocked_at "
                         "FROM orders o WHERE o.sewer_user_id = %s AND o.sewn_at IS NOT NULL "
-                        "  AND COALESCE(o.sewing_status, '') <> 'Со склада' "
+                        "  AND o.sewing_status = 'Готовые' "
+                        "  AND o.cut_given_to_order_id IS NULL "
                         "  AND NOT EXISTS (SELECT 1 FROM salary_accruals a "
                         "                  WHERE a.order_id = o.id AND a.type = 'sewer_piece')",
                         (m_user_id,),
@@ -1270,6 +1314,8 @@ def handler(event: dict, context) -> dict:
                     cur.execute(
                         "SELECT o.id, o.order_number, o.width, o.workshop_id, o.overlocked_at "
                         "FROM orders o WHERE o.packer_user_id = %s AND o.sewing_status = 'Готовые' "
+                        "  AND o.packed_at IS NOT NULL "
+                        "  AND o.cut_given_to_order_id IS NULL "
                         "  AND NOT EXISTS (SELECT 1 FROM salary_accruals a "
                         "                  WHERE a.order_id = o.id AND a.type = 'packer_stickering')",
                         (m_user_id,),
@@ -1356,6 +1402,7 @@ def handler(event: dict, context) -> dict:
                     cur, actor_id, actor_name, 'manual_accrual', 'salary_accrual', new_id,
                     f'Ручное начисление сотруднику #{user_id}: {amount} ({description})',
                 )
+                flush_onec_outbox(cur)
                 conn.commit()
                 return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'id': new_id})}
 
@@ -1393,6 +1440,7 @@ def handler(event: dict, context) -> dict:
                     cur, actor_id, actor_name, action, 'salary_accrual', new_id,
                     f'{word} сотруднику #{user_id}: {penalty_amount} ({description})',
                 )
+                flush_onec_outbox(cur)
                 conn.commit()
                 return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'id': new_id})}
 

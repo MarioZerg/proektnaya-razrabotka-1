@@ -12,6 +12,8 @@ import LiveFloorFeed, { eventKey } from '@/components/crm/dashboard/liveFloor/Li
 import LiveOrderChain from '@/components/crm/dashboard/liveFloor/LiveOrderChain';
 import LiveOrderChip from '@/components/crm/dashboard/liveFloor/LiveOrderChip';
 import {
+  STAGES,
+  personState,
   shortName,
   stageIndex,
   stageOf,
@@ -20,14 +22,27 @@ import {
 } from '@/components/crm/dashboard/liveFloor/liveFloorShared';
 
 const POLL_MS = 12000;
+// Свёрнутый блок показывает только сводку — дёргать сервер каждые 12 секунд незачем.
+const POLL_COLLAPSED_MS = 60000;
 const HOUR_MS = 60 * 60 * 1000;
 const MAX_COMETS = 8;
+const OPEN_KEY = 'megatul_live_floor_open';
+
+const COUNT_KEYS: Record<StageKey, keyof LiveFloorData['counts']> = {
+  new: 'new',
+  cutting: 'cutting',
+  overlock: 'overlock',
+  cutReady: 'cutReady',
+  sewing: 'sewing',
+  stickering: 'stickering',
+  done: 'doneToday',
+};
 
 const UpdatedAgo = ({ at }: { at: number | null }) => {
   const now = useTicker();
   if (at == null) return null;
   const sec = Math.max(0, Math.round((now - at) / 1000));
-  return <> · обновлено {sec < 5 ? 'только что' : `${sec} сек назад`}</>;
+  return <>обновлено {sec < 5 ? 'только что' : `${sec} сек назад`}</>;
 };
 
 /**
@@ -40,6 +55,27 @@ const LiveFloorCard = () => {
   const [error, setError] = useState<string | null>(null);
   const [workshop, setWorkshop] = useState<number | 'all'>('all');
   const [big, setBig] = useState(false);
+  // Свёрнут по умолчанию: на телефоне раскрытый блок занимает несколько экранов.
+  const [open, setOpen] = useState(() => {
+    try {
+      return localStorage.getItem(OPEN_KEY) === '1';
+    } catch {
+      return false;
+    }
+  });
+  const expanded = open || big;
+
+  const toggleOpen = () => {
+    setOpen((v) => {
+      const next = !v;
+      try {
+        localStorage.setItem(OPEN_KEY, next ? '1' : '0');
+      } catch {
+        /* приватный режим браузера — просто не запоминаем */
+      }
+      return next;
+    });
+  };
   const [query, setQuery] = useState('');
   const [comets, setComets] = useState<Comet[]>([]);
   const [movedIds, setMovedIds] = useState<Set<number>>(new Set());
@@ -50,6 +86,9 @@ const LiveFloorCard = () => {
   const prevStages = useRef<Map<number, StageKey> | null>(null);
   const prevEvents = useRef<Set<string> | null>(null);
   const timers = useRef<ReturnType<typeof setTimeout>[]>([]);
+  // В свёрнутом виде ленты нет — кометы копились бы и вылетали пачкой при раскрытии.
+  const expandedRef = useRef(expanded);
+  expandedRef.current = expanded;
 
   useEffect(() => {
     const pending = timers.current;
@@ -86,7 +125,7 @@ const LiveFloorCard = () => {
             flying.push({ id: `${o.id}-${nowStage}-${Date.now()}`, orderNumber: o.orderNumber, from: before, to: nowStage });
           }
         });
-        if (moved.length) {
+        if (moved.length && expandedRef.current) {
           setMovedIds(new Set(moved));
           later(() => setMovedIds(new Set()), 4000);
           // Пачкой не запускаем — кометы идут друг за другом, иначе сливаются.
@@ -113,7 +152,7 @@ const LiveFloorCard = () => {
     }
   }, []);
 
-  usePolling(load, POLL_MS);
+  usePolling(load, expanded ? POLL_MS : POLL_COLLAPSED_MS);
 
   const removeComet = useCallback((id: string) => {
     setComets((cs) => cs.filter((c) => c.id !== id));
@@ -184,6 +223,9 @@ const LiveFloorCard = () => {
       ),
     ).sort((a, b) => a[1].localeCompare(b[1], 'ru'));
 
+    const nowMs = Date.now() + clockOffset;
+    const states = people.map((p) => personState(p, orders, events, nowMs));
+
     return {
       people,
       orders,
@@ -193,6 +235,8 @@ const LiveFloorCard = () => {
       holderName: holder?.overlockUserId ? shortName(data.names[String(holder.overlockUserId)]) : null,
       stickeringQueue,
       workshops,
+      working: states.filter((s) => s.working).length,
+      idle: states.filter((s) => s.idleAlert).length,
     };
   }, [data, workshop, clockOffset]);
 
@@ -205,26 +249,98 @@ const LiveFloorCard = () => {
 
   const body = (
     <Card className={`overflow-hidden border-border shadow-none ${big ? 'min-h-full rounded-none border-0' : ''}`}>
-      <CardContent className="space-y-5 pt-5">
-        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-          <div className="flex min-w-0 items-center gap-2.5">
+      <CardContent className={`px-3 sm:px-6 ${expanded ? 'space-y-5 pt-5' : 'space-y-3 py-4'}`}>
+        <div className="flex items-start gap-2">
+          <button
+            type="button"
+            onClick={big ? undefined : toggleOpen}
+            aria-expanded={expanded}
+            className="flex min-w-0 flex-1 items-center gap-2.5 text-left"
+          >
             <span className="relative flex h-3 w-3 shrink-0">
               <span className="absolute inset-0 animate-ping rounded-full bg-red-500 opacity-60" />
               <span className="relative h-3 w-3 rounded-full bg-red-500" />
             </span>
-            <div className="min-w-0">
-              <p className="flex items-center gap-2 font-semibold">
+            <span className="min-w-0">
+              <span className="flex items-center gap-2 font-semibold">
                 Живой цех
                 <span className="rounded bg-red-50 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-red-600">
                   live
                 </span>
-              </p>
-              <p className="text-xs text-muted-foreground">
-                Движение вещей по этапам и кто что делает прямо сейчас
+              </span>
+              <span className="block text-xs text-muted-foreground">
+                <span className="hidden sm:inline">
+                  {expanded
+                    ? 'Движение вещей по этапам и кто что делает прямо сейчас · '
+                    : 'Люди, вещи и лента событий · '}
+                </span>
                 <UpdatedAgo at={updatedAt} />
-              </p>
-            </div>
-          </div>
+              </span>
+            </span>
+          </button>
+          {!big && (
+            <Button variant="ghost" size="sm" className="h-8 shrink-0 px-2" onClick={toggleOpen}>
+              <span className="hidden sm:inline">{expanded ? 'Свернуть' : 'Развернуть'}</span>
+              <Icon
+                name="ChevronDown"
+                size={16}
+                className={`transition-transform sm:ml-1 ${expanded ? 'rotate-180' : ''}`}
+              />
+            </Button>
+          )}
+        </div>
+
+        {!expanded && (
+          error && !data ? (
+            <p className="text-xs text-destructive">
+              Не удалось загрузить: {error}{' '}
+              <button type="button" className="underline" onClick={load}>
+                Повторить
+              </button>
+            </p>
+          ) : view && data ? (
+            <button type="button" onClick={toggleOpen} className="block w-full space-y-2 text-left">
+              <div className="-mx-1 flex gap-1.5 overflow-x-auto px-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+                {STAGES.map((s) => (
+                  <span
+                    key={s.key}
+                    className="inline-flex shrink-0 items-center gap-1.5 rounded-full border bg-card px-2.5 py-1 text-xs"
+                  >
+                    <span className="h-2 w-2 rounded-full" style={{ background: s.hex }} />
+                    <span className="font-semibold tabular-nums">{data.counts[COUNT_KEYS[s.key]] ?? 0}</span>
+                    <span className="text-muted-foreground">{s.label}</span>
+                  </span>
+                ))}
+              </div>
+              <div className="flex flex-wrap gap-1.5 text-[11px]">
+                <span className="rounded-full bg-muted px-2 py-0.5 text-muted-foreground">
+                  на смене {view.people.length}
+                </span>
+                <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-emerald-800">
+                  в работе {view.working}
+                </span>
+                {view.idle > 0 && (
+                  <span className="rounded-full bg-amber-100 px-2 py-0.5 text-amber-800">
+                    простой {view.idle}
+                  </span>
+                )}
+                {view.holderName && (
+                  <span className="rounded-full bg-fuchsia-50 px-2 py-0.5 text-fuchsia-800">
+                    оверлок: {view.holderName}
+                  </span>
+                )}
+              </div>
+            </button>
+          ) : (
+            <p className="flex items-center gap-2 text-xs text-muted-foreground">
+              <Icon name="Loader2" size={14} className="animate-spin" />
+              Подключаемся к цеху…
+            </p>
+          )
+        )}
+
+        {expanded && (
+          <>
           <div className="flex flex-wrap items-center gap-2">
             {view && view.workshops.length > 1 && (
               <div className="flex flex-wrap gap-1">
@@ -263,10 +379,9 @@ const LiveFloorCard = () => {
             </div>
             <Button variant="outline" size="sm" className="h-8" onClick={() => setBig((v) => !v)}>
               <Icon name={big ? 'X' : 'MonitorPlay'} size={14} className="mr-1.5" />
-              {big ? 'Свернуть' : 'На весь экран'}
+              {big ? 'Выйти из полного экрана' : 'На весь экран'}
             </Button>
           </div>
-        </div>
 
         {error && !data ? (
           <WarehouseFetchError title="Не удалось загрузить живой цех" description={error} onRetry={load} />
@@ -312,8 +427,8 @@ const LiveFloorCard = () => {
               </div>
             )}
 
-            <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_300px]">
-              <div className="min-w-0 space-y-5">
+            <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_320px]">
+              <div className="min-w-0 space-y-4">
                 <LiveFloorPeople
                   people={view.people}
                   orders={view.orders}
@@ -326,9 +441,11 @@ const LiveFloorCard = () => {
                 />
 
                 {view.stickeringQueue.length > 0 && (
-                  <section className="space-y-2">
-                    <div className="flex items-center gap-2 text-sm">
-                      <Icon name="Tag" size={15} className="text-orange-500" />
+                  <section className="rounded-2xl border p-3 sm:p-4">
+                    <div className="mb-3 flex flex-wrap items-center gap-2 text-sm">
+                      <span className="flex h-8 w-8 items-center justify-center rounded-full bg-orange-100 text-orange-600">
+                        <Icon name="Tag" size={16} />
+                      </span>
                       <span className="font-semibold">Ждут стикеровки</span>
                       <span className="text-xs text-muted-foreground">
                         {view.stickeringQueue.length} · сначала самые давние
@@ -352,12 +469,16 @@ const LiveFloorCard = () => {
                 )}
               </div>
 
-              <aside className="min-w-0 space-y-2 lg:sticky lg:top-4 lg:self-start">
-                <div className="flex items-center gap-2 text-sm">
+              <aside className="min-w-0 rounded-2xl border p-3 xl:sticky xl:top-4 xl:self-start">
+                <div className="mb-2 flex items-center gap-2 text-sm">
                   <Icon name="TrendingUp" size={15} className="text-muted-foreground" />
                   <span className="font-semibold">Что только что случилось</span>
                 </div>
-                <div className={`overflow-y-auto pr-1 ${big ? 'max-h-[calc(100vh-280px)]' : 'max-h-[560px]'}`}>
+                <div
+                  className={`overflow-y-auto pr-1 ${
+                    big ? 'max-h-[calc(100vh-200px)]' : 'max-h-[420px] xl:max-h-[640px]'
+                  }`}
+                >
                   <LiveFloorFeed
                     events={view.events}
                     names={data.names}
@@ -367,6 +488,8 @@ const LiveFloorCard = () => {
                 </div>
               </aside>
             </div>
+          </>
+        )}
           </>
         )}
       </CardContent>

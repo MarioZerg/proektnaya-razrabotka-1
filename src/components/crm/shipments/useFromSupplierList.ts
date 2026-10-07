@@ -9,6 +9,7 @@ import {
 import { fetchSuppliers, type Supplier } from '@/lib/suppliersApi';
 import { fetchMaterialsData, type Material } from '@/lib/materialsApi';
 import { printBarcodes } from '@/lib/printBarcodes';
+import { printAcceptanceSheet as printAcceptanceSheetHtml } from '@/lib/printAcceptanceSheet';
 import { formatQuantity } from '@/lib/formatQuantity';
 
 /**
@@ -109,6 +110,19 @@ export const useFromSupplierList = () => {
     printBarcodes(items, `Приёмка #${shipmentId}`);
   };
 
+  const printAcceptanceSheet = async (shipmentId: number) => {
+    try {
+      const detail = await fetchShipmentDetail(shipmentId);
+      printAcceptanceSheetHtml(detail);
+    } catch (e) {
+      toast({
+        title: 'Не удалось напечатать лист',
+        description: e instanceof Error ? e.message : undefined,
+        variant: 'destructive',
+      });
+    }
+  };
+
   const handleDelete = async () => {
     if (!deleteId) return;
     setDeleting(true);
@@ -157,6 +171,7 @@ export const useFromSupplierList = () => {
     setLogisticsShipmentId,
     load,
     printShipmentBarcodes,
+    printAcceptanceSheet,
     handleDelete,
     activeFiltersCount,
     resetFilters,

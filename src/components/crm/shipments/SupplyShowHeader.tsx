@@ -15,6 +15,7 @@ interface Props {
   filteredCount: number;
   onBack: () => void;
   onPrintAllFound: () => void;
+  onPrintAcceptanceSheet?: () => void;
 }
 
 export const SupplyShowHeader = ({
@@ -24,6 +25,7 @@ export const SupplyShowHeader = ({
   filteredCount,
   onBack,
   onPrintAllFound,
+  onPrintAcceptanceSheet,
 }: Props) => (
   <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
     <div className="min-w-0">
@@ -40,15 +42,28 @@ export const SupplyShowHeader = ({
         </p>
       )}
     </div>
+    <div className="flex w-full shrink-0 flex-col gap-2 sm:w-auto sm:flex-row">
+    {onPrintAcceptanceSheet && (
+      <Button
+        variant="outline"
+        className="w-full sm:w-auto"
+        onClick={onPrintAcceptanceSheet}
+        disabled={loading}
+      >
+        <Icon name="FileText" size={16} className="mr-1" />
+        Лист приёмки
+      </Button>
+    )}
     <Button
       variant="outline"
-      className="w-full shrink-0 sm:w-auto"
+      className="w-full sm:w-auto"
       onClick={onPrintAllFound}
       disabled={loading}
     >
       <Icon name="Barcode" size={16} className="mr-1" />
       Печать всех ({filteredCount})
     </Button>
+    </div>
   </div>
 );
 

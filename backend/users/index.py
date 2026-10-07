@@ -10,6 +10,7 @@ import boto3
 import psycopg2
 
 from authz import AuthError, auth_error_response, require_admin
+from onec_flush import flush_onec_outbox
 
 
 ROLES = {'sewer', 'cutter', 'packer', 'storekeeper', 'senior_storekeeper', 'cleaner',
@@ -378,6 +379,7 @@ def handler(event: dict, context) -> dict:
                     "AND personal_data_verified = false",
                     (new_id,),
                 )
+                flush_onec_outbox(cur)
                 conn.commit()
                 return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'id': new_id, 'login': login})}
 
@@ -622,6 +624,7 @@ def handler(event: dict, context) -> dict:
 
                 cur.execute('SELECT login FROM users WHERE id = %s', (int(user_id),))
                 login_row = cur.fetchone()
+                flush_onec_outbox(cur)
                 conn.commit()
                 return {
                     'statusCode': 200,

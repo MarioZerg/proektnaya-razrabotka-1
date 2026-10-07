@@ -8,6 +8,7 @@ import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/context/AuthContext';
 import ShopItemDialog from '@/components/crm/variki/ShopItemDialog';
 import CertificatesDialog from '@/components/crm/variki/CertificatesDialog';
+import ShopCardImage from '@/components/crm/variki/ShopCardImage';
 import {
   fetchShopManage,
   uploadCertificates,
@@ -218,12 +219,15 @@ const VarikiShopManage = () => {
                   className="flex flex-wrap items-center gap-3 rounded-lg border border-border bg-card p-3 sm:gap-4"
                 >
                   {item.imageUrl ? (
-                    <img
-                      src={item.imageUrl}
-                      alt=""
-                      loading="lazy"
-                      className="h-16 w-20 shrink-0 rounded-md object-cover sm:h-20 sm:w-28"
-                    />
+                    <div className="relative h-16 w-20 shrink-0 overflow-hidden rounded-md sm:h-20 sm:w-28">
+                      <ShopCardImage
+                        src={item.imageUrl}
+                        alt=""
+                        size="M"
+                        priority
+                        className="h-full w-full object-cover"
+                      />
+                    </div>
                   ) : (
                     <div className="flex h-16 w-20 shrink-0 items-center justify-center rounded-md bg-muted sm:h-20 sm:w-28">
                       <Icon name={item.icon} size={28} className="text-muted-foreground" />

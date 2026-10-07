@@ -3,19 +3,21 @@ import os
 
 import psycopg2
 
-MARKETPLACES = ('ozon', 'wildberries', 'yandex_market', 'megamarket', 'lemana_pro', 'avito')
+MARKETPLACES = (
+    'ozon', 'wildberries', 'yandex_market', 'megamarket', 'lemana_pro', 'avito',
+    'onec_buh',
+)
 
 
 def handler(event: dict, context) -> dict:
     """Управляет настройками интеграций с маркетплейсами (API-ключи и токены).
 
     Хранит учётные данные для подключения к API маркетплейсов (OZON, Wildberries,
-    Яндекс Маркет, МегаМаркет, Леруа Мерлен/Лемана PRO, Avito) — отсюда в дальнейшем
-    будут браться данные для синхронизации заказов, остатков и цен. Сами интеграции
-    (обращения к внешним API) реализуются отдельно и используют эти сохранённые
-    учётные данные — этот backend только хранит и отдаёт их администратору.
+    Яндекс Маркет, МегаМаркет, Леруа Мерлен/Лемана PRO, Avito) и к 1С:Бухгалтерии.
+    Отсюда в дальнейшем берутся данные для синхронизации заказов, остатков, цен
+    и обмена с бухгалтерией. Сами обращения к внешним API реализуются отдельно.
 
-    GET  /  - список всех 6 маркетплейсов с текущими настройками (credentials, isEnabled)
+    GET  /  - список площадок и 1С с текущими настройками (credentials, isEnabled)
     POST /  { action: 'update', marketplaceCode, isEnabled?, credentials? }
         - обновляет настройки одного маркетплейса; credentials — словарь произвольных
           полей (например {apiKey, clientId, sellerId}) — заменяет полностью, если передан

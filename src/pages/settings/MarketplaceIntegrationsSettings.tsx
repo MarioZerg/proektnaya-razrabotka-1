@@ -9,7 +9,10 @@ import {
   type MarketplaceIntegration,
   type Shop,
 } from '@/lib/marketplaceIntegrationsApi';
-import { marketplaceIntegrationsConfig } from '@/lib/marketplaceIntegrationsConfig';
+import {
+  accountingIntegrationsConfig,
+  marketplaceIntegrationsConfig,
+} from '@/lib/marketplaceIntegrationsConfig';
 import MarketplaceIntegrationCard from '@/components/crm/settings/MarketplaceIntegrationCard';
 import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
 
@@ -79,10 +82,10 @@ const MarketplaceIntegrationsSettings = () => {
     <CrmLayout>
       <div className="space-y-6">
         <div>
-          <h1 className="text-xl font-bold">Интеграции с маркетплейсами</h1>
+          <h1 className="text-xl font-bold">Интеграции</h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            Подключите API-ключи маркетплейсов — отсюда система будет брать данные для
-            синхронизации заказов, остатков и цен
+            Ключи площадок и API 1С. Отсюда система берёт доступ к заказам, остаткам
+            и к бухгалтерии
           </p>
         </div>
 
@@ -109,7 +112,10 @@ const MarketplaceIntegrationsSettings = () => {
                 {shops.map((shop) => {
                   const active = shop.id === shopId;
                   const connected = integrations.filter(
-                    (i) => i.shopId === shop.id && i.isEnabled,
+                    (i) =>
+                      i.shopId === shop.id &&
+                      i.isEnabled &&
+                      marketplaceIntegrationsConfig.some((c) => c.code === i.marketplaceCode),
                   ).length;
                   return (
                     <button
@@ -150,6 +156,29 @@ const MarketplaceIntegrationsSettings = () => {
                   onToggle={(isEnabled) => handleToggle(config.code, isEnabled)}
                 />
               ))}
+            </div>
+
+            <div className="space-y-3">
+              <div>
+                <h2 className="text-base font-semibold">Бухгалтерия</h2>
+                <p className="text-sm text-muted-foreground">
+                  Подключение к 1С по HTTP API — обмен документами и справочниками
+                </p>
+              </div>
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                {accountingIntegrationsConfig.map((config) => (
+                  <MarketplaceIntegrationCard
+                    key={`${shopId}-${config.code}`}
+                    config={config}
+                    integration={integrations.find(
+                      (i) => i.marketplaceCode === config.code && i.shopId === shopId,
+                    )}
+                    saving={savingCode === config.code}
+                    onSave={(credentials, isEnabled) => handleSave(config.code, credentials, isEnabled)}
+                    onToggle={(isEnabled) => handleToggle(config.code, isEnabled)}
+                  />
+                ))}
+              </div>
             </div>
           </>
         )}

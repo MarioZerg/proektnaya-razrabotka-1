@@ -36,6 +36,7 @@ interface FromSupplierContentProps {
     setLogisticsShipmentId: Dispatch<SetStateAction<number | null>>;
     load: () => void;
     printShipmentBarcodes: (shipmentId: number) => void;
+    printAcceptanceSheet: (shipmentId: number) => void;
     handleDelete: () => void;
     activeFiltersCount: number;
     resetFilters: () => void;
@@ -83,7 +84,7 @@ const FromSupplierContent = ({
   forms,
 }: FromSupplierContentProps) => (
   <>
-    <div className="min-w-0 space-y-6 overflow-x-hidden">
+    <div className="min-w-0 space-y-8 overflow-x-hidden">
       {/* Бракованные рулоны из цеха: забираем сканером и решаем с поставщиком —
           возврат или скидка. Панель прячется сама, когда забирать нечего. */}
       <DefectRollsPanel />
@@ -148,6 +149,7 @@ const FromSupplierContent = ({
         onOpenReview={forms.openReview}
         onOpenLogistics={list.setLogisticsShipmentId}
         onPrintShipmentBarcodes={list.printShipmentBarcodes}
+        onPrintAcceptanceSheet={list.printAcceptanceSheet}
         deleteId={list.deleteId}
         deleting={list.deleting}
         onSetDeleteId={list.setDeleteId}

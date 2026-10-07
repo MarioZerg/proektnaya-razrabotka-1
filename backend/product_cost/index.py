@@ -102,6 +102,45 @@ def _material_prices(cur):
     return out
 
 
+def _recent_supplies(cur, per_material=5):
+    """Последние приёмки по каждому материалу — фактическая цена 1 пог.м.
+
+    Прайс поставщика в карточке себестоимости — плановая цена. После машины
+    метр стоит иначе: курс, логистика, правки метража. Владелец подставляет
+    цену из конкретной поставки и смотрит, как поедет себестоимость вещи.
+    """
+    cur.execute(
+        "SELECT r.material_id, s.id, "
+        "       COALESCE(s.completed_at, s.created_at), "
+        "       COALESCE(MAX(sup.name), ''), "
+        "       AVG(r.cost_per_unit), "
+        "       SUM(r.initial_quantity) "
+        "FROM rolls r "
+        "JOIN shipments s ON s.id = r.shipment_id "
+        "LEFT JOIN suppliers sup ON sup.id = COALESCE(r.supplier_id, s.supplier_id) "
+        "WHERE s.type = 'from_supplier' "
+        "  AND s.status = 'Завершено' "
+        "  AND r.cost_per_unit IS NOT NULL "
+        "  AND r.removed_at IS NULL "
+        "GROUP BY r.material_id, s.id, s.completed_at, s.created_at "
+        "ORDER BY r.material_id, COALESCE(s.completed_at, s.created_at) DESC, s.id DESC"
+    )
+    by_mat = {}
+    for mid, sid, dt, sname, cpu, qty in cur.fetchall():
+        key = str(mid)
+        arr = by_mat.setdefault(key, [])
+        if len(arr) >= per_material:
+            continue
+        arr.append({
+            'shipmentId': sid,
+            'completedAt': dt.isoformat() if dt else None,
+            'supplierName': sname or '—',
+            'costPerUnit': round(float(cpu), 4),
+            'quantity': round(float(qty or 0), 2),
+        })
+    return by_mat
+
+
 def _rates(cur, workshop_id):
     """Тарифы работ выбранного цеха.
 
@@ -696,6 +735,8 @@ def handler(event: dict, context) -> dict:
                 'sold': sold,
                 # Вознаграждение менеджера маркетплейсов: процент с поступлений.
                 'manager': manager,
+                # Последние приёмки по материалу: подставить цену метра в карточку.
+                'suppliesByMaterial': _recent_supplies(cur),
             })
 
         if method == 'POST':

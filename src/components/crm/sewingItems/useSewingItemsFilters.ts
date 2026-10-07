@@ -5,6 +5,7 @@ import compareCutQueue from '@/components/crm/sewingItems/cutQueueOrder';
 import {
   OVERLOCK_TAB,
   CANCELLED_CUT_TAB,
+  isOnOverlock,
   isOrderCancelled,
   isCancelledWithCut,
   materialNamesMatch,
@@ -130,19 +131,17 @@ export const useSewingItemsFilters = ({
       // «Стикеровка» нельзя — иначе «1 заказ на стикеровке», а вкладка пустая.
       if (isCancelledWithCut(o) && o.sewingStatus !== 'Стикеровка') return false;
 
-      // ВКЛАДКА «ОВЕРЛОК» — СРЕЗ ОЧЕРЕДИ «РАСКРОЕНО», А НЕ ОТДЕЛЬНЫЙ СТАТУС.
+      // ВКЛАДКА «ОВЕРЛОК» — ТО, ЧТО УЖЕ ВЫДАНО ШВЕЕ, А НЕ ОЧЕРЕДЬ НА ОБМЁТКУ.
       //
-      // Вещь из ткани с осыпающимся краем лежит в том же статусе «Раскроено», что
-      // и остальной крой, но швеям на прямострочку её отдавать рано. Поэтому одна
-      // и та же очередь делится на две вкладки:
-      //   · «Оверлок»   — ждут обмётки (край ещё не обметан);
-      //   · «Раскроено» — всё остальное, включая уже обмётанные вещи.
-      // Без этого деления необмётанный крой висел бы в общей очереди и швея
-      // забирала бы его в работу, пропуская этап.
+      // Необмётанный крой остаётся во вкладке «Раскроено». Швея не выбирает вещь
+      // из списка: её даёт кнопка «Получить новый заказ». Как только система
+      // закрепила вещь (overlockUserId), она уходит на «Оверлок» — там обмётка
+      // и сдача. Иначе вся очередь кроя падала бы на отдельную вкладку, и её
+      // разбирали бы руками, минуя общую выдачу.
       if (activeTab === OVERLOCK_TAB) {
-        return o.sewingStatus === 'Раскроено' && o.requiresOverlock && !o.overlockedAt;
+        return isOnOverlock(o);
       }
-      if (activeTab === 'Раскроено' && o.requiresOverlock && !o.overlockedAt) return false;
+      if (activeTab === 'Раскроено' && isOnOverlock(o)) return false;
       return o.sewingStatus === activeTab;
     })
     .sort((a, b) => {
@@ -226,6 +225,8 @@ export const useSewingItemsFilters = ({
     // (с именами), поэтому под этот фильтр не попадает.
     if (activeTab === 'На раскрое' && isCutter && o.assignedUserId !== userId) return false;
     if (activeTab === 'В работе' && isSewer && o.assignedUserId !== userId) return false;
+    // На оверлоке швея видит только то, что система выдала ей самой.
+    if (activeTab === OVERLOCK_TAB && isSewer && o.overlockUserId !== userId) return false;
     // Закройщик на «В работе» смотрит судьбу СВОЕГО кроя: какие его вещи сейчас шьют.
     // Общий список всех швей ему не нужен — там чужой крой, за который он не отвечает.
     if (activeTab === 'В работе' && isCutter && o.cutterUserId !== userId) return false;
@@ -265,14 +266,13 @@ export const useSewingItemsFilters = ({
     );
 
     if (status === OVERLOCK_TAB) {
-      return workOrders.filter(
-        (o) => o.sewingStatus === 'Раскроено' && o.requiresOverlock && !o.overlockedAt
-      );
+      const onMachine = workOrders.filter(isOnOverlock);
+      return isSewer ? onMachine.filter((o) => o.overlockUserId === userId) : onMachine;
     }
 
     let list = workOrders.filter((o) => {
       if (status === 'Раскроено') {
-        return o.sewingStatus === 'Раскроено' && !(o.requiresOverlock && !o.overlockedAt);
+        return o.sewingStatus === 'Раскроено' && !isOnOverlock(o);
       }
       return o.sewingStatus === status;
     });
@@ -363,6 +363,12 @@ export const useSewingItemsFilters = ({
   });
 
   const myUnfinishedCount = myUnfinishedOrders.length;
+  // Всё, что лежит в стеке, вместе с отменёнными покупателем: предел стека сервер
+  // считает именно так. Кнопку «Взять стек» отменённые не запирают — только лимит.
+  const myStackTotal = activeOrders.filter(
+    (o) => o.sewingStatus === 'На раскрое' && o.assignedUserId === userId
+  ).length;
+  const myStackCancelled = myStackTotal - myUnfinishedCount;
 
   const myInWorkCount = activeOrders.filter(
     (o) => o.sewingStatus === 'В работе' && o.assignedUserId === userId
@@ -415,6 +421,8 @@ export const useSewingItemsFilters = ({
     countForTab,
     piecesForTab,
     myUnfinishedCount,
+    myStackTotal,
+    myStackCancelled,
     myUnfinishedOrders,
     myInWorkCount,
     myGroups,

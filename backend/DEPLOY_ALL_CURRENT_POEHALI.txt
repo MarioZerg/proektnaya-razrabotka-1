@@ -1,0 +1,215 @@
+# Промпт для агента poehali.dev — все накопленные правки (1С, приёмка бухгалтера, зарплата, конвейер, себестоимость, поставки, варики)
+
+Скопируй текст НИЖЕ агенту на Поехали целиком.
+
+---
+
+Ты — агент на poehali.dev. Опубликуй накопленные правки CRM из актуального
+репозитория: миграции, Cloud Functions и фронтенд. Один заход.
+
+URL уже существующих функций НЕ меняй. Секреты не ротируй.
+Новую функцию onec создай и запиши её URL в backend/func2url.json (ключ "onec").
+
+---
+
+## Часть 0 — миграции БД (сначала)
+
+Накатить два файла из репозитория, если их ещё нет в проде:
+
+1) `db_migrations/V0691__add_onec_buh_integration.sql`
+   — виджет 1С:Бухгалтерия: строки marketplace_integrations с
+     marketplace_code='onec_buh' на каждый активный магазин.
+
+2) `db_migrations/V0692__accountant_supply_acceptance.sql`
+   — колонки shipments: accountant_status, accountant_comment,
+     accountant_confirmed_at, accountant_confirmed_by, onec_synced_at, onec_error;
+   — таблица onec_outbox + триггеры trg_onec_supplier / trg_onec_employee /
+     trg_onec_material / trg_onec_salary_accrual;
+   — старые завершённые приёмки пометить accountant_status='confirmed',
+     чтобы бухгалтеру не сверять всю историю.
+
+Без этих миграций shipments/salary/onec на проде либо упадут, либо будут
+ходить в SAVEPOINT и молча не писать очередь. После миграций проверь:
+SELECT COUNT(*) FROM marketplace_integrations WHERE marketplace_code='onec_buh';
+SELECT to_regclass('onec_outbox');
+
+---
+
+## Часть A — какие функции публиковать
+
+Для каждой существующей: Cloud Functions → функция по URL → залить пакет
+ЦЕЛИКОМ из папки репозитория (все .py, включая authz.py и новые onec_flush.py)
+→ Сохранить → Опубликовать. URL тот же.
+
+| Функция | Папка | URL |
+|---|---|---|
+| orders | `backend/orders/` | https://functions.poehali.dev/1d8ed922-bded-4f5a-a367-a0742711203a |
+| salary | `backend/salary/` | https://functions.poehali.dev/16c53065-6726-495b-9e59-70d16dd9328f |
+| shipments | `backend/shipments/` | https://functions.poehali.dev/a68cce8d-f3b0-4f06-a66a-305eeacd17bb |
+| product_cost | `backend/product_cost/` | https://functions.poehali.dev/7e85cd3d-e5cd-44e2-a803-5ff07584de12 |
+| marketplace_integrations | `backend/marketplace_integrations/` | https://functions.poehali.dev/74493687-7597-43cc-a138-fa8c1e7215b4 |
+| auth | `backend/auth/` | https://functions.poehali.dev/eca1843f-b794-48c6-a9e6-4dead2174136 |
+| users | `backend/users/` | https://functions.poehali.dev/1db3a89a-f0f6-470e-bef4-fb5ca8fa02df |
+| materials | `backend/materials/` | https://functions.poehali.dev/642e7cf2-2a7e-4c6e-81c6-c31c19737524 |
+| suppliers | `backend/suppliers/` | https://functions.poehali.dev/eb3fba8a-def9-443a-a867-97243dacc9f8 |
+
+Новая функция **onec** (ещё нет в проде):
+- папка `backend/onec/` — `index.py` + `requirements.txt` (psycopg2-binary);
+- тот же DATABASE_URL, что у остальных;
+- Python 3.11;
+- после создания записать URL в `backend/func2url.json` как `"onec": "https://functions.poehali.dev/…"`;
+- GET / — счётчики onec_outbox; POST {action:'flush'} — отправка пачки в 1С.
+
+Важно: в salary, auth, users, materials, suppliers появился файл `onec_flush.py`.
+Если залить только index.py без него — ImportError.
+
+orders разбит на несколько файлов (`index.py`, `orders_actions.py`, `orders_read.py`,
+`shared.py`, `authz.py`, `bulk_cancel.py` …). Синхронизируй ВЕСЬ пакет.
+
+---
+
+## Часть B — что должно попасть в прод (проверь в коде)
+
+### B1. salary — «Работа без начисления» без ложных дыр
+`backend/salary/index.py`, GET `?missedAccruals=1` и POST `accrue_missed`:
+
+- Раскрой: не считать дырой заказ с `cut_from_order_id` (крой унаследован)
+  и с `cut_given_to_order_id` (донор уже отдал крой). Иначе «Доначислить»
+  платит закройщице второй раз за один рез.
+- Пошив: только `sewing_status='Готовые'` и без `cut_given_to_order_id`.
+  `sewn_at` на стикеровке — ещё не зарплата.
+- Стикеровка: нужен `packed_at`, доноров кроя нет.
+- Доначисление раскроя ищет ткань по имени заказа И синониму
+  «Вуаль (без ут)» ⇄ «Вуаль без утяжелителя» (`_material_id_by_order_name`).
+- После начисления salary зовёт flush очереди 1С (`onec_flush.py`).
+
+### B2. shipments — сверка бухгалтера и очередь в 1С
+`backend/shipments/index.py`:
+- список/карточка отдают accountantStatus, accountantComment,
+  accountantConfirmedAt, accountantConfirmedByName, onecSyncedAt, onecError.
+  Если колонок ещё нет — SAVEPOINT, список не падает.
+- GET `?accountant_status=pending|correction|confirmed`.
+- `accountant_confirm` (роли accountant, admin): статус confirmed,
+  в onec_outbox уходит поставка + текущие остатки склада, затем flush.
+- `accountant_correction`: статус correction + причина, кладовщик её видит.
+- `accountant_resubmit`: кладовщик вернул исправленную в pending.
+- После правки поставки из correction снова pending.
+
+### B3. onec — выгрузка в 1С:Бухгалтерию
+`backend/onec/index.py`:
+- читает credentials виджета marketplace_code='onec_buh'
+  (baseUrl, username, password);
+- POST JSON `{source:'crm', entity, id, payload}` Basic Auth;
+- entity: supplier, employee, material, salary_accrual, supplier_supply,
+  warehouse_stock;
+- ошибка HTTP не откатывает CRM, пишет last_error в onec_outbox.
+
+Триггеры миграции кладут в очередь: поставщика, сотрудника (регистрация/
+одобрение), материал, начисление зарплаты. Поставка уходит только после
+подтверждения бухгалтером (не триггером).
+
+### B4. auth / users / materials / suppliers
+В конце успешного создания/правки вызвать flush из своего `onec_flush.py`.
+Ошибка 1С не должна ронять регистрацию сотрудника или карточку поставщика.
+
+### B5. marketplace_integrations
+Код `onec_buh` принимается как виджет учёта (не площадка).
+Сохранение URL / логина / пароля / is_enabled по магазину.
+
+### B6. product_cost — последние 5 приёмок ткани
+GET себестоимости отдаёт `suppliesByMaterial`:
+по каждому material_id до 5 завершённых поставок from_supplier
+с датой, поставщиком, ценой за 1 пог.м., метражом.
+Админ в карточке ткани подставляет эту цену — себестоимость пересчитывается
+(как при правке метража: цена за метр, цена рулона, карточка себестоимости).
+
+### B7. orders — конвейер (если пакет ещё не выкладывали)
+`orders_actions.py`:
+- `take_stack`: advisory lock на закройщика; лимит по ВСЕМ «На раскрое»
+  включая отменённые; не больше 20 (настройка цеха), не 22.
+- `overlock_done`: `next='to_sewing'` — тесьму НЕ списывать, статус «Раскроено»;
+  `next='finish'` — рулон тесьмы обязателен, списание, «Стикеровка».
+- Оверлок один на цех; «Получить заказ» может выдать оверлочную вещь
+  только если машина свободна; ручного «взять на оверлок» из раскроенных нет.
+
+---
+
+## Часть C — фронтенд CRM
+
+Опубликуй сайт из актуального репозитория.
+
+### C1. Бухгалтер и приёмка от поставщика
+- Маршрут `/crm/shipments/accountant-supplies` (`AccountantSupplies.tsx`).
+- Роль accountant: меню «Приёмки от поставщика», вход сразу туда (`Crm.tsx`, `roles.ts`).
+- Вкладки: Ждут сверки / На корректировке / Подтверждены.
+- Кнопки: подтвердить (в 1С), на корректировку с причиной, печать листа приёмки
+  (`printAcceptanceSheet.ts`) — материал, кол-во, рулоны, подписи.
+- Кладовщик на «Отгрузка от поставщика» видит бейдж статуса и причину,
+  если сверки нет; кнопка «Лист приёмки».
+
+### C2. Поставки от поставщика — экран не кучный
+`SuppliesCards`, `SuppliesFilters`, `CreateSupplyDialog`, `FromSupplierContent`:
+воздух, фильтры, карточки. В рулоне кроме цены за 1 пог.м. — полная цена рулона.
+
+### C3. Себестоимость
+`FabricCostCard`, `applyFabricPrice.ts`, `ProductCost.tsx`:
+последние 5 поставок с ценой за пог.м.; правка метража админом пересчитывает
+цену метра, цену рулона и себестоимость.
+
+### C4. Интеграции
+Виджет «1С:Бухгалтерия» на `/crm/settings/marketplace-integrations`
+(`accountingIntegrationsConfig`, `MarketplaceIntegrationCard`).
+
+### C5. Живой цех
+По умолчанию свёрнут в строку со счётчиками; «Развернуть» раскрывает,
+выбор запоминается. Сетка сотрудников на десктопе.
+
+### C6. Конвейер / оверлок
+Вкладка оверлок без ручного «взять на оверлок».
+Раскроенные обычные заказы туда не падают.
+«Передать на пошив» без тесьмы; «Завершить полностью» — с тесьмой.
+
+### C7. Магазин вариков
+Быстрее картинки: `ShopCardImage.tsx`, `shopCardImage.ts`
+(превью, не ждать полный оригинал на витрине).
+
+---
+
+## Часть D — проверка после деплоя
+
+### Миграции и 1С
+1. В интеграциях есть виджет 1С:Бухгалтерия, сохраняется URL/логин/пароль.
+2. Новый поставщик / новый сотрудник / новый материал — строка в onec_outbox.
+3. Бухгалтер (роль accountant) после входа сразу на «Приёмки от поставщика».
+4. Кладовщик завершил приёмку → печатает лист (кол-во + рулоны).
+5. Бухгалтер подтверждает → поставка confirmed, в очереди supplier_supply
+   и warehouse_stock. Если 1С выключена — CRM не откатывается, onec_error/last_error.
+6. Бухгалтер «на корректировку» с текстом → кладовщик видит причину, статуса
+   подтверждения нет; после правки снова «ждёт сверки».
+
+### Зарплата
+7. Финансы → «Работа без начисления»: у Коротаевой пропали 4 раскроя
+   с переданным кроем (56355927-0387-3 и соседи). «Доначислить» по ним больше нет.
+8. У Привезенцевой 2 раскроя Лен (2000068625428-54, 44684256-0332-3) остаются —
+   это живые дыры, их можно доначислить.
+9. Пошив на стикеровке (ещё не «Готовые») в блоке не висит.
+
+### Поставки / себестоимость / конвейер
+10. В рулоне приёмки видна полная цена, не только за пог.м.
+11. Себестоимость товара: у ткани последние 5 поставок с ценой за метр;
+    правка метража меняет цену метра и карточку.
+12. Закройщик с 20 на руках не берёт 21–22.
+13. «Передать на пошив» с оверлока не списывает тесьму.
+14. Живой цех свёрнут по умолчанию, раскрывается.
+15. Витрина вариков грузит превью, карточки не ждут тяжёлые оригиналы.
+
+---
+
+## Отчёт
+
+Коротко напиши:
+1. Миграции V0691 / V0692: накатили / уже были.
+2. Каждая функция из таблицы A: Deploy ок, URL тот же.
+3. Новая onec: URL и запись в func2url.json.
+4. Фронт опубликован.
+5. Что из проверки D не прошло — с текстом ошибки.

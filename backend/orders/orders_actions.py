@@ -87,6 +87,14 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                     'body': json.dumps({'error': 'Укажите userId и workshopId'}),
                 }
 
+            # Двойное нажатие на планшете отправляет два запроса подряд. Без блокировки
+            # оба видели «на руках 0» и выдавали по стеку — закройщица получала 40.
+            # Блокировка на человека держится до конца транзакции.
+            cur.execute(
+                "SELECT pg_advisory_xact_lock(hashtext(%s))",
+                (f'take_stack_user_{int(user_id)}',),
+            )
+
             # Брать работу с конвейера можно только на открытой смене — иначе выработка
             # и зарплата повиснут вне смены, а в цехе будет непонятно, кто работает.
             cur.execute(
@@ -111,11 +119,21 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
             # именно на это и жаловались закройщицы. Условие ниже совпадает с тем,
             # по которому очередь прячет отменённые.
             cur.execute(
-                "SELECT COUNT(*) FROM orders WHERE assigned_user_id = %s "
-                f"AND sewing_status = 'На раскрое' AND NOT ({cancelled_sql('')})",
+                "SELECT COUNT(*), "
+                f"       COUNT(*) FILTER (WHERE NOT ({cancelled_sql('')})) "
+                "FROM orders WHERE assigned_user_id = %s AND sewing_status = 'На раскрое'",
                 (int(user_id),),
             )
-            unfinished = cur.fetchone()[0]
+            in_hands_total, unfinished = cur.fetchone()
+            in_hands_total = int(in_hands_total or 0)
+            unfinished = int(unfinished or 0)
+            # ОТМЕНЁННЫЕ В СТЕКЕ ЗАНИМАЮТ МЕСТО В ЛИМИТЕ.
+            #
+            # Кнопку «Взять стек» они не запирают (см. выше), но и сверх предела
+            # выдавать нельзя: такой заказ закройщица всё равно раскраивает — он
+            # лежит во вкладке «Отменённые с кроем». Раньше он в лимит не входил:
+            # два таких заказа плюс новый стек давали 22 вместо 20.
+            cancelled_in_hands = in_hands_total - unfinished
 
             cur.execute(
                 "SELECT value FROM workshop_settings WHERE workshop_id = %s AND key = 'max_quantity_orders_to_cutter'",
@@ -127,32 +145,34 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                     "SELECT value FROM system_settings WHERE key = 'max_quantity_orders_to_cutter'"
                 )
                 row = cur.fetchone()
-            stack_size = int(row[0]) if row and row[0] else 20
+            stack_limit = int(row[0]) if row and row[0] else 20
 
-            if single_mode:
-                # «Взять 1 заказ» — добор поштучно ДО общего лимита закройщика.
-                #
-                # Раньше любой незакрытый заказ полностью запирал кнопку: взял стек,
-                # раскроил половину — и добрать одну вещь под остаток рулона уже
-                # нельзя, пока не закроешь всё до последнего. Закройщики упирались в
-                # это каждый день: ткань на столе есть, работа стоит.
-                #
-                # Теперь считаем не «есть ли незакрытые», а сколько их: пока на руках
-                # меньше лимита — можно добирать по одной. Сам лимит остаётся прежним
-                # (max_quantity_orders_to_cutter, сейчас 20): он защищает от того,
-                # чтобы один человек не разобрал всю очередь цеха.
-                if unfinished >= stack_size:
-                    return {
-                        'statusCode': 409,
-                        'headers': headers,
-                        'body': json.dumps({
-                            'error': f'У вас уже {unfinished} нераскроенных заказов — '
-                                     f'это предел ({stack_size} шт.). Раскроите часть, '
-                                     f'и можно будет добрать ещё'
-                        }, ensure_ascii=False),
-                    }
-                stack_size = 1
-            elif unfinished > 0:
+            # «Взять 1 заказ» — добор поштучно ДО общего лимита закройщика.
+            #
+            # Раньше любой незакрытый заказ полностью запирал кнопку: взял стек,
+            # раскроил половину — и добрать одну вещь под остаток рулона уже
+            # нельзя, пока не закроешь всё до последнего. Закройщики упирались в
+            # это каждый день: ткань на столе есть, работа стоит.
+            #
+            # Лимит (max_quantity_orders_to_cutter, сейчас 20) — на ВСЁ, что на
+            # руках, вместе с добранным: и для стека, и для добора по одному.
+            room = stack_limit - in_hands_total
+            if room <= 0:
+                return {
+                    'statusCode': 409,
+                    'headers': headers,
+                    'body': json.dumps({
+                        'error': f'У вас на руках уже {in_hands_total} заказов — это предел '
+                                 f'({stack_limit} шт.)'
+                                 + (f', из них {cancelled_in_hands} отменены покупателем. '
+                                    f'Раскроите их во вкладке «Отменённые с кроем»'
+                                    if cancelled_in_hands else
+                                    '. Раскроите часть, и можно будет добрать ещё'),
+                    }, ensure_ascii=False),
+                }
+            stack_size = 1 if single_mode else room
+
+            if not single_mode and unfinished > 0:
                 # Стек берётся только «с чистого листа»: иначе на закройщике окажется
                 # два десятка заказов поверх недоделанных, и очередь цеха встанет.
                 return {
@@ -268,6 +288,17 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                 f" AND NOT ({ozon_split_purchase_sql('')}) "
                 if single_mode else " "
             )
+            # Связка Яндекса выдаётся целиком. Поверх того, что уже на руках
+            # (в том числе отменённых), её не даём — 2 отменённых + связка легко
+            # дают 22 вместо 20. На пустых руках берём только связку, которая
+            # сама влезает в лимит: иначе закройщик периодически получает 22.
+            if not single_mode and in_hands_total > 0:
+                single_sql += " AND (group_key IS NULL OR COALESCE(group_size, 1) <= 1) "
+            elif not single_mode:
+                single_sql += (
+                    " AND (group_key IS NULL OR COALESCE(group_size, 1) <= 1 "
+                    f"OR COALESCE(group_size, 1) <= {int(room)}) "
+                )
             # Отсечка OZON действует и на раскрое: резать во второй половине дня то,
             # что всё равно не уедет сегодня, — значит копить крой впустую, пока
             # заказы WB и Яндекса ждут. Это порядок, а не запрет: кончились заказы
@@ -364,7 +395,16 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                     "AND material IN (" + names_csv + ") "
                     "FOR UPDATE SKIP LOCKED"
                 )
-                order_ids = sorted({r[0] for r in cur.fetchall()} | set(order_ids))
+                group_ids = sorted({r[0] for r in cur.fetchall()})
+                # group_size в заказе иногда меньше фактического числа вещей.
+                # Если связка не влезает — оставляем её в очереди и берём
+                # обычные заказы из той же выборки, без вещей этой связки.
+                if len(group_ids) > room:
+                    skipped_key = first_group_key
+                    first_group_key = None
+                    order_ids = [r[0] for r in picked if r[1] != skipped_key][:room]
+                else:
+                    order_ids = group_ids
 
             # ОТПРАВЛЕНИЯ ОДНОЙ ПОКУПКИ OZON — ОДНОМУ ЗАКРОЙЩИКУ.
             #
@@ -400,9 +440,10 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                     "  FROM orders WHERE id IN (" + ids_for_siblings + ") "
                     "    AND marketplace = 'OZON' AND ozon_posting_number IS NOT NULL) "
                     f"AND id NOT IN ({ids_for_siblings}) "
-                    # Предохранитель от аномалии: покупка на сотню отправлений не
-                    # должна одна забить весь стек закройщика.
-                    "LIMIT 20 "
+                    # Не больше остатка места: иначе добор соседей снова
+                    # раздует стек сверх лимита, а лишние строки только
+                    # заблокируют очередь другим закройщикам.
+                    f"LIMIT {int(room)} "
                     "FOR UPDATE SKIP LOCKED"
                 )
                 siblings = [r[0] for r in cur.fetchall()]
@@ -448,11 +489,13 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                         if key in seen_keys:
                             groups[seen_keys[key]].append(sid)
 
-                    # Первую покупку отдаём всегда, даже если она одна перекрывает
-                    # предел: иначе закройщик не получил бы вообще ничего и встал.
+                    # Набираем покупки, пока влезают. Покупку, которая не влезает,
+                    # целиком оставляем в очереди — резать её нельзя. Сверх лимита
+                    # не выдаём даже первую: иначе 20 из выборки + 2 соседа OZON
+                    # снова дают 22 в стеке.
                     limited_ids = []
                     for group in groups:
-                        if limited_ids and len(limited_ids) + len(group) > stack_size:
+                        if len(limited_ids) + len(group) > stack_size:
                             continue
                         limited_ids.extend(group)
                     order_ids = sorted(set(limited_ids))
@@ -523,6 +566,11 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                             ensure_ascii=False,
                         ),
                     }
+
+            # Последняя линия: на руках + выдаём не больше лимита. Связку
+            # Яндекса, которая целиком влезла, не режем. Всё остальное — режем.
+            if order_ids and len(order_ids) > room and not first_group_key:
+                order_ids = order_ids[:room]
 
             if not order_ids:
                 # В режиме одного заказа очередь может состоять из связок Яндекса
@@ -2056,15 +2104,24 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
 
             if not row:
                 # Швее, которая может сесть за оверлок, в общую очередь добавляем
-                # необмётанные вещи, которые ещё никто не взял. Связки Яндекса сюда
-                # не подмешиваем: их шьёт одна швея целиком, и рвать связку обмёткой
-                # отдельной вещи нельзя — их берут на оверлок вручную.
+                # необмётанные вещи. Раньше связки Яндекса сюда не пускали — их
+                # предлагали брать руками со вкладки «Оверлок». Ручного взятия
+                # больше нет: вещь выдаёт только эта кнопка, в том числе из связки.
+                # После обмётки она вернётся в «Раскроено» и связка сошьётся целиком.
+                #
+                # Брошенную вещь (швея закрыла смену, не сдав обмётку) тоже
+                # отдаём следующей — иначе она навсегда зависла бы на оверлоке.
                 queue_where = list(where_parts)
                 if overlock_ok:
-                    queue_where = [
+                    overlock_free_sql = (
                         "(requires_overlock = false OR overlocked_at IS NOT NULL "
-                        " OR (overlock_user_id IS NULL AND group_key IS NULL))"
-                        if p == overlock_strict_sql else p
+                        " OR overlock_user_id IS NULL "
+                        " OR NOT EXISTS (SELECT 1 FROM shift_sessions ss "
+                        "                WHERE ss.user_id = orders.overlock_user_id "
+                        "                  AND ss.closed_at IS NULL))"
+                    )
+                    queue_where = [
+                        overlock_free_sql if p == overlock_strict_sql else p
                         for p in where_parts
                     ]
 
@@ -2730,6 +2787,18 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                 }
 
             if action == 'take_overlock':
+                # Швея не выбирает вещь из списка: оверлок выдаёт «Получить новый
+                # заказ». Ручное взятие оставляем только администратору — разобрать
+                # завал или передать вещь, если очередь сбилась.
+                if actor_row[0] != 'admin':
+                    return {
+                        'statusCode': 403,
+                        'headers': headers,
+                        'body': json.dumps({
+                            'error': 'Заказы на оверлок выдаёт кнопка «Получить новый заказ» '
+                                     'во вкладке «Раскроено». Из списка вещь не берут',
+                        }, ensure_ascii=False),
+                    }
                 if ov_done_at:
                     return {
                         'statusCode': 409,

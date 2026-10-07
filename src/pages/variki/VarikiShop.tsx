@@ -1,4 +1,6 @@
 import { useEffect, useState } from 'react';
+import ShopCardImage from '@/components/crm/variki/ShopCardImage';
+import { shopCardImageUrl } from '@/lib/shopCardImage';
 import { useNavigate } from 'react-router-dom';
 import CrmLayout from '@/components/crm/CrmLayout';
 import { Badge } from '@/components/ui/badge';
@@ -108,6 +110,25 @@ const VarikiShop = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id]);
 
+  // Первые карточки видны сразу — начинаем качать фото, не дожидаясь отрисовки
+  // сетки. Иначе браузер ставит их в очередь после вёрстки и они вспыхивают позже.
+  useEffect(() => {
+    const hrefs = items
+      .map((item) => item.imageUrl)
+      .filter((url): url is string => Boolean(url))
+      .slice(0, 6)
+      .map((url) => shopCardImageUrl(url));
+    const links = hrefs.map((href) => {
+      const link = document.createElement('link');
+      link.rel = 'preload';
+      link.as = 'image';
+      link.href = href;
+      document.head.appendChild(link);
+      return link;
+    });
+    return () => links.forEach((link) => link.remove());
+  }, [items]);
+
   const handleBuy = async () => {
     if (!confirmItem || !user?.id) return;
     // Дату проверяем и здесь: без неё админ не сможет забронировать место,
@@ -193,7 +214,7 @@ const VarikiShop = () => {
         ) : (
           <>
             <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-              {items.map((item) => {
+              {items.map((item, index) => {
                 const enough = balance >= item.price;
                 // У подарков с записью на дату склада нет вовсе: сертификат
                 // бронирует админ под конкретный день. Считать их «закончившимися»
@@ -210,10 +231,10 @@ const VarikiShop = () => {
                         поверх воды на нём оживляют карточку. */}
                     {item.imageUrl && (
                       <div className="relative h-40 shrink-0 overflow-hidden">
-                        <img
+                        <ShopCardImage
                           src={item.imageUrl}
                           alt={item.title}
-                          loading="lazy"
+                          priority={index < 6}
                           className="h-full w-full object-cover"
                         />
                         {item.animation === 'spa' && <SpaAnimation />}

@@ -3,7 +3,12 @@ import { Badge } from '@/components/ui/badge';
 import { useNavigate } from 'react-router-dom';
 import Icon from '@/components/ui/icon';
 import type { Shipment } from '@/lib/shipmentsApi';
-import { formatDate, statusVariant } from '@/components/crm/shipments/fromSupplierShared';
+import {
+  accountantStatusLabel,
+  accountantStatusVariant,
+  statusVariant,
+} from '@/components/crm/shipments/fromSupplierShared';
+import { formatDate } from '@/lib/dateUtils';
 import { formatQuantity } from '@/lib/formatQuantity';
 
 interface SuppliesCardsProps {
@@ -11,16 +16,15 @@ interface SuppliesCardsProps {
   isAdmin: boolean;
   canEditPending: boolean;
   onOpenReview: (shipmentId: number) => void;
-  /** Открыть окно ввода логистики: сумму перевозки дописывают после приёмки. */
   onOpenLogistics: (shipmentId: number) => void;
   onPrintShipmentBarcodes: (shipmentId: number) => void;
+  onPrintAcceptanceSheet: (shipmentId: number) => void;
   onSetDeleteId: (id: number | null) => void;
 }
 
 /**
- * Мобильный вид списка приёмок от поставщика. Таблица на 9 колонок на телефоне
- * уезжала вбок вместе с кнопкой «Проверить» — её просто не было видно.
- * Здесь всё в столбик, действия внизу карточки и всегда на экране.
+ * Список приёмок карточками — и на телефоне, и на десктопе.
+ * Таблица из пяти колонок сжимала даты, поставщика и кнопки в одну кучу.
  */
 const SuppliesCards = ({
   shipments,
@@ -29,6 +33,7 @@ const SuppliesCards = ({
   onOpenReview,
   onOpenLogistics,
   onPrintShipmentBarcodes,
+  onPrintAcceptanceSheet,
   onSetDeleteId,
 }: SuppliesCardsProps) => {
   const navigate = useNavigate();
@@ -37,108 +42,110 @@ const SuppliesCards = ({
     <div className="space-y-3">
       {shipments.map((s) => {
         const isPending = s.status === 'Новый';
+        const supplier = s.itemSuppliers || s.supplierName || '—';
         return (
-          <div key={s.id} className="min-w-0 overflow-hidden rounded-lg border border-border bg-card p-3">
-            <div className="flex items-start justify-between gap-2">
-              <div className="min-w-0">
-                <div className="font-semibold">Приёмка #{s.id}</div>
-                <div className="text-xs text-muted-foreground">
-                  {s.itemsCount} поз., {formatQuantity(s.totalQuantity)} метр/шт
-                </div>
+          <article key={s.id} className="rounded-xl border border-border bg-card p-4 sm:p-5">
+            <div className="space-y-3">
+              <div className="flex flex-wrap items-center gap-2">
+                <h2 className="text-base font-semibold">Приёмка #{s.id}</h2>
+                <Badge variant={statusVariant[s.status] || 'secondary'}>
+                  {isPending ? 'Ожидает проверки' : s.status}
+                </Badge>
+                {s.accountantStatus && (
+                  <Badge variant={accountantStatusVariant[s.accountantStatus] || 'outline'}>
+                    {accountantStatusLabel[s.accountantStatus] || s.accountantStatus}
+                  </Badge>
+                )}
               </div>
-              <Badge
-                variant={statusVariant[s.status] || 'secondary'}
-                className="max-w-[50%] shrink-0 whitespace-normal text-center"
-              >
-                {isPending ? 'Ожидает подтверждения' : s.status}
-              </Badge>
-            </div>
-
-            <div className="mt-2 space-y-1 text-sm">
-              <div className="break-words">
-                <span className="text-muted-foreground">Поставщик: </span>
-                {s.itemSuppliers || s.supplierName || '—'}
-              </div>
-              <div>
-                <span className="text-muted-foreground">Кладовщик: </span>
-                {s.createdByName || '—'}
-              </div>
-              <div>
-                <span className="text-muted-foreground">Создано: </span>
-                {formatDate(s.createdAt)}
-              </div>
-              {s.completedAt && (
-                <div>
-                  <span className="text-muted-foreground">Принято: </span>
-                  {formatDate(s.completedAt)}
-                </div>
-              )}
+              <p className="text-sm text-foreground">{supplier}</p>
+              <p className="text-sm text-muted-foreground">
+                {s.itemsCount} поз. · {formatQuantity(s.totalQuantity)} метр/шт
+                {s.createdByName ? ` · ${s.createdByName}` : ''}
+              </p>
+              <p className="text-xs text-muted-foreground">
+                Создана {formatDate(s.createdAt)}
+                {s.completedAt ? ` · принята ${formatDate(s.completedAt)}` : ''}
+              </p>
               {s.comment && (
-                <div className="break-words">
-                  <span className="text-muted-foreground">Комментарий: </span>
-                  {s.comment}
-                </div>
+                <p className="max-w-2xl text-xs text-muted-foreground">{s.comment}</p>
               )}
-            </div>
-
-            {!isPending && (
-              <Button
-                variant="link"
-                size="sm"
-                className="mt-1 h-auto px-0 py-0 text-xs"
-                onClick={() => navigate(`/crm/shipments/from-supplier/${s.id}`)}
-              >
-                <Icon name="ChevronRight" size={12} className="mr-1" />
-                Открыть рулоны ({s.itemsCount})
-              </Button>
-            )}
-
-            <div className="mt-3 flex min-w-0 flex-wrap gap-2">
-              {isPending && (isAdmin || canEditPending) && (
-                <Button
-                  size="sm"
-                  className="min-w-0 flex-1"
-                  variant={isAdmin ? 'default' : 'outline'}
-                  onClick={() => onOpenReview(s.id)}
-                >
-                  <Icon name={isAdmin ? 'ClipboardCheck' : 'Pencil'} size={14} className="mr-1" />
-                  {isAdmin ? 'Проверить и принять' : 'Изменить'}
-                </Button>
+              {s.accountantStatus === 'correction' && s.accountantComment && (
+                <p className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
+                  Бухгалтер не подтвердила. Причина: {s.accountantComment}
+                </p>
               )}
-              {/* Логистику дописывают после приёмки: счёт за машину приходит позже.
-                  Пропущенную подсвечиваем — без неё себестоимость метра занижена. */}
-              {isAdmin && !isPending && (
+              {s.accountantStatus === 'pending' && (
+                <p className="text-xs text-muted-foreground">
+                  Напечатайте лист приёмки и отнесите бухгалтеру в офис
+                </p>
+              )}
+              <div className="flex flex-wrap gap-2">
+                {isPending && (isAdmin || canEditPending) && (
+                  <Button
+                    size="sm"
+                    variant={isAdmin ? 'default' : 'outline'}
+                    onClick={() => onOpenReview(s.id)}
+                  >
+                    <Icon name={isAdmin ? 'ClipboardCheck' : 'Pencil'} size={14} className="mr-1.5" />
+                    {isAdmin ? 'Проверить' : 'Изменить'}
+                  </Button>
+                )}
+                {!isPending && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => navigate(`/crm/shipments/from-supplier/${s.id}`)}
+                  >
+                    <Icon name="Layers" size={14} className="mr-1.5" />
+                    Рулоны · {s.itemsCount}
+                  </Button>
+                )}
+                {isAdmin && !isPending && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className={
+                      s.logisticsCost
+                        ? undefined
+                        : 'border-amber-400 text-amber-800 hover:bg-amber-50'
+                    }
+                    onClick={() => onOpenLogistics(s.id)}
+                  >
+                    <Icon name="Truck" size={14} className="mr-1.5" />
+                    {s.logisticsCost
+                      ? `${s.logisticsCost.toLocaleString('ru-RU')} ₽`
+                      : 'Логистика'}
+                  </Button>
+                )}
                 <Button
-                  size="sm"
                   variant="outline"
-                  className={
-                    s.logisticsCost
-                      ? undefined
-                      : 'border-amber-400 text-amber-800 hover:bg-amber-50'
-                  }
-                  onClick={() => onOpenLogistics(s.id)}
+                  size="sm"
+                  onClick={() => onPrintAcceptanceSheet(s.id)}
                 >
-                  <Icon name="Truck" size={14} className="mr-1" />
-                  {s.logisticsCost
-                    ? `${s.logisticsCost.toLocaleString('ru-RU')} ₽`
-                    : 'Логистика'}
+                  <Icon name="FileText" size={14} className="mr-1.5" />
+                  Лист приёмки
                 </Button>
-              )}
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => onPrintShipmentBarcodes(s.id)}
-              >
-                <Icon name="Barcode" size={14} className="mr-1" />
-                Стикеры
-              </Button>
-              {isAdmin && (
-                <Button variant="ghost" size="icon" onClick={() => onSetDeleteId(s.id)}>
-                  <Icon name="Trash2" size={14} />
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => onPrintShipmentBarcodes(s.id)}
+                >
+                  <Icon name="Barcode" size={14} className="mr-1.5" />
+                  Стикеры
                 </Button>
-              )}
+                {isAdmin && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="text-muted-foreground hover:text-destructive"
+                    onClick={() => onSetDeleteId(s.id)}
+                  >
+                    <Icon name="Trash2" size={14} />
+                  </Button>
+                )}
+              </div>
             </div>
-          </div>
+          </article>
         );
       })}
     </div>

@@ -8,7 +8,8 @@ export type MarketplaceCode =
   | 'yandex_market'
   | 'megamarket'
   | 'lemana_pro'
-  | 'avito';
+  | 'avito'
+  | 'onec_buh';
 
 export interface MarketplaceIntegration {
   marketplaceCode: MarketplaceCode;

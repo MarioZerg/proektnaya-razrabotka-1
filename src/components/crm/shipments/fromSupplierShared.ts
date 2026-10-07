@@ -43,8 +43,32 @@ export const calcCostPerUnit = (
 
 export { formatDateTime as formatDate } from '@/lib/dateUtils';
 
+export const moneyRub = (n: number) =>
+  `${n.toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ₽`;
+
+/** Полная себестоимость рулона: цена единицы × метраж в строке приёмки. */
+export const rollTotalCost = (
+  costPerUnit: number | null | undefined,
+  quantity: number | null | undefined,
+): number | null => {
+  if (costPerUnit == null || quantity == null) return null;
+  return costPerUnit * quantity;
+};
+
 export const statusVariant: Record<string, 'secondary' | 'default' | 'outline' | 'destructive'> = {
   Новый: 'secondary',
   Завершено: 'default',
   Отклонена: 'destructive',
+};
+
+export const accountantStatusLabel: Record<string, string> = {
+  pending: 'Ждёт бухгалтера',
+  confirmed: 'Бухгалтер подтвердила',
+  correction: 'На корректировке',
+};
+
+export const accountantStatusVariant: Record<string, 'secondary' | 'default' | 'outline' | 'destructive'> = {
+  pending: 'outline',
+  confirmed: 'default',
+  correction: 'destructive',
 };

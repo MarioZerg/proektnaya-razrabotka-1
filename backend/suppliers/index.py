@@ -3,6 +3,8 @@ import os
 
 import psycopg2
 
+from onec_flush import flush_onec_outbox
+
 
 def handler(event: dict, context) -> dict:
     """Управляет справочником поставщиков.
@@ -127,6 +129,7 @@ def handler(event: dict, context) -> dict:
                     f"RETURNING id"
                 )
                 new_id = cur.fetchone()[0]
+                flush_onec_outbox(cur)
                 conn.commit()
                 return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'id': new_id})}
 

@@ -44,12 +44,17 @@ const MarketplaceIntegrationCard = ({
 
   return (
     <Card className="border-border shadow-none">
-      <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-3">
-        <div className="flex items-center gap-2">
-          <CardTitle className={`text-base font-bold ${config.className}`}>{config.name}</CardTitle>
-          <Badge variant={isConnected ? 'default' : 'secondary'} className={isConnected ? 'bg-emerald-600 hover:bg-emerald-600' : ''}>
-            {isConnected ? 'Подключено' : 'Не подключено'}
-          </Badge>
+      <CardHeader className="flex flex-row items-start justify-between space-y-0 pb-3">
+        <div className="min-w-0 space-y-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <CardTitle className={`text-base font-bold ${config.className}`}>{config.name}</CardTitle>
+            <Badge variant={isConnected ? 'default' : 'secondary'} className={isConnected ? 'bg-emerald-600 hover:bg-emerald-600' : ''}>
+              {isConnected ? 'Подключено' : 'Не подключено'}
+            </Badge>
+          </div>
+          {config.hint && (
+            <p className="text-xs font-normal text-muted-foreground">{config.hint}</p>
+          )}
         </div>
         <Switch
           checked={isEnabled}

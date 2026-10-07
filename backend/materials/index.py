@@ -4,6 +4,7 @@ import os
 import psycopg2
 
 from authz import AuthError, auth_error_response, require_admin
+from onec_flush import flush_onec_outbox
 
 
 def handler(event: dict, context) -> dict:
@@ -256,6 +257,7 @@ def handler(event: dict, context) -> dict:
                 new_id = cur.fetchone()[0]
                 if 'shops' in body_data:
                     save_material_shops(new_id, body_data.get('shops'))
+                flush_onec_outbox(cur)
                 conn.commit()
                 return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'id': new_id})}
 

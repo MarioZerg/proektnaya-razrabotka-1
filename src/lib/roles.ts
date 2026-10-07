@@ -404,6 +404,11 @@ const managerNav: NavItem[] = [
  */
 const accountantNav: NavItem[] = [
   {
+    label: 'Приёмки от поставщика',
+    icon: 'ClipboardCheck',
+    path: '/crm/shipments/accountant-supplies',
+  },
+  {
     label: 'Себестоимость товара',
     icon: 'Calculator',
     path: '/crm/analytics/product-cost',
@@ -517,7 +522,7 @@ const adminNav: NavItem[] = [
       { label: 'Материалы', path: '/crm/settings/materials' },
       { label: 'Поставщики', path: '/crm/settings/suppliers' },
       { label: 'Товары на маркетплейсе', path: '/crm/settings/marketplace-items' },
-      { label: 'Интеграции маркетплейсов', path: '/crm/settings/marketplace-integrations' },
+      { label: 'Интеграции', path: '/crm/settings/marketplace-integrations' },
       { label: 'Планировщик', path: '/crm/settings/scheduler' },
       { label: 'Полки на складе', path: '/crm/settings/shelves' },
       { label: 'Вешалки', path: '/crm/settings/hangers' },

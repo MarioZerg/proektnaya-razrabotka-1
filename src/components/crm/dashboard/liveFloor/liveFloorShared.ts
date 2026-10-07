@@ -157,6 +157,42 @@ export const ordersInHands = (person: LivePerson, orders: LiveOrder[]) => {
   return [];
 };
 
+/** Через сколько минут без единого действия человек считается простаивающим. */
+export const IDLE_ALERT_MIN = 20;
+
+export interface PersonState {
+  hands: LiveOrder[];
+  working: boolean;
+  idleAlert: boolean;
+  lastAt: string | null;
+  idleMs: number;
+}
+
+/** Работает человек сейчас или простаивает — одно правило для карточки и сводки. */
+export const personState = (
+  person: LivePerson,
+  orders: LiveOrder[],
+  events: { userId: number | null; at: string }[],
+  nowMs: number,
+): PersonState => {
+  const hands = ordersInHands(person, orders);
+  const lastAt = events.find((e) => e.userId === person.id)?.at || null;
+  const lastMs = lastAt ? nowMs - new Date(lastAt).getTime() : null;
+  // У упаковки вещей «в руках» нет — она закрывает их на терминале. Работает,
+  // если что-то упаковала за последние 10 минут.
+  const working =
+    person.role === 'packer' ? lastMs != null && lastMs < 10 * 60000 : hands.length > 0;
+  const idleSince = lastAt || person.shiftOpenedAt;
+  const idleMs = idleSince ? nowMs - new Date(idleSince).getTime() : 0;
+  return {
+    hands,
+    working,
+    idleAlert: !working && idleMs > IDLE_ALERT_MIN * 60000,
+    lastAt,
+    idleMs,
+  };
+};
+
 /** С какого момента вещь на текущем этапе — от этого идёт таймер на фишке. */
 export const stageSince = (o: LiveOrder): string | null => {
   switch (stageOf(o)) {

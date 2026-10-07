@@ -1,5 +1,8 @@
+import base64
 import json
 import os
+import urllib.error
+import urllib.request
 
 import psycopg2
 
@@ -17,6 +20,237 @@ VALID_TYPES = {'from_supplier', 'to_workshop', 'return_to_supplier', 'defect_wri
 
 CLOSED_WORKSHOP_NAMES = ('Цех №2', 'Тестовый цех (QA)')
 KEEP_WORKSHOP_NAME = 'Цех №1'
+
+
+def enqueue_onec(cur, entity, entity_id, payload):
+    """Кладём документ в очередь 1С. Если миграции ещё нет — не роняем приёмку."""
+    cur.execute('SAVEPOINT onec_enq')
+    try:
+        cur.execute(
+            "INSERT INTO onec_outbox (entity, entity_id, payload) VALUES (%s, %s, %s::jsonb)",
+            (entity, int(entity_id), json.dumps(payload, ensure_ascii=False, default=str)),
+        )
+        cur.execute('RELEASE SAVEPOINT onec_enq')
+    except Exception:
+        cur.execute('ROLLBACK TO SAVEPOINT onec_enq')
+
+
+def _load_onec_creds(cur):
+    cur.execute(
+        "SELECT is_enabled, credentials FROM marketplace_integrations "
+        "WHERE marketplace_code = 'onec_buh' "
+        "ORDER BY is_enabled DESC, (credentials::text <> '{}') DESC, shop_id LIMIT 1"
+    )
+    row = cur.fetchone()
+    if not row or not row[0]:
+        return None
+    creds = row[1] if isinstance(row[1], dict) else json.loads(row[1] or '{}')
+    base = (creds.get('baseUrl') or '').strip().rstrip('/')
+    if not base:
+        return None
+    return {
+        'baseUrl': base,
+        'username': (creds.get('username') or '').strip(),
+        'password': creds.get('password') or '',
+    }
+
+
+def flush_onec_outbox(cur, limit=20):
+    """Отправляем пачку очереди на URL из виджета 1С. Ошибки 1С не откатывают приёмку."""
+    cur.execute('SAVEPOINT onec_flush')
+    try:
+        creds = _load_onec_creds(cur)
+        if not creds:
+            cur.execute('RELEASE SAVEPOINT onec_flush')
+            return {'sent': 0, 'failed': 0, 'error': '1С не подключена: включите интеграцию и укажите URL'}
+        cur.execute(
+            "SELECT id, entity, entity_id, payload FROM onec_outbox "
+            "WHERE status = 'pending' ORDER BY id LIMIT %s",
+            (limit,),
+        )
+        rows = cur.fetchall()
+        sent = 0
+        failed = 0
+        last_error = None
+        for oid, entity, entity_id, payload in rows:
+            data = payload if isinstance(payload, dict) else json.loads(payload or '{}')
+            body = json.dumps({
+                'source': 'crm',
+                'entity': entity,
+                'id': entity_id,
+                'payload': data,
+            }, ensure_ascii=False, default=str).encode('utf-8')
+            req = urllib.request.Request(
+                creds['baseUrl'],
+                data=body,
+                method='POST',
+                headers={'Content-Type': 'application/json'},
+            )
+            if creds['username']:
+                token = base64.b64encode(
+                    f"{creds['username']}:{creds['password']}".encode('utf-8')
+                ).decode('ascii')
+                req.add_header('Authorization', f'Basic {token}')
+            try:
+                with urllib.request.urlopen(req, timeout=12) as resp:
+                    resp.read()
+                ok, err = True, None
+            except urllib.error.HTTPError as e:
+                raw = e.read().decode('utf-8', errors='replace')[:400]
+                ok, err = False, f'HTTP {e.code}: {raw}'
+            except Exception as e:
+                ok, err = False, str(e)[:400]
+            if ok:
+                cur.execute(
+                    "UPDATE onec_outbox SET status = 'sent', sent_at = now(), "
+                    "last_error = NULL, attempts = attempts + 1 WHERE id = %s",
+                    (oid,),
+                )
+                if entity == 'supplier_supply':
+                    cur.execute(
+                        "UPDATE shipments SET onec_synced_at = now(), onec_error = NULL WHERE id = %s",
+                        (int(entity_id),),
+                    )
+                sent += 1
+            else:
+                last_error = err
+                cur.execute(
+                    "UPDATE onec_outbox SET attempts = attempts + 1, last_error = %s WHERE id = %s",
+                    (err, oid),
+                )
+                if entity == 'supplier_supply':
+                    cur.execute(
+                        "UPDATE shipments SET onec_error = %s WHERE id = %s",
+                        (err, int(entity_id)),
+                    )
+                failed += 1
+        cur.execute('RELEASE SAVEPOINT onec_flush')
+        return {'sent': sent, 'failed': failed, 'error': last_error}
+    except Exception as e:
+        cur.execute('ROLLBACK TO SAVEPOINT onec_flush')
+        return {'sent': 0, 'failed': 0, 'error': str(e)[:400]}
+
+
+def build_supply_onec_payload(cur, shipment_id):
+    """Документ приёмки для 1С: поставщик, позиции, логистика, кто принял."""
+    cur.execute(
+        "SELECT s.id, s.status, s.created_at, s.completed_at, s.comment, "
+        "s.logistics_cost, s.exchange_rate, s.supplier_id, sup.name, cu.full_name "
+        "FROM shipments s "
+        "LEFT JOIN suppliers sup ON sup.id = s.supplier_id "
+        "LEFT JOIN users cu ON cu.id = s.created_by "
+        "WHERE s.id = %s",
+        (int(shipment_id),),
+    )
+    row = cur.fetchone()
+    if not row:
+        return None
+    cur.execute(
+        "SELECT m.id, m.name, m.unit, "
+        "COALESCE(si.total_quantity, si.quantity), si.number_rolls, "
+        "si.price, si.currency, si.cost_per_unit, "
+        "COALESCE(si.supplier_id, %s), COALESCE(isup.name, %s) "
+        "FROM shipment_items si "
+        "LEFT JOIN materials m ON m.id = si.material_id "
+        "LEFT JOIN suppliers isup ON isup.id = si.supplier_id "
+        "WHERE si.shipment_id = %s ORDER BY si.id",
+        (row[7], row[8], int(shipment_id)),
+    )
+    items = []
+    material_ids = set()
+    for r in cur.fetchall():
+        if r[0]:
+            material_ids.add(int(r[0]))
+        items.append({
+            'materialId': r[0],
+            'materialName': r[1],
+            'unit': r[2],
+            'quantity': float(r[3]) if r[3] is not None else 0,
+            'numberRolls': r[4],
+            'price': float(r[5]) if r[5] is not None else None,
+            'currency': r[6],
+            'costPerUnit': float(r[7]) if r[7] is not None else None,
+            'supplierId': r[8],
+            'supplierName': r[9],
+        })
+    stock = []
+    if material_ids:
+        mids = ','.join(str(i) for i in sorted(material_ids))
+        cur.execute(
+            f"SELECT m.id, m.name, m.unit, "
+            f"COALESCE(SUM(r.remaining_quantity) FILTER ("
+            f"  WHERE r.status = 'in_storage' AND r.removed_at IS NULL), 0) "
+            f"FROM materials m "
+            f"LEFT JOIN rolls r ON r.material_id = m.id "
+            f"WHERE m.id IN ({mids}) "
+            f"GROUP BY m.id, m.name, m.unit"
+        )
+        stock = [
+            {
+                'materialId': r[0],
+                'materialName': r[1],
+                'unit': r[2],
+                'quantity': float(r[3]) if r[3] is not None else 0,
+            }
+            for r in cur.fetchall()
+        ]
+    return {
+        'id': row[0],
+        'status': row[1],
+        'createdAt': row[2].isoformat() + 'Z' if row[2] else None,
+        'completedAt': row[3].isoformat() + 'Z' if row[3] else None,
+        'comment': row[4],
+        'logisticsCost': float(row[5]) if row[5] is not None else 0,
+        'exchangeRate': float(row[6]) if row[6] is not None else None,
+        'supplierId': row[7],
+        'supplierName': row[8],
+        'createdByName': row[9],
+        'items': items,
+        'warehouseStock': stock,
+    }
+
+
+def attach_accountant_fields(cur, shipments=None, detail=None):
+    """Поля сверки бухгалтера. Пока миграции нет — список приёмок всё равно открывается."""
+    cur.execute('SAVEPOINT onec_acc')
+    try:
+        if detail is not None:
+            cur.execute(
+                "SELECT accountant_status, accountant_comment, accountant_confirmed_at, "
+                "accu.full_name, onec_synced_at, onec_error "
+                "FROM shipments s "
+                "LEFT JOIN users accu ON accu.id = s.accountant_confirmed_by "
+                "WHERE s.id = %s",
+                (int(detail['id']),),
+            )
+            row = cur.fetchone()
+            if row:
+                detail['accountantStatus'] = row[0]
+                detail['accountantComment'] = row[1]
+                detail['accountantConfirmedAt'] = (row[2].isoformat() + 'Z') if row[2] else None
+                detail['accountantConfirmedByName'] = row[3]
+                detail['onecSyncedAt'] = (row[4].isoformat() + 'Z') if row[4] else None
+                detail['onecError'] = row[5]
+        elif shipments:
+            ids = [s['id'] for s in shipments]
+            cur.execute(
+                "SELECT id, accountant_status, accountant_comment, accountant_confirmed_at, "
+                "onec_synced_at, onec_error FROM shipments WHERE id = ANY(%s)",
+                (ids,),
+            )
+            extra = {r[0]: r for r in cur.fetchall()}
+            for s in shipments:
+                row = extra.get(s['id'])
+                if not row:
+                    continue
+                s['accountantStatus'] = row[1]
+                s['accountantComment'] = row[2]
+                s['accountantConfirmedAt'] = (row[3].isoformat() + 'Z') if row[3] else None
+                s['onecSyncedAt'] = (row[4].isoformat() + 'Z') if row[4] else None
+                s['onecError'] = row[5]
+        cur.execute('RELEASE SAVEPOINT onec_acc')
+    except Exception:
+        cur.execute('ROLLBACK TO SAVEPOINT onec_acc')
 
 
 def remap_closed_workshop_id(cur, workshop_id):
@@ -438,6 +672,7 @@ def handler(event: dict, context) -> dict:
                     'requestedByAdmin': row[19] == 'admin',
                     'items': items,
                 }
+                attach_accountant_fields(cur, detail=detail)
 
                 # РУЛОНЫ ОТ СОРВАВШИХСЯ ПОПЫТОК.
                 #
@@ -459,6 +694,7 @@ def handler(event: dict, context) -> dict:
 
             supplier_filter = params.get('supplier_id')
             status_filter = params.get('status')
+            accountant_status_filter = params.get('accountant_status')
             date_from = params.get('date_from')
             date_to = params.get('date_to')
 
@@ -538,6 +774,12 @@ def handler(event: dict, context) -> dict:
                 }
                 for r in cur.fetchall()
             ]
+            attach_accountant_fields(cur, shipments=shipments)
+            if accountant_status_filter:
+                shipments = [
+                    s for s in shipments
+                    if s.get('accountantStatus') == accountant_status_filter
+                ]
         finally:
             conn.close()
 
@@ -1066,6 +1308,13 @@ def handler(event: dict, context) -> dict:
                     f'Отредактировал позиции поставки #{shipment_id}: сохранено {saved}'
                     + (f', пропущено {len(skipped)}' if skipped else '')
                     + ' — перед подтверждением',
+                )
+                # Кладовщик поправил состав после возврата от бухгалтера —
+                # снова кладём на сверку, причину корректировки снимаем.
+                cur.execute(
+                    "UPDATE shipments SET accountant_status = 'pending', accountant_comment = NULL "
+                    "WHERE id = %s AND accountant_status = 'correction'",
+                    (int(shipment_id),),
                 )
                 conn.commit()
                 return {
@@ -1839,6 +2088,113 @@ def handler(event: dict, context) -> dict:
                 log_action(
                     cur, actor_id, actor_name, 'reject_supply', 'shipment', shipment_id,
                     f'Отклонил поставку #{shipment_id}',
+                )
+                conn.commit()
+                return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True})}
+
+            if action == 'accountant_confirm':
+                # Бухгалтер сверила лист приёмки с фактом — документ уходит в 1С.
+                require_role(cur, event, 'accountant', 'admin')
+                shipment_id = body_data.get('id')
+                if not shipment_id:
+                    return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите id'})}
+                cur.execute(
+                    "SELECT type, accountant_status FROM shipments WHERE id = %s",
+                    (int(shipment_id),),
+                )
+                sh_row = cur.fetchone()
+                if not sh_row:
+                    return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': 'Поставка не найдена'})}
+                if sh_row[0] != 'from_supplier':
+                    return {'statusCode': 409, 'headers': headers, 'body': json.dumps({'error': 'Это не приёмка от поставщика'})}
+                if sh_row[1] == 'confirmed':
+                    return {'statusCode': 409, 'headers': headers, 'body': json.dumps({'error': 'Приёмка уже подтверждена бухгалтером'})}
+
+                payload = build_supply_onec_payload(cur, shipment_id)
+                cur.execute(
+                    "UPDATE shipments SET accountant_status = 'confirmed', "
+                    "accountant_comment = NULL, accountant_confirmed_at = now(), "
+                    "accountant_confirmed_by = %s, onec_error = NULL "
+                    "WHERE id = %s",
+                    (int(actor_id) if actor_id else None, int(shipment_id)),
+                )
+                if payload:
+                    enqueue_onec(cur, 'supplier_supply', shipment_id, payload)
+                    for stock_row in payload.get('warehouseStock') or []:
+                        enqueue_onec(cur, 'warehouse_stock', stock_row['materialId'], stock_row)
+                log_action(
+                    cur, actor_id, actor_name, 'accountant_confirm', 'shipment', shipment_id,
+                    f'Бухгалтер подтвердила приёмку #{shipment_id} — документ в 1С',
+                )
+                onec = flush_onec_outbox(cur)
+                conn.commit()
+                return {
+                    'statusCode': 200,
+                    'headers': headers,
+                    'body': json.dumps({'success': True, 'onec': onec}, ensure_ascii=False),
+                }
+
+            if action == 'accountant_correction':
+                require_role(cur, event, 'accountant', 'admin')
+                shipment_id = body_data.get('id')
+                comment = (body_data.get('comment') or '').strip()
+                if not shipment_id:
+                    return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите id'})}
+                if not comment:
+                    return {
+                        'statusCode': 400,
+                        'headers': headers,
+                        'body': json.dumps({'error': 'Напишите, что исправить в приёмке'}),
+                    }
+                cur.execute(
+                    "SELECT type, accountant_status FROM shipments WHERE id = %s",
+                    (int(shipment_id),),
+                )
+                sh_row = cur.fetchone()
+                if not sh_row:
+                    return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': 'Поставка не найдена'})}
+                if sh_row[0] != 'from_supplier':
+                    return {'statusCode': 409, 'headers': headers, 'body': json.dumps({'error': 'Это не приёмка от поставщика'})}
+                if sh_row[1] == 'confirmed':
+                    return {
+                        'statusCode': 409,
+                        'headers': headers,
+                        'body': json.dumps({'error': 'Подтверждённую приёмку на корректировку не вернуть'}),
+                    }
+                cur.execute(
+                    "UPDATE shipments SET accountant_status = 'correction', "
+                    "accountant_comment = %s, accountant_confirmed_at = NULL, "
+                    "accountant_confirmed_by = NULL "
+                    "WHERE id = %s",
+                    (comment, int(shipment_id)),
+                )
+                log_action(
+                    cur, actor_id, actor_name, 'accountant_correction', 'shipment', shipment_id,
+                    f'Бухгалтер вернула приёмку #{shipment_id} на корректировку: {comment}',
+                )
+                conn.commit()
+                return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True})}
+
+            if action == 'accountant_resubmit':
+                require_auth(cur, event)
+                shipment_id = body_data.get('id')
+                if not shipment_id:
+                    return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите id'})}
+                cur.execute(
+                    "UPDATE shipments SET accountant_status = 'pending', accountant_comment = NULL "
+                    "WHERE id = %s AND type = 'from_supplier' AND accountant_status = 'correction' "
+                    "RETURNING id",
+                    (int(shipment_id),),
+                )
+                if not cur.fetchone():
+                    return {
+                        'statusCode': 409,
+                        'headers': headers,
+                        'body': json.dumps({'error': 'На сверку можно вернуть только приёмку с корректировкой'}),
+                    }
+                log_action(
+                    cur, actor_id, actor_name, 'accountant_resubmit', 'shipment', shipment_id,
+                    f'Кладовщик отправил приёмку #{shipment_id} бухгалтеру повторно',
                 )
                 conn.commit()
                 return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True})}

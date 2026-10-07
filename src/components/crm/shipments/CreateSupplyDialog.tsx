@@ -46,10 +46,8 @@ const CreateSupplyDialog = ({
     <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
       <div className="min-w-0">
         <h1 className="text-xl font-bold">Отгрузка от поставщика</h1>
-        <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
-          Приехала машина — указали материал, от кого приехал и сколько рулонов.
-          Штрихкоды выдаются сразу: стикеры можно печатать и клеить при разгрузке.
-          Материал появится на складе после проверки администратором
+        <p className="mt-1 text-sm text-muted-foreground">
+          Стикеры печатаются сразу, на склад ткань встанет после проверки
         </p>
       </div>
       <Dialog open={open} onOpenChange={onOpenChange}>

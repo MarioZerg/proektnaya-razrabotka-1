@@ -1,3 +1,5 @@
+import { fetchShipmentDetail, fetchShipments } from '@/lib/shipmentsApi';
+
 const PRODUCT_COST_URL = 'https://functions.poehali.dev/7e85cd3d-e5cd-44e2-a803-5ff07584de12';
 
 /** POEHALI: себестоимость. FRONTEND-ONLY: сбой GET не писать как «тканей не найдено». */
@@ -12,8 +14,17 @@ export interface CostMaterial {
   quantity: number;
   pricePerUnit: number;
   sum: number;
-  /** Откуда взята цена: прайс поставщика, рулоны на складе или нигде. */
-  priceSource: 'supplier' | 'rolls' | 'none';
+  /** Откуда взята цена: прайс поставщика, рулоны на складе, поставка или нигде. */
+  priceSource: 'supplier' | 'rolls' | 'supply' | 'none';
+}
+
+/** Фактическая цена метра из принятой поставки. */
+export interface MaterialSupplyPrice {
+  shipmentId: number;
+  completedAt: string | null;
+  supplierName: string;
+  costPerUnit: number;
+  quantity: number;
 }
 
 /**
@@ -129,6 +140,8 @@ export interface CostResponse {
   workshops: { id: number; name: string }[];
   sold: SoldUnits;
   manager: ManagerCommission | null;
+  /** Последние приёмки по id материала — чтобы подставить цену метра в карточку. */
+  suppliesByMaterial?: Record<string, MaterialSupplyPrice[]>;
 }
 
 const post = async (payload: Record<string, unknown>) => {
@@ -172,6 +185,45 @@ export const updateExtraExpense = (payload: {
 
 export const deleteExtraExpense = (id: number, actorId?: number) =>
   post({ action: 'delete_expense', id, actorId });
+
+/** Пока облачная функция не отдаёт поставки — собираем их из приёмок. */
+export const loadRecentSupplyPrices = async (): Promise<Record<string, MaterialSupplyPrice[]>> => {
+  const list = await fetchShipments({ type: 'from_supplier', status: 'Завершено' });
+  const map: Record<string, MaterialSupplyPrice[]> = {};
+  const details = await Promise.all(list.slice(0, 12).map((s) => fetchShipmentDetail(s.id)));
+  for (const detail of details) {
+    if (!detail) continue;
+    const acc = new Map<number, { weighted: number; qty: number; supplier: string }>();
+    for (const it of detail.items || []) {
+      if (it.costPerUnit == null || it.materialId == null) continue;
+      const qty = it.quantity ?? 0;
+      const prev = acc.get(it.materialId) || {
+        weighted: 0,
+        qty: 0,
+        supplier: it.supplierName || detail.supplierName || '—',
+      };
+      acc.set(it.materialId, {
+        weighted: prev.weighted + it.costPerUnit * qty,
+        qty: prev.qty + qty,
+        supplier: it.supplierName || prev.supplier,
+      });
+    }
+    for (const [mid, v] of acc) {
+      const key = String(mid);
+      const rows = map[key] || [];
+      if (rows.length >= 5) continue;
+      rows.push({
+        shipmentId: detail.id,
+        completedAt: detail.completedAt || detail.createdAt,
+        supplierName: v.supplier,
+        costPerUnit: v.qty > 0 ? Math.round((v.weighted / v.qty) * 10000) / 10000 : 0,
+        quantity: Math.round(v.qty * 100) / 100,
+      });
+      map[key] = rows;
+    }
+  }
+  return map;
+};
 
 export const saveManagerCommission = (payload: {
   percent: number;

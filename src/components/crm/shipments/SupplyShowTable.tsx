@@ -12,6 +12,7 @@ import {
 import Icon from '@/components/ui/icon';
 import { formatQuantity } from '@/lib/formatQuantity';
 import type { ShipmentDetail, ShipmentItem } from '@/lib/shipmentsApi';
+import { moneyRub, rollTotalCost } from '@/components/crm/shipments/fromSupplierShared';
 
 /**
  * Таблица рулонов приёмки для широких экранов.
@@ -71,6 +72,7 @@ const SupplyShowTable = ({
         {filtered.map((item) => {
           const code = item.barcode || item.reservedBarcodes?.[0];
           const editing = editItemId === item.id;
+          const totalCost = rollTotalCost(item.costPerUnit, item.quantity);
           return (
             <TableRow key={item.id} className={item.removedAt ? 'opacity-60' : undefined}>
               <TableCell className="whitespace-normal break-words align-top">
@@ -165,9 +167,18 @@ const SupplyShowTable = ({
                 </div>
               </TableCell>
               <TableCell className="text-right text-sm align-top">
-                {item.costPerUnit != null
-                  ? `${item.costPerUnit.toFixed(2)} ₽`
-                  : '—'}
+                {item.costPerUnit != null ? (
+                  <div>
+                    <div className="text-muted-foreground">
+                      {moneyRub(item.costPerUnit)} / {item.unit || 'ед.'}
+                    </div>
+                    {totalCost != null && (
+                      <div className="mt-0.5 font-medium">{moneyRub(totalCost)}</div>
+                    )}
+                  </div>
+                ) : (
+                  '—'
+                )}
               </TableCell>
               <TableCell>
                 <div className="flex justify-end gap-1">

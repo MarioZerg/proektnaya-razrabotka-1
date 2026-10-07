@@ -7,7 +7,7 @@ import {
   formatAgo,
   formatMinutes,
   initials,
-  ordersInHands,
+  personState,
   stageSince,
   useTicker,
 } from '@/components/crm/dashboard/liveFloor/liveFloorShared';
@@ -23,15 +23,32 @@ interface LiveFloorPeopleProps {
   highlightIds: Set<number>;
 }
 
-const ROLE_STYLE: Record<string, { avatar: string; icon: string }> = {
-  cutter: { avatar: 'from-amber-400 to-amber-600', icon: 'Scissors' },
-  sewer: { avatar: 'from-sky-400 to-sky-600', icon: 'Shirt' },
-  packer: { avatar: 'from-orange-400 to-orange-600', icon: 'PackageCheck' },
+const ROLE_STYLE: Record<
+  string,
+  { avatar: string; icon: string; panel: string; badge: string }
+> = {
+  cutter: {
+    avatar: 'from-amber-400 to-amber-600',
+    icon: 'Scissors',
+    panel: 'border-amber-200/70 bg-amber-50/40',
+    badge: 'bg-amber-500',
+  },
+  sewer: {
+    avatar: 'from-sky-400 to-sky-600',
+    icon: 'Shirt',
+    panel: 'border-sky-200/70 bg-sky-50/40',
+    badge: 'bg-sky-500',
+  },
+  packer: {
+    avatar: 'from-orange-400 to-orange-600',
+    icon: 'PackageCheck',
+    panel: 'border-orange-200/70 bg-orange-50/40',
+    badge: 'bg-orange-500',
+  },
 };
 
-/** Через сколько минут без единого действия человек считается простаивающим. */
-const IDLE_ALERT_MIN = 20;
-const HANDS_VISIBLE = 6;
+const HANDS_VISIBLE = 4;
+const STACK_VISIBLE = 12;
 
 const PersonCard = ({
   person,
@@ -45,32 +62,17 @@ const PersonCard = ({
 }: Omit<LiveFloorPeopleProps, 'people'> & { person: LivePerson }) => {
   const now = useTicker() + clockOffset;
   const style = ROLE_STYLE[person.role] || ROLE_STYLE.sewer;
-  const hands = ordersInHands(person, orders).sort((a, b) => {
-    const sa = stageSince(a) || '';
-    const sb = stageSince(b) || '';
-    return sa.localeCompare(sb);
-  });
-  const myEvents = events.filter((e) => e.userId === person.id);
-  const lastAt = myEvents[0]?.at || null;
-  const lastMs = lastAt ? now - new Date(lastAt).getTime() : null;
+  const { hands: rawHands, working, idleAlert, lastAt, idleMs } = personState(
+    person,
+    orders,
+    events,
+    now,
+  );
+  const hands = [...rawHands].sort((a, b) => (stageSince(a) || '').localeCompare(stageSince(b) || ''));
   const stats = today[String(person.id)] || {};
 
   const overlockCount = hands.filter((o) => o.sewingStatus === 'Раскроено').length;
   const sewingCount = hands.length - overlockCount;
-  // У упаковки вещей «в руках» нет — она закрывает их на терминале. Работает,
-  // если что-то упаковала за последние 10 минут.
-  const working =
-    person.role === 'packer' ? lastMs != null && lastMs < 10 * 60000 : hands.length > 0;
-  const idleSince = lastAt || person.shiftOpenedAt;
-  const idleMs = idleSince ? now - new Date(idleSince).getTime() : 0;
-  const idleAlert = !working && idleMs > IDLE_ALERT_MIN * 60000;
-  const idleText = working
-    ? ''
-    : idleAlert
-      ? ` · простой ${formatMinutes(idleMs)}`
-      : lastAt
-        ? ` · последнее действие ${formatAgo(idleMs)}`
-        : '';
 
   let status: string;
   if (person.role === 'cutter') {
@@ -83,6 +85,13 @@ const PersonCard = ({
   } else {
     status = working ? 'Стикерует' : 'Ждёт вещи';
   }
+  const idleText = working
+    ? ''
+    : idleAlert
+      ? ` · простой ${formatMinutes(idleMs)}`
+      : lastAt
+        ? ` · последнее действие ${formatAgo(idleMs)}`
+        : '';
 
   const [todayCount, todayCaption] =
     person.role === 'cutter'
@@ -92,15 +101,17 @@ const PersonCard = ({
         : [stats.sewn || 0, 'отшито'];
 
   const packedRecently =
-    person.role === 'packer' ? myEvents.filter((e) => e.kind === 'packed').slice(0, 4) : [];
+    person.role === 'packer'
+      ? events.filter((e) => e.userId === person.id && e.kind === 'packed').slice(0, 4)
+      : [];
 
   return (
-    <div
-      className={`flex min-w-0 flex-col gap-2.5 rounded-xl border bg-card p-3 transition-colors ${
-        idleAlert ? 'border-amber-300 bg-amber-50/40' : working ? 'border-emerald-200' : ''
+    <article
+      className={`flex h-full min-w-0 flex-col gap-3 rounded-xl border bg-card p-3.5 shadow-sm transition-colors ${
+        idleAlert ? 'border-amber-300 ring-1 ring-amber-200' : working ? 'border-emerald-200' : ''
       }`}
     >
-      <div className="flex items-center gap-2.5">
+      <div className="flex items-start gap-2.5">
         <div className="relative shrink-0">
           <div
             className={`flex h-10 w-10 items-center justify-center rounded-full bg-gradient-to-br text-sm font-bold text-white ${style.avatar} ${
@@ -124,7 +135,7 @@ const PersonCard = ({
           <p className="flex items-start gap-1 text-sm font-semibold leading-tight">
             <span className="min-w-0 break-words">{person.name}</span>
             {person.canOverlock && person.role === 'sewer' && (
-              <Icon name="Zap" size={12} className="shrink-0 text-fuchsia-600" />
+              <Icon name="Zap" size={12} className="mt-0.5 shrink-0 text-fuchsia-600" />
             )}
           </p>
           <p className="truncate text-xs text-muted-foreground">
@@ -135,7 +146,9 @@ const PersonCard = ({
           <p key={todayCount} className="inline-block animate-count-bump text-lg font-bold leading-none tabular-nums">
             {todayCount}
           </p>
-          <p className="text-[10px] leading-tight text-muted-foreground">{todayCaption} сегодня</p>
+          <p className="ml-auto max-w-[4.5rem] text-[10px] leading-tight text-muted-foreground">
+            {todayCaption} сегодня
+          </p>
           {person.role === 'sewer' && !!stats.overlock && (
             <p className="text-[10px] leading-tight text-fuchsia-700">обметано {stats.overlock}</p>
           )}
@@ -156,7 +169,7 @@ const PersonCard = ({
 
       {hands.length > 0 && person.role === 'cutter' && (
         <div className="flex flex-wrap gap-1">
-          {hands.slice(0, 12).map((o) => (
+          {hands.slice(0, STACK_VISIBLE).map((o) => (
             <LiveOrderChip
               key={o.id}
               order={o}
@@ -167,8 +180,8 @@ const PersonCard = ({
               compact
             />
           ))}
-          {hands.length > 12 && (
-            <span className="px-1 text-[11px] text-muted-foreground">ещё {hands.length - 12}</span>
+          {hands.length > STACK_VISIBLE && (
+            <span className="px-1 text-[11px] text-muted-foreground">ещё {hands.length - STACK_VISIBLE}</span>
           )}
         </div>
       )}
@@ -207,12 +220,14 @@ const PersonCard = ({
           ))}
         </div>
       )}
-    </div>
+    </article>
   );
 };
 
-/** Кто на смене и что у каждого в руках прямо сейчас. */
+/** Кто на смене и что у каждого в руках прямо сейчас — панель на каждую роль. */
 const LiveFloorPeople = ({ people, ...rest }: LiveFloorPeopleProps) => {
+  const now = useTicker() + rest.clockOffset;
+
   if (people.length === 0) {
     return (
       <div className="flex items-center gap-2 rounded-xl border border-dashed p-6 text-sm text-muted-foreground">
@@ -223,29 +238,38 @@ const LiveFloorPeople = ({ people, ...rest }: LiveFloorPeopleProps) => {
   }
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-5">
       {ROLE_ORDER.map((role) => {
         const group = people.filter((p) => p.role === role);
         if (group.length === 0) return null;
-        const busy = group.filter((p) =>
-          role === 'packer'
-            ? rest.events.some(
-                (e) =>
-                  e.userId === p.id &&
-                  Date.now() - new Date(e.at).getTime() < 10 * 60000,
-              )
-            : ordersInHands(p, rest.orders).length > 0,
-        ).length;
+        const style = ROLE_STYLE[role];
+        const states = group.map((p) => personState(p, rest.orders, rest.events, now));
+        const busy = states.filter((s) => s.working).length;
+        const idle = states.filter((s) => s.idleAlert).length;
         return (
-          <section key={role} className="space-y-2">
-            <div className="flex items-center gap-2 text-sm">
-              <Icon name={ROLE_STYLE[role].icon} size={15} className="text-muted-foreground" />
-              <span className="font-semibold">{ROLE_LABEL[role]}</span>
-              <span className="text-xs text-muted-foreground">
-                на смене {group.length} · в работе {busy}
+          <section key={role} className={`min-w-0 rounded-2xl border p-3 sm:p-5 ${style.panel}`}>
+            <header className="mb-4 flex flex-wrap items-center gap-x-3 gap-y-1.5">
+              <span
+                className={`flex h-8 w-8 items-center justify-center rounded-full text-white ${style.badge}`}
+              >
+                <Icon name={style.icon} size={16} />
               </span>
-            </div>
-            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+              <h3 className="text-sm font-semibold">{ROLE_LABEL[role]}</h3>
+              <div className="flex flex-wrap gap-1.5 text-[11px]">
+                <span className="rounded-full bg-background px-2 py-0.5 text-muted-foreground">
+                  на смене {group.length}
+                </span>
+                <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-emerald-800">
+                  в работе {busy}
+                </span>
+                {idle > 0 && (
+                  <span className="rounded-full bg-amber-100 px-2 py-0.5 text-amber-800">
+                    простой {idle}
+                  </span>
+                )}
+              </div>
+            </header>
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
               {group.map((p) => (
                 <PersonCard key={p.id} person={p} {...rest} />
               ))}

@@ -76,7 +76,7 @@ const CrmDashboard = () => {
   // поставки — для него это пустой экран. Ведём сразу на его единственную
   // страницу, чтобы вход не упирался в «ничего не найдено».
   if (user?.role === 'accountant') {
-    return <Navigate to="/crm/analytics/product-cost" replace />;
+    return <Navigate to="/crm/shipments/accountant-supplies" replace />;
   }
 
   if (user && user.availableRoles.length === 0) {

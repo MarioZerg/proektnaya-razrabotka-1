@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useToast } from '@/hooks/use-toast';
 import {
   takeStack,
@@ -78,6 +78,7 @@ export const useSewingItemsQueueActions = ({
   const { toast } = useToast();
 
   const [takingStack, setTakingStack] = useState(false);
+  const takingStackRef = useRef(false);
   const [takingOrder, setTakingOrder] = useState(false);
   const [takeOrderCooldown, setTakeOrderCooldown] = useState(false);
   const [lastTakenStack, setLastTakenStack] = useState<TakenOrder[]>(() => loadStoredStack(userId));
@@ -250,6 +251,10 @@ export const useSewingItemsQueueActions = ({
       toast({ title: 'У вас не указан цех — откройте смену на главной странице', variant: 'destructive' });
       return;
     }
+    // Кнопка гаснет только после перерисовки, а двойной тап на планшете успевает
+    // раньше — второй запрос выдал бы ещё один стек.
+    if (takingStackRef.current) return;
+    takingStackRef.current = true;
     setTakingStack(true);
     try {
       const res = await takeStack(userId!, effectiveWorkshopId, effectiveShiftNumber, single);
@@ -291,6 +296,7 @@ export const useSewingItemsQueueActions = ({
         variant: 'destructive',
       });
     } finally {
+      takingStackRef.current = false;
       setTakingStack(false);
     }
   };

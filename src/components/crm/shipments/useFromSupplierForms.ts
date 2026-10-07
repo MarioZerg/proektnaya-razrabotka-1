@@ -98,7 +98,7 @@ export const useFromSupplierForms = ({
       } else {
         toast({
           title: 'Приёмка оформлена',
-          description: 'Отправлена администратору на подтверждение — материал появится на складе после проверки',
+          description: 'Напечатайте лист приёмки и отнесите бухгалтеру. Материал на складе — после проверки администратора',
         });
       }
       setDialogOpen(false);
@@ -178,6 +178,8 @@ export const useFromSupplierForms = ({
             `Не сохранились ${allSkipped.length}: ${allSkipped.slice(0, 3).join('; ')}` +
             (allSkipped.length > 3 ? ' и ещё…' : ''),
         });
+      } else if (reviewShipment.accountantStatus === 'correction') {
+        toast({ title: 'Позиции обновлены', description: 'Снова отправлено бухгалтеру на сверку' });
       } else {
         toast({ title: 'Позиции обновлены' });
       }

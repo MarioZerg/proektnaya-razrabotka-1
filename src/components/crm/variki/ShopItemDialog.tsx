@@ -15,6 +15,7 @@ import Icon from '@/components/ui/icon';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/context/AuthContext';
 import { saveShopItem, type ShopItem } from '@/lib/varikiApi';
+import { shopCardImageUrl } from '@/lib/shopCardImage';
 
 interface ShopItemDialogProps {
   /** null — создаём новый подарок, объект — правим существующий. */
@@ -267,8 +268,10 @@ const ShopItemDialog = ({ item, open, onOpenChange, onSaved }: ShopItemDialogPro
             />
             {imageUrl && (
               <img
-                src={imageUrl}
+                src={shopCardImageUrl(imageUrl)}
                 alt=""
+                decoding="async"
+                referrerPolicy="no-referrer"
                 className="mt-2 h-28 w-full rounded-md object-cover"
               />
             )}

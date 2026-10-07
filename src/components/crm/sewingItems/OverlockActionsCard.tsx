@@ -73,7 +73,6 @@ const OverlockActionsCard = ({
 
   const taken = order.overlockUserId != null;
   const takenByOther = taken && !isAdmin && order.overlockUserId !== actorId;
-  const meters = order.width ? (order.width / 100).toFixed(2) : null;
   const limitReached = maxOverlockOrders > 0 && overlockInWork >= maxOverlockOrders;
   const takeBlocked = !taken && (Boolean(overlockBusyBy) || limitReached);
   const waitLabel =
@@ -117,20 +116,25 @@ const OverlockActionsCard = ({
       <CardContent className="space-y-3">
         <p className="text-xs text-muted-foreground"></p>
 
-        {!taken && overlockBusyBy && (
-          <div className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900">
-            За оверлоком работает <b>{overlockBusyBy}</b> — машина в цехе одна.
-            Возьмите обычный заказ: обмётка освободится, когда она сдаст свои вещи.
+        {!taken && !isAdmin && (
+          <div className="rounded-md border border-fuchsia-200 bg-white px-3 py-2 text-xs text-fuchsia-900">
+            Заказ на оверлок выдаёт кнопка «Получить новый заказ» во вкладке
+            «Раскроено». Из списка вещь не берут — иначе очередь разберут руками,
+            и другие швеи останутся без работы.
           </div>
         )}
-        {!taken && !overlockBusyBy && limitReached && (
+        {!taken && isAdmin && overlockBusyBy && (
           <div className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900">
-            У вас уже {overlockInWork} из {maxOverlockOrders} вещей на оверлоке —
-            обметайте и передайте их дальше.
+            За оверлоком работает <b>{overlockBusyBy}</b> — машина в цехе одна.
+          </div>
+        )}
+        {!taken && isAdmin && !overlockBusyBy && limitReached && (
+          <div className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+            У швеи уже {overlockInWork} из {maxOverlockOrders} вещей на оверлоке.
           </div>
         )}
 
-        {!taken ? (
+        {!taken && isAdmin ? (
           <Button
             className="w-full bg-fuchsia-600 hover:bg-fuchsia-700"
             disabled={busy || takeBlocked}
@@ -141,25 +145,13 @@ const OverlockActionsCard = ({
             ) : (
               <Icon name={takeBlocked ? 'Lock' : 'Hand'} size={16} className="mr-2" />
             )}
-            {takeBlocked ? 'Оверлок занят' : 'Взять на оверлок'}
+            {takeBlocked ? 'Оверлок занят' : 'Выдать на оверлок'}
           </Button>
         ) : takenByOther ? (
-          <div className="space-y-2">
-            <div className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900">
-              Эту вещь обмётывает другая швея — сдать её может только она. Если она
-              закрыла смену, не сдав вещь, её можно забрать себе.
-            </div>
-            <Button
-              variant="outline"
-              className="w-full"
-              disabled={busy}
-              onClick={() => run(() => takeOverlock(order.id, actorId), 'Заказ взят на оверлок')}
-            >
-              <Icon name="Hand" size={16} className="mr-2" />
-              Забрать себе
-            </Button>
+          <div className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+            Эту вещь обмётывает другая швея — сдать её может только она.
           </div>
-        ) : (
+        ) : taken ? (
           <div className="space-y-3">
             {overlockWaitSec > 0 && (
               <div className="flex items-center gap-2 rounded-md border border-fuchsia-300 bg-white px-3 py-2 text-xs text-fuchsia-900">
@@ -264,7 +256,7 @@ const OverlockActionsCard = ({
               </Button>
             </div>
           </div>
-        )}
+        ) : null}
       </CardContent>
     </Card>
   );

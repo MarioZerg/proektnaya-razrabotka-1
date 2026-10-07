@@ -12,6 +12,8 @@ export interface MarketplaceConfigItem {
   name: string;
   className: string;
   fields: MarketplaceCredentialField[];
+  /** Подсказка под заголовком — у 1С не ключ кабинета, а публикация HTTP-сервиса. */
+  hint?: string;
 }
 
 export const marketplaceIntegrationsConfig: MarketplaceConfigItem[] = [
@@ -61,6 +63,25 @@ export const marketplaceIntegrationsConfig: MarketplaceConfigItem[] = [
     fields: [
       { key: 'clientId', label: 'Client ID' },
       { key: 'clientSecret', label: 'Client Secret', secret: true },
+    ],
+  },
+];
+
+/** Учёт: не площадка, те же ключи магазина — у МЕГАТЮЛЬ и ДЮНЫ могут быть разные базы. */
+export const accountingIntegrationsConfig: MarketplaceConfigItem[] = [
+  {
+    code: 'onec_buh',
+    name: '1С:Бухгалтерия',
+    className: 'text-[#E35205]',
+    hint: 'HTTP-сервис или OData публикации базы. Система будет ходить в 1С по этому адресу.',
+    fields: [
+      {
+        key: 'baseUrl',
+        label: 'URL API',
+        placeholder: 'https://1c.example.ru/buh/hs/erp',
+      },
+      { key: 'username', label: 'Пользователь 1С' },
+      { key: 'password', label: 'Пароль', secret: true },
     ],
   },
 ];

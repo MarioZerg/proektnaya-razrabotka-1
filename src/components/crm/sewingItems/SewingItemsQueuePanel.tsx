@@ -10,6 +10,9 @@ interface SewingItemsQueuePanelProps {
   lastTakenStack: unknown[];
   takingStack: boolean;
   myUnfinishedCount: number;
+  /** Всё, что в стеке, вместе с отменёнными покупателем, — по нему считается предел. */
+  myStackTotal: number;
+  myStackCancelled: number;
   cutterLimit: number;
   printQrCuttingEnabled: boolean;
   handleTakeStack: (single?: boolean) => void;
@@ -32,6 +35,8 @@ const SewingItemsQueuePanel = ({
   lastTakenStack,
   takingStack,
   myUnfinishedCount,
+  myStackTotal,
+  myStackCancelled,
   cutterLimit,
   printQrCuttingEnabled,
   handleTakeStack,
@@ -58,7 +63,11 @@ const SewingItemsQueuePanel = ({
       )}
       {isCutter && (
         <div className="flex flex-wrap gap-2">
-          <Button onClick={() => handleTakeStack()} disabled={takingStack || myUnfinishedCount > 0} className="w-full sm:w-auto">
+          <Button
+            onClick={() => handleTakeStack()}
+            disabled={takingStack || myUnfinishedCount > 0 || myStackTotal >= cutterLimit}
+            className="w-full sm:w-auto"
+          >
             {takingStack ? (
               <>
                 <Icon name="Loader2" size={16} className="mr-2 animate-spin" />
@@ -80,19 +89,19 @@ const SewingItemsQueuePanel = ({
           <Button
             variant="outline"
             onClick={() => handleTakeStack(true)}
-            disabled={takingStack || myUnfinishedCount >= cutterLimit}
+            disabled={takingStack || myStackTotal >= cutterLimit}
             className="w-full sm:w-auto"
             title={
-              myUnfinishedCount >= cutterLimit
-                ? `На руках ${myUnfinishedCount} из ${cutterLimit} — раскроите часть`
+              myStackTotal >= cutterLimit
+                ? `На руках ${myStackTotal} из ${cutterLimit} — раскроите часть`
                 : undefined
             }
           >
             <Icon name="Plus" size={16} className="mr-2" />
             Взять 1 заказ
-            {myUnfinishedCount > 0 && (
+            {myStackTotal > 0 && (
               <span className="ml-1.5 text-xs text-muted-foreground">
-                {myUnfinishedCount}/{cutterLimit}
+                {myStackTotal}/{cutterLimit}
               </span>
             )}
           </Button>
@@ -146,6 +155,13 @@ const SewingItemsQueuePanel = ({
       {isCutter && myUnfinishedCount > 0 && (
         <p className="text-sm text-muted-foreground">
           У вас {myUnfinishedCount} нераскроенных заказов — раскроите их, прежде чем брать новый стек.
+        </p>
+      )}
+
+      {isCutter && myStackCancelled > 0 && (
+        <p className="text-sm text-amber-700">
+          В стеке ещё {myStackCancelled} отменённых покупателем — они тоже входят в лимит{' '}
+          {cutterLimit}. Раскроите их во вкладке «Отменённые с кроем».
         </p>
       )}
 

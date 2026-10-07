@@ -82,6 +82,8 @@ const SewingItems = () => {
     countForTab,
     piecesForTab,
     myUnfinishedCount,
+    myStackTotal,
+    myStackCancelled,
     myUnfinishedOrders,
     myInWorkCount,
     myGroups,
@@ -233,6 +235,8 @@ const SewingItems = () => {
           lastTakenStack={lastTakenStack}
           takingStack={takingStack}
           myUnfinishedCount={myUnfinishedCount}
+          myStackTotal={myStackTotal}
+          myStackCancelled={myStackCancelled}
           cutterLimit={cutterLimit}
           printQrCuttingEnabled={printQrCuttingEnabled}
           handleTakeStack={handleTakeStack}

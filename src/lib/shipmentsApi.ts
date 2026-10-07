@@ -53,6 +53,13 @@ export interface Shipment {
    * где логистика пропущена: без неё себестоимость метра занижена.
    */
   logisticsCost?: number;
+  /** Сверка бухгалтера: ждёт лист, подтверждена (ушла в 1С) или вернута на правку. */
+  accountantStatus?: 'pending' | 'confirmed' | 'correction' | null;
+  accountantComment?: string | null;
+  accountantConfirmedAt?: string | null;
+  accountantConfirmedByName?: string | null;
+  onecSyncedAt?: string | null;
+  onecError?: string | null;
 }
 
 export interface ShipmentItem {
@@ -122,6 +129,7 @@ export interface ShipmentFilters {
   type?: ShipmentType;
   supplierId?: number;
   status?: string;
+  accountantStatus?: 'pending' | 'confirmed' | 'correction';
   dateFrom?: string;
   dateTo?: string;
 }
@@ -132,6 +140,7 @@ export const fetchShipments = async (filters?: ShipmentType | ShipmentFilters): 
   if (f.type) params.set('type', f.type);
   if (f.supplierId) params.set('supplier_id', String(f.supplierId));
   if (f.status) params.set('status', f.status);
+  if (f.accountantStatus) params.set('accountant_status', f.accountantStatus);
   if (f.dateFrom) params.set('date_from', f.dateFrom);
   if (f.dateTo) params.set('date_to', f.dateTo);
   const qs = params.toString();
@@ -334,3 +343,20 @@ export const workshopWriteoff = (payload: {
 }) => postAction({ action: 'workshop_writeoff', ...payload });
 
 export const deleteShipment = (id: number) => postAction({ action: 'delete', id });
+
+export interface AccountantConfirmResult {
+  success: true;
+  onec?: { sent: number; failed: number; error?: string | null };
+}
+
+/** Бухгалтер сверила лист с фактом — поставка уходит в 1С. */
+export const accountantConfirmSupply = (id: number): Promise<AccountantConfirmResult> =>
+  postAction({ action: 'accountant_confirm', id });
+
+/** Вернуть кладовщику: подтверждения нет, в карточке видна причина. */
+export const accountantCorrectionSupply = (id: number, comment: string) =>
+  postAction({ action: 'accountant_correction', id, comment });
+
+/** Кладовщик поправил состав и снова отдаёт лист бухгалтеру. */
+export const accountantResubmitSupply = (id: number) =>
+  postAction({ action: 'accountant_resubmit', id });
