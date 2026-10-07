@@ -305,9 +305,12 @@ export const lifeFromWarehouseItem = (item: GoodsWarehouseItem): LifeEvent[] => 
     push(out, fromPoint(p));
   }
 
+  // received_at после приёмки возврата затирается её датой. Если история
+  // возвратов уже пришла в life — это дубль, второй «Вернули» не рисуем.
+  const lifeHasReturns = (item.life || []).some((p) => p.kind === 'returned');
   if (item.receivedAt && item.receiveReason !== 'return') {
     push(out, { kind: 'received', label: KIND_LABEL.received, at: item.receivedAt });
-  } else if (item.receivedAt && item.receiveReason === 'return') {
+  } else if (item.receivedAt && item.receiveReason === 'return' && !lifeHasReturns) {
     push(out, { kind: 'returned', label: KIND_LABEL.returned, at: item.receivedAt });
   }
   if (item.shippingLabeledAt) {

@@ -99,7 +99,6 @@ const PersonCard = ({
   orders,
   events,
   today,
-  names,
   clockOffset,
   movedIds,
 }: Omit<LiderTvPeopleProps, 'people'> & { person: LivePerson }) => {

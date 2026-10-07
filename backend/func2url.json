@@ -36,7 +36,6 @@
   "gazelka": "https://functions.poehali.dev/919a040d-f5ad-4fcb-98ee-a0cf8e28b99e",
   "ozon_fbo": "https://functions.poehali.dev/697620a6-2bfe-40f7-af06-0de882dd0391",
   "ozon_fbs": "https://functions.poehali.dev/c1ec58fb-3291-4827-a469-11a1e7019684",
-  "wb_fbs": "https://functions.poehali.dev/142096e2-0171-412b-b6df-1631cb52574a",
   "marketplace_integrations": "https://functions.poehali.dev/74493687-7597-43cc-a138-fa8c1e7215b4",
   "shifts": "https://functions.poehali.dev/88851192-9090-480d-b9f7-aecfea5e7bdf",
   "kiosk": "https://functions.poehali.dev/646f604e-57e9-47fb-b2ca-dd424abfba48",
@@ -50,6 +49,5 @@
   "marketplace_items": "https://functions.poehali.dev/9959a7b8-9bf6-4fbe-8170-68cc9e031f77",
   "workshops": "https://functions.poehali.dev/c3ce83da-9296-40d9-b00b-720d364431ea",
   "users": "https://functions.poehali.dev/1db3a89a-f0f6-470e-bef4-fb5ca8fa02df",
-  "orders": "https://functions.poehali.dev/1d8ed922-bded-4f5a-a367-a0742711203a",
-  "auth": "https://functions.poehali.dev/eca1843f-b794-48c6-a9e6-4dead2174136"
+  "orders": "https://functions.poehali.dev/1d8ed922-bded-4f5a-a367-a0742711203a"
 }

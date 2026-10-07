@@ -27,7 +27,6 @@ const center = (key: StageKey) => ((stageIndex(key) + 0.5) / STAGES.length) * 10
 
 const CometPill = ({ comet, onDone }: { comet: Comet; onDone: (id: string) => void }) => {
   const [go, setGo] = useState(false);
-  const from = STAGES[stageIndex(comet.from)];
   const to = STAGES[stageIndex(comet.to)];
 
   useEffect(() => {

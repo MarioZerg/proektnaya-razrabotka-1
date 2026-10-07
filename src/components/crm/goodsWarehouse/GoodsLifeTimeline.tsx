@@ -85,9 +85,10 @@ const GoodsLifeTimeline = ({ events, compact = false }: GoodsLifeTimelineProps) 
               <Icon name={style.icon} size={12} />
             </span>
             <div className="min-w-0 flex-1 pt-0.5">
-              <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
-                <span className="text-sm font-semibold">{e.label}</span>
-                <span className="tabular-nums text-xs text-muted-foreground">
+              {/* Подпись и дата в одну строку: дату не обрезаем и не переносим */}
+              <div className="flex items-baseline gap-x-2">
+                <span className="min-w-0 text-sm font-semibold">{e.label}</span>
+                <span className="shrink-0 whitespace-nowrap tabular-nums text-xs text-muted-foreground">
                   {formatDateTime(e.at)}
                 </span>
               </div>
