@@ -51,6 +51,7 @@ const CrmDashboard = () => {
       <CrmDashboardSections
         userId={user?.id}
         isAdmin={isAdmin}
+        canSeeLiveFloor={isStorekeeper}
         canSeeWorkingToday={canSeeWorkingToday}
         canSeeFboBoard={canSeeFboBoard}
         canSeeShiftCalendar={canSeeShiftCalendar}

@@ -19,6 +19,7 @@ import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchE
 interface CrmDashboardSectionsProps {
   userId?: number;
   isAdmin: boolean;
+  canSeeLiveFloor?: boolean;
   canSeeWorkingToday: boolean;
   canSeeFboBoard: boolean;
   canSeeShiftCalendar: boolean;
@@ -48,6 +49,7 @@ interface CrmDashboardSectionsProps {
 const CrmDashboardSections = ({
   userId,
   isAdmin,
+  canSeeLiveFloor = false,
   canSeeWorkingToday,
   canSeeFboBoard,
   canSeeShiftCalendar,
@@ -84,7 +86,8 @@ const CrmDashboardSections = ({
 
     {widgets.length > 0 && <DashboardWidgetsGrid widgets={widgets} loading={dataLoading} />}
 
-    {isAdmin && (
+    {/* Живой цех: админ и кладовщики — видят, как вещи движутся по цеху. */}
+    {(isAdmin || canSeeLiveFloor) && (
       <LiveFloorBoundary>
         <LiveFloorCard />
       </LiveFloorBoundary>
