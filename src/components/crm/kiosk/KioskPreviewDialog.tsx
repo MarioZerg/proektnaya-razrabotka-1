@@ -29,7 +29,7 @@ interface KioskPreviewDialogProps {
 
 /** Роли, которые реально работают за терминалом цеха. Администратор и менеджер в киоск не
  * ходят, но админу нужно видеть терминал их глазами — поэтому список именно рабочий. */
-const KIOSK_ROLES: Role[] = ['sewer', 'cutter', 'packer', 'storekeeper', 'senior_storekeeper'];
+const KIOSK_ROLES: Role[] = ['sewer', 'cutter', 'packer', 'packer_returns', 'storekeeper', 'senior_storekeeper'];
 
 /**
  * Под какими ролями админ может ОТКРЫТЬ терминал.

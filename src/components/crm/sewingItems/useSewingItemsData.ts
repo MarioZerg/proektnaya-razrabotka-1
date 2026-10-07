@@ -43,7 +43,7 @@ export const useSewingItemsData = () => {
   const isCutter = user?.role === 'cutter';
   const isSewer = user?.role === 'sewer';
   const isPacker = user?.role === 'packer';
-  const isProductionRole = isSewer || isCutter || isPacker;
+  const isProductionRole = isSewer || isCutter || isPacker || user?.role === 'packer_returns';
 
   // Конвейер по ролям:
   //  - закройщик: На раскрое (свои, берёт стеком) → Раскроено → Готовые
@@ -232,7 +232,7 @@ export const useSewingItemsData = () => {
   const visibleEmployees = useMemo(() => {
     if (!isProductionRole) return employees;
     const workshopName = workshops.find((w) => w.id === effectiveWorkshopId)?.name;
-    const shopRoles = ['sewer', 'cutter', 'packer'];
+    const shopRoles = ['sewer', 'cutter', 'packer', 'packer_returns'];
     return employees.filter(
       (e) =>
         shopRoles.includes(e.role) &&

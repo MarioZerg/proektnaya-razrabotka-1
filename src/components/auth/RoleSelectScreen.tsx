@@ -8,6 +8,7 @@ const roleIcons: Record<Role, string> = {
   sewer: 'Shirt',
   cutter: 'Scissors',
   packer: 'PackageCheck',
+  packer_returns: 'PackageOpen',
   cleaner: 'Sparkles',
   manager: 'Briefcase',
   accountant: 'Calculator',

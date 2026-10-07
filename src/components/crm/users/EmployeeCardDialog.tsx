@@ -13,7 +13,7 @@ import EmployeeRolesSection from '@/components/crm/users/employeeCard/EmployeeRo
 import EmployeeScheduleSection from '@/components/crm/users/employeeCard/EmployeeScheduleSection';
 import EmployeeAccessSection from '@/components/crm/users/employeeCard/EmployeeAccessSection';
 
-const VACATION_ROLES = ['sewer', 'cutter', 'packer', 'storekeeper', 'senior_storekeeper', 'cleaner'];
+const VACATION_ROLES = ['sewer', 'cutter', 'packer', 'packer_returns', 'storekeeper', 'senior_storekeeper', 'cleaner'];
 
 
 interface EmployeeCardDialogProps {

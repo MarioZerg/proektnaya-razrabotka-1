@@ -76,12 +76,15 @@ const KioskWorkspace = ({
   // счётчик уже новый. Считаем только СВОЙ цех, иначе киоски цехов №1 и №2 покажут
   // одно и то же число и обе упаковщицы пойдут за одними вещами.
   const [repackCount, setRepackCount] = useState(0);
+  const [returnsPackerOnShift, setReturnsPackerOnShift] = useState<string | null>(null);
   const repackWorkshop = currentWorkshopId || Number(workshopId) || null;
   useEffect(() => {
     if (screen !== 'menu') return;
     let alive = true;
     fetchRepackCount(repackWorkshop).then((r) => {
-      if (alive) setRepackCount(r.mineCount + r.freeCount);
+      if (!alive) return;
+      setRepackCount(r.mineCount + r.freeCount);
+      setReturnsPackerOnShift(r.returnsPackerOnShift);
     });
     return () => {
       alive = false;
@@ -111,7 +114,7 @@ const KioskWorkspace = ({
         onDismissCloseBlocked={onDismissCloseBlocked}
         onGoToOrders={() => {
           onDismissCloseBlocked();
-          setScreen('orders');
+          setScreen((shift?.role || user.role) === 'packer_returns' ? 'repack' : 'orders');
         }}
       />
 
@@ -161,6 +164,7 @@ const KioskWorkspace = ({
         setScreen={setScreen}
         shiftSaving={shiftSaving}
         repackCount={repackCount}
+        returnsPackerOnShift={returnsPackerOnShift}
         closeAt={closeAt}
         canCloseNow={canCloseNow}
         onOpenShift={onOpenShift}

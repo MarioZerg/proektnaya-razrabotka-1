@@ -10,6 +10,7 @@ import {
   initials,
   ordersInHands,
   personState,
+  shortName,
   stageSince,
   useTicker,
 } from '@/components/crm/dashboard/liveFloor/liveFloorShared';
@@ -46,6 +47,12 @@ const ROLE_STYLE: Record<
     icon: 'PackageCheck',
     panel: 'border-orange-200/70 bg-orange-50/40',
     badge: 'bg-orange-500',
+  },
+  packer_returns: {
+    avatar: 'from-violet-400 to-violet-600',
+    icon: 'PackageOpen',
+    panel: 'border-violet-200/70 bg-violet-50/40',
+    badge: 'bg-violet-500',
   },
 };
 
@@ -84,6 +91,8 @@ const PersonCard = ({
     if (sewingCount) parts.push(`шьёт ${sewingCount}`);
     if (overlockCount) parts.push(`на оверлоке ${overlockCount}`);
     status = parts.length ? parts.join(' · ') : 'Ждёт заказ';
+  } else if (person.role === 'packer_returns') {
+    status = working ? 'Перепаковывает' : 'Ждёт возвраты';
   } else {
     status = working ? 'Стикерует' : 'Ждёт вещи';
   }
@@ -100,7 +109,9 @@ const PersonCard = ({
       ? [stats.cut || 0, 'раскроено']
       : person.role === 'packer'
         ? [stats.packed || 0, 'упаковано']
-        : [stats.sewn || 0, 'отшито'];
+        : person.role === 'packer_returns'
+          ? [stats.packed || 0, 'перепаковано']
+          : [stats.sewn || 0, 'отшито'];
 
   const packedRecently =
     person.role === 'packer'
@@ -133,28 +144,28 @@ const PersonCard = ({
             />
           </span>
         </div>
-        <div className="min-w-0 flex-1">
-          <p className="flex items-start gap-1 text-sm font-semibold leading-tight">
-            <span className="min-w-0 break-words">{person.name}</span>
+        <div className="min-w-0 flex-1 overflow-hidden">
+          <p className="flex min-w-0 items-center gap-1 text-sm font-semibold leading-tight">
+            <span className="min-w-0 truncate" title={person.name}>
+              {shortName(person.name)}
+            </span>
             {person.canOverlock && person.role === 'sewer' && (
-              <Icon name="Zap" size={12} className="mt-0.5 shrink-0 text-fuchsia-600" />
+              <Icon name="Zap" size={12} className="shrink-0 text-fuchsia-600" />
             )}
           </p>
           <p className="truncate text-xs text-muted-foreground">
             {person.workshopName || 'цех не указан'}
+            {' · '}
+            {todayCaption}
+            {person.role === 'sewer' && !!stats.overlock ? ` · обметано ${stats.overlock}` : ''}
           </p>
         </div>
-        <div className="shrink-0 text-right">
-          <p key={todayCount} className="inline-block animate-count-bump text-lg font-bold leading-none tabular-nums">
-            {todayCount}
-          </p>
-          <p className="ml-auto max-w-[4.5rem] text-[10px] leading-tight text-muted-foreground">
-            {todayCaption} сегодня
-          </p>
-          {person.role === 'sewer' && !!stats.overlock && (
-            <p className="text-[10px] leading-tight text-fuchsia-700">обметано {stats.overlock}</p>
-          )}
-        </div>
+        <p
+          key={todayCount}
+          className="shrink-0 animate-count-bump text-lg font-bold leading-none tabular-nums"
+        >
+          {todayCount}
+        </p>
       </div>
 
       <div
@@ -324,7 +335,7 @@ const LiveFloorPeople = ({ people, ...rest }: LiveFloorPeopleProps) => {
               </header>
             )}
             {open && (
-              <div className={`${collapsible ? 'mt-4' : ''} grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4`}>
+              <div className={`${collapsible ? 'mt-4' : ''} grid grid-cols-[repeat(auto-fill,minmax(15rem,1fr))] gap-4`}>
                 {group.map((p) => (
                   <PersonCard key={p.id} person={p} {...rest} />
                 ))}

@@ -8,7 +8,7 @@ import { formatMoney } from '@/components/crm/dashboard/dashboardShared';
 import SalarySalute from '@/components/crm/SalarySalute';
 import { playSalaryOpenSound } from '@/lib/salarySound';
 
-const PRODUCTION_ROLES = ['sewer', 'cutter', 'packer'];
+const PRODUCTION_ROLES = ['sewer', 'cutter', 'packer', 'packer_returns'];
 
 /** «1 день», «3 дня», «7 дней» — чтобы подпись читалась по-русски. */
 const dayWord = (n: number) => {

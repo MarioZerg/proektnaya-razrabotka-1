@@ -2,6 +2,7 @@ export type Role =
   | 'sewer'
   | 'cutter'
   | 'packer'
+  | 'packer_returns'
   | 'storekeeper'
   | 'senior_storekeeper'
   | 'cleaner'
@@ -21,13 +22,27 @@ export type Role =
  */
 export type AccessZone = 'admin' | 'warehouse' | 'workshop' | 'none';
 
+/**
+ * Упаковщица основной продукции или упаковщица-возвраты.
+ *
+ * Обе работают в цехе на терминале, видят рулоны упаковки и одно меню.
+ * Различаются сменой: возвраты перепаковывают только возвраты, а основная
+ * к перепаковке не допускается, пока возвраты на смене.
+ */
+export const isPackerRole = (role: Role | undefined | null): boolean =>
+  role === 'packer' || role === 'packer_returns';
+
+/** Упаковщица-возвраты: только перепаковка, без стикеровки основной продукции. */
+export const isReturnsPacker = (role: Role | undefined | null): boolean =>
+  role === 'packer_returns';
+
 export const getAccessZone = (role: Role | undefined | null): AccessZone => {
   if (role === 'admin') return 'admin';
   // Менеджер работает с поставками маркетплейса — относим к складской зоне (доступ к отгрузкам).
   // Старший кладовщик работает наравне с обычным — та же складская зона.
   if (role === 'storekeeper' || role === 'senior_storekeeper' || role === 'manager')
     return 'warehouse';
-  if (role === 'sewer' || role === 'cutter' || role === 'packer') return 'workshop';
+  if (role === 'sewer' || role === 'cutter' || isPackerRole(role)) return 'workshop';
   return 'none';
 };
 
@@ -63,6 +78,7 @@ export const roleLabels: Record<Role, string> = {
   sewer: 'Швея',
   cutter: 'Закройщик',
   packer: 'Упаковщик',
+  packer_returns: 'Упаковщица-возвраты',
   storekeeper: 'Кладовщик',
   senior_storekeeper: 'Старший кладовщик',
   cleaner: 'Уборщица',
@@ -131,17 +147,17 @@ export const guideItems: GuideItem[] = [
     label: 'Что такое договоры',
     path: '/crm/inventory/contracts-guide',
     // Договор подписывают все без исключения — без подписи система не работает.
-    roles: ['sewer', 'cutter', 'packer', 'cleaner', 'manager', ...ALL_STOREKEEPERS],
+    roles: ['sewer', 'cutter', 'packer', 'packer_returns', 'cleaner', 'manager', ...ALL_STOREKEEPERS],
   },
   {
     label: 'Подбор пакетов',
     path: '/crm/inventory/packaging-guide',
-    roles: ['sewer', 'cutter', 'packer', ...ALL_STOREKEEPERS],
+    roles: ['sewer', 'cutter', 'packer', 'packer_returns', ...ALL_STOREKEEPERS],
   },
   {
     label: 'Инструкция упаковщицы',
     path: '/crm/inventory/packer-guide',
-    roles: ['packer', 'sewer'],
+    roles: ['packer', 'packer_returns', 'sewer'],
   },
   {
     label: 'Как принимать возвраты',
@@ -187,7 +203,7 @@ export const guideItems: GuideItem[] = [
     label: 'Завершение сотрудничества',
     path: '/crm/inventory/termination-guide',
     // Касается всех исполнителей: условия договора одинаковые для любой роли.
-    roles: ['sewer', 'cutter', 'packer', 'cleaner', 'manager', ...ALL_STOREKEEPERS],
+    roles: ['sewer', 'cutter', 'packer', 'packer_returns', 'cleaner', 'manager', ...ALL_STOREKEEPERS],
   },
 ];
 
@@ -535,6 +551,7 @@ const baseNavByRole: Record<Role, NavItem[]> = {
   sewer: productionNav,
   cutter: productionNav,
   packer: packerNav,
+  packer_returns: packerNav,
   storekeeper: storekeeperNav,
   // Права у старшего кладовщика те же, что у обычного — отличаются только ставки
   // в тарифах, поэтому меню переиспользуем как есть.

@@ -22,7 +22,7 @@ const isCompletedStatus = (status: string) => status === 'Получено' || s
  */
 export const useToWorkshopState = () => {
   const { user } = useAuth();
-  const isProduction = user?.role === 'sewer' || user?.role === 'cutter' || user?.role === 'packer';
+  const isProduction = user?.role === 'sewer' || user?.role === 'cutter' || user?.role === 'packer' || user?.role === 'packer_returns';
   const zone = getAccessZone(user?.role);
   // Админ тоже может оформить заявку кладовщику — но за конкретный цех и смену, которые
   // он выбирает руками (своего цеха у него нет). Заявка уходит с его именем и пометкой.

@@ -145,6 +145,7 @@ export const ROLES_WITH_TEMPLATE = [
   'storekeeper',
   'senior_storekeeper',
   'packer',
+  'packer_returns',
 ] as const;
 
 /** Собирает договор из шаблона роли и данных сотрудника, но НЕ отправляет:

@@ -17,6 +17,7 @@ const ROLE_LABELS: Record<string, { label: string; hint: string; icon: string }>
   cutter: { label: 'Закройщик', hint: 'работаю с тканью', icon: 'Scissors' },
   sewer: { label: 'Швея', hint: 'работаю с тесьмой', icon: 'Shirt' },
   packer: { label: 'Упаковщик', hint: 'пакеты и этикетки', icon: 'Package' },
+  packer_returns: { label: 'Упаковщица-возвраты', hint: 'перепаковка возвратов', icon: 'PackageOpen' },
 };
 
 interface KioskShiftGateProps {

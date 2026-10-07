@@ -16,7 +16,7 @@ VACATION_DAYS = 14
 # За рабочий год положено два отпуска.
 VACATIONS_PER_YEAR = 2
 # Должности, которым положен отпуск по этим правилам.
-VACATION_ROLES = ('sewer', 'cutter', 'packer', 'storekeeper', 'senior_storekeeper', 'cleaner')
+VACATION_ROLES = ('sewer', 'cutter', 'packer', 'packer_returns', 'storekeeper', 'senior_storekeeper', 'cleaner')
 
 
 def _resp(status, body):

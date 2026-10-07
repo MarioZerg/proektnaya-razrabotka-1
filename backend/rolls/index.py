@@ -791,7 +791,7 @@ def handler(event: dict, context) -> dict:
                 # работавшего человека — это не идеальная работа, а необорудованный
                 # брак: обрезки есть у всех.
                 w_where = ["u.is_active", "u.contract_terminated_at IS NULL",
-                           "u.role IN ('sewer', 'cutter', 'packer')"]
+                           "u.role IN ('sewer', 'cutter', 'packer', 'packer_returns')"]
                 if role_filter:
                     w_where.append("u.role = '" + role_filter.replace("'", "''") + "'")
                 cur.execute(
@@ -1620,7 +1620,7 @@ def handler(event: dict, context) -> dict:
                 # тогда швее подбирался тюль вместо тесьмы, и выбрать рулон было
                 # не из чего. Смена и карточка остаются запасными вариантами.
                 actual_role = (params.get('forRole') or '').strip() or None
-                if actual_role not in ('sewer', 'cutter', 'packer'):
+                if actual_role not in ('sewer', 'cutter', 'packer', 'packer_returns'):
                     actual_role = None
                 if not actual_role and sess and len(sess) > 2 and sess[2]:
                     actual_role = sess[2]
@@ -1632,6 +1632,7 @@ def handler(event: dict, context) -> dict:
                     'cutter': 'Тюль',
                     'sewer': 'Аксессуары',
                     'packer': 'Упаковка',
+                    'packer_returns': 'Упаковка',
                 }
                 allowed_type = role_types.get(actual_role)
                 if allowed_type:

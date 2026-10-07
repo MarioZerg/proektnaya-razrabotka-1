@@ -36,6 +36,7 @@ const allowedTypesByRole: Record<string, string[]> = {
   cutter: ['Тюль'],
   sewer: ['Аксессуары'],
   packer: ['Упаковка'],
+  packer_returns: ['Упаковка'],
 };
 
 /** Экран работы с рулонами на терминале: закройщик закрывает рулон, когда ткань

@@ -274,7 +274,7 @@ def _handle_live_floor(cur, headers: dict) -> dict:
         "JOIN users u ON u.id = ss.user_id "
         "LEFT JOIN workshops w ON w.id = ss.workshop_id "
         "WHERE ss.closed_at IS NULL "
-        "  AND COALESCE(ss.role, u.role) IN ('cutter', 'sewer', 'packer') "
+        "  AND COALESCE(ss.role, u.role) IN ('cutter', 'sewer', 'packer', 'packer_returns') "
         "ORDER BY u.id, ss.opened_at DESC"
     )
     people = [

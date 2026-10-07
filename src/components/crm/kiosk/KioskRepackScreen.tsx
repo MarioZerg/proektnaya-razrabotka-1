@@ -95,7 +95,7 @@ const KioskRepackScreen = ({ actorId, actorName, workshopId }: KioskRepackScreen
     setScanning(true);
     setScanError(null);
     try {
-      const found = await scanRepackItem(code, workshopId);
+      const found = await scanRepackItem(code, workshopId, actorId);
       playScanSound();
       setItem(found);
       // Отметки дефектов от предыдущей вещи не переносим: это другая вещь.

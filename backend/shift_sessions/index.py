@@ -209,6 +209,18 @@ def count_orders_in_work(cur, user_id, role, session_workshop_id=None):
     закрытии смены: у закройщицы в раскрое пусто, а терминал требует «завершите
     заказы». Завершить их она не может — их не видно. Условие ниже совпадает с тем,
     по которому очередь прячет заказ."""
+    if role == 'packer_returns':
+        # Держит очередь перепаковки своего цеха: пока вещи ждут осмотра,
+        # уходить нельзя — иначе возвраты зависнут до следующей её смены.
+        if not session_workshop_id:
+            return 0
+        cur.execute(
+            "SELECT COUNT(*) FROM goods_warehouse "
+            "WHERE status = 'repacking' "
+            "AND (repack_workshop_id = %s OR repack_workshop_id IS NULL)",
+            (int(session_workshop_id),),
+        )
+        return int(cur.fetchone()[0])
     if role == 'packer':
         # Цех берём тот, в котором открыта смена: в гостевом режиме упаковщица может
         # работать не в своём штатном цехе, и держать её должна очередь того цеха,
@@ -945,7 +957,7 @@ def handler(event: dict, context) -> dict:
                 # Производственные роли работают гибко: сотрудник сам выбирает цех и смену
                 # при каждом открытии. Перешёл в другой цех — открывает смену там, но
                 # обязанность закрыть смену по окончании рабочего дня сохраняется.
-                if user_role in ('sewer', 'cutter', 'packer'):
+                if user_role in ('sewer', 'cutter', 'packer', 'packer_returns'):
                     effective_free = True
 
                 # Должность фиксируется на момент открытия смены в цехе. Выбрать можно
@@ -1326,6 +1338,19 @@ def handler(event: dict, context) -> dict:
                     orders_left = count_orders_in_work(
                         cur, user_id, sess_role, session_workshop_id,
                     )
+                    if orders_left > 0 and sess_role == 'packer_returns':
+                        return {
+                            'statusCode': 409,
+                            'headers': headers,
+                            'body': json.dumps(
+                                {
+                                    'error': f'В цехе {orders_left} вещей на перепаковке — '
+                                             f'сначала закройте их на терминале, потом смену',
+                                    'ordersInWork': orders_left,
+                                },
+                                ensure_ascii=False,
+                            ),
+                        }
                     if orders_left > 0 and sess_role == 'packer':
                         # Называем конкретные заказы. Отменённый покупателем заказ
                         # конвейер прячет из вкладки «Стикеровка» во вкладку

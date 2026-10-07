@@ -2,6 +2,7 @@ import AdminNotifications from '@/components/crm/dashboard/AdminNotifications';
 import VarikiPurchasesCard from '@/components/crm/variki/VarikiPurchasesCard';
 import MyShiftCard from '@/components/crm/dashboard/MyShiftCard';
 import AwardCard from '@/components/crm/dashboard/AwardCard';
+import PackerStickerQueueCard from '@/components/crm/dashboard/PackerStickerQueueCard';
 import { type EmployeeShiftStatus } from '@/lib/shiftSessionsApi';
 
 interface CrmDashboardHeaderProps {
@@ -9,6 +10,7 @@ interface CrmDashboardHeaderProps {
   userId?: number;
   userRole?: string;
   isSewer: boolean;
+  isPacker: boolean;
   isStorekeeper: boolean;
   myShiftStatus: EmployeeShiftStatus | null;
   shiftsLoading: boolean;
@@ -27,6 +29,7 @@ const CrmDashboardHeader = ({
   userId,
   userRole,
   isSewer: _isSewer,
+  isPacker,
   isStorekeeper,
   myShiftStatus,
   shiftsLoading,
@@ -68,6 +71,9 @@ const CrmDashboardHeader = ({
     {/* Решения склада, которые стоят денег, — сразу перед виджетами: админ видит их
         первыми, ещё до сводки по цеху. */}
     {userRole === 'admin' && <AdminNotifications />}
+    {/* Упаковщице на телефоне сразу видно, чью пачку разбирать первой:
+        швея, которая скинула на стикеровку раньше всех. */}
+    {isPacker && <PackerStickerQueueCard />}
     {/* Покупки за варики: сотрудник заплатил и ждёт купон — заявка не должна
         потеряться, поэтому висит на панели, пока админ не прикрепит PDF. */}
     {userRole === 'admin' && <VarikiPurchasesCard />}

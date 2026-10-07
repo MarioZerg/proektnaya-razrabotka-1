@@ -9,6 +9,7 @@ const CrmDashboard = () => {
     user,
     isAdmin,
     isSewer,
+    isPacker,
     isStorekeeper,
     canSeeShiftCalendar,
     canSeeFboBoard,
@@ -39,6 +40,7 @@ const CrmDashboard = () => {
         userId={user?.id}
         userRole={user?.role}
         isSewer={isSewer}
+        isPacker={isPacker}
         isStorekeeper={isStorekeeper}
         myShiftStatus={myShiftStatus}
         shiftsLoading={shiftsLoading}

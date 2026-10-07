@@ -126,6 +126,7 @@ def _denied_text(roles) -> str:
         'cutter': 'закройщик',
         'sewer': 'швея',
         'packer': 'упаковщик',
+        'packer_returns': 'упаковщица-возвраты',
     }
     named = [titles.get(r, r) for r in roles]
     if len(named) == 1:

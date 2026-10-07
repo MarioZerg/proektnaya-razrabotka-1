@@ -22,7 +22,7 @@ CORS_HEADERS = {
     'Access-Control-Max-Age': '86400',
 }
 
-PRODUCTION_ROLES = ('sewer', 'cutter', 'packer')
+PRODUCTION_ROLES = ('sewer', 'cutter', 'packer', 'packer_returns')
 
 
 def _resp(status, body):

@@ -312,10 +312,56 @@ DEFECT_REASONS = {
 # в руках не держит. Швея и закройщик наоборот: работают с полотном и тесьмой.
 DEFECT_TYPES_BY_ROLE = {
     'packer': ['Упаковка'],
+    'packer_returns': ['Упаковка'],
+    'packer_returns': ['Упаковка'],
     'sewer': ['Тюль', 'Аксессуары'],
     'cutter': ['Тюль', 'Аксессуары'],
 }
 ALL_DEFECT_TYPES = ['Тюль', 'Аксессуары', 'Упаковка']
+
+
+def actor_shift_role(cur, user_id):
+    """Должность открытой смены: ею человек сегодня работает на терминале."""
+    if not user_id:
+        return None
+    cur.execute(
+        "SELECT COALESCE(ss.role, u.role) FROM shift_sessions ss "
+        "JOIN users u ON u.id = ss.user_id "
+        "WHERE ss.user_id = %s AND ss.closed_at IS NULL "
+        "ORDER BY ss.opened_at DESC LIMIT 1",
+        (int(user_id),),
+    )
+    row = cur.fetchone()
+    return row[0] if row else None
+
+
+def active_returns_packer_name(cur, workshop_id):
+    """Кто из упаковщиц-возвраты сейчас на смене в этом цехе — или никто."""
+    if not workshop_id:
+        return None
+    cur.execute(
+        "SELECT u.full_name FROM shift_sessions ss "
+        "JOIN users u ON u.id = ss.user_id "
+        "WHERE ss.closed_at IS NULL AND ss.workshop_id = %s "
+        "AND COALESCE(ss.role, u.role) = 'packer_returns' "
+        "ORDER BY ss.opened_at LIMIT 1",
+        (int(workshop_id),),
+    )
+    row = cur.fetchone()
+    return row[0] if row else None
+
+
+def repack_blocked_for_main_packer(cur, actor_id, workshop_id):
+    """Пока возвраты на смене, основная упаковщица перепаковку не трогает."""
+    if actor_shift_role(cur, actor_id) != 'packer':
+        return None
+    name = active_returns_packer_name(cur, workshop_id)
+    if not name:
+        return None
+    return (
+        f'В цехе на смене упаковщица-возвраты ({name}) — перепаковку делает она. '
+        f'Вам доступна только упаковка основной продукции'
+    )
 
 
 def defect_reason_label(material_type, code):
@@ -1332,6 +1378,15 @@ def handler(event: dict, context) -> dict:
                 )
                 pr = cur.fetchone()
                 packer_shift_role = pr[0] if pr else None
+                if packer_shift_role == 'packer_returns':
+                    return {
+                        'statusCode': 403,
+                        'headers': headers,
+                        'body': json.dumps({
+                            'error': 'Упаковщица-возвраты закрывает только перепаковку. '
+                                     'Основную продукцию упаковывает упаковщица на стикеровке'
+                        }, ensure_ascii=False),
+                    }
                 if packer_shift_role == 'sewer' and order_workshop_id:
                     # Швея упаковывает сама только если цех это разрешил. Иначе вещи
                     # идут через упаковщицу, даже когда её смена уже закрыта.
@@ -1630,7 +1685,8 @@ def handler(event: dict, context) -> dict:
                     amount = round(meters * packer_rate, 2)
                     # Если стикеровал не упаковщик (упаковщика на смене не было), помечаем это
                     # в описании начисления — админу видно, кто подменял упаковщицу.
-                    role_labels = {'sewer': 'швея', 'cutter': 'закройщик', 'packer': 'упаковщик'}
+                    role_labels = {'sewer': 'швея', 'cutter': 'закройщик', 'packer': 'упаковщик',
+                                   'packer_returns': 'упаковщица-возвраты'}
                     instead_note = ''
                     if packer_shift_role and packer_shift_role != 'packer':
                         instead_note = f' (стикеровал {role_labels.get(packer_shift_role, packer_shift_role)} вместо упаковщицы)'
@@ -1783,7 +1839,8 @@ def handler(event: dict, context) -> dict:
                 return {'statusCode': 200, 'headers': headers, 'body': json.dumps({
                     'mineCount': int(cnt[0] or 0),
                     'freeCount': int(cnt[1] or 0),
-                })}
+                    'returnsPackerOnShift': active_returns_packer_name(cur, count_ws),
+                }, ensure_ascii=False)}
 
             if action == 'repack_scan':
                 # Скан вещи на перепаковку: упаковщица подносит ярлык с пакета вместо
@@ -1796,6 +1853,13 @@ def handler(event: dict, context) -> dict:
                 if not scan_code:
                     return {'statusCode': 400, 'headers': headers,
                             'body': json.dumps({'error': 'Отсканируйте ярлык'})}
+                blocked = repack_blocked_for_main_packer(cur, actor_id, scan_ws)
+                if blocked:
+                    return {
+                        'statusCode': 403,
+                        'headers': headers,
+                        'body': json.dumps({'error': blocked}, ensure_ascii=False),
+                    }
 
                 code_esc = scan_code.replace("'", "''")
 
@@ -1962,6 +2026,15 @@ def handler(event: dict, context) -> dict:
                 new_bag = body_data.get('newBag')
                 if not gw_id:
                     return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите id вещи'})}
+                blocked = repack_blocked_for_main_packer(
+                    cur, actor_id, body_data.get('workshopId'),
+                )
+                if blocked:
+                    return {
+                        'statusCode': 403,
+                        'headers': headers,
+                        'body': json.dumps({'error': blocked}, ensure_ascii=False),
+                    }
                 if outcome not in ('repacked', 'utilized'):
                     return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Неизвестное решение'})}
                 if outcome == 'repacked' and new_bag is None:
@@ -3392,7 +3465,8 @@ def handler(event: dict, context) -> dict:
                     cur.execute("SELECT role FROM users WHERE id = %s", (int(user_id),))
                     r_row = cur.fetchone()
                     actual_role = r_row[0] if r_row else None
-                role_types = {'cutter': 'Тюль', 'sewer': 'Аксессуары', 'packer': 'Упаковка'}
+                role_types = {'cutter': 'Тюль', 'sewer': 'Аксессуары', 'packer': 'Упаковка',
+                              'packer_returns': 'Упаковка'}
                 need_type = role_types.get(actual_role)
                 if need_type and material_type != need_type:
                     return {'statusCode': 403, 'headers': headers,

@@ -64,7 +64,7 @@ export type RollMovementKind =
 
 /** Этап выполнения заказа: кто раскроил / сшил / упаковал. */
 export interface RollOrderStage {
-  role: 'cutter' | 'sewer' | 'packer';
+  role: 'cutter' | 'sewer' | 'packer' | 'packer_returns';
   label: string;
   userName: string | null;
   at: string | null;
@@ -81,7 +81,7 @@ export interface RollMovement {
   stages?: RollOrderStage[] | null;
   /** Кто отвечает за брак этого материала: Тюль — закройщик, Аксессуары — швея,
    * Упаковка — упаковщик. Для незнакомого типа материала — null. */
-  defectRole?: 'cutter' | 'sewer' | 'packer' | null;
+  defectRole?: 'cutter' | 'sewer' | 'packer' | 'packer_returns' | null;
   defectRoleLabel?: string | null;
 }
 
@@ -89,7 +89,7 @@ export interface RollMovement {
 export interface RollDetailInfo extends Roll {
   materialType: string | null;
   kind: 'fabric' | 'trim';
-  defectRole?: 'cutter' | 'sewer' | 'packer' | null;
+  defectRole?: 'cutter' | 'sewer' | 'packer' | 'packer_returns' | null;
   defectRoleLabel?: string | null;
   /** Себестоимость рулона — видит только администратор. */
   supplierName?: string | null;

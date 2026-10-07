@@ -13,8 +13,8 @@ from authz import AuthError, auth_error_response, require_admin
 from onec_flush import enqueue_onec_entity, flush_onec_outbox
 
 
-ROLES = {'sewer', 'cutter', 'packer', 'storekeeper', 'senior_storekeeper', 'cleaner',
-         'admin', 'manager', 'accountant'}
+ROLES = {'sewer', 'cutter', 'packer', 'packer_returns', 'storekeeper', 'senior_storekeeper',
+         'cleaner', 'admin', 'manager', 'accountant'}
 
 CLOSED_WORKSHOP_NAMES = ('Цех №2', 'Тестовый цех (QA)')
 KEEP_WORKSHOP_NAME = 'Цех №1'
@@ -31,6 +31,7 @@ SCHEDULE_BY_ROLE = {
     'sewer': ('2/2', '07:00', '19:00'),
     'cutter': ('2/2', '07:00', '19:00'),
     'packer': ('2/2', '07:00', '19:00'),
+    'packer_returns': ('2/2', '07:00', '19:00'),
     'storekeeper': ('5/2', '08:00', '17:00'),
     'senior_storekeeper': ('5/2', '08:00', '17:00'),
     'manager': ('5/2', '08:00', '17:00'),

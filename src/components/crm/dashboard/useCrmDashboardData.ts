@@ -37,6 +37,7 @@ export const useCrmDashboardData = () => {
   const isCleaner = user?.role === 'cleaner' || user?.role === 'accountant';
   const isCutter = user?.role === 'cutter';
   const isSewer = user?.role === 'sewer';
+  const isPacker = user?.role === 'packer';
   const canSeeWarehouseWidgets = user?.role === 'admin' || isStorekeeperRole(user?.role);
   // Кладовщик и старший кладовщик: у них общее рабочее пространство склада.
   const isStorekeeper = isStorekeeperRole(user?.role);
@@ -247,6 +248,7 @@ export const useCrmDashboardData = () => {
     isAdmin,
     isCutter,
     isSewer,
+    isPacker,
     isStorekeeper,
     canSeeShiftCalendar,
     canSeeFboBoard,

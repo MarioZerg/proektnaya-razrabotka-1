@@ -55,7 +55,7 @@ const Rolls = () => {
   // Швея, закройщик и упаковщик видят рулоны только своего цеха (сервер фильтрует по
   // цеху их открытой смены) и не могут заводить новые — это работа кладовщика.
   const isProductionRole =
-    user?.role === 'sewer' || user?.role === 'cutter' || user?.role === 'packer';
+    user?.role === 'sewer' || user?.role === 'cutter' || user?.role === 'packer' || user?.role === 'packer_returns';
   // Рулоны заводятся только приёмкой от поставщика (Отгрузки → Отгрузка от поставщика):
   // так у каждого рулона есть документ прихода, поставщик и цена. Ручное создание оставлено
   // администратору на случай исправления данных.
@@ -120,6 +120,7 @@ const Rolls = () => {
     cutter: 'Тюль',
     sewer: 'Аксессуары',
     packer: 'Упаковка',
+    packer_returns: 'Упаковка',
   };
   const myTypeName = user ? roleTypeName[user.role] : undefined;
   const myTypeId = myTypeName

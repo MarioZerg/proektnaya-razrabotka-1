@@ -67,9 +67,10 @@ export const ROLE_LABEL: Record<string, string> = {
   cutter: 'Закройщики',
   sewer: 'Швеи',
   packer: 'Упаковка',
+  packer_returns: 'Упаковка возвратов',
 };
 
-export const ROLE_ORDER = ['cutter', 'sewer', 'packer'];
+export const ROLE_ORDER = ['cutter', 'sewer', 'packer', 'packer_returns'];
 
 export const EVENT_META: Record<LiveEventKind, { label: string; icon: string; stage: StageKey }> = {
   cut: { label: 'раскроен', icon: 'Scissors', stage: 'cutting' },
@@ -191,7 +192,9 @@ export const personState = (
   // У упаковки вещей «в руках» нет — она закрывает их на терминале. Работает,
   // если что-то упаковала за последние 10 минут.
   const working =
-    person.role === 'packer' ? lastMs != null && lastMs < 10 * 60000 : hands.length > 0;
+    person.role === 'packer' || person.role === 'packer_returns'
+      ? lastMs != null && lastMs < 10 * 60000
+      : hands.length > 0;
   const idleSince = lastAt || person.shiftOpenedAt;
   const idleMs = idleSince ? nowMs - new Date(idleSince).getTime() : 0;
   return {

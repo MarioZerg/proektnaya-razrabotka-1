@@ -65,7 +65,7 @@ const WorkshopMaterials = () => {
   // кладовщик и админ видят все цеха и смены без ограничений. Цех/смена берутся из
   // ТЕКУЩЕЙ открытой рабочей смены (activeWorkshopId/activeShiftNumber), с fallback на
   // штатные значения профиля, если смена не открыта — аналогично ToWorkshop.tsx.
-  const isProduction = user?.role === 'sewer' || user?.role === 'cutter' || user?.role === 'packer';
+  const isProduction = user?.role === 'sewer' || user?.role === 'cutter' || user?.role === 'packer' || user?.role === 'packer_returns';
   const effectiveWorkshopId = user?.activeWorkshopId ?? user?.workshopId ?? null;
   const effectiveShiftNumber = user?.activeShiftNumber ?? user?.shiftNumber ?? null;
 

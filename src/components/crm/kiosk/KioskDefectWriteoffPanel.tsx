@@ -58,7 +58,7 @@ const KioskDefectWriteoffPanel = ({
   // Отсканировали рулон, который брать нельзя — показываем причину крупно.
   const [scanError, setScanError] = useState('');
 
-  const isPacker = role === 'packer';
+  const isPacker = role === 'packer' || role === 'packer_returns';
   const isSewer = role === 'sewer';
 
   const reset = () => {

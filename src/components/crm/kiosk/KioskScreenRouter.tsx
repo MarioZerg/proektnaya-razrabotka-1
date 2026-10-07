@@ -10,7 +10,7 @@ import KioskReviewsScreen from '@/components/crm/kiosk/KioskReviewsScreen';
 import KioskRollsScreen from '@/components/crm/kiosk/KioskRollsScreen';
 import KioskUnlabeledScreen from '@/components/crm/kiosk/KioskUnlabeledScreen';
 import KioskShiftScreen from '@/components/crm/kiosk/KioskShiftScreen';
-import type { Role } from '@/lib/roles';
+import { isReturnsPacker, type Role } from '@/lib/roles';
 import type { KioskUser, KioskShift } from '@/lib/kioskApi';
 
 interface Props {
@@ -24,6 +24,7 @@ interface Props {
   setScreen: (screen: KioskScreen) => void;
   shiftSaving: boolean;
   repackCount: number;
+  returnsPackerOnShift: string | null;
   closeAt: Date | null;
   canCloseNow: boolean;
   onOpenShift: (workshopId: number | null, shiftNumber: number | null) => void;
@@ -48,6 +49,7 @@ const KioskScreenRouter = ({
   setScreen,
   shiftSaving,
   repackCount,
+  returnsPackerOnShift,
   closeAt,
   canCloseNow,
   onOpenShift,
@@ -65,6 +67,7 @@ const KioskScreenRouter = ({
           onSelect={setScreen}
           role={(shift?.role || user.role) as Role}
           repackCount={repackCount}
+          returnsPackerOnShift={returnsPackerOnShift}
         />
       ) : (
         <div className="mx-auto max-w-xl space-y-4 pt-8 text-center">
@@ -101,13 +104,23 @@ const KioskScreenRouter = ({
         вытягивалась в длинную «простыню» — половину строк приходилось листать. */}
     {screen === 'orders' && (
       <div className="mx-auto max-w-5xl">
-        <KioskOrdersScreen
-          packerId={user.id}
-          packerName={user.name}
-          workshopId={currentWorkshopId}
-          // Должность берём из СМЕНЫ: сотрудник мог выйти сегодня другой ролью.
-          role={shift?.role || user.role}
-        />
+        {isReturnsPacker((shift?.role || user.role) as Role) ? (
+          <div className="rounded-lg border border-amber-300 bg-amber-50 p-4 text-amber-900">
+            <p className="text-lg font-bold">Стикеровка основной продукции вам недоступна</p>
+            <p className="mt-1 text-base">
+              Упаковщица-возвраты закрывает только перепаковку. Основную продукцию
+              упаковывает упаковщица на стикеровке.
+            </p>
+          </div>
+        ) : (
+          <KioskOrdersScreen
+            packerId={user.id}
+            packerName={user.name}
+            workshopId={currentWorkshopId}
+            // Должность берём из СМЕНЫ: сотрудник мог выйти сегодня другой ролью.
+            role={shift?.role || user.role}
+          />
+        )}
       </div>
     )}
 
@@ -130,13 +143,23 @@ const KioskScreenRouter = ({
 
     {screen === 'repack' && (
       <div className="mx-auto max-w-3xl">
-        <KioskRepackScreen
-          actorId={user.id}
-          actorName={user.name}
-          // Цех киоска: список перепаковки у каждого цеха свой, иначе две
-          // упаковщицы возьмут в работу одну и ту же вещь.
-          workshopId={currentWorkshopId || Number(workshopId) || null}
-        />
+        {(shift?.role || user.role) === 'packer' && returnsPackerOnShift ? (
+          <div className="rounded-lg border border-amber-300 bg-amber-50 p-4 text-amber-900">
+            <p className="text-lg font-bold">Перепаковку сейчас делает {returnsPackerOnShift}</p>
+            <p className="mt-1 text-base">
+              Пока упаковщица-возвраты на смене, вам доступна только упаковка
+              основной продукции.
+            </p>
+          </div>
+        ) : (
+          <KioskRepackScreen
+            actorId={user.id}
+            actorName={user.name}
+            // Цех киоска: список перепаковки у каждого цеха свой, иначе две
+            // упаковщицы возьмут в работу одну и ту же вещь.
+            workshopId={currentWorkshopId || Number(workshopId) || null}
+          />
+        )}
       </div>
     )}
 

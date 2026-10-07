@@ -57,7 +57,12 @@ export const useSewingItemsFilters = ({
   const [typeFilter, setTypeFilter] = useState(
     () => new URLSearchParams(window.location.search).get('type') || 'all'
   );
-  const [employeeFilter, setEmployeeFilter] = useState('all');
+  const [employeeFilter, setEmployeeFilter] = useState(
+    () =>
+      new URLSearchParams(window.location.search).get('employee') ||
+      new URLSearchParams(window.location.search).get('sewer') ||
+      'all'
+  );
   const [materialFilter, setMaterialFilter] = useState('all');
   const [widthFilter, setWidthFilter] = useState('all');
   const [heightFilter, setHeightFilter] = useState('all');
@@ -166,7 +171,19 @@ export const useSewingItemsFilters = ({
     // и FBS, и FBO, поэтому проверяем отдельным условием.
     if (typeFilter === 'legal' && !o.isLegalEntity) return false;
     if (typeFilter !== 'all' && typeFilter !== 'legal' && o.orderType !== typeFilter) return false;
-    if (employeeFilter !== 'all' && String(o.assignedUserId) !== employeeFilter) return false;
+    // Упаковщица фильтрует по швее, которая отшила вещь. На стикеровке
+    // assignedUserId уже пустой — без sewerUserId фильтр с дашборда ничего
+    // не находил.
+    if (employeeFilter !== 'all') {
+      const id = employeeFilter;
+      if (
+        String(o.assignedUserId) !== id &&
+        String(o.sewerUserId) !== id &&
+        String(o.cutterUserId) !== id
+      ) {
+        return false;
+      }
+    }
     if (materialFilter !== 'all') {
       const selectedName = materials.find((m) => String(m.id) === materialFilter)?.name;
       // Синонимы: «Вуаль без утяжелителя» в справочнике = «Вуаль (без ут)» в заказе.

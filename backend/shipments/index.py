@@ -2237,7 +2237,7 @@ def handler(event: dict, context) -> dict:
                 if actor_id:
                     cur.execute("SELECT role FROM users WHERE id = %s", (int(actor_id),))
                     actor_row = cur.fetchone()
-                    if actor_row and actor_row[0] not in ('sewer', 'cutter', 'packer', 'admin'):
+                    if actor_row and actor_row[0] not in ('sewer', 'cutter', 'packer', 'packer_returns', 'admin'):
                         return {'statusCode': 403, 'headers': headers, 'body': json.dumps({'error': 'Создать заявку на материал может только сотрудник цеха'})}
 
                     # Материал заказывают под работу текущей смены — без открытой смены заявка
@@ -2599,7 +2599,7 @@ def handler(event: dict, context) -> dict:
                     if actor_row:
                         actor_role, actor_workshop_name, actor_shift_number = actor_row
                         if actor_role != 'admin':
-                            if actor_role not in ('sewer', 'cutter', 'packer'):
+                            if actor_role not in ('sewer', 'cutter', 'packer', 'packer_returns'):
                                 return {'statusCode': 403, 'headers': headers, 'body': json.dumps({'error': 'Принять заявку в цехе может только сотрудник этого цеха'})}
                             cur.execute(
                                 "SELECT id FROM workshops WHERE name = %s",
@@ -2682,7 +2682,7 @@ def handler(event: dict, context) -> dict:
                     if actor_row:
                         actor_role, actor_workshop_name, actor_shift_number = actor_row
                         if actor_role != 'admin':
-                            if actor_role not in ('sewer', 'cutter', 'packer'):
+                            if actor_role not in ('sewer', 'cutter', 'packer', 'packer_returns'):
                                 return {'statusCode': 403, 'headers': headers, 'body': json.dumps({'error': 'Отказать в приёме заявки может только сотрудник этого цеха'})}
                             cur.execute(
                                 "SELECT id FROM workshops WHERE name = %s",

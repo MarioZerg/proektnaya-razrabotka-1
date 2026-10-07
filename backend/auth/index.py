@@ -9,8 +9,8 @@ import psycopg2
 from onec_flush import enqueue_onec_entity, flush_onec_outbox
 
 
-ROLES = {'sewer', 'cutter', 'packer', 'storekeeper', 'senior_storekeeper', 'cleaner',
-         'admin', 'manager', 'accountant'}
+ROLES = {'sewer', 'cutter', 'packer', 'packer_returns', 'storekeeper', 'senior_storekeeper',
+         'cleaner', 'admin', 'manager', 'accountant'}
 
 CLOSED_WORKSHOP_NAMES = ('Цех №2', 'Тестовый цех (QA)')
 KEEP_WORKSHOP_NAME = 'Цех №1'

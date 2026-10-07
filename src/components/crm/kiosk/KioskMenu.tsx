@@ -25,6 +25,11 @@ interface KioskMenuProps {
    * загрузки списка.
    */
   repackCount?: number;
+  /**
+   * Имя упаковщицы-возвраты, если она сейчас на смене в этом цехе.
+   * Пока она работает, основной упаковщице плитку «Перепаковка» прячем.
+   */
+  returnsPackerOnShift?: string | null;
 }
 
 const tiles: Array<{ screen: KioskScreen; label: string; icon: string; className: string }> = [
@@ -85,7 +90,12 @@ const tiles: Array<{ screen: KioskScreen; label: string; icon: string; className
 ];
 
 /** Главное меню терминала — крупные плитки под сенсорный экран. */
-const KioskMenu = ({ onSelect, role, repackCount = 0 }: KioskMenuProps) => {
+const KioskMenu = ({
+  onSelect,
+  role,
+  repackCount = 0,
+  returnsPackerOnShift = null,
+}: KioskMenuProps) => {
   // Кто что видит на терминале:
   //
   // «Товар без стикера» — зона кладовщика: он ищет вещи, оставшиеся без стикера хранения.
@@ -108,6 +118,9 @@ const KioskMenu = ({ onSelect, role, repackCount = 0 }: KioskMenuProps) => {
     storekeeper: ['orders', 'rolls', 'defect', 'flyer', 'cutterSheet'],
     sewer: ['unlabeled', 'repack', 'flyer', 'cutterSheet'],
     cutter: ['unlabeled', 'repack', 'flyer'],
+    // Возвраты: только перепаковка. Стикеровка основной продукции и листовки —
+    // зона основной упаковщицы.
+    packer_returns: ['orders', 'flyer', 'unlabeled', 'cutterSheet'],
   };
 
   // Администратору на терминале доступно ВСЁ, включая «Товар без стикера».
@@ -116,12 +129,19 @@ const KioskMenu = ({ onSelect, role, repackCount = 0 }: KioskMenuProps) => {
   // пряталась. На практике админ подходит к терминалу ровно тогда, когда у кладовщика
   // что-то не сходится: вещь без стикера, и разобраться надо на месте, а не искать
   // свободного кладовщика, чтобы тот открыл экран под своим входом.
-  const hidden =
-    role === 'admin'
+  const hidden: KioskScreen[] = [
+    ...(role === 'admin'
       ? []
       : isStorekeeperRole(role)
         ? hiddenByRole.storekeeper
-        : hiddenByRole[role] || ['unlabeled', 'cutterSheet'];
+        : hiddenByRole[role] || ['unlabeled', 'cutterSheet']),
+  ];
+
+  // Пока в цехе на смене упаковщица-возвраты — основную к перепаковке не пускаем.
+  // Иначе обе возьмут одну очередь, а основная отвлечётся от стикеровки.
+  if (role === 'packer' && returnsPackerOnShift && !hidden.includes('repack')) {
+    hidden.push('repack');
+  }
 
   const visibleTiles = tiles.filter((t) => !hidden.includes(t.screen));
 
