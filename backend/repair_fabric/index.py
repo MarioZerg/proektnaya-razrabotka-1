@@ -145,10 +145,15 @@ def list_pieces(cur, event):
         f"       p.workshop_id, w.name, p.shift_number, "
         f"       p.created_by_name, p.created_at, "
         f"       p.used_order_id, o.order_number, p.used_by_name, p.used_at, p.comment, "
-        f"       p.barcode, p.reason_label "
+        f"       p.barcode, p.reason_label, p.added_by_role, p.goods_warehouse_id, "
+        f"       gw.storage_barcode, src.order_number, "
+        f"       gw.received_at, gw.shipping_labeled_at, gw.shipped_at, "
+        f"       src.cut_at, src.sewn_at, src.packed_at, gw.dispose_reason "
         f"FROM repair_fabric_pieces p "
         f"LEFT JOIN workshops w ON w.id = p.workshop_id "
         f"LEFT JOIN orders o ON o.id = p.used_order_id "
+        f"LEFT JOIN goods_warehouse gw ON gw.id = p.goods_warehouse_id "
+        f"LEFT JOIN orders src ON src.id = COALESCE(gw.reserved_order_id, gw.order_id) "
         f"{where_sql} "
         f"ORDER BY p.material, p.width, p.height, p.id",
         params,
@@ -162,6 +167,13 @@ def list_pieces(cur, event):
             'usedOrderId': r[11], 'usedOrderNumber': r[12],
             'usedByName': r[13], 'usedAt': r[14], 'comment': r[15],
             'barcode': r[16], 'reasonLabel': r[17],
+            'addedByRole': r[18],
+            'goodsWarehouseId': r[19],
+            'storageBarcode': r[20],
+            'sourceOrderNumber': r[21],
+            'receivedAt': r[22], 'labeledAt': r[23], 'shippedAt': r[24],
+            'cutAt': r[25], 'sewnAt': r[26], 'packedAt': r[27],
+            'disposeReason': r[28],
         }
         for r in cur.fetchall()
     ]
@@ -242,7 +254,7 @@ def suitable_for_order(cur, event):
 
     cur.execute(
         "SELECT p.id, p.material, p.width, p.height, p.created_by_name, p.created_at, "
-        "       w.name, p.shift_number, p.barcode, p.reason_label "
+        "       w.name, p.shift_number, p.barcode, p.reason_label, p.added_by_role "
         "FROM repair_fabric_pieces p "
         "LEFT JOIN workshops w ON w.id = p.workshop_id "
         "WHERE p.status = 'available' "
@@ -260,7 +272,7 @@ def suitable_for_order(cur, event):
             'workshopName': r[6], 'shiftNumber': r[7],
             # Номер со стикера и причина — по ним закройщица находит отрез на
             # стеллаже и сразу знает, где искать дефект.
-            'barcode': r[8], 'reasonLabel': r[9],
+            'barcode': r[8], 'reasonLabel': r[9], 'addedByRole': r[10],
             # Насколько кусок больше заказа — закройщик видит запас сразу.
             'extraWidth': r[2] - int(width),
             'extraHeight': r[3] - int(height),
@@ -277,23 +289,61 @@ def suitable_for_order(cur, event):
     })
 
 
-def send_to_repair(cur, conn, event, body):
-    """Упаковщица отправляет вещь в перешив — кусок попадает в цех.
+def lookup_item(cur, event):
+    """Кладовщик сканирует стикер брака GW-… — показываем вещь до отправки в куски."""
+    q = event.get('queryStringParameters') or {}
+    barcode = (q.get('barcode') or '').strip()
+    if not barcode:
+        return _resp(400, {'error': 'Отсканируйте стикер вещи'})
 
-    Раньше здесь требовалось выбрать рулон: упаковщица искала подходящий,
-    сканировала его, и кусок растворялся в метраже. Теперь она просто
-    отправляет вещь в перешив — кусок сохраняет свои размеры и достаётся
-    закройщику как отдельный отрез.
+    cur.execute(
+        "SELECT gw.id, gw.status, gw.storage_barcode, o.material, o.width, o.height, "
+        "       o.order_number, gw.dispose_reason "
+        "FROM goods_warehouse gw "
+        "LEFT JOIN orders o ON o.id = COALESCE(gw.reserved_order_id, gw.order_id) "
+        "WHERE gw.storage_barcode = %s",
+        (barcode,),
+    )
+    row = cur.fetchone()
+    if not row:
+        return _resp(404, {'error': 'Вещь с таким стикером не найдена'})
+    gw_id, status, storage_barcode, material, width, height, order_number, dispose_reason = row
+    return _resp(200, {
+        'item': {
+            'id': gw_id,
+            'status': status,
+            'storageBarcode': storage_barcode,
+            'material': material,
+            'width': width,
+            'height': height,
+            'orderNumber': order_number,
+            'disposeReason': dispose_reason,
+            'canSend': status == 'to_dispose',
+        }
+    })
+
+
+def send_to_repair(cur, conn, event, body):
+    """Вещь уходит в куски на перешив — из перепаковки или с брака кладовщика.
 
     ПРИЧИНА ОБЯЗАТЕЛЬНА. Кусок без причины бесполезен закройщице: она не знает,
-    искать ли дефект на полотне или ткань целая и виноват шов. Раньше это
-    выяснялось разворачиванием отреза на столе — самая долгая часть работы.
+    искать ли дефект на полотне или ткань целая и виноват шов.
 
-    НОМЕР СТИКЕРА ВЫДАЁМ ЗДЕСЬ ЖЕ. Упаковщица печатает наклейку с этим номером
-    и клеит её на вещь, а закройщица видит тот же номер в карточке заказа —
-    и берёт нужный отрез со стеллажа сразу, не перебирая соседние.
+    НОМЕР. Упаковщица получает новый RS-XXXXXX. Кладовщик забирает вещь из
+    утилизации — кусок остаётся под тем же GW-номером, что был на стикере
+    «БРАК», чтобы цепочка заказа не обрывалась.
     """
     gw_id = body.get('goodsWarehouseId')
+    barcode_in = (body.get('barcode') or '').strip()
+    if not gw_id and barcode_in:
+        cur.execute(
+            "SELECT id FROM goods_warehouse WHERE storage_barcode = %s",
+            (barcode_in,),
+        )
+        found = cur.fetchone()
+        if not found:
+            return _resp(404, {'error': 'Вещь с таким стикером не найдена'})
+        gw_id = found[0]
     if not gw_id:
         return _resp(400, {'error': 'Укажите вещь'})
 
@@ -314,9 +364,11 @@ def send_to_repair(cur, conn, event, body):
     user = current_user(cur, event)
     actor_id = user['id'] if user else body.get('userId')
     actor_name = user['name'] if user else body.get('userName')
+    actor_role = user['role'] if user else None
 
     cur.execute(
-        "SELECT gw.id, gw.status, o.material, o.width, o.height, o.order_number "
+        "SELECT gw.id, gw.status, gw.storage_barcode, "
+        "       o.material, o.width, o.height, o.order_number "
         "FROM goods_warehouse gw "
         "LEFT JOIN orders o ON o.id = COALESCE(gw.reserved_order_id, gw.order_id) "
         "WHERE gw.id = %s",
@@ -325,7 +377,7 @@ def send_to_repair(cur, conn, event, body):
     row = cur.fetchone()
     if not row:
         return _resp(404, {'error': 'Вещь не найдена'})
-    _id, gw_status, material, width, height, order_number = row
+    _id, gw_status, storage_barcode, material, width, height, order_number = row
 
     if not material or not width or not height:
         return _resp(409, {
@@ -334,6 +386,27 @@ def send_to_repair(cur, conn, event, body):
     # Уже отгруженную вещь в перешив не пускаем: её нет на складе.
     if gw_status in ('shipped', 'returned_to_roll', 'disposed'):
         return _resp(409, {'error': 'Эта вещь уже выбыла со склада'})
+
+    # Кладовщик забирает только брак/утиль после перепаковки. Упаковщица
+    # отправляет вещь ещё на осмотре, до утилизации.
+    storekeeper_roles = ('storekeeper', 'senior_storekeeper', 'admin')
+    from_dispose = gw_status == 'to_dispose'
+    if from_dispose:
+        if actor_role not in storekeeper_roles:
+            return _resp(403, {
+                'error': 'Вещь из утилизации в куски может отправить только кладовщик',
+            })
+    elif actor_role in ('storekeeper', 'senior_storekeeper'):
+        return _resp(409, {
+            'error': 'Кладовщик добавляет в куски только вещи со статусом '
+                     '«брак» или «утилизация» после перепаковки',
+        })
+
+    added_by_role = 'packer'
+    if actor_role in ('storekeeper', 'senior_storekeeper'):
+        added_by_role = 'storekeeper'
+    elif actor_role == 'admin':
+        added_by_role = 'admin'
 
     cur.execute(
         "SELECT 1 FROM repair_fabric_pieces WHERE goods_warehouse_id = %s AND status = 'available'",
@@ -359,46 +432,61 @@ def send_to_repair(cur, conn, event, body):
     m_row = cur.fetchone()
     material_id = m_row[0] if m_row else None
 
-    barcode = next_repair_barcode(cur)
+    # Брак после перепаковки уже носит GW-номер на стикере «БРАК».
+    # Новый RS выдавать нельзя: иначе цепочка заказа пропадёт.
+    if from_dispose and storage_barcode:
+        barcode = storage_barcode
+    else:
+        barcode = next_repair_barcode(cur)
+
+    who = 'Добавил кладовщик' if added_by_role == 'storekeeper' else (
+        'Добавил администратор' if added_by_role == 'admin' else None
+    )
+    comment_parts = []
+    if order_number:
+        comment_parts.append(f'Из заказа {order_number}')
+    if who:
+        comment_parts.append(who)
+    comment = '. '.join(comment_parts) or None
 
     cur.execute(
         "INSERT INTO repair_fabric_pieces "
         "  (goods_warehouse_id, material_id, material, width, height, "
         "   workshop_id, shift_number, created_by, created_by_name, comment, "
-        "   barcode, reason_code, reason_label) "
-        "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id",
+        "   barcode, reason_code, reason_label, added_by_role) "
+        "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id",
         (
             int(gw_id), material_id, material, int(width), int(height),
             workshop_id, shift_number,
             int(actor_id) if actor_id else None, actor_name,
-            f'Из заказа {order_number}' if order_number else None,
-            barcode, reason_code or None, reason_label,
+            comment,
+            barcode, reason_code or None, reason_label, added_by_role,
         ),
     )
     piece_id = cur.fetchone()[0]
 
-    # Вещь уходит со склада: как товар она больше не существует, теперь это
-    # материал в цехе. Статус тот же, что был у роспуска в рулон, — движение
-    # по складу остаётся прослеживаемым.
+    # Вещь уходит со склада в куски. Дату отгрузки не затираем: у возврата
+    # она уже есть и нужна таймлайну. Новую ставим только если её не было.
     cur.execute(
-        "UPDATE goods_warehouse SET status = 'returned_to_roll', shipped_at = now() "
+        "UPDATE goods_warehouse SET status = 'returned_to_roll', "
+        "  shipped_at = COALESCE(shipped_at, now()) "
         "WHERE id = %s",
         (int(gw_id),),
     )
 
     log_action(
         cur, actor_id, actor_name, 'repair_piece_add', piece_id,
-        f'В перешив {barcode}: {material} {width}x{height} — {reason_label} (вещь #{gw_id})',
+        f'В перешив {barcode}: {material} {width}x{height} — {reason_label} '
+        f'({who or "упаковщица"}, вещь #{gw_id})',
     )
     conn.commit()
 
     return _resp(200, {
         'success': True, 'pieceId': piece_id,
         'material': material, 'width': width, 'height': height,
-        # Номер и причину возвращаем терминалу: он тут же печатает наклейку,
-        # и на ней стоит ровно то, что записано в базе.
         'barcode': barcode, 'reasonLabel': reason_label,
         'orderNumber': order_number,
+        'addedByRole': added_by_role,
     })
 
 
@@ -614,25 +702,26 @@ def delete_piece(cur, conn, event, body):
     user = require_admin(cur, event)
 
     cur.execute(
-        "SELECT status, material, width, height, goods_warehouse_id "
+        "SELECT status, material, width, height, goods_warehouse_id, added_by_role "
         "FROM repair_fabric_pieces WHERE id = %s",
         (int(piece_id),),
     )
     row = cur.fetchone()
     if not row:
         return _resp(404, {'error': 'Кусок не найден'})
-    status, material, width, height, gw_id = row
+    status, material, width, height, gw_id, added_by_role = row
 
-    # Вещь уходила в перешив с перепаковки и получала статус 'returned_to_roll'.
-    # Раз куска больше нет, возвращаем её в очередь перепаковки: иначе вещь
-    # пропадёт отовсюду разом — и из перешива, и из работы упаковщицы.
-    # Только для непотраченных кусков: раскроенный обратно вещью не станет.
+    # Вещь уходила в перешив и получала статус 'returned_to_roll'.
+    # Раз куска больше нет — возвращаем туда, откуда её взяли:
+    # с перепаковки — обратно упаковщице, с утиля кладовщика — снова в брак.
+    # Раскроенный обратно вещью не станет.
     if gw_id and status in ('available', 'reserved'):
+        back = 'to_dispose' if added_by_role in ('storekeeper', 'admin') else 'repacking'
         cur.execute(
-            "UPDATE goods_warehouse SET status = 'repacking', shipped_at = NULL, "
+            "UPDATE goods_warehouse SET status = %s, shipped_at = NULL, "
             "received_at = now() "
             "WHERE id = %s AND status = 'returned_to_roll'",
-            (int(gw_id),),
+            (back, int(gw_id)),
         )
 
     cur.execute("DELETE FROM repair_fabric_pieces WHERE id = %s", (int(piece_id),))
@@ -692,6 +781,8 @@ def handler(event: dict, context) -> dict:
     ПУТЬ КУСКА: available → reserved → used. Резерв обратим — пока ткань не
     разрезана, кусок можно открепить от заказа и вернуть в перешив.
 
+    GET  /?action=lookup&barcode=GW-000123
+        - кладовщик сканирует стикер брака: что за вещь и можно ли в куски.
     GET  /?action=reasons
         - справочник причин перешива для терминала упаковщицы.
     GET  /?status=available&material=Вуаль
@@ -725,6 +816,8 @@ def handler(event: dict, context) -> dict:
 
         if method == 'GET':
             q = event.get('queryStringParameters') or {}
+            if q.get('action') == 'lookup':
+                return lookup_item(cur, event)
             if q.get('action') == 'reasons':
                 # Справочник причин живёт на сервере, а не в коде терминала:
                 # подпись на стикере, запись в базе и текст в карточке

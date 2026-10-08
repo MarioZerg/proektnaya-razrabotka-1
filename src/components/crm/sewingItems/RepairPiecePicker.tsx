@@ -334,7 +334,11 @@ const RepairPiecePicker = ({
                       {exact
                         ? 'Ровно под заказ, без обрезков'
                         : `Запас: +${p.extraWidth} см по ширине, +${p.extraHeight} см по высоте`}
-                      {p.createdByName ? ` · отправил(а) ${p.createdByName}` : ''}
+                      {p.addedByRole === 'storekeeper'
+                        ? ' · добавил кладовщик'
+                        : p.createdByName
+                          ? ` · отправил(а) ${p.createdByName}`
+                          : ''}
                     </p>
                   </div>
                   <Button

@@ -24,6 +24,9 @@ import {
   type RepairPiece,
   type RepairPieceStatus,
 } from '@/lib/repairFabricApi';
+import { lifeFromRepairPiece } from '@/lib/goodsLifeTimeline';
+import GoodsLifeTimeline from '@/components/crm/goodsWarehouse/GoodsLifeTimeline';
+import StorekeeperSendToRepairDialog from '@/components/crm/goodsWarehouse/StorekeeperSendToRepairDialog';
 
 /**
  * Состояние куска одним значком.
@@ -68,6 +71,8 @@ const RepairFabric = () => {
   const { user } = useAuth();
   const { toast } = useToast();
   const isAdmin = user?.role === 'admin';
+  const isStorekeeper = user?.role === 'storekeeper' || user?.role === 'senior_storekeeper';
+  const canAddPiece = isAdmin || isStorekeeper;
 
   const [pieces, setPieces] = useState<RepairPiece[]>([]);
   const [summary, setSummary] = useState<Array<{ material: string; count: number }>>([]);
@@ -78,6 +83,7 @@ const RepairFabric = () => {
   const [writingOff, setWritingOff] = useState<number | null>(null);
   const [deleting, setDeleting] = useState<number | null>(null);
   const [search, setSearch] = useState('');
+  const [addOpen, setAddOpen] = useState(false);
 
   const load = () => {
     setLoading(true);
@@ -109,6 +115,8 @@ const RepairFabric = () => {
         // Номер со стикера ищем первым: с этой бумажкой в руках человек
         // и приходит к таблице — «что это за кусок и куда он делся».
         (p.barcode || '').toLowerCase().includes(q) ||
+        (p.storageBarcode || '').toLowerCase().includes(q) ||
+        (p.sourceOrderNumber || '').toLowerCase().includes(q) ||
         p.material.toLowerCase().includes(q) ||
         `${p.width}x${p.height}`.includes(q) ||
         `${p.width}×${p.height}`.includes(q) ||
@@ -177,15 +185,23 @@ const RepairFabric = () => {
   return (
     <CrmLayout>
       <div className="space-y-4">
-        <div>
-          <h1 className="flex items-center gap-2 text-2xl font-bold">
-            <Icon name="Scissors" size={24} className="text-violet-600" />
-            Куски на перешив
-          </h1>
-          <p className="text-sm text-muted-foreground">
-            Отрезы ткани, лежащие в цехе. Закройщик выбирает их в карточке заказа —
-            система показывает только те, что подходят по размеру
-          </p>
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h1 className="flex items-center gap-2 text-2xl font-bold">
+              <Icon name="Scissors" size={24} className="text-violet-600" />
+              Куски на перешив
+            </h1>
+            <p className="text-sm text-muted-foreground">
+              Отрезы ткани, лежащие в цехе. Закройщик выбирает их в карточке заказа —
+              система показывает только те, что подходят по размеру
+            </p>
+          </div>
+          {canAddPiece && (
+            <Button className="bg-violet-600 hover:bg-violet-700" onClick={() => setAddOpen(true)}>
+              <Icon name="Plus" size={16} className="mr-2" />
+              Добавить кусок
+            </Button>
+          )}
         </div>
 
         {listError && (
@@ -267,7 +283,8 @@ const RepairFabric = () => {
                   : 'Ничего не найдено'}
             </p>
             <p className="text-sm text-muted-foreground">
-              Куски появляются здесь, когда упаковщица отправляет их с перепаковки
+              Куски появляются, когда упаковщица отправляет их с перепаковки или
+              кладовщик забирает брак из утилизации
             </p>
           </div>
           )
@@ -292,11 +309,22 @@ const RepairFabric = () => {
                           {p.reasonLabel}
                         </p>
                       )}
+                      {(p.addedByRole === 'storekeeper' || p.addedByRole === 'admin') && (
+                        <p className="text-xs font-medium text-violet-800">
+                          {p.addedByRole === 'admin' ? 'Добавил администратор' : 'Добавил кладовщик'}
+                        </p>
+                      )}
+                      {p.sourceOrderNumber && (
+                        <p className="text-xs text-muted-foreground">заказ {p.sourceOrderNumber}</p>
+                      )}
                       <p className="text-xs text-muted-foreground">
                         {p.createdByName || '—'} · {formatDateTime(p.createdAt)}
                       </p>
                     </div>
                     <StatusBadge status={p.status} />
+                  </div>
+                  <div className="mt-2">
+                    <GoodsLifeTimeline events={lifeFromRepairPiece(p)} compact />
                   </div>
                   {p.usedOrderNumber && (
                     <p className="mt-1 text-xs text-muted-foreground">
@@ -368,8 +396,14 @@ const RepairFabric = () => {
                         {p.width}×{p.height}
                       </TableCell>
                       <TableCell className="text-sm">
-                        {p.reasonLabel || (
-                          <span className="text-muted-foreground">—</span>
+                        <div>{p.reasonLabel || <span className="text-muted-foreground">—</span>}</div>
+                        {(p.addedByRole === 'storekeeper' || p.addedByRole === 'admin') && (
+                          <span className="mt-0.5 inline-block rounded bg-violet-100 px-1.5 py-0.5 text-[11px] font-medium text-violet-800">
+                            {p.addedByRole === 'admin' ? 'Добавил администратор' : 'Добавил кладовщик'}
+                          </span>
+                        )}
+                        {p.sourceOrderNumber && (
+                          <div className="text-xs text-muted-foreground">заказ {p.sourceOrderNumber}</div>
                         )}
                       </TableCell>
                       <TableCell>
@@ -384,6 +418,9 @@ const RepairFabric = () => {
                       )}
                       <TableCell className="text-sm text-muted-foreground">
                         {formatDateTime(p.createdAt)}
+                        <div className="mt-1">
+                          <GoodsLifeTimeline events={lifeFromRepairPiece(p)} compact />
+                        </div>
                       </TableCell>
                       {isAdmin && (
                         <TableCell className="text-sm">
@@ -450,6 +487,11 @@ const RepairFabric = () => {
           </>
         )}
       </div>
+      <StorekeeperSendToRepairDialog
+        open={addOpen}
+        onOpenChange={setAddOpen}
+        onSent={load}
+      />
     </CrmLayout>
   );
 };

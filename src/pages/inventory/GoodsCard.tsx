@@ -28,6 +28,7 @@ import GoodsCardActions from '@/components/crm/goodsCard/GoodsCardActions';
 import GoodsCardDetails from '@/components/crm/goodsCard/GoodsCardDetails';
 import GoodsCardLife from '@/components/crm/goodsCard/GoodsCardLife';
 import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
+import StorekeeperSendToRepairDialog from '@/components/crm/goodsWarehouse/StorekeeperSendToRepairDialog';
 
 /**
  * Карточка вещи со склада.
@@ -58,10 +59,13 @@ const GoodsCard = () => {
   const [notFoundItem, setNotFoundItem] = useState<NotFoundTarget | null>(null);
   /** Открыт диалог возврата списанной вещи, которая нашлась. */
   const [restoreOpen, setRestoreOpen] = useState(false);
+  const [repairOpen, setRepairOpen] = useState(false);
 
   // Возврат списанной вещи в оборот меняет остатки склада — это решение админа.
   // Сервер проверяет право ещё раз: спрятанной кнопки для защиты мало.
   const isAdmin = user?.role === 'admin';
+  const canSendToRepair =
+    isAdmin || user?.role === 'storekeeper' || user?.role === 'senior_storekeeper';
 
   const load = () => {
     if (!id) return;
@@ -304,6 +308,8 @@ const GoodsCard = () => {
           onRestore={() => setRestoreOpen(true)}
           onSendToSewing={setSewingItem}
           onNotFound={setNotFoundItem}
+          canSendToRepair={canSendToRepair}
+          onSendToRepair={() => setRepairOpen(true)}
         />
 
         <GoodsCardDetails card={card} />
@@ -316,6 +322,24 @@ const GoodsCard = () => {
           storageBarcode={card.storageBarcode}
           currentShelfName={card.shelfName}
           onDone={load}
+        />
+
+        <StorekeeperSendToRepairDialog
+          open={repairOpen}
+          onOpenChange={setRepairOpen}
+          item={
+            card
+              ? {
+                  id: card.id,
+                  material: card.material,
+                  width: card.width,
+                  height: card.height,
+                  orderNumber: card.reservedOrderNumber || card.sourceOrderNumber,
+                  storageBarcode: card.storageBarcode,
+                }
+              : null
+          }
+          onSent={load}
         />
 
         <SendToSewingDialog

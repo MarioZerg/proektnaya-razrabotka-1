@@ -180,6 +180,7 @@ const GoodsWarehouseFilters = ({
                 или заказ отменили уже после закрытия поставки. По факту она лежит
                 у нас, а в системе числится уехавшей. */}
             <SelectItem value="shipped">Отгружен</SelectItem>
+            <SelectItem value="to_dispose">Брак / утилизация</SelectItem>
             <SelectItem value="lost">Утерян</SelectItem>
           </SelectContent>
         </Select>

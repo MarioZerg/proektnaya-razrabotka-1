@@ -7,6 +7,7 @@ import type {
   GoodsWarehouseItem,
   ReturnHistoryEntry,
 } from '@/lib/goodsWarehouseApi';
+import type { RepairPiece } from '@/lib/repairFabricApi';
 
 /**
  * Точка жизни вещи: отшили, приняли, оформили, отгрузили, вернули, оформили снова.
@@ -29,6 +30,7 @@ export type LifeKind =
   | 'returned'
   | 'lost'
   | 'sewing'
+  | 'repair'
   | 'other';
 
 export interface LifeEvent {
@@ -55,6 +57,7 @@ const KIND_LABEL: Record<LifeKind, string> = {
   returned: 'Вернули',
   lost: 'Утерян',
   sewing: 'В пошив',
+  repair: 'В куски',
   other: 'Событие',
 };
 
@@ -93,6 +96,7 @@ const ROW_KINDS: LifeKind[] = [
   'returned',
   'lost',
   'sewing',
+  'repair',
 ];
 
 const DEDUPE_MS = 2 * 60 * 1000;
@@ -358,6 +362,51 @@ const numberReturns = (events: LifeEvent[]): LifeEvent[] => {
   });
 };
 
+/**
+ * Кусок — это бывший заказ. Лента та же, что у вещи, плюс «В куски»
+ * и раскрой, если отрез уже взяли.
+ */
+export const lifeFromRepairPiece = (piece: RepairPiece): LifeEvent[] => {
+  const out: LifeEvent[] = [];
+  if (piece.cutAt) push(out, { kind: 'cut', label: KIND_LABEL.cut, at: piece.cutAt });
+  if (piece.sewnAt) push(out, { kind: 'sewn', label: KIND_LABEL.sewn, at: piece.sewnAt });
+  if (piece.packedAt) push(out, { kind: 'packed', label: KIND_LABEL.packed, at: piece.packedAt });
+  if (piece.receivedAt) {
+    push(out, { kind: 'received', label: KIND_LABEL.received, at: piece.receivedAt });
+  }
+  if (piece.labeledAt) {
+    push(out, { kind: 'labeled', label: KIND_LABEL.labeled, at: piece.labeledAt });
+  }
+  if (piece.shippedAt) {
+    push(out, { kind: 'shipped', label: KIND_LABEL.shipped, at: piece.shippedAt });
+  }
+  if (piece.createdAt) {
+    const who =
+      piece.addedByRole === 'storekeeper'
+        ? 'кладовщик'
+        : piece.addedByRole === 'admin'
+          ? 'администратор'
+          : piece.createdByName || null;
+    push(out, {
+      kind: 'repair',
+      label: KIND_LABEL.repair,
+      at: piece.createdAt,
+      who: piece.createdByName,
+      detail: [piece.reasonLabel, who ? `добавил ${who}` : null].filter(Boolean).join(' · '),
+    });
+  }
+  if (piece.usedAt && piece.status === 'used') {
+    push(out, {
+      kind: 'cut',
+      label: 'Пущен в раскрой',
+      at: piece.usedAt,
+      who: piece.usedByName,
+      detail: piece.usedOrderNumber ? `заказ ${piece.usedOrderNumber}` : null,
+    });
+  }
+  return mergeSort(out);
+};
+
 export const formatLifeDay = (iso: string) =>
   new Date(iso).toLocaleDateString('ru-RU', {
     day: '2-digit',
@@ -382,5 +431,6 @@ export const lifeKindStyle: Record<
   returned: { hex: '#d97706', icon: 'Undo2' },
   lost: { hex: '#dc2626', icon: 'PackageX' },
   sewing: { hex: '#c026d3', icon: 'Shirt' },
+  repair: { hex: '#7c3aed', icon: 'Scissors' },
   other: { hex: '#64748b', icon: 'Clock' },
 };

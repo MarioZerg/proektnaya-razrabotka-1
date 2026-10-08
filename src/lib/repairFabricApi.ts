@@ -56,6 +56,20 @@ export interface RepairPiece {
   barcode?: string | null;
   /** Что с куском не так — где закройщице искать брак перед раскроем. */
   reasonLabel?: string | null;
+  /** Кто завёл кусок: упаковщица, кладовщик или администратор. */
+  addedByRole?: 'packer' | 'storekeeper' | 'admin' | null;
+  goodsWarehouseId?: number | null;
+  /** Номер со стикера брака GW-… — тот же, что был у вещи. */
+  storageBarcode?: string | null;
+  /** Заказ, из которого получился кусок. */
+  sourceOrderNumber?: string | null;
+  receivedAt?: string | null;
+  labeledAt?: string | null;
+  shippedAt?: string | null;
+  cutAt?: string | null;
+  sewnAt?: string | null;
+  packedAt?: string | null;
+  disposeReason?: string | null;
   /** Насколько кусок больше заказа — только в подборе под заказ. */
   extraWidth?: number;
   extraHeight?: number;
@@ -142,15 +156,33 @@ export const sendToRepair = (
   goodsWarehouseId: number,
   reason: { code?: string; label?: string },
   actor?: { id?: number | null; name?: string | null },
+  barcode?: string,
 ): Promise<SendToRepairResult> =>
   post({
     action: 'send',
     goodsWarehouseId,
+    barcode,
     reasonCode: reason.code,
     reasonLabel: reason.label,
     userId: actor?.id,
     userName: actor?.name,
   }) as Promise<SendToRepairResult>;
+
+/** Кладовщик сканирует стикер брака — что за вещь и можно ли в куски. */
+export const lookupRepairItem = (barcode: string) =>
+  request(`${REPAIR_FABRIC_URL}?action=lookup&barcode=${encodeURIComponent(barcode)}`) as Promise<{
+    item: {
+      id: number;
+      status: string;
+      storageBarcode: string;
+      material: string | null;
+      width: number | null;
+      height: number | null;
+      orderNumber: string | null;
+      disposeReason: string | null;
+      canSend: boolean;
+    };
+  }>;
 
 /**
  * Закройщик закрепляет кусок за заказом.

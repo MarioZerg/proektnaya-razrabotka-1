@@ -12,6 +12,8 @@ export interface RepairStickerData {
   reason?: string | null;
   /** Номер заказа, из которого пришла вещь. */
   orderNumber?: string | null;
+  /** Кто завёл кусок — на стикере, если это не упаковщица. */
+  addedBy?: string | null;
 }
 
 const esc = (v: string | number | null | undefined) =>
@@ -52,6 +54,7 @@ export const printRepairSticker = (data: RepairStickerData) => {
   const title = [data.material || '', size].filter(Boolean).join(' ');
   const reason = (data.reason || '').trim();
   const order = (data.orderNumber || '').trim();
+  const addedBy = (data.addedBy || '').trim();
 
   const html = `<!DOCTYPE html>
 <html lang="ru">
@@ -133,6 +136,7 @@ export const printRepairSticker = (data: RepairStickerData) => {
   <div class="code">${esc(data.barcode)}</div>
   ${reason ? `<div class="reason">${esc(reason)}</div>` : ''}
   ${order ? `<div class="order">${esc(order)}</div>` : ''}
+  ${addedBy ? `<div class="order">добавил ${esc(addedBy)}</div>` : ''}
 </body>
 </html>`;
 

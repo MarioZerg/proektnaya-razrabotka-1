@@ -26,6 +26,9 @@ interface GoodsCardActionsProps {
   onRestore: () => void;
   onSendToSewing: (item: GoodsWarehouseItem) => void;
   onNotFound: (item: NotFoundTarget) => void;
+  /** Кладовщик может увести брак/утиль после перепаковки в куски. */
+  canSendToRepair?: boolean;
+  onSendToRepair?: () => void;
 }
 
 /**
@@ -47,6 +50,8 @@ const GoodsCardActions = ({
   onRestore,
   onSendToSewing,
   onNotFound,
+  canSendToRepair = false,
+  onSendToRepair,
 }: GoodsCardActionsProps) => (
   <>
     {/* Вещь была списана (не нашли на складе или брак), но потом нашлась.
@@ -69,6 +74,12 @@ const GoodsCardActions = ({
               </p>
             </div>
           </div>
+          {canSendToRepair && card.status === 'to_dispose' && onSendToRepair && (
+            <Button variant="outline" onClick={onSendToRepair}>
+              <Icon name="Scissors" size={18} className="mr-2" />
+              В куски на перешив
+            </Button>
+          )}
           {isAdmin ? (
             <Button onClick={onRestore}>
               <Icon name="PackageCheck" size={18} className="mr-2" />
