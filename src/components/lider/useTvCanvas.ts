@@ -16,5 +16,8 @@ export const useTvCanvas = () => {
   const scale = Math.min(size.w / FRAME_W, size.h / FRAME_H);
   const left = (size.w - FRAME_W * scale) / 2;
   const top = (size.h - FRAME_H * scale) / 2;
-  return { scale, left, top, frameW: FRAME_W, frameH: FRAME_H };
+  // scale(1) всё равно создаёт containing block: в WebView2 из-за этого
+  // программный scrollTop у внутренней ленты часто не едет.
+  const zoom = Math.abs(scale - 1) < 0.002 ? 1 : scale;
+  return { scale: zoom, left, top, frameW: FRAME_W, frameH: FRAME_H };
 };

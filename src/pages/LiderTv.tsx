@@ -58,7 +58,8 @@ const localRace = (people: LivePerson[], today: LiveFloorData['today']): LiveRac
  */
 const IDLE_PUNISH_MS = 5 * 60000;
 const RACE_HOLD_MS = 30000;
-const FLOOR_MIN_MS = 22000;
+const FLOOR_MIN_MS = 18000;
+const FLOOR_MAX_MS = 50000;
 
 const LiderTv = () => {
   const { scale, left, top, frameW, frameH } = useTvCanvas();
@@ -100,19 +101,34 @@ const LiderTv = () => {
     return ids;
   }, [view, nowMs]);
 
-  useSlowScroll(scrollRef, Boolean(view) && screen === 'floor', 32, () => {
+  const floorReady = Boolean(view);
+  useSlowScroll(scrollRef, floorReady && screen === 'floor', 32, () => {
     window.setTimeout(() => setScreen('race'), 1600);
   });
 
+  // view — новый объект на каждый опрос цеха (12 с). Если повесить таймер на него,
+  // гонка на телевизоре никогда не откроется. WebView2 к тому же иногда не скроллит —
+  // тогда всё равно уходим на карту по потолку FLOOR_MAX_MS.
   useEffect(() => {
-    if (screen !== 'floor' || !view) return;
-    const t = window.setTimeout(() => {
+    if (screen !== 'floor' || !floorReady) return;
+    let gone = false;
+    const go = () => {
+      if (gone) return;
+      gone = true;
+      setScreen('race');
+    };
+    const noOverflow = window.setTimeout(() => {
       const el = scrollRef.current;
       const max = el ? el.scrollHeight - el.clientHeight : 0;
-      if (max <= 8) setScreen('race');
+      if (max <= 8) go();
     }, FLOOR_MIN_MS);
-    return () => window.clearTimeout(t);
-  }, [screen, view]);
+    const safety = window.setTimeout(go, FLOOR_MAX_MS);
+    return () => {
+      gone = true;
+      window.clearTimeout(noOverflow);
+      window.clearTimeout(safety);
+    };
+  }, [screen, floorReady]);
 
   useEffect(() => {
     if (screen !== 'race') return;
@@ -169,7 +185,7 @@ const LiderTv = () => {
           height: frameH,
           left,
           top,
-          transform: `scale(${scale})`,
+          transform: scale === 1 ? undefined : `scale(${scale})`,
           transformOrigin: 'top left',
         }}
       >
@@ -222,8 +238,8 @@ const LiderTv = () => {
         ) : (
           <div className="relative h-[calc(1080px-88px)]">
             <div
-              className={`absolute inset-0 flex flex-col px-6 pb-5 pt-2 ${
-                screen === 'floor' ? 'z-10' : 'invisible pointer-events-none'
+              className={`flex h-full min-h-0 flex-col px-6 pb-5 pt-2 ${
+                screen === 'floor' ? '' : 'invisible pointer-events-none'
               }`}
             >
               <div className="shrink-0 pb-3">
@@ -239,7 +255,7 @@ const LiderTv = () => {
               <div className="grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)_420px] gap-4">
                 <div
                   ref={scrollRef}
-                  className="min-h-0 overflow-y-auto overscroll-contain [overflow-anchor:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+                  className="min-h-0 overflow-y-scroll overscroll-contain [overflow-anchor:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
                 >
                   <LiderTvPeople
                     people={view.people}
@@ -273,8 +289,8 @@ const LiderTv = () => {
             </div>
             {race ? (
               <div
-                className={`absolute inset-0 px-5 pb-4 pt-1 ${
-                  screen === 'race' ? 'z-10' : 'invisible pointer-events-none'
+                className={`absolute inset-0 z-20 px-5 pb-4 pt-1 ${
+                  screen === 'race' ? '' : 'hidden'
                 }`}
               >
                 <LiderTvRace

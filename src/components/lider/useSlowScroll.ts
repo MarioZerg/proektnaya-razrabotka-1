@@ -19,25 +19,27 @@ export const useSlowScroll = (
 
   useEffect(() => {
     if (!enabled) return;
-    const el = ref.current;
-    if (!el) return;
 
     let dir = 1;
-    let y = el.scrollTop;
-    let last = performance.now();
+    let y = 0;
+    let last = 0;
     let pauseUntil = 0;
     let raf = 0;
+    let watchdog = 0;
     let announced = false;
+    let stopped = false;
+    let el: HTMLElement | null = null;
 
     const tick = (t: number) => {
+      if (stopped) return;
+      if (!el) el = ref.current;
+      if (!el) return;
+      if (!last) last = t;
       const dt = Math.min(100, Math.max(0, t - last));
       last = t;
       const max = el.scrollHeight - el.clientHeight;
-      if (el.clientHeight < 16 || max <= 8) {
-        y = 0;
-        if (el.scrollTop !== 0) el.scrollTop = 0;
-        return;
-      }
+      // В WebView2 flex иногда даёт 0 высоту на пару кадров — ждём, не сбрасываем.
+      if (el.clientHeight < 16 || max <= 8) return;
       if (t < pauseUntil) return;
       y += (dir * pxPerSec * dt) / 1000;
       if (y >= max - 0.5) {
@@ -54,18 +56,19 @@ export const useSlowScroll = (
         announced = false;
         pauseUntil = t + 1600;
       }
-      el.scrollTop = y;
+      const next = dir > 0 ? Math.ceil(y) : Math.floor(y);
+      if (el.scrollTop !== next) el.scrollTop = next;
     };
 
     const loop = (t: number) => {
       tick(t);
-      raf = requestAnimationFrame(loop);
+      if (!stopped) raf = requestAnimationFrame(loop);
     };
     raf = requestAnimationFrame(loop);
 
-    const watchdog = window.setInterval(() => {
+    watchdog = window.setInterval(() => {
       const t = performance.now();
-      if (t - last > 80) tick(t);
+      if (!last || t - last > 80) tick(t);
     }, 50);
 
     const onVis = () => {
@@ -74,8 +77,9 @@ export const useSlowScroll = (
     document.addEventListener('visibilitychange', onVis);
 
     return () => {
+      stopped = true;
       cancelAnimationFrame(raf);
-      clearInterval(watchdog);
+      window.clearInterval(watchdog);
       document.removeEventListener('visibilitychange', onVis);
     };
   }, [ref, enabled, pxPerSec]);

@@ -1,0 +1,134 @@
+# Промпт для агента poehali.dev — живой цех на ТВ (гонка, скролл в WebView2, аватарки MAX)
+
+Скопируй текст НИЖЕ агенту на Поехали целиком.
+
+---
+
+Ты — агент деплоя на poehali.dev. Проект CRM «Мегатюль».
+Не создавай функции с нуля: обновляй существующие. URL после публикации
+должен остаться ПРЕЖНИМ. Секреты не ротируй, новые токены не выпускай.
+
+Папку `desktop-kiosk/` НЕ трогай и НЕ публикуй: это Windows-оболочка телевизора
+(exe на мини-ПК). Она открывает https://yarplan.ru/lider — без свежего фронта
+на ТВ останется старый экран без скролла и без гонки.
+
+Один заход: сначала миграция, потом Cloud Functions, потом фронтенд.
+Фронт выложи ОБЯЗАТЕЛЬНО — это главное, что чинит exe на телевизоре.
+
+---
+
+## 0) Миграция БД (сначала)
+
+Накати `db_migrations/V0703__floor_race_wins.sql`, если таблицы ещё нет:
+
+```sql
+CREATE TABLE IF NOT EXISTS floor_race_wins (
+    race_date date PRIMARY KEY,
+    winner_user_id integer NOT NULL REFERENCES users(id),
+    winner_name text,
+    steps integer NOT NULL,
+    variki integer NOT NULL DEFAULT 50,
+    won_at timestamptz NOT NULL DEFAULT now()
+);
+```
+
+Проверка: `SELECT to_regclass('floor_race_wins');` — не NULL.
+
+---
+
+## 1) Функция orders
+
+**URL (не менять):**
+https://functions.poehali.dev/1d8ed922-bded-4f5a-a367-a0742711203a
+
+Замени пакет ЦЕЛИКОМ из `backend/orders/`:
+
+- `index.py`
+- `orders_actions.py`
+- `orders_read.py`
+- `shared.py`
+- `authz.py`
+- `bulk_cancel.py`
+- `floor_race.py` — НОВЫЙ файл. Без него `from floor_race import build_race` → ImportError, живой цех падает.
+- `requirements.txt`
+
+**Секрет MAX_BOT_TOKEN**
+В orders добавь `MAX_BOT_TOKEN` с ТЕМ ЖЕ значением, что у функции max_bot
+(`https://functions.poehali.dev/b640dd15-78fa-45ad-9614-b4ba6879c7a9`).
+Токен не меняй. Без него фото с MAX на живом цехе не подтянутся.
+
+**GET `?liveFloor=1` должен отдавать:**
+
+1. Люди на смене с `avatarUrl` = COALESCE(avatar_url, max_avatar_url).
+2. Раз в 5 минут `_maybe_sync_shift_avatars` обновляет только `max_avatar_url`.
+   После UPDATE — `conn.commit()`. Иначе GET откатит запись при close.
+3. Поле `race` из `floor_race.py`:
+   - путь = `seamstress_daily_limit` (иначе `live_race_meters`, иначе 250 п.м.);
+   - прогресс = SUM(width)/100 за сегодня (width в заказах — см);
+   - в JSON: `progress` 0…1, `finished`, `place`, `prize`, `winner` — метраж
+     на телевизор цифрами не показываем;
+   - первая швея, набравшая норму за московские сутки: +50 вариков,
+     строка в `floor_race_wins` (ON CONFLICT DO NOTHING);
+   - закройщики/упаковщицы на тропе есть, приз только швее.
+
+---
+
+## 2) Функция users
+
+**URL (не менять):**
+https://functions.poehali.dev/1db3a89a-f0f6-470e-bef4-fb5ca8fa02df
+
+Пакет целиком из `backend/users/`:
+`index.py`, `max_avatars.py` (без него ImportError), `authz.py`,
+`onec_flush.py`, `requirements.txt`.
+
+`MAX_BOT_TOKEN` — то же значение, что у max_bot, если ещё не стоит.
+POST `{ action: 'sync_max_avatars' }` пишет только `max_avatar_url`.
+
+---
+
+## 3) Фронтенд — обязательно актуальный
+
+Опубликуй фронт из репозитория. На ТВ (exe / WebView2) сейчас нет скролла
+и не открывается гонка — это чинится ЭТИМИ файлами:
+
+- `src/pages/LiderTv.tsx`
+  - старт с «Живой цех», не с гонки;
+  - лента в `flex h-full min-h-0`, НЕ `absolute inset-0` (WebView2 терял высоту);
+  - `overflow-y-scroll`;
+  - на Full HD нет `transform: scale(1)` — из-за него scrollTop в WebView2 не ехал;
+  - таймер гонки зависит от `floorReady` (boolean), НЕ от объекта `view`
+    (view новый каждые 12 с при опросе — таймер сбрасывался и гонка никогда
+    не открывалась);
+  - открыть карту: после конца скролла, или через 18 с если ленты нечего скроллить,
+    или принудительно через 50 с (`FLOOR_MAX_MS`), если WebView2 снова застрял;
+  - гонка ~30 с, потом снова цех; оба экрана в DOM, карта через `hidden`, не unmount.
+- `src/components/lider/useSlowScroll.ts` — дробный накопитель + watchdog 50 мс;
+  если высота 0 на кадр, ждём, не сбрасываем.
+- `src/components/lider/useTvCanvas.ts` — scale≈1 не ставит transform.
+- `src/components/lider/LiderTvRace.tsx` — Цех → мост → ярмарка → роща → ворота
+  замка; метров нет; салют; звуки; простой швеи/закройщика > 5 мин — лужайка.
+- `src/components/lider/useRaceAudio.ts`, `useTvBuildWatch.ts`, `LiderTvPeople.tsx`
+- `src/lib/liveFloorApi.ts`, `src/lib/workshopSettingsConfig.ts`
+  (подпись «Норма швеи за смену, п.м.»)
+- `src/lib/appUpdate.ts`, `src/main.tsx`, `src/components/AppUpdateBanner.tsx` —
+  на `/lider` service worker не регистрируем, новая сборка применяется сама.
+- `src/components/crm/dashboard/liveFloor/LiveFloorPeople.tsx` — аватарки.
+
+Маршрут `/lider` уже есть. После публикации exe сам подхватит сайт
+(кэш киоска сбрасывается), переустанавливать программу не нужно.
+
+---
+
+## 4) Проверка
+
+1. `SELECT to_regclass('floor_race_wins');`
+2. GET `https://functions.poehali.dev/1d8ed922-bded-4f5a-a367-a0742711203a?liveFloor=1`
+   — есть `people[].avatarUrl`, есть `race.prize === 50`, нет 502.
+3. `https://yarplan.ru/lider` жёстким обновлением:
+   - заголовок «Живой цех», список людей медленно едет вниз;
+   - затем «Путь к замку», дорога в ворота, подпись «Цех», метров нет.
+4. У orders есть `MAX_BOT_TOKEN`.
+
+Если живой цех на главной CRM пропал — в пакет orders не попал `floor_race.py`.
+Долей пакет целиком, URL не меняй.
