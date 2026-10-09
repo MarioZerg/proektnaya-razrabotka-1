@@ -259,6 +259,26 @@ export const finishRepack = async (payload: {
   return data;
 };
 
+/**
+ * Очистить очередь перепаковки на терминале: вещи возвращаются кладовщику
+ * на разбор, зарплата не начисляется. Кладовщик заново отправит в цех только
+ * то, что реально забрал с маркетплейса.
+ */
+export const clearRepackQueue = async (payload: {
+  actorId?: number;
+  actorName?: string;
+  workshopId?: number | null;
+}): Promise<{ cleared: number }> => {
+  const res = await fetch(KIOSK_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'repack_clear_queue', ...payload }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Не удалось очистить очередь');
+  return { cleared: data.cleared || 0 };
+};
+
 export interface KioskUser {
   id: number;
   name: string;

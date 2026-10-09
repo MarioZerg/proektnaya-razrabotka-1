@@ -17,6 +17,7 @@ import {
   fetchRepackCount,
   scanRepackItem,
   finishRepack,
+  clearRepackQueue,
   type RepackItem,
 } from '@/lib/kioskApi';
 
@@ -65,9 +66,16 @@ const KioskRepackScreen = ({ actorId, actorName, workshopId }: KioskRepackScreen
   const [countError, setCountError] = useState<string | null>(null);
   /** Сколько вещей упаковщица закрыла за эту смену на экране. */
   const [doneCount, setDoneCount] = useState(0);
+  /** Подтверждение очистки очереди — без него случайное нажатие сотрёт работу. */
+  const [clearAsk, setClearAsk] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  const focusInput = () => setTimeout(() => inputRef.current?.focus(), 0);
+  const anyDialog = bagAsk || repairOpen || clearAsk;
+
+  const focusInput = () => {
+    if (anyDialog || item) return;
+    setTimeout(() => inputRef.current?.focus(), 0);
+  };
 
   const loadCount = () => {
     fetchRepackCount(workshopId)
@@ -113,7 +121,33 @@ const KioskRepackScreen = ({ actorId, actorName, workshopId }: KioskRepackScreen
   // Сканер работает, только пока на экране нет вещи: сначала закончи с той, что в
   // руках, потом бери следующую. Иначе упаковщица пикает пакеты подряд, а решения
   // по ним теряются.
-  useScannerAutoSubmit(barcode, handleScan, !scanning && !item);
+  useScannerAutoSubmit(barcode, handleScan, !scanning && !item && !anyDialog);
+
+  const handleClearQueue = () => {
+    void run(async () => {
+      setClearAsk(false);
+      try {
+        const res = await clearRepackQueue({ actorId, actorName, workshopId });
+        setItem(null);
+        setNote('');
+        loadCount();
+        toast({
+          title: res.cleared
+            ? `Очередь очищена · ${res.cleared} шт.`
+            : 'Очередь уже пуста',
+          description:
+            'Кладовщик заново отправит на перепаковку вещи, которые забрал с маркетплейса',
+        });
+        focusInput();
+      } catch (e) {
+        toast({
+          title: 'Не удалось очистить очередь',
+          description: e instanceof Error ? e.message : undefined,
+          variant: 'destructive',
+        });
+      }
+    });
+  };
 
   const handleFinish = (outcome: 'repacked' | 'utilized', newBag?: boolean) => {
     if (!item) return;
@@ -226,7 +260,7 @@ const KioskRepackScreen = ({ actorId, actorName, workshopId }: KioskRepackScreen
           }
           className="h-16 font-mono-tech text-2xl"
           autoComplete="off"
-          disabled={scanning || !!item}
+          disabled={scanning || !!item || clearAsk}
         />
 
         {!item && (
@@ -264,6 +298,42 @@ const KioskRepackScreen = ({ actorId, actorName, workshopId }: KioskRepackScreen
           focusInput();
         }}
       />
+
+      <Dialog open={clearAsk} onOpenChange={(v) => !v && setClearAsk(false)}>
+        <DialogContent className="kiosk-root sm:max-w-lg" confirmClose={false}>
+          <DialogHeader>
+            <DialogTitle className="text-2xl">Очистить очередь перепаковки?</DialogTitle>
+          </DialogHeader>
+          <p className="text-lg text-muted-foreground">
+            {waiting > 0
+              ? `Все ${waiting} шт. уйдут обратно кладовщику на разбор. Зарплата не начисляется.`
+              : 'Очередь на экране станет пустой. Зарплата не начисляется.'}{' '}
+            Кладовщик заново отправит в цех только вещи, которые реально забрал с
+            маркетплейса.
+          </p>
+          <div className="grid grid-cols-2 gap-3">
+            <Button
+              size="lg"
+              variant="outline"
+              className="h-20 text-xl"
+              onClick={() => setClearAsk(false)}
+              disabled={processing}
+            >
+              Отмена
+            </Button>
+            <Button
+              size="lg"
+              variant="destructive"
+              className="h-20 text-xl"
+              onClick={handleClearQueue}
+              disabled={processing}
+            >
+              <Icon name="RotateCcw" size={24} className="mr-2" />
+              Очистить
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={bagAsk} onOpenChange={(v) => !v && setBagAsk(false)}>
         <DialogContent className="kiosk-root sm:max-w-lg">
@@ -318,6 +388,15 @@ const KioskRepackScreen = ({ actorId, actorName, workshopId }: KioskRepackScreen
               ? `В этом месяце на перепаковке ${waiting} шт. Берите вещь и подносите к сканеру`
               : 'Сюда попадают возвраты, которые кладовщик отправил переупаковать в этом месяце'}
           </p>
+          <Button
+            variant="outline"
+            className="mt-4 h-14 border-violet-300 text-base text-violet-800 hover:bg-violet-50"
+            onClick={() => setClearAsk(true)}
+            disabled={processing || (!countError && waiting === 0)}
+          >
+            <Icon name="RotateCcw" size={22} className="mr-2" />
+            Очистить очередь — начать с чистого листа
+          </Button>
         </div>
       ) : (
         <Card className="border-2 border-violet-500 shadow-none ring-4 ring-violet-200">

@@ -1844,6 +1844,54 @@ def handler(event: dict, context) -> dict:
                     'returnsPackerOnShift': active_returns_packer_name(cur, count_ws),
                 }, ensure_ascii=False)}
 
+            if action == 'repack_clear_queue':
+                # Чистый лист на терминале перепаковки.
+                #
+                # Очередь на экране больше не совпадает с тележкой в цехе: цифры
+                # накопились, а кладовщик сегодня заново заводит только то, что
+                # реально забрал с маркетплейса. Вещи не удаляем и зарплату не
+                # трогаем — возвращаем на разбор (checking), снимаем закрепление
+                # за цехом и открываем заявку возврата, чтобы кладовщик снова
+                # нажал «в цех на осмотр» по живым коробкам.
+                blocked = repack_blocked_for_main_packer(
+                    cur, actor_id, body_data.get('workshopId'),
+                )
+                if blocked:
+                    return {
+                        'statusCode': 403,
+                        'headers': headers,
+                        'body': json.dumps({'error': blocked}, ensure_ascii=False),
+                    }
+
+                cur.execute(
+                    "UPDATE goods_warehouse SET status = 'checking', "
+                    "repack_workshop_id = NULL "
+                    "WHERE status = 'repacking' AND " + repack_since +
+                    " RETURNING id"
+                )
+                cleared_ids = [int(r[0]) for r in cur.fetchall()]
+                if cleared_ids:
+                    cur.execute(
+                        "UPDATE marketplace_returns SET status = 'picked_up', "
+                        "outcome = NULL "
+                        "WHERE goods_warehouse_id = ANY(%s) "
+                        "AND status = 'processed' AND outcome = 'repack'",
+                        (cleared_ids,),
+                    )
+                log_action(
+                    cur, actor_id, actor_name, 'repack_clear_queue',
+                    'goods_warehouse', None,
+                    f'Очистил очередь перепаковки: {len(cleared_ids)} шт. '
+                    f'вернулись кладовщику на разбор',
+                    {'cleared': len(cleared_ids)},
+                )
+                conn.commit()
+                return {
+                    'statusCode': 200,
+                    'headers': headers,
+                    'body': json.dumps({'cleared': len(cleared_ids)}),
+                }
+
             if action == 'repack_scan':
                 # Скан вещи на перепаковку: упаковщица подносит ярлык с пакета вместо
                 # того, чтобы искать строку глазами в списке из сотни позиций.
