@@ -171,6 +171,193 @@ export const fetchAllPurchases = async (
   return { purchases: data.purchases || [], pendingCount: data.pendingCount || 0 };
 };
 
+export interface DuelFighter {
+  id: number;
+  name: string;
+  avatarUrl?: string | null;
+  hat?: string | null;
+}
+
+export interface DuelView {
+  id: number;
+  status: string;
+  youAre: 'challenger' | 'opponent';
+  stake: number;
+  hatBonus?: number;
+  phase: 'incoming' | 'outgoing' | 'draw' | 'award' | 'done' | string;
+  you: DuelFighter;
+  them: DuelFighter;
+  hatTitle: string | null;
+  hatKey: string | null;
+  boostUntil: string | null;
+  winnerId: number | null;
+  youWon: boolean | null;
+}
+
+export interface DuelTarget {
+  id: number;
+  name: string;
+  hat: string;
+  hatTitle: string;
+  boostUntil: string | null;
+  avatarUrl?: string | null;
+  /** Шляпа осталась у неё после вашей дуэли. До этой даты вызвать её снова нельзя. */
+  lockedUntil?: string | null;
+}
+
+export interface DuelResult {
+  id: number;
+  at: string | null;
+  hatTitle: string | null;
+  winnerId: number | null;
+  challenger: DuelFighter & { won: boolean };
+  opponent: DuelFighter & { won: boolean };
+}
+
+export interface DuelDesk {
+  balance: number;
+  role: string;
+  hasHat: boolean;
+  hatTitle: string | null;
+  canChallenge: boolean;
+  blockReason: string;
+  stake: number;
+  hatBonus?: number;
+  floor: number;
+  targets: DuelTarget[];
+  incoming: DuelView | null;
+  outgoing: DuelView | null;
+  live: DuelView | null;
+  history?: DuelResult[];
+}
+
+export interface TvDuel {
+  id: number;
+  status: string;
+  phase: 'draw' | 'award' | 'done';
+  stake: number;
+  hatBonus?: number;
+  hatTitle: string | null;
+  hatKey: string | null;
+  hatOn: 'left' | 'right' | null;
+  boostUntil?: string | null;
+  winnerSide: 'left' | 'right' | null;
+  winnerName: string | null;
+  left: { id: number; name: string; avatarUrl?: string | null };
+  right: { id: number; name: string; avatarUrl?: string | null };
+}
+
+export const fetchDuelDesk = async (userId: number): Promise<DuelDesk> => {
+  const res = await fetch(`${VARIKI_URL}?duel=1&userId=${userId}`);
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Не удалось открыть дуэль');
+  if (!Array.isArray(data.targets)) {
+    throw new Error('Дуэль ещё не подключена на сервере');
+  }
+  return data;
+};
+
+export const fetchTvDuel = async (): Promise<TvDuel | null> => {
+  const res = await fetch(`${VARIKI_URL}?duelTv=1`);
+  if (!res.ok) return null;
+  const data = await res.json();
+  return data.duel || null;
+};
+
+export const challengeDuel = (userId: number, opponentId: number) =>
+  postAction({ action: 'duel_challenge', userId, opponentId }) as Promise<{ duel: DuelView }>;
+
+export const answerDuel = (userId: number, duelId: number, accept: boolean) =>
+  postAction({ action: 'duel_answer', userId, duelId, accept }) as Promise<{ duel?: DuelView; declined?: boolean }>;
+
+export interface ShaftDay {
+  day: number;
+  status: 'waiting' | 'open' | 'taken' | 'missed' | 'spent';
+}
+
+export interface ShaftClaim {
+  day: number;
+  percent: number;
+  payout: number;
+  at: string | null;
+  paid?: boolean;
+}
+
+export interface ShaftDigger {
+  id: number;
+  name: string;
+  avatarUrl?: string | null;
+}
+
+export interface ShaftDesk {
+  hasHat: boolean;
+  name?: string;
+  bag: number;
+  full: boolean;
+  tied: boolean;
+  days: ShaftDay[];
+  windowOpen: boolean;
+  closesAt: string | null;
+  nextOpenAt: string | null;
+  percent: number | null;
+  previewPayout: number | null;
+  canClaim: boolean;
+  blockReason: string;
+  claims: ShaftClaim[];
+  diggers?: ShaftDigger[];
+}
+
+export interface ShaftPremium {
+  id: number;
+  userId: number;
+  userName: string | null;
+  day: number | null;
+  percent: number;
+  payout: number;
+  at: string | null;
+}
+
+export const fetchShaft = async (userId: number): Promise<ShaftDesk> => {
+  const res = await fetch(`${VARIKI_URL}?shaft=1&userId=${userId}`);
+  const raw = await res.text();
+  let data: ShaftDesk & { error?: string } = {} as ShaftDesk;
+  try {
+    data = raw ? JSON.parse(raw) : {};
+  } catch {
+    data = {} as ShaftDesk;
+  }
+  if (!res.ok) throw new Error(data.error || 'Не удалось открыть шахту');
+  if (typeof data.hasHat !== 'boolean') throw new Error('Шахта ещё не подключена на сервере');
+  return data;
+};
+
+export const claimShaft = (userId: number) =>
+  postAction({ action: 'shaft_claim', userId }) as Promise<{
+    payout: number;
+    percent: number;
+    title: string;
+  }>;
+
+export const fetchShaftPremiums = async (actorId: number): Promise<{ claims: ShaftPremium[]; total: number }> => {
+  const res = await fetch(`${VARIKI_URL}?shaftFinance=1&actorId=${actorId}`);
+  const raw = await res.text();
+  let data: { claims?: ShaftPremium[]; total?: number; error?: string } = {};
+  try {
+    data = raw ? JSON.parse(raw) : {};
+  } catch {
+    data = {};
+  }
+  if (!Array.isArray(data.claims)) {
+    if (res.status === 403 && data.error) throw new Error(data.error);
+    throw new Error('Премии шахты ещё не подключены на сервере');
+  }
+  if (!res.ok) throw new Error(data.error || 'Не удалось загрузить премии шахты');
+  return { claims: data.claims, total: data.total || 0 };
+};
+
+export const payShaftPremium = (actorId: number, claimId: number) =>
+  postAction({ action: 'shaft_pay', actorId, claimId }) as Promise<{ id: number; payout: number }>;
+
 export const buyShopItem = (userId: number, itemId: number, visitDate?: string) =>
   postAction({ action: 'buy', userId, itemId, visitDate }) as Promise<{
     purchaseId: number;

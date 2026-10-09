@@ -138,6 +138,9 @@ def handler(event: dict, context) -> dict:
     POST /  { action: 'remove_role', id, role } — убирает должность у пользователя
     POST /  { action: 'sync_max_avatars' } — подтягивает фото из профилей MAX
         в max_avatar_url. Ручное фото сотрудника не затирается.
+    POST /  { action: 'set_own_avatar', avatarBase64 } — сотрудник ставит фото
+        себе. id из тела не читается: пишется только тому, чей токен пришёл.
+    GET  /?self=1 — фото текущего сотрудника (своё или из MAX).
 
     Логин сотрудника генерируется из email (часть до @). Пароль хранится как
     PBKDF2-HMAC-SHA256 с солью. Аватар загружается в S3, сохраняется публичная ссылка.
@@ -167,9 +170,27 @@ def handler(event: dict, context) -> dict:
     dsn = os.environ['DATABASE_URL']
 
     if method == 'GET':
+        params = event.get('queryStringParameters') or {}
         conn = psycopg2.connect(dsn)
         try:
             cur = conn.cursor()
+            if str(params.get('self') or '') == '1':
+                me = require_auth(cur, event)
+                cur.execute(
+                    "SELECT NULLIF(COALESCE(avatar_url, max_avatar_url), '') "
+                    "FROM users WHERE id = %s",
+                    (me['id'],),
+                )
+                row = cur.fetchone()
+                conn.commit()
+                return {
+                    'statusCode': 200,
+                    'headers': headers,
+                    'body': json.dumps(
+                        {'avatarUrl': row[0] if row else None},
+                        ensure_ascii=False,
+                    ),
+                }
             cur.execute(
                 # Фото: загруженное администратором главнее, иначе берём из профиля MAX —
                 # так в списках сотрудник узнаётся по лицу, а не по инициалам.
@@ -263,6 +284,9 @@ def handler(event: dict, context) -> dict:
                 }
                 for r in rows
             ]
+        except AuthError as e:
+            conn.rollback()
+            return auth_error_response(e, headers)
         finally:
             conn.close()
 
@@ -275,6 +299,34 @@ def handler(event: dict, context) -> dict:
         conn = psycopg2.connect(dsn)
         try:
             cur = conn.cursor()
+
+            # Своё фото может поставить любой вошедший. Чужие поля и роли
+            # по-прежнему только у администратора — это действие идёт раньше
+            # проверки роли и пишет строго в строку владельца токена.
+            if action == 'set_own_avatar':
+                me = require_auth(cur, event)
+                raw = body_data.get('avatarBase64') or ''
+                err = avatar_error(raw)
+                if err:
+                    return {
+                        'statusCode': 400,
+                        'headers': headers,
+                        'body': json.dumps({'error': err}, ensure_ascii=False),
+                    }
+                avatar_url = upload_avatar(raw)
+                cur.execute(
+                    "UPDATE users SET avatar_url = %s, updated_at = now() WHERE id = %s",
+                    (avatar_url, me['id']),
+                )
+                conn.commit()
+                return {
+                    'statusCode': 200,
+                    'headers': headers,
+                    'body': json.dumps(
+                        {'success': True, 'avatarUrl': avatar_url},
+                        ensure_ascii=False,
+                    ),
+                }
 
             # ВСЁ, ЧТО КАСАЕТСЯ СОТРУДНИКОВ И ИХ ПРАВ, — ТОЛЬКО АДМИНИСТРАТОР.
             #

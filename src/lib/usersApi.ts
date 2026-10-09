@@ -178,3 +178,20 @@ export const syncMaxAvatars = () =>
     missing: number;
     total: number;
   }>;
+
+/** Своё фото: загруженное самим сотрудником, иначе из MAX. */
+export const fetchOwnAvatar = async (): Promise<string | null> => {
+  const res = await fetch(`${USERS_URL}?self=1`);
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(data.error || 'Не удалось открыть фото профиля');
+  }
+  return typeof data.avatarUrl === 'string' && data.avatarUrl ? data.avatarUrl : null;
+};
+
+/** Сотрудник ставит фото себе. Чужой профиль этим действием не меняется. */
+export const setOwnAvatar = (avatarBase64: string) =>
+  postAction({ action: 'set_own_avatar', avatarBase64 }) as Promise<{
+    success: true;
+    avatarUrl: string;
+  }>;

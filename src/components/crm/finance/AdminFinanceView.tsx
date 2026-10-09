@@ -1,6 +1,7 @@
 import CrmLayout from '@/components/crm/CrmLayout';
 import FinanceSummaryCard from '@/components/crm/finance/FinanceSummaryCard';
 import SalaryPayoutsTable from '@/components/crm/finance/SalaryPayoutsTable';
+import ShaftPremiumsCard from '@/components/crm/finance/ShaftPremiumsCard';
 import SalaryRatesCard from '@/components/crm/finance/SalaryRatesCard';
 import CashBoxCard from '@/components/crm/finance/CashBoxCard';
 import MissedAccrualsAlert from '@/components/crm/finance/MissedAccrualsAlert';
@@ -228,6 +229,8 @@ const AdminFinanceView = ({
           </Card>
         )}
       </div>
+
+      <ShaftPremiumsCard onPaid={onRetryCash} />
 
       <SalaryPayoutsTable
         payouts={payouts}

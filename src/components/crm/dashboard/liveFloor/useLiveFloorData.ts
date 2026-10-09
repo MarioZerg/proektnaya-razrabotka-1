@@ -6,7 +6,6 @@ import { eventKey } from '@/components/crm/dashboard/liveFloor/LiveFloorFeed';
 import {
   inOverlockWork,
   personState,
-  shortName,
   stageIndex,
   stageOf,
   type StageKey,
@@ -93,7 +92,7 @@ export const buildLiveFloorView = (
     flows,
     active,
     counts,
-    holderName: holder?.overlockUserId ? shortName(data.names[String(holder.overlockUserId)]) : null,
+    holderName: holder?.overlockUserId ? (data.names[String(holder.overlockUserId)] || null) : null,
     stickeringQueue,
     workshops,
     working: states.filter((s) => s.working).length,

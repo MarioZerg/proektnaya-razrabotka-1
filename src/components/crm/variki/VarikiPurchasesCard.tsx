@@ -85,7 +85,7 @@ const VarikiPurchasesCard = () => {
         await attachCoupon(targetId, base64, file.name, user?.id, user?.name);
         toast({
           title: 'Купон отправлен',
-          description: 'Сотрудник увидит его в магазине вариков',
+          description: 'Сотрудник увидит его в Тайм-кофе',
         });
         setItems((prev) => prev.filter((p) => p.id !== targetId));
       } catch (err) {

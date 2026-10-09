@@ -1,5 +1,6 @@
 import ShopCardImage from '@/components/crm/variki/ShopCardImage';
 import SpaAnimation from '@/components/crm/variki/SpaAnimation';
+import HatLootCarousel from '@/components/crm/variki/shop/HatLootCarousel';
 import { Button } from '@/components/ui/button';
 import Icon from '@/components/ui/icon';
 import type { ShopItem } from '@/lib/varikiApi';
@@ -28,7 +29,8 @@ const ShopItemCard = ({ item, index, balance, userId, onBuy }: ShopItemCardProps
       {/* Фотография подарка: по одной анимации пузырьков непонятно,
           ЧТО покупаешь. Снимок делает награду наглядной, а пузырьки
           поверх воды на нём оживляют карточку. */}
-      {item.imageUrl && (
+      {isCase && <HatLootCarousel />}
+      {item.imageUrl && !isCase && (
         <div className="relative h-40 shrink-0 overflow-hidden">
           <ShopCardImage
             src={item.imageUrl}
@@ -42,15 +44,7 @@ const ShopItemCard = ({ item, index, balance, userId, onBuy }: ShopItemCardProps
           <div className="absolute inset-x-0 bottom-0 h-10 bg-gradient-to-b from-transparent to-card" />
         </div>
       )}
-      {!item.imageUrl && item.animation === 'spa' && <SpaAnimation />}
-      {!item.imageUrl && isCase && (
-        <div className="relative flex h-36 shrink-0 items-end justify-center bg-gradient-to-b from-amber-200 via-amber-400 to-amber-700">
-          <div className="mb-4 h-20 w-28 rounded-md border-4 border-amber-900 bg-amber-500 shadow-inner">
-            <div className="h-6 rounded-t-sm bg-amber-800" />
-            <div className="mx-auto mt-4 h-4 w-8 rounded-sm bg-yellow-300 ring-2 ring-amber-900" />
-          </div>
-        </div>
-      )}
+      {!item.imageUrl && !isCase && item.animation === 'spa' && <SpaAnimation />}
 
       <div className="relative flex flex-1 flex-col p-5">
         {!item.imageUrl && !isCase && (

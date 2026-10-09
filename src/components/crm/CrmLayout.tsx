@@ -19,8 +19,10 @@ import {
 import Icon from '@/components/ui/icon';
 import ErrorBoundary from '@/components/ErrorBoundary';
 import ShiftQrDialog from '@/components/crm/ShiftQrDialog';
+import MyAvatarButton from '@/components/crm/MyAvatarButton';
 import HeaderSalaryWidget from '@/components/crm/HeaderSalaryWidget';
 import StorekeeperTasksWidget from '@/components/crm/StorekeeperTasksWidget';
+import DuelWatcher from '@/components/crm/variki/duel/DuelWatcher';
 import { useAuth } from '@/context/AuthContext';
 import { navByRole, roleLabels, isStorekeeperRole } from '@/lib/roles';
 import { fetchTestAccounts, type TestAccount } from '@/lib/authApi';
@@ -402,6 +404,7 @@ const CrmLayout = ({ children }: { children: ReactNode }) => {
           >
             <Icon name="QrCode" size={20} />
           </button>
+          <MyAvatarButton />
           {user?.role !== 'accountant' ? (
             <div className="ml-auto min-w-0">
               <HeaderSalaryWidget />
@@ -413,6 +416,7 @@ const CrmLayout = ({ children }: { children: ReactNode }) => {
             Сам решает, показываться ли: только кладовщику и только при
             открытой смене. */}
         <StorekeeperTasksWidget topOffset={headerOffset} />
+        {user?.id ? <DuelWatcher userId={user.id} /> : null}
         {/* Сбой внутри страницы не должен гасить меню и весь экран. */}
         <div
           className={

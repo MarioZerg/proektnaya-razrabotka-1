@@ -44,9 +44,10 @@ const CometPill = ({ comet, onDone }: { comet: Comet; onDone: (id: string) => vo
 
   return (
     <div
-      className="pointer-events-none absolute top-[42px] z-20 -translate-x-1/2"
-      style={{
+      className="pointer-events-none absolute z-20 -translate-x-1/2"
+        style={{
         left: `${go ? center(comet.to) : center(comet.from)}%`,
+        top: 22,
         opacity: go ? 0 : 1,
         transition: 'left 2.1s cubic-bezier(0.45, 0, 0.2, 1), opacity 0.5s ease 2.1s',
       }}
@@ -70,14 +71,14 @@ const LiderTvPipeline = ({
   comets,
   onCometDone,
 }: LiderTvPipelineProps) => (
-  <div className="relative px-6 pt-2">
+  <div className="relative px-4 pt-1">
     {STAGES.slice(0, -1).map((s, i) => {
       const next = STAGES[i + 1];
       const flow = flows[i] || 0;
       return (
         <div
           key={s.key}
-          className="absolute top-[52px] h-2.5"
+          className="absolute top-[34px] h-2"
           style={{ left: `${center(s.key)}%`, width: `${100 / STAGES.length}%` }}
         >
           <div
@@ -89,8 +90,8 @@ const LiderTvPipeline = ({
             }}
           />
           {flow > 0 && (
-            <span className="absolute -top-7 left-1/2 -translate-x-1/2 whitespace-nowrap text-sm font-medium text-slate-400">
-              {flow}/ч
+            <span className="absolute -top-5 left-1/2 -translate-x-1/2 whitespace-nowrap text-xs font-medium text-slate-400">
+              {flow} в час
             </span>
           )}
         </div>
@@ -103,29 +104,28 @@ const LiderTvPipeline = ({
         const active = activeStages.has(s.key);
         return (
           <div key={s.key} className="flex flex-col items-center gap-1 text-center">
-            <div className="relative flex h-[88px] w-[88px] items-center justify-center">
+            <div className="relative flex h-14 w-14 items-center justify-center">
               {active && (
                 <span
-                  className="absolute inset-2 animate-widget-pulse rounded-full opacity-40"
+                  className="absolute inset-0 animate-widget-pulse rounded-full opacity-40"
                   style={{ background: s.hex }}
                 />
               )}
               <div
-                className={`relative flex h-[64px] w-[64px] items-center justify-center rounded-full text-white ${s.solid}`}
-                style={{ boxShadow: active ? `0 0 22px ${s.hex}99` : undefined }}
+                className={`relative flex h-11 w-11 items-center justify-center rounded-full text-white ${s.solid}`}
+                style={{ boxShadow: active ? `0 0 18px ${s.hex}99` : undefined }}
               >
-                <Icon name={s.icon} size={28} />
+                <Icon name={s.icon} size={22} />
               </div>
             </div>
-            <span key={value} className="inline-block animate-count-bump text-5xl font-bold leading-none tabular-nums text-white">
+            <span key={value} className="inline-block animate-count-bump text-4xl font-bold leading-none tabular-nums text-white">
               {value}
             </span>
-            <span className="text-xl font-semibold leading-tight text-slate-300">
-              {s.label}
-              {s.key === 'done' && <span className="block text-sm font-medium text-slate-500">сегодня</span>}
+            <span className="text-lg font-semibold leading-tight text-slate-300">
+              {s.key === 'done' ? 'Готово сегодня' : s.label}
             </span>
             {s.key === 'overlock' && overlockHolder && (
-              <span className="max-w-full truncate rounded-full bg-fuchsia-500/20 px-2 py-0.5 text-base text-fuchsia-200">
+              <span className="max-w-full break-words rounded-full bg-fuchsia-500/20 px-2 py-0.5 text-sm leading-tight text-fuchsia-200">
                 {overlockHolder}
               </span>
             )}

@@ -38,6 +38,8 @@ interface Body {
   ty: number;
   wait: number;
   zone: number;
+  /** Насколько шляпа торчит над кружком. Без шляпы — 0. */
+  crown: number;
 }
 
 const radiusFor = (work: number, maxWork: number) => {
@@ -48,13 +50,13 @@ const radiusFor = (work: number, maxWork: number) => {
 const rand = (a: number, b: number) => a + Math.random() * (b - a);
 
 /** Цель в одной из 6 зон поля, чтобы не крутились в одном углу. */
-const fieldTarget = (w: number, h: number, r: number, zone: number) => {
+const fieldTarget = (w: number, h: number, r: number, zone: number, crown = 0) => {
   const cols = 3;
   const rows = 2;
   const col = ((zone % 6) + 6) % 6 % cols;
   const row = Math.floor((((zone % 6) + 6) % 6) / cols);
-  const padX = r + 16;
-  const padY = r + 54;
+  const padX = r + crown * 0.4 + 16;
+  const padY = r + crown + 12;
   const x0 = (w / cols) * col;
   const x1 = (w / cols) * (col + 1);
   const y0 = (h / rows) * row;
@@ -82,13 +84,13 @@ const boostLeft = (until: string | null | undefined, nowMs: number) => {
   return `3 заказа · ${Math.max(1, mins)}м`;
 };
 
-const scatter = (w: number, h: number, r: number, zone: number, used: { x: number; y: number; r: number }[]) => {
+const scatter = (w: number, h: number, r: number, zone: number, crown: number, used: { x: number; y: number; r: number }[]) => {
   for (let tryN = 0; tryN < 28; tryN += 1) {
-    const spot = fieldTarget(w, h, r, zone + tryN);
+    const spot = fieldTarget(w, h, r, zone + tryN, crown);
     const hit = used.some((u) => Math.hypot(u.x - spot.tx, u.y - spot.ty) < u.r + r + 20);
     if (!hit) return spot;
   }
-  return fieldTarget(w, h, r, zone);
+  return fieldTarget(w, h, r, zone, crown);
 };
 
 interface LiderTvBubblesProps {
@@ -119,8 +121,9 @@ const LiderTvBubbles = ({ active, people, today }: LiderTvBubblesProps) => {
       const r = radiusFor(work, maxWork);
       const old = prev.get(p.id);
       const zone = old?.zone ?? placed.length;
-      const spawn = old ? { tx: old.x, ty: old.y } : scatter(w, h, r, zone, placed);
-      const aim = old ? { tx: old.tx, ty: old.ty } : fieldTarget(w, h, r, zone);
+      const crown = p.bubbleHat ? r * 1.35 : 0;
+      const spawn = old ? { tx: old.x, ty: old.y } : scatter(w, h, r, zone, crown, placed);
+      const aim = old ? { tx: old.tx, ty: old.ty } : fieldTarget(w, h, r, zone, crown);
       placed.push({ x: spawn.tx, y: spawn.ty, r });
       return {
         id: p.id,
@@ -135,6 +138,7 @@ const LiderTvBubbles = ({ active, people, today }: LiderTvBubblesProps) => {
         ty: aim.ty,
         wait: old?.wait ?? rand(1.6, 4.8),
         zone,
+        crown,
       };
     });
   }, [people, today, maxWork]);
@@ -173,7 +177,7 @@ const LiderTvBubbles = ({ active, people, today }: LiderTvBubblesProps) => {
         let tdist = Math.hypot(tdx, tdy);
         if (tdist < 36 || a.wait <= 0) {
           a.zone += 1 + Math.floor(Math.random() * 3);
-          const next = fieldTarget(w, h, a.r, a.zone);
+          const next = fieldTarget(w, h, a.r, a.zone, a.crown);
           a.tx = next.tx;
           a.ty = next.ty;
           a.wait = rand(2.4, 5.8);
@@ -243,8 +247,8 @@ const LiderTvBubbles = ({ active, people, today }: LiderTvBubblesProps) => {
       }
 
       for (const a of bodies) {
-        const padX = 10;
-        const padTop = 52;
+        const padX = 10 + a.crown * 0.4;
+        const padTop = 8 + a.crown;
         let bounced = false;
         if (a.x < a.r + padX) {
           a.x = a.r + padX;
@@ -268,7 +272,7 @@ const LiderTvBubbles = ({ active, people, today }: LiderTvBubblesProps) => {
         }
         if (bounced) {
           a.zone += 2;
-          const next = fieldTarget(w, h, a.r, a.zone);
+          const next = fieldTarget(w, h, a.r, a.zone, a.crown);
           a.tx = next.tx;
           a.ty = next.ty;
           a.wait = rand(2.4, 5.2);
@@ -316,24 +320,23 @@ const LiderTvBubbles = ({ active, people, today }: LiderTvBubblesProps) => {
               className="absolute left-0 top-0 overflow-visible will-change-transform"
               style={{ width: r * 2, zIndex: 10 + Math.round(r) }}
             >
+              <div className="relative overflow-visible" style={{ width: r * 2, height: r * 2 }}>
               {p.bubbleHat ? (
                 <div
                   className="pointer-events-none absolute left-1/2 z-20"
                   style={{
-                    bottom: r * 2 - r * 0.06,
-                    width: r * 1.2,
-                    height: r * 0.82,
+                    bottom: '62%',
+                    width: '150%',
                     transform: 'translateX(-50%)',
+                    aspectRatio: '80 / 56',
                   }}
                 >
                   <BubbleHat kind={p.bubbleHat} />
                 </div>
               ) : null}
               <div
-                className="relative overflow-hidden rounded-full shadow-[0_12px_28px_rgba(0,0,0,.45)]"
+                className="relative h-full w-full overflow-hidden rounded-full shadow-[0_12px_28px_rgba(0,0,0,.45)]"
                 style={{
-                  width: r * 2,
-                  height: r * 2,
                   boxShadow: `0 0 0 5px ${ring}, 0 12px 28px rgba(0,0,0,.45)`,
                 }}
               >
@@ -344,6 +347,7 @@ const LiderTvBubbles = ({ active, people, today }: LiderTvBubblesProps) => {
                   <AvatarFallback className="bg-slate-800 text-3xl font-black text-white">{initials(p.name)}</AvatarFallback>
                 </Avatar>
                 <span className="pointer-events-none absolute inset-0 rounded-full bg-[radial-gradient(circle_at_30%_22%,rgba(255,255,255,.35),transparent_42%)]" />
+              </div>
               </div>
               <div className="mt-1 text-center">
                 <p className="truncate text-lg font-bold text-white drop-shadow">

@@ -9,7 +9,6 @@ import {
   initials,
   personState,
   productLabel,
-  shortName,
   stageSince,
   useTicker,
 } from '@/components/crm/dashboard/liveFloor/liveFloorShared';
@@ -81,7 +80,7 @@ const OrderPill = ({
   const label = productLabel(order);
   return (
     <span
-      className={`inline-flex items-center gap-2 rounded-lg border px-2.5 py-1 font-mono text-lg font-semibold ${
+      className={`inline-flex max-w-full flex-wrap items-baseline gap-x-2 rounded-lg border px-2 py-0.5 font-mono text-base font-semibold ${
         moved
           ? 'border-emerald-400 bg-emerald-500/20 text-emerald-100'
           : slow
@@ -90,7 +89,7 @@ const OrderPill = ({
       }`}
     >
       {order.orderNumber}
-      {label && <span className="max-w-[9rem] truncate font-sans text-base font-medium text-slate-400">{label}</span>}
+      {label && <span className="font-sans text-sm font-medium text-slate-300">{label}</span>}
     </span>
   );
 };
@@ -127,17 +126,16 @@ const PersonCard = ({
   const packedRecently =
     person.role === 'packer' ? events.filter((e) => e.userId === person.id && e.kind === 'packed').slice(0, 4) : [];
   const cutter = person.role === 'cutter';
-  const shown = cutter ? hands.slice(0, 20) : hands.slice(0, 5);
 
   return (
     <article
-      className={`flex min-w-0 flex-col gap-2.5 rounded-2xl border bg-slate-900/70 p-3.5 ${
+      className={`flex min-w-0 flex-col gap-1.5 rounded-xl border bg-slate-900/70 px-3 py-2 ${
         idleAlert ? 'border-amber-400 ring-2 ring-amber-400/40' : working ? 'border-emerald-400/50' : 'border-white/10'
       }`}
     >
-      <div className="flex items-start gap-3">
+      <div className="flex items-start gap-2.5">
         <Avatar
-          className={`h-14 w-14 shrink-0 text-xl font-bold text-white ${working ? '' : 'opacity-70'}`}
+          className={`h-10 w-10 shrink-0 text-sm font-bold text-white ${working ? '' : 'opacity-70'}`}
         >
           {person.avatarUrl ? (
             <AvatarImage src={person.avatarUrl} alt={person.name} referrerPolicy="no-referrer" className="object-cover" />
@@ -147,21 +145,21 @@ const PersonCard = ({
           </AvatarFallback>
         </Avatar>
         <div className="min-w-0 flex-1">
-          <p className="truncate text-2xl font-bold leading-tight text-white">{shortName(person.name)}</p>
-          <p className="truncate text-base text-slate-400">
-            {person.workshopName || 'цех'}
+          <p className="break-words text-xl font-bold leading-tight text-white">{person.name}</p>
+          <p className="break-words text-sm text-slate-400">
+            {person.workshopName || 'Цех'}
             {' · '}
             {todayCaption}
             {person.role === 'sewer' && !!stats.overlock ? ` · обмётка ${stats.overlock}` : ''}
           </p>
         </div>
-        <p key={todayCount} className="shrink-0 animate-count-bump text-5xl font-bold leading-none tabular-nums text-white">
+        <p key={todayCount} className="shrink-0 animate-count-bump text-4xl font-bold leading-none tabular-nums text-white">
           {todayCount}
         </p>
       </div>
 
       <p
-        className={`text-xl font-semibold leading-snug ${
+        className={`text-lg font-semibold leading-snug ${
           working ? 'text-emerald-300' : idleAlert ? 'text-amber-300' : 'text-slate-400'
         }`}
       >
@@ -171,11 +169,11 @@ const PersonCard = ({
 
       {hands.length > 0 && (
         <div className={cutter ? 'grid grid-cols-4 gap-1' : 'flex flex-wrap gap-1.5'}>
-          {shown.map((o) =>
+          {hands.map((o) =>
             cutter ? (
               <span
                 key={o.id}
-                className={`truncate rounded-md border px-1.5 py-0.5 text-center font-mono text-sm font-semibold ${
+                className={`break-all rounded-md border px-1.5 py-0.5 text-center font-mono text-sm font-semibold ${
                   movedIds.has(o.id)
                     ? 'border-emerald-400 bg-emerald-500/20 text-emerald-100'
                     : 'border-white/15 bg-black/30 text-slate-100'
@@ -186,9 +184,6 @@ const PersonCard = ({
             ) : (
               <OrderPill key={o.id} order={o} clockOffset={clockOffset} moved={movedIds.has(o.id)} />
             ),
-          )}
-          {!cutter && hands.length > shown.length && (
-            <span className="self-center text-lg text-slate-400">ещё {hands.length - shown.length}</span>
           )}
         </div>
       )}
@@ -223,7 +218,7 @@ const LiderTvPeople = ({ people, ...rest }: LiderTvPeopleProps) => {
   }
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-2">
       {ROLE_ORDER.map((role) => {
         const group = people.filter((p) => p.role === role);
         if (group.length === 0) return null;
@@ -232,19 +227,19 @@ const LiderTvPeople = ({ people, ...rest }: LiderTvPeopleProps) => {
         const busy = states.filter((s) => s.working).length;
         const idle = states.filter((s) => s.idleAlert).length;
         return (
-          <section key={role} className={`rounded-2xl border p-4 ${style.panel}`}>
-            <header className="mb-3 flex flex-wrap items-center gap-3">
-              <span className={`flex h-10 w-10 items-center justify-center rounded-full text-white ${style.badge}`}>
-                <Icon name={style.icon} size={22} />
+          <section key={role} className={`rounded-xl border px-3 py-2 ${style.panel}`}>
+            <header className="mb-2 flex flex-wrap items-center gap-2">
+              <span className={`flex h-8 w-8 items-center justify-center rounded-full text-white ${style.badge}`}>
+                <Icon name={style.icon} size={16} />
               </span>
-              <h2 className="text-2xl font-bold text-white">{ROLE_LABEL[role]}</h2>
-              <span className="rounded-full bg-black/30 px-3 py-1 text-lg text-slate-300">на смене {group.length}</span>
-              <span className="rounded-full bg-emerald-500/20 px-3 py-1 text-lg text-emerald-200">в работе {busy}</span>
+              <h2 className="text-xl font-bold text-white">{ROLE_LABEL[role]}</h2>
+              <span className="rounded-full bg-black/30 px-2.5 py-0.5 text-base text-slate-300">на смене {group.length}</span>
+              <span className="rounded-full bg-emerald-500/20 px-2.5 py-0.5 text-base text-emerald-200">в работе {busy}</span>
               {idle > 0 && (
-                <span className="rounded-full bg-amber-500/20 px-3 py-1 text-lg text-amber-200">простой {idle}</span>
+                <span className="rounded-full bg-amber-500/20 px-2.5 py-0.5 text-base text-amber-200">простой {idle}</span>
               )}
             </header>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-3 gap-2">
               {group.map((p) => (
                 <PersonCard key={p.id} person={p} {...rest} />
               ))}

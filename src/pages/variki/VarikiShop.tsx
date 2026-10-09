@@ -16,6 +16,9 @@ import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchE
 import ShopItemCard from '@/components/crm/variki/shop/ShopItemCard';
 import MyPurchasesList from '@/components/crm/variki/shop/MyPurchasesList';
 import BuyConfirmDialog from '@/components/crm/variki/shop/BuyConfirmDialog';
+import DuelTab from '@/components/crm/variki/duel/DuelTab';
+import ShaftTab from '@/components/crm/variki/shaft/ShaftTab';
+import GameRulesTab from '@/components/crm/variki/GameRulesTab';
 
 /**
  * Магазин вариков: сотрудник тратит игровую валюту на настоящие подарки.
@@ -38,6 +41,8 @@ const VarikiShop = () => {
   const [buying, setBuying] = useState(false);
   const [confirmItem, setConfirmItem] = useState<ShopItem | null>(null);
   const [visitDate, setVisitDate] = useState('');
+  const [tab, setTab] = useState<'shop' | 'duel' | 'shaft' | 'rules'>('shop');
+  const shaftAllowed = user?.role === 'admin' || user?.role === 'sewer';
 
   const load = () => {
     setLoading(true);
@@ -122,7 +127,7 @@ const VarikiShop = () => {
       <div className="space-y-6">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
-            <h1 className="text-xl font-bold">Магазин вариков</h1>
+            <h1 className="text-xl font-bold">Тайм-кофе</h1>
             <p className="mt-1 text-sm text-muted-foreground">
               Обменяйте накопленные варики на подарки
             </p>
@@ -153,6 +158,31 @@ const VarikiShop = () => {
           </div>
         </div>
 
+        <div className="flex flex-wrap gap-2">
+          <Button variant={tab === 'shop' ? 'default' : 'outline'} onClick={() => setTab('shop')}>
+            Витрина
+          </Button>
+          <Button variant={tab === 'duel' ? 'default' : 'outline'} onClick={() => setTab('duel')}>
+            Дуэль
+          </Button>
+          {shaftAllowed && (
+            <Button variant={tab === 'shaft' ? 'default' : 'outline'} onClick={() => setTab('shaft')}>
+              Шахта
+            </Button>
+          )}
+          <Button variant={tab === 'rules' ? 'default' : 'outline'} onClick={() => setTab('rules')}>
+            Правила игр
+          </Button>
+        </div>
+
+        {tab === 'rules' ? (
+          <GameRulesTab />
+        ) : tab === 'shaft' && user?.id && shaftAllowed ? (
+          <ShaftTab userId={user.id} />
+        ) : tab === 'duel' && user?.id ? (
+          <DuelTab userId={user.id} />
+        ) : (
+          <>
         {listError && (
           <WarehouseFetchError
             title="Не удалось загрузить магазин"
@@ -182,6 +212,8 @@ const VarikiShop = () => {
             </div>
 
             {purchases.length > 0 && <MyPurchasesList purchases={purchases} userId={user?.id} />}
+          </>
+        )}
           </>
         )}
       </div>

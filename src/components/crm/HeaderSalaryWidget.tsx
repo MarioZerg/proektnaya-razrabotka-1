@@ -136,7 +136,7 @@ const HeaderSalaryWidget = () => {
         <Link
           to="/crm/variki/shop"
           className="flex min-w-0 items-center gap-1.5 rounded-lg border border-border bg-card px-2 py-1.5 transition hover:bg-muted/60 sm:gap-2 sm:px-3"
-          title="Варики — на подарки в магазине"
+          title="Варики — на подарки в Тайм-кофе"
         >
           <Icon name="Coins" size={16} className="shrink-0 text-amber-500" />
           <div className="min-w-0 leading-tight">

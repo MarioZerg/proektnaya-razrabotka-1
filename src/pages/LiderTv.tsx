@@ -7,7 +7,9 @@ import LiderTvPeople from '@/components/lider/LiderTvPeople';
 import LiderTvFeed from '@/components/lider/LiderTvFeed';
 import LiderTvBubbles from '@/components/lider/LiderTvBubbles';
 import LiveFloorBoundary from '@/components/crm/dashboard/liveFloor/LiveFloorBoundary';
-import { useSlowScroll } from '@/components/lider/useSlowScroll';
+import LiderTvDuel from '@/components/lider/LiderTvDuel';
+import { fetchTvDuel, type TvDuel } from '@/lib/varikiApi';
+import { playDuelStart, playDuelWin } from '@/lib/gameSounds';
 import { useTvCanvas } from '@/components/lider/useTvCanvas';
 import { useTvBuildWatch } from '@/components/lider/useTvBuildWatch';
 
@@ -28,14 +30,14 @@ const MoscowClock = () => {
  * Экран «Живой цех» на телевизор: кадр цеха чередуется с пузырями выработки.
  */
 const BUBBLES_HOLD_MS = 32000;
-const FLOOR_MIN_MS = 18000;
-const FLOOR_MAX_MS = 50000;
+/** Кадр цеха стоит на месте: всё уже в одном экране, листать вниз не нужно. */
+const FLOOR_HOLD_MS = 24000;
 
 const LiderTv = () => {
   const { scale, left, top, frameW, frameH } = useTvCanvas();
-  const scrollRef = useRef<HTMLDivElement>(null);
-  const panRef = useRef<HTMLDivElement>(null);
   useTvBuildWatch();
+  const [duel, setDuel] = useState<TvDuel | null>(null);
+  const playedDuel = useRef(new Set<string>());
   const [screen, setScreen] = useState<'floor' | 'bubbles'>(() =>
     new URLSearchParams(window.location.search).get('screen') === 'bubbles' ? 'bubbles' : 'floor',
   );
@@ -51,55 +53,50 @@ const LiderTv = () => {
     removeComet,
   } = useLiveFloorData(true);
 
+  useEffect(() => {
+    let stop = false;
+    const tick = () => {
+      fetchTvDuel()
+        .then((next) => {
+          if (!stop) setDuel(next);
+        })
+        .catch(() => undefined);
+    };
+    tick();
+    const timer = window.setInterval(tick, 1500);
+    return () => {
+      stop = true;
+      window.clearInterval(timer);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!duel) return;
+    if (duel.phase === 'draw' && !playedDuel.current.has(`${duel.id}:draw`)) {
+      playedDuel.current.add(`${duel.id}:draw`);
+      playDuelStart();
+    }
+    if (
+      (duel.phase === 'award' || duel.phase === 'done') &&
+      !playedDuel.current.has(`${duel.id}:win`)
+    ) {
+      playedDuel.current.add(`${duel.id}:win`);
+      playDuelWin();
+    }
+  }, [duel]);
+
   const view = useMemo(() => buildLiveFloorView(data, 'all', clockOffset), [data, clockOffset]);
   const floorReady = Boolean(view);
-  const goBubblesTimer = useRef(0);
-  useSlowScroll(scrollRef, panRef, floorReady && screen === 'floor', 32, () => {
-    window.clearTimeout(goBubblesTimer.current);
-    goBubblesTimer.current = window.setTimeout(() => setScreen('bubbles'), 1600);
-  });
 
-  // view — новый объект на каждый опрос цеха (12 с). Если повесить таймер на него,
-  // гонка на телевизоре никогда не откроется. WebView2 к тому же иногда не скроллит —
-  // тогда всё равно уходим на карту по потолку FLOOR_MAX_MS.
   useEffect(() => {
     if (screen !== 'floor' || !floorReady) return;
-    let gone = false;
-    const go = () => {
-      if (gone) return;
-      gone = true;
-      setScreen('bubbles');
-    };
-    const noOverflow = window.setTimeout(() => {
-      const view = scrollRef.current;
-      const content = panRef.current;
-      if (!view || !content) {
-        go();
-        return;
-      }
-      const floor = view.closest('[data-tv-floor]') as HTMLElement | null;
-      const pipe = floor?.firstElementChild as HTMLElement | null;
-      const avail = floor
-        ? Math.max(0, floor.clientHeight - (pipe?.offsetHeight || 0))
-        : view.clientHeight;
-      const max = Math.max(content.offsetHeight, content.scrollHeight) - avail;
-      if (max <= 8) go();
-    }, FLOOR_MIN_MS);
-    const safety = window.setTimeout(go, FLOOR_MAX_MS);
-    return () => {
-      gone = true;
-      window.clearTimeout(noOverflow);
-      window.clearTimeout(safety);
-      window.clearTimeout(goBubblesTimer.current);
-    };
+    const hold = window.setTimeout(() => setScreen('bubbles'), FLOOR_HOLD_MS);
+    return () => window.clearTimeout(hold);
   }, [screen, floorReady]);
 
   useEffect(() => {
     if (screen !== 'bubbles') return;
-    const t = window.setTimeout(() => {
-      if (panRef.current) panRef.current.style.transform = '';
-      setScreen('floor');
-    }, BUBBLES_HOLD_MS);
+    const t = window.setTimeout(() => setScreen('floor'), BUBBLES_HOLD_MS);
     return () => window.clearTimeout(t);
   }, [screen]);
 
@@ -139,11 +136,24 @@ const LiderTv = () => {
   }, []);
 
   const agoSec = updatedAt ? Math.max(0, Math.round((Date.now() - updatedAt) / 1000)) : null;
+  const agoText = (() => {
+    if (agoSec == null) return '';
+    if (agoSec < 5) return 'только что';
+    const mod10 = agoSec % 10;
+    const mod100 = agoSec % 100;
+    const word =
+      mod10 === 1 && mod100 !== 11
+        ? 'секунду'
+        : mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)
+          ? 'секунды'
+          : 'секунд';
+    return `${agoSec} ${word} назад`;
+  })();
 
   return (
     <div className="h-screen w-screen cursor-none overflow-hidden bg-black">
       <div
-        className="absolute overflow-hidden bg-[#0b1220] text-slate-100"
+        className="absolute flex flex-col overflow-hidden bg-[#0b1220] text-slate-100"
         style={{
           width: frameW,
           height: frameH,
@@ -153,18 +163,18 @@ const LiderTv = () => {
           transformOrigin: 'top left',
         }}
       >
-        <header className="flex items-center gap-4 px-8 pt-5">
-          <span className="relative flex h-4 w-4 shrink-0">
+        <header className="flex shrink-0 items-center gap-4 px-6 py-3">
+          <span className="relative flex h-3.5 w-3.5 shrink-0">
             <span className="absolute inset-0 animate-ping rounded-full bg-red-500 opacity-60" />
-            <span className="relative h-4 w-4 rounded-full bg-red-500" />
+            <span className="relative h-3.5 w-3.5 rounded-full bg-red-500" />
           </span>
-          <h1 className="text-4xl font-black tracking-tight text-white">
+          <h1 className="shrink-0 text-3xl font-black tracking-tight text-white">
             {screen === 'bubbles' ? 'Сотрудники смены' : 'Живой цех'}
           </h1>
-          <span className="rounded bg-red-500/20 px-2 py-0.5 text-sm font-bold uppercase tracking-widest text-red-300">
-            {screen === 'bubbles' ? 'топ' : 'live'}
+          <span className="shrink-0 rounded bg-red-500/20 px-2 py-0.5 text-sm font-bold text-red-300">
+            {screen === 'bubbles' ? 'выработка' : 'сейчас'}
           </span>
-          <span className="min-w-0 flex-1 truncate text-xl text-slate-400">
+          <span className="min-w-0 flex-1 text-lg leading-tight text-slate-300">
             {view ? (
               <>
                 на смене {view.people.length}
@@ -175,15 +185,15 @@ const LiderTv = () => {
             ) : (
               'подключаемся…'
             )}
-            {agoSec != null && <> · обновлено {agoSec < 5 ? 'только что' : `${agoSec} сек назад`}</>}
+            {agoText && <> · обновлено {agoText}</>}
           </span>
-          <span className="ml-auto shrink-0 font-mono text-5xl font-bold tabular-nums text-white">
+          <span className="ml-auto shrink-0 font-mono text-4xl font-bold tabular-nums text-white">
             <MoscowClock />
           </span>
         </header>
 
         {error && !data ? (
-          <div className="flex h-[calc(1080px-88px)] flex-col items-center justify-center gap-4 px-10 text-center">
+          <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-4 px-10 text-center">
             <p className="text-3xl text-red-300">Нет связи с цехом</p>
             <p className="max-w-3xl text-2xl text-slate-400">{error}</p>
             <button
@@ -195,19 +205,19 @@ const LiderTv = () => {
             </button>
           </div>
         ) : !view || !data ? (
-          <div className="flex h-[calc(1080px-88px)] items-center justify-center gap-3 text-3xl text-slate-400">
+          <div className="flex min-h-0 flex-1 items-center justify-center gap-3 text-3xl text-slate-400">
             <Icon name="Loader2" size={36} className="animate-spin" />
             Подключаемся к цеху…
           </div>
         ) : (
-          <div data-tv-body="1" className="relative h-[calc(1080px-88px)] overflow-hidden">
+          <div data-tv-body="1" className="relative min-h-0 flex-1 overflow-hidden">
             <div
               data-tv-floor="1"
-              className={`flex h-full min-h-0 flex-col overflow-hidden px-6 pb-5 pt-2 ${
+              className={`flex h-full min-h-0 flex-col overflow-hidden px-5 pb-3 pt-1 ${
                 screen === 'floor' ? '' : 'invisible pointer-events-none'
               }`}
             >
-              <div className="shrink-0 pb-3">
+              <div className="shrink-0 pb-1">
                 <LiderTvPipeline
                   counts={view.counts}
                   flows={view.flows}
@@ -217,13 +227,9 @@ const LiderTv = () => {
                   onCometDone={removeComet}
                 />
               </div>
-              <div className="grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)_420px] grid-rows-[minmax(0,1fr)] gap-4 overflow-hidden">
-                <div
-                  ref={scrollRef}
-                  data-tv-scroll="1"
-                  className="h-full min-h-0 overflow-hidden"
-                >
-                  <div ref={panRef} data-tv-pan="1">
+              <div className="grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)_400px] grid-rows-[minmax(0,1fr)] gap-3 overflow-hidden">
+                <div className="flex h-full min-h-0 flex-col overflow-hidden">
+                  <div className="shrink-0">
                     <LiderTvPeople
                       people={view.people}
                       orders={view.orders}
@@ -233,24 +239,24 @@ const LiderTv = () => {
                       clockOffset={clockOffset}
                       movedIds={movedIds}
                     />
-                    {view.stickeringQueue.length > 0 && (
-                      <section className="mt-5 rounded-2xl border border-orange-400/30 bg-orange-500/10 p-4">
-                        <h2 className="mb-3 text-2xl font-bold text-white">
-                          Ждут стикеровки · {view.stickeringQueue.length}
-                        </h2>
-                        <div className="flex flex-wrap gap-2">
-                          {view.stickeringQueue.slice(0, 24).map((o) => (
-                            <span
-                              key={o.id}
-                              className="rounded-lg border border-orange-400/40 bg-black/30 px-3 py-1 font-mono text-xl font-semibold text-orange-100"
-                            >
-                              {o.orderNumber}
-                            </span>
-                          ))}
-                        </div>
-                      </section>
-                    )}
                   </div>
+                  {view.stickeringQueue.length > 0 && (
+                    <section className="mt-2 flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-orange-400/30 bg-orange-500/10 px-3 py-2">
+                      <h2 className="mb-1 shrink-0 text-lg font-bold text-white">
+                        Ждут стикеровки · {view.stickeringQueue.length}
+                      </h2>
+                      <div className="flex min-h-0 flex-1 flex-wrap content-start gap-1.5 overflow-hidden">
+                        {view.stickeringQueue.map((o) => (
+                          <span
+                            key={o.id}
+                            className="rounded-md border border-orange-400/40 bg-black/30 px-2 py-0.5 font-mono text-base font-semibold text-orange-100"
+                          >
+                            {o.orderNumber}
+                          </span>
+                        ))}
+                      </div>
+                    </section>
+                  )}
                 </div>
                 <LiderTvFeed events={view.events} names={data.names} freshKeys={freshKeys} />
               </div>
@@ -266,6 +272,7 @@ const LiderTv = () => {
             </div>
           </div>
         )}
+        {duel && <LiderTvDuel duel={duel} />}
       </div>
     </div>
   );
