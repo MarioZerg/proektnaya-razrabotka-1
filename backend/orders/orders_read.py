@@ -820,7 +820,11 @@ def handle_get(event: dict, headers: dict, dsn: str) -> dict:
                         cur,
                         accessories,
                         material_name,
-                        bool(row[-2]),
+                        # Признак оверлока — строго по номеру колонки (row[34]).
+                        # Отсчёт с конца (row[-2]) сломался, когда в конец добавили
+                        # даты этапов: туда попала дата «швея взяла», и любой взятый
+                        # в пошив лён получал тесьму 4 см.
+                        bool(row[34]),
                         width_val,
                     )
                     required_trim_material_id = trim_id
