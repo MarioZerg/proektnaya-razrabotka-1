@@ -30,14 +30,14 @@ const CASTLE_SLOTS = [
   { x: 1740, y: 176 },
 ];
 
-const LAWN = { x: 1688, y: 742 };
+const LAWN = { x: 520, y: 300 };
 const LAWN_SLOTS = [
-  { x: 1618, y: 758 },
-  { x: 1668, y: 788 },
-  { x: 1578, y: 786 },
-  { x: 1718, y: 778 },
-  { x: 1598, y: 728 },
-  { x: 1748, y: 748 },
+  { x: 448, y: 318 },
+  { x: 498, y: 348 },
+  { x: 408, y: 348 },
+  { x: 548, y: 338 },
+  { x: 428, y: 278 },
+  { x: 568, y: 288 },
 ];
 
 const ROLE_RING: Record<string, string> = {
@@ -286,24 +286,20 @@ const LiderTvRace = ({ race, people, workingIds, idlePunishIds, active }: LiderT
         </g>
 
         <ellipse cx="240" cy="760" rx="210" ry="90" fill="#1d4a32" />
-        <ellipse cx="900" cy="555" rx="190" ry="95" fill="#2a5a38" />
-        <ellipse cx="1260" cy="518" rx="175" ry="88" fill="#2d6340" />
-        {punished.length > 0 ? (
-          <g>
-            <ellipse cx={LAWN.x} cy={LAWN.y} rx="168" ry="92" fill="#3f6b2a" />
-            <ellipse cx={LAWN.x} cy={LAWN.y + 8} rx="140" ry="70" fill="#4d7c30" />
-          </g>
-        ) : null}
+        <ellipse cx="720" cy="290" rx="340" ry="150" fill="#2f6a3c" />
+        <ellipse cx="700" cy="300" rx="280" ry="118" fill="#357544" />
 
         <g opacity="0.95">
-          <ellipse cx="1198" cy="528" rx="32" ry="20" fill="#14532d" />
-          <ellipse cx="1258" cy="508" rx="40" ry="24" fill="#166534" />
-          <ellipse cx="1324" cy="532" rx="34" ry="20" fill="#15803d" />
-          <ellipse cx="1288" cy="548" rx="28" ry="16" fill="#14532d" />
-          <rect x="1192" y="528" width="12" height="26" fill="#3f2a14" />
-          <rect x="1250" y="508" width="14" height="32" fill="#3f2a14" />
-          <rect x="1318" y="532" width="12" height="24" fill="#3f2a14" />
-          <rect x="1282" y="548" width="10" height="20" fill="#3f2a14" />
+          <ellipse cx="640" cy="268" rx="42" ry="26" fill="#14532d" />
+          <ellipse cx="708" cy="248" rx="50" ry="30" fill="#166534" />
+          <ellipse cx="778" cy="272" rx="40" ry="24" fill="#15803d" />
+          <ellipse cx="738" cy="292" rx="34" ry="20" fill="#14532d" />
+          <ellipse cx="668" cy="300" rx="30" ry="18" fill="#166534" />
+          <rect x="632" y="268" width="14" height="32" fill="#3f2a14" />
+          <rect x="698" y="248" width="16" height="38" fill="#3f2a14" />
+          <rect x="770" y="272" width="14" height="28" fill="#3f2a14" />
+          <rect x="732" y="292" width="12" height="24" fill="#3f2a14" />
+          <rect x="662" y="300" width="12" height="22" fill="#3f2a14" />
         </g>
 
         <g filter="url(#race-soft)">
@@ -329,19 +325,19 @@ const LiderTvRace = ({ race, people, workingIds, idlePunishIds, active }: LiderT
         <path d="M70 760 L 310 748" stroke="#f59e0b" strokeWidth="3" opacity="0.55" />
         <path d="M90 754 L 160 730 L 230 752" fill="none" stroke="#fb923c" strokeWidth="6" opacity="0.7" />
 
-        <g filter="url(#race-soft)">
-          <rect x="828" y="508" width="92" height="62" rx="4" fill="#fde68a" />
-          <polygon points="818,508 874,468 928,508" fill="#b45309" />
-          <rect x="858" y="532" width="22" height="38" fill="#7c2d12" />
-          <rect x="840" y="518" width="14" height="14" fill="#fbbf24" />
-          <rect x="890" y="518" width="14" height="14" fill="#f59e0b" />
-          <circle cx="874" cy="458" r="16" fill="#facc15" />
-          <text x="874" y="464" textAnchor="middle" fill="#78350f" fontSize="16" fontWeight="800" fontFamily="Segoe UI, sans-serif">
+        <g filter="url(#race-soft)" transform="translate(40,-20)">
+          <rect x="828" y="248" width="100" height="70" rx="4" fill="#fde68a" />
+          <polygon points="818,248 878,204 938,248" fill="#b45309" />
+          <rect x="864" y="276" width="24" height="42" fill="#7c2d12" />
+          <rect x="844" y="260" width="16" height="16" fill="#fbbf24" />
+          <rect x="896" y="260" width="16" height="16" fill="#f59e0b" />
+          <circle cx="878" cy="194" r="18" fill="#facc15" />
+          <text x="878" y="201" textAnchor="middle" fill="#78350f" fontSize="18" fontWeight="800" fontFamily="Segoe UI, sans-serif">
             В
           </text>
-          <rect x="930" y="528" width="48" height="42" rx="3" fill="#fcd34d" />
-          <polygon points="924,528 954,502 984,528" fill="#92400e" />
-          <rect x="946" y="544" width="12" height="12" fill="#fbbf24" />
+          <rect x="938" y="268" width="52" height="50" rx="3" fill="#fcd34d" />
+          <polygon points="932,268 964,238 996,268" fill="#92400e" />
+          <rect x="954" y="286" width="14" height="14" fill="#fbbf24" />
         </g>
 
         <path d="M500 668 C 560 600, 640 600, 700 648" fill="none" stroke="#292524" strokeWidth="46" />
@@ -411,28 +407,26 @@ const LiderTvRace = ({ race, people, workingIds, idlePunishIds, active }: LiderT
         <path d="M1600 282 L 1654 248" fill="none" stroke="#8b5a2b" strokeWidth="22" strokeLinecap="round" />
         <path d="M1600 282 L 1654 248" fill="none" stroke="#e8c48a" strokeWidth="10" strokeLinecap="round" strokeDasharray="10 8" />
 
-        {punished.length > 0 ? (
-          <g>
-            <text x={LAWN.x - 70} y={LAWN.y - 78} fill="#fecaca" fontSize="22" fontWeight="800" fontFamily="Segoe UI, sans-serif">
-              Простой
-            </text>
-            <g transform={`translate(${LAWN.x + 36}, ${LAWN.y - 70})`}>
-              <ellipse cx="18" cy="118" rx="22" ry="8" fill="#0f172a" opacity="0.35" />
-              <rect x="8" y="48" width="22" height="52" rx="4" fill="#111827" />
-              <rect x="4" y="48" width="30" height="14" fill="#020617" />
-              <circle cx="19" cy="34" r="16" fill="#1c1917" />
-              <rect x="6" y="28" width="26" height="14" rx="6" fill="#09090b" />
-              <circle cx="13" cy="34" r="3" fill="#fca5a5" />
-              <circle cx="25" cy="34" r="3" fill="#fca5a5" />
-              <rect x="14" y="98" width="8" height="22" fill="#111827" />
-              <rect x="22" y="98" width="8" height="22" fill="#111827" />
-              <g style={{ transformOrigin: '32px 58px', animation: 'race-whip 1.3s ease-in-out infinite' }}>
-                <path d="M32 58 C 70 48, 108 22, 128 8" fill="none" stroke="#1c1917" strokeWidth="4" strokeLinecap="round" />
-                <path d="M128 8 C 136 4, 142 10, 134 16" fill="none" stroke="#7f1d1d" strokeWidth="3" strokeLinecap="round" />
-              </g>
+        <g>
+          <text x={LAWN.x - 40} y={LAWN.y - 92} fill="#fecaca" fontSize="24" fontWeight="800" fontFamily="Segoe UI, sans-serif">
+            Простой
+          </text>
+          <g transform={`translate(${LAWN.x - 10}, ${LAWN.y - 110}) scale(1.55)`}>
+            <ellipse cx="18" cy="118" rx="22" ry="8" fill="#0f172a" opacity="0.35" />
+            <rect x="8" y="48" width="22" height="52" rx="4" fill="#111827" />
+            <rect x="4" y="48" width="30" height="14" fill="#020617" />
+            <circle cx="19" cy="34" r="16" fill="#1c1917" />
+            <rect x="6" y="28" width="26" height="14" rx="6" fill="#09090b" />
+            <circle cx="13" cy="34" r="3.2" fill="#fca5a5" />
+            <circle cx="25" cy="34" r="3.2" fill="#fca5a5" />
+            <rect x="14" y="98" width="8" height="22" fill="#111827" />
+            <rect x="22" y="98" width="8" height="22" fill="#111827" />
+            <g style={{ transformOrigin: '32px 58px', animation: 'race-whip 1.3s ease-in-out infinite' }}>
+              <path d="M32 58 C 70 48, 108 22, 128 8" fill="none" stroke="#1c1917" strokeWidth="4" strokeLinecap="round" />
+              <path d="M128 8 C 136 4, 142 10, 134 16" fill="none" stroke="#7f1d1d" strokeWidth="3" strokeLinecap="round" />
             </g>
           </g>
-        ) : null}
+        </g>
 
         <text x="118" y="828" fill="#fed7aa" fontSize="26" fontWeight="800" fontFamily="Segoe UI, sans-serif">
           Цех
@@ -440,10 +434,10 @@ const LiderTvRace = ({ race, people, workingIds, idlePunishIds, active }: LiderT
         <text x="560" y="578" fill="#e2e8f0" fontSize="22" fontWeight="700" fontFamily="Segoe UI, sans-serif">
           Мост
         </text>
-        <text x="818" y="598" fill="#fde68a" fontSize="22" fontWeight="700" fontFamily="Segoe UI, sans-serif">
+        <text x="868" y="348" fill="#fde68a" fontSize="22" fontWeight="700" fontFamily="Segoe UI, sans-serif">
           Варики
         </text>
-        <text x="1228" y="588" fill="#bbf7d0" fontSize="22" fontWeight="700" fontFamily="Segoe UI, sans-serif">
+        <text x="658" y="368" fill="#bbf7d0" fontSize="22" fontWeight="700" fontFamily="Segoe UI, sans-serif">
           Роща
         </text>
         <text x="1588" y="58" fill="#fde68a" fontSize="26" fontWeight="800" fontFamily="Segoe UI, sans-serif">
