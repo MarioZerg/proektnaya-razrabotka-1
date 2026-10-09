@@ -126,7 +126,8 @@ const PersonCard = ({
           : [stats.sewn || 0, 'отшито'];
   const packedRecently =
     person.role === 'packer' ? events.filter((e) => e.userId === person.id && e.kind === 'packed').slice(0, 4) : [];
-  const visible = person.role === 'cutter' ? 10 : 5;
+  const cutter = person.role === 'cutter';
+  const shown = cutter ? hands.slice(0, 20) : hands.slice(0, 5);
 
   return (
     <article
@@ -169,12 +170,25 @@ const PersonCard = ({
       </p>
 
       {hands.length > 0 && (
-        <div className="flex flex-wrap gap-1.5">
-          {hands.slice(0, visible).map((o) => (
-            <OrderPill key={o.id} order={o} clockOffset={clockOffset} moved={movedIds.has(o.id)} />
-          ))}
-          {hands.length > visible && (
-            <span className="self-center text-lg text-slate-400">ещё {hands.length - visible}</span>
+        <div className={`flex flex-wrap ${cutter ? 'gap-1' : 'gap-1.5'}`}>
+          {shown.map((o) =>
+            cutter ? (
+              <span
+                key={o.id}
+                className={`rounded-md border px-1.5 py-0.5 font-mono text-sm font-semibold ${
+                  movedIds.has(o.id)
+                    ? 'border-emerald-400 bg-emerald-500/20 text-emerald-100'
+                    : 'border-white/15 bg-black/30 text-slate-100'
+                }`}
+              >
+                {o.orderNumber}
+              </span>
+            ) : (
+              <OrderPill key={o.id} order={o} clockOffset={clockOffset} moved={movedIds.has(o.id)} />
+            ),
+          )}
+          {!cutter && hands.length > shown.length && (
+            <span className="self-center text-lg text-slate-400">ещё {hands.length - shown.length}</span>
           )}
         </div>
       )}

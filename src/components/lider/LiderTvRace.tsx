@@ -3,7 +3,7 @@ import type { LivePerson, LiveRace, LiveRaceRunner } from '@/lib/liveFloorApi';
 import { initials, shortName } from '@/components/crm/dashboard/liveFloor/liveFloorShared';
 import { useRaceAudio } from '@/components/lider/useRaceAudio';
 
-/** Тропа: цех слева внизу → мост → ярмарка → роща → ворота замка. */
+/** Тропа: цех слева внизу → мост → магазин вариков → роща на лужайке → ворота замка. */
 const PATH: { x: number; y: number }[] = [
   { x: 250, y: 742 },
   { x: 370, y: 700 },
@@ -286,8 +286,8 @@ const LiderTvRace = ({ race, people, workingIds, idlePunishIds, active }: LiderT
         </g>
 
         <ellipse cx="240" cy="760" rx="210" ry="90" fill="#1d4a32" />
-        <ellipse cx="900" cy="540" rx="170" ry="80" fill="#1a4530" />
-        <ellipse cx="1280" cy="390" rx="150" ry="70" fill="#16442c" />
+        <ellipse cx="900" cy="555" rx="190" ry="95" fill="#2a5a38" />
+        <ellipse cx="1260" cy="518" rx="175" ry="88" fill="#2d6340" />
         {punished.length > 0 ? (
           <g>
             <ellipse cx={LAWN.x} cy={LAWN.y} rx="168" ry="92" fill="#3f6b2a" />
@@ -295,13 +295,15 @@ const LiderTvRace = ({ race, people, workingIds, idlePunishIds, active }: LiderT
           </g>
         ) : null}
 
-        <g opacity="0.9">
-          <ellipse cx="1220" cy="430" rx="28" ry="18" fill="#0f3d24" />
-          <ellipse cx="1270" cy="410" rx="34" ry="22" fill="#14532d" />
-          <ellipse cx="1330" cy="390" rx="30" ry="18" fill="#166534" />
-          <rect x="1214" y="430" width="10" height="22" fill="#3f2a14" />
-          <rect x="1262" y="410" width="12" height="28" fill="#3f2a14" />
-          <rect x="1324" y="390" width="10" height="24" fill="#3f2a14" />
+        <g opacity="0.95">
+          <ellipse cx="1198" cy="528" rx="32" ry="20" fill="#14532d" />
+          <ellipse cx="1258" cy="508" rx="40" ry="24" fill="#166534" />
+          <ellipse cx="1324" cy="532" rx="34" ry="20" fill="#15803d" />
+          <ellipse cx="1288" cy="548" rx="28" ry="16" fill="#14532d" />
+          <rect x="1192" y="528" width="12" height="26" fill="#3f2a14" />
+          <rect x="1250" y="508" width="14" height="32" fill="#3f2a14" />
+          <rect x="1318" y="532" width="12" height="24" fill="#3f2a14" />
+          <rect x="1282" y="548" width="10" height="20" fill="#3f2a14" />
         </g>
 
         <g filter="url(#race-soft)">
@@ -327,13 +329,19 @@ const LiderTvRace = ({ race, people, workingIds, idlePunishIds, active }: LiderT
         <path d="M70 760 L 310 748" stroke="#f59e0b" strokeWidth="3" opacity="0.55" />
         <path d="M90 754 L 160 730 L 230 752" fill="none" stroke="#fb923c" strokeWidth="6" opacity="0.7" />
 
-        <g>
-          <polygon points="820,575 860,555 900,575 860,595" fill="#b45309" />
-          <polygon points="860,555 860,518 900,575" fill="#fde68a" />
-          <polygon points="930,568 972,548 1014,568 972,588" fill="#7c2d12" />
-          <polygon points="972,548 972,512 1014,568" fill="#fed7aa" />
-          <rect x="848" y="575" width="24" height="18" fill="#78350f" />
-          <rect x="960" y="568" width="24" height="18" fill="#451a03" />
+        <g filter="url(#race-soft)">
+          <rect x="828" y="508" width="92" height="62" rx="4" fill="#fde68a" />
+          <polygon points="818,508 874,468 928,508" fill="#b45309" />
+          <rect x="858" y="532" width="22" height="38" fill="#7c2d12" />
+          <rect x="840" y="518" width="14" height="14" fill="#fbbf24" />
+          <rect x="890" y="518" width="14" height="14" fill="#f59e0b" />
+          <circle cx="874" cy="458" r="16" fill="#facc15" />
+          <text x="874" y="464" textAnchor="middle" fill="#78350f" fontSize="16" fontWeight="800" fontFamily="Segoe UI, sans-serif">
+            В
+          </text>
+          <rect x="930" y="528" width="48" height="42" rx="3" fill="#fcd34d" />
+          <polygon points="924,528 954,502 984,528" fill="#92400e" />
+          <rect x="946" y="544" width="12" height="12" fill="#fbbf24" />
         </g>
 
         <path d="M500 668 C 560 600, 640 600, 700 648" fill="none" stroke="#292524" strokeWidth="46" />
@@ -432,10 +440,10 @@ const LiderTvRace = ({ race, people, workingIds, idlePunishIds, active }: LiderT
         <text x="560" y="578" fill="#e2e8f0" fontSize="22" fontWeight="700" fontFamily="Segoe UI, sans-serif">
           Мост
         </text>
-        <text x="888" y="488" fill="#fde68a" fontSize="22" fontWeight="700" fontFamily="Segoe UI, sans-serif">
-          Ярмарка
+        <text x="818" y="598" fill="#fde68a" fontSize="22" fontWeight="700" fontFamily="Segoe UI, sans-serif">
+          Варики
         </text>
-        <text x="1188" y="328" fill="#bbf7d0" fontSize="22" fontWeight="700" fontFamily="Segoe UI, sans-serif">
+        <text x="1228" y="588" fill="#bbf7d0" fontSize="22" fontWeight="700" fontFamily="Segoe UI, sans-serif">
           Роща
         </text>
         <text x="1588" y="58" fill="#fde68a" fontSize="26" fontWeight="800" fontFamily="Segoe UI, sans-serif">
