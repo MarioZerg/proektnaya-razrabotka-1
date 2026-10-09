@@ -1076,7 +1076,13 @@ def handle_sync_orders(cur, conn, client_id, api_key, actor_id, actor_name,
             if sc != 200:
                 continue
             res = (d.get('result') or {}) if isinstance(d, dict) else {}
-            if res and (res.get('status') or '') in OZON_WORK_STATUSES:
+            # Ручная догрузка (anyStatus): отправление собрали в кабинете OZON мимо
+            # системы, и оно уже «ожидает отгрузки». Забираем его, чтобы закрыть
+            # в «Готовые» по листу сборки. Отменённые и доставленные не берём.
+            any_status = bool(body_data.get('anyStatus'))
+            st = (res.get('status') or '') if res else ''
+            if res and (st in OZON_WORK_STATUSES or (
+                    any_status and st in ('awaiting_packaging', 'awaiting_deliver'))):
                 postings.append(res)
 
     offset = 0
@@ -1284,6 +1290,7 @@ def handle_sync_orders(cur, conn, client_id, api_key, actor_id, actor_name,
             posting_number not in existing_format
             and len(products) > 0
             and split_done < OZON_SPLIT_PER_RUN
+            and (p.get('status') or '') in OZON_WORK_STATUSES
         ):
             total_qty = sum(int(pr.get('quantity') or 1) for pr in products)
             if total_qty > 1:
@@ -1475,6 +1482,12 @@ def handle_sync_orders(cur, conn, client_id, api_key, actor_id, actor_name,
                     skipped_existing += 1
                     continue
                 new_order_id = inserted[0]
+                # Ручная догрузка: вещь уже сшита и собрана — со склада не подбираем
+                # и чужой крой не забираем.
+                if body_data.get('anyStatus'):
+                    made_any = True
+                    created += 1
+                    continue
                 # Такая вещь может уже лежать на полке (осталась от отменённого заказа) —
                 # тогда шить заново не надо: резервируем её под этот заказ, кладовщик заберёт
                 # её с полки, наклеит стикер отправления и отсканирует в поставку FBS.
