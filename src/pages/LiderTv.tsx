@@ -64,6 +64,7 @@ const FLOOR_MAX_MS = 50000;
 const LiderTv = () => {
   const { scale, left, top, frameW, frameH } = useTvCanvas();
   const scrollRef = useRef<HTMLDivElement>(null);
+  const panRef = useRef<HTMLDivElement>(null);
   useTvBuildWatch();
   const [screen, setScreen] = useState<'floor' | 'race'>('floor');
   const nowTick = useTicker();
@@ -102,7 +103,7 @@ const LiderTv = () => {
   }, [view, nowMs]);
 
   const floorReady = Boolean(view);
-  useSlowScroll(scrollRef, floorReady && screen === 'floor', 32, () => {
+  useSlowScroll(scrollRef, panRef, floorReady && screen === 'floor', 32, () => {
     window.setTimeout(() => setScreen('race'), 1600);
   });
 
@@ -118,8 +119,9 @@ const LiderTv = () => {
       setScreen('race');
     };
     const noOverflow = window.setTimeout(() => {
-      const el = scrollRef.current;
-      const max = el ? el.scrollHeight - el.clientHeight : 0;
+      const view = scrollRef.current;
+      const content = panRef.current;
+      const max = view && content ? content.offsetHeight - view.clientHeight : 0;
       if (max <= 8) go();
     }, FLOOR_MIN_MS);
     const safety = window.setTimeout(go, FLOOR_MAX_MS);
@@ -133,7 +135,7 @@ const LiderTv = () => {
   useEffect(() => {
     if (screen !== 'race') return;
     const t = window.setTimeout(() => {
-      if (scrollRef.current) scrollRef.current.scrollTop = 0;
+      if (panRef.current) panRef.current.style.transform = '';
       setScreen('floor');
     }, RACE_HOLD_MS);
     return () => window.clearTimeout(t);
@@ -255,34 +257,37 @@ const LiderTv = () => {
               <div className="grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)_420px] gap-4">
                 <div
                   ref={scrollRef}
-                  className="min-h-0 overflow-y-scroll overscroll-contain [overflow-anchor:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+                  data-tv-scroll="1"
+                  className="min-h-0 overflow-hidden"
                 >
-                  <LiderTvPeople
-                    people={view.people}
-                    orders={view.orders}
-                    events={view.events}
-                    today={data.today}
-                    names={data.names}
-                    clockOffset={clockOffset}
-                    movedIds={movedIds}
-                  />
-                  {view.stickeringQueue.length > 0 && (
-                    <section className="mt-5 rounded-2xl border border-orange-400/30 bg-orange-500/10 p-4">
-                      <h2 className="mb-3 text-2xl font-bold text-white">
-                        Ждут стикеровки · {view.stickeringQueue.length}
-                      </h2>
-                      <div className="flex flex-wrap gap-2">
-                        {view.stickeringQueue.slice(0, 24).map((o) => (
-                          <span
-                            key={o.id}
-                            className="rounded-lg border border-orange-400/40 bg-black/30 px-3 py-1 font-mono text-xl font-semibold text-orange-100"
-                          >
-                            {o.orderNumber}
-                          </span>
-                        ))}
-                      </div>
-                    </section>
-                  )}
+                  <div ref={panRef} data-tv-pan="1">
+                    <LiderTvPeople
+                      people={view.people}
+                      orders={view.orders}
+                      events={view.events}
+                      today={data.today}
+                      names={data.names}
+                      clockOffset={clockOffset}
+                      movedIds={movedIds}
+                    />
+                    {view.stickeringQueue.length > 0 && (
+                      <section className="mt-5 rounded-2xl border border-orange-400/30 bg-orange-500/10 p-4">
+                        <h2 className="mb-3 text-2xl font-bold text-white">
+                          Ждут стикеровки · {view.stickeringQueue.length}
+                        </h2>
+                        <div className="flex flex-wrap gap-2">
+                          {view.stickeringQueue.slice(0, 24).map((o) => (
+                            <span
+                              key={o.id}
+                              className="rounded-lg border border-orange-400/40 bg-black/30 px-3 py-1 font-mono text-xl font-semibold text-orange-100"
+                            >
+                              {o.orderNumber}
+                            </span>
+                          ))}
+                        </div>
+                      </section>
+                    )}
+                  </div>
                 </div>
                 <LiderTvFeed events={view.events} names={data.names} freshKeys={freshKeys} />
               </div>

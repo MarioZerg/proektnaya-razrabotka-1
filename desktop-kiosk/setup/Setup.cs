@@ -371,7 +371,7 @@ namespace YarplanLiderSetup
                 k.SetValue("InstallLocation", dir);
                 k.SetValue("DisplayIcon", Path.Combine(dir, Program.ExeName));
                 k.SetValue("UninstallString", "\"" + setupCopy + "\" /uninstall");
-                k.SetValue("DisplayVersion", "1.1.0");
+                k.SetValue("DisplayVersion", "1.1.1");
                 k.SetValue("NoModify", 1, RegistryValueKind.DWord);
                 k.SetValue("NoRepair", 1, RegistryValueKind.DWord);
             }

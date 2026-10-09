@@ -13,7 +13,7 @@
     <Product>Ярплан — Живой цех</Product>
     <Company>МЕГАТЮЛЬ</Company>
     <Description>Полноэкранная оболочка телевизора цеха</Description>
-    <Version>1.1.0</Version>
+    <Version>1.1.1</Version>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.2849.39" />

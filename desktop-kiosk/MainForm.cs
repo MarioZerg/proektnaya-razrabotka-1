@@ -133,15 +133,7 @@ namespace YarplanLider
             {
             }
 
-            await _web.CoreWebView2.AddScriptToExecuteOnDocumentCreatedAsync(
-                "(function(){try{" +
-                "if(navigator.serviceWorker){" +
-                "navigator.serviceWorker.register=function(){return Promise.reject();};" +
-                "navigator.serviceWorker.getRegistrations().then(function(rs){" +
-                "rs.forEach(function(r){r.unregister();});});}" +
-                "if(window.caches){caches.keys().then(function(keys){" +
-                "keys.forEach(function(k){caches.delete(k);});});}" +
-                "}catch(e){}})();");
+            await _web.CoreWebView2.AddScriptToExecuteOnDocumentCreatedAsync(KioskBootScript());
 
             _web.CoreWebView2.NewWindowRequested += (s, e) => { e.Handled = true; };
             _web.CoreWebView2.NavigationStarting += (s, e) =>
@@ -168,6 +160,8 @@ namespace YarplanLider
                     _status.Visible = false;
                     if (!_updateCheck.Enabled) _updateCheck.Start();
                     System.Threading.ThreadPool.QueueUserWorkItem(CheckSiteUpdate);
+                    try { _web.CoreWebView2.ExecuteScriptAsync(KioskScrollScript()); }
+                    catch { }
                 }
                 else
                 {
@@ -192,7 +186,7 @@ namespace YarplanLider
                 }
                 _status.Visible = true;
                 _status.Text = "Подключаемся к живому цеху…";
-                _web.CoreWebView2.Navigate(_config.Url);
+                _web.CoreWebView2.Navigate(HomeUrl());
                 await Task.CompletedTask;
             }
             catch
@@ -266,9 +260,65 @@ namespace YarplanLider
             }
             catch
             {
-                try { if (_web.CoreWebView2 != null) _web.CoreWebView2.Navigate(_config.Url); }
+                try { if (_web.CoreWebView2 != null) _web.CoreWebView2.Navigate(HomeUrl()); }
                 catch { }
             }
+        }
+
+        private string HomeUrl()
+        {
+            var url = _config.Url;
+            var sep = url.IndexOf('?') >= 0 ? "&" : "?";
+            return url + sep + "kiosk=" + DateTime.UtcNow.Ticks;
+        }
+
+        /// <summary>
+        /// WebView2 часто игнорирует scrollTop. Если страница сама не двигает
+        /// ленту (__tvPanOk), киоск сдвигает её через translate3d.
+        /// </summary>
+        private static string KioskBootScript()
+        {
+            return
+                "(function(){try{" +
+                "if(navigator.serviceWorker){" +
+                "navigator.serviceWorker.register=function(){return Promise.reject();};" +
+                "navigator.serviceWorker.getRegistrations().then(function(rs){" +
+                "rs.forEach(function(r){r.unregister();});});}" +
+                "if(window.caches){caches.keys().then(function(keys){" +
+                "keys.forEach(function(k){caches.delete(k);});});}" +
+                "}catch(e){}})();" +
+                KioskScrollScript();
+        }
+
+        private static string KioskScrollScript()
+        {
+            return
+                "(function(){if(window.__yarplanKioskScroll)return;window.__yarplanKioskScroll=1;" +
+                "var y=0,dir=1,pause=0;" +
+                "function box(){" +
+                "var v=document.querySelector('[data-tv-scroll]');" +
+                "if(v){var c=v.querySelector('[data-tv-pan]')||v.firstElementChild;if(c)return{v:v,c:c};}" +
+                "var nodes=document.querySelectorAll('div'),best=null,score=0;" +
+                "for(var i=0;i<nodes.length;i++){var n=nodes[i],ch=n.firstElementChild;if(!ch)continue;" +
+                "if(n.clientHeight<260)continue;" +
+                "var extra=Math.max(ch.offsetHeight,n.scrollHeight)-n.clientHeight;" +
+                "if(extra>score&&extra>40){best={v:n,c:ch};score=extra;}}" +
+                "return best;}" +
+                "setInterval(function(){" +
+                "if(window.__tvPanOk)return;" +
+                "var h=document.querySelector('h1');" +
+                "if(h&&h.textContent&&h.textContent.indexOf('Путь')>=0)return;" +
+                "var b=box();if(!b||!b.c||!b.v)return;" +
+                "var p=b.v.parentElement;" +
+                "if(p&&p.clientHeight>16){b.v.style.height=p.clientHeight+'px';b.v.style.maxHeight=p.clientHeight+'px';}" +
+                "b.v.style.overflow='hidden';" +
+                "var max=b.c.offsetHeight-b.v.clientHeight;if(max<8)return;" +
+                "if(Date.now()<pause)return;" +
+                "y+=1.6*dir;if(y>=max){y=max;dir=-1;pause=Date.now()+1600;}" +
+                "if(y<=0){y=0;dir=1;pause=Date.now()+1600;}" +
+                "b.c.style.willChange='transform';" +
+                "b.c.style.transform='translate3d(0,'+(-Math.round(y))+'px,0)';" +
+                "},50);})();";
         }
 
         private void ScheduleRetry()
