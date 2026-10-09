@@ -1,12 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Card, CardContent } from '@/components/ui/card';
-import { Badge } from '@/components/ui/badge';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import Icon from '@/components/ui/icon';
 import KioskSendToRepairDialog from '@/components/crm/kiosk/KioskSendToRepairDialog';
-import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
+import RepackScanPanel from '@/components/crm/kiosk/repack/RepackScanPanel';
+import RepackDialogs from '@/components/crm/kiosk/repack/RepackDialogs';
+import RepackEmptyState from '@/components/crm/kiosk/repack/RepackEmptyState';
+import RepackItemCard from '@/components/crm/kiosk/repack/RepackItemCard';
 import { useToast } from '@/hooks/use-toast';
 import { useSubmitGuard } from '@/hooks/useSubmitGuard';
 import { printStorageSticker } from '@/lib/printStorageSticker';
@@ -230,61 +227,21 @@ const KioskRepackScreen = ({
 
   return (
     <div className="space-y-4">
-      {/* Сканер и счётчики. Пока вещь на экране — поле заблокировано: сначала
-          закончи с ней, потом бери следующую. */}
-      {countError && (
-        <WarehouseFetchError
-          title="Не удалось узнать очередь перепаковки"
-          description={countError}
-          onRetry={loadCount}
-        />
-      )}
-      <div className="space-y-3 rounded-xl border-2 border-violet-300 bg-violet-50 p-4">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <p className="text-xl font-bold text-violet-900">
-            {item ? 'Закончите с этой вещью' : 'Отсканируйте вещь'}
-          </p>
-          <div className="flex gap-2">
-            <span className="rounded-lg bg-violet-600 px-4 py-2 text-xl font-bold text-white">
-              {countError ? 'очередь неизвестна' : `${waiting} шт. за этот месяц`}
-            </span>
-            {doneCount > 0 && (
-              <span className="rounded-lg border border-emerald-400 bg-white px-4 py-2 text-xl font-bold text-emerald-700">
-                {doneCount} готово
-              </span>
-            )}
-          </div>
-        </div>
-
-        <Input
-          ref={inputRef}
-          autoFocus
-          value={barcode}
-          onChange={(e) => setBarcode(e.target.value)}
-          onKeyDown={(e) => e.key === 'Enter' && handleScan()}
-          onBlur={focusInput}
-          placeholder={
-            item ? 'Сначала завершите текущую вещь' : 'Поднесите ярлык к сканеру'
-          }
-          className="h-16 font-mono-tech text-2xl"
-          autoComplete="off"
-          disabled={scanning || !!item || clearAsk}
-        />
-
-        {!item && (
-          <p className="text-base text-violet-800">
-            Сканируйте наклейку возврата или ярлык отправления, с которым вещь ездила к
-            покупателю — OZON, Wildberries, Яндекс Маркет
-          </p>
-        )}
-
-        {scanError && (
-          <div className="flex items-start gap-3 rounded-lg border border-destructive bg-destructive/10 p-3">
-            <Icon name="TriangleAlert" size={24} className="mt-0.5 shrink-0 text-destructive" />
-            <p className="text-lg font-medium text-destructive">{scanError}</p>
-          </div>
-        )}
-      </div>
+      <RepackScanPanel
+        item={item}
+        countError={countError}
+        onRetryCount={loadCount}
+        waiting={waiting}
+        doneCount={doneCount}
+        inputRef={inputRef}
+        barcode={barcode}
+        onBarcodeChange={setBarcode}
+        onScan={handleScan}
+        onInputBlur={focusInput}
+        scanning={scanning}
+        clearAsk={clearAsk}
+        scanError={scanError}
+      />
 
       {/* Новый пакет? Спрашиваем перед закрытием перепаковки — по этим ответам видно
           реальный расход упаковки на возвратах. Кнопки крупные: экран сенсорный. */}
@@ -307,201 +264,40 @@ const KioskRepackScreen = ({
         }}
       />
 
-      <Dialog open={isAdmin && clearAsk} onOpenChange={(v) => !v && setClearAsk(false)}>
-        <DialogContent className="kiosk-root sm:max-w-lg" confirmClose={false}>
-          <DialogHeader>
-            <DialogTitle className="text-2xl">Очистить очередь перепаковки?</DialogTitle>
-          </DialogHeader>
-          <p className="text-lg text-muted-foreground">
-            {waiting > 0
-              ? `Все ${waiting} шт. уйдут обратно кладовщику на разбор. Зарплата не начисляется.`
-              : 'Очередь на экране станет пустой. Зарплата не начисляется.'}{' '}
-            Кладовщик заново отправит в цех только вещи, которые реально забрал с
-            маркетплейса.
-          </p>
-          <div className="grid grid-cols-2 gap-3">
-            <Button
-              size="lg"
-              variant="outline"
-              className="h-20 text-xl"
-              onClick={() => setClearAsk(false)}
-              disabled={processing}
-            >
-              Отмена
-            </Button>
-            <Button
-              size="lg"
-              variant="destructive"
-              className="h-20 text-xl"
-              onClick={handleClearQueue}
-              disabled={processing}
-            >
-              <Icon name="RotateCcw" size={24} className="mr-2" />
-              Очистить
-            </Button>
-          </div>
-        </DialogContent>
-      </Dialog>
+      <RepackDialogs
+        isAdmin={isAdmin}
+        clearAsk={clearAsk}
+        setClearAsk={setClearAsk}
+        waiting={waiting}
+        processing={processing}
+        onClearQueue={handleClearQueue}
+        bagAsk={bagAsk}
+        setBagAsk={setBagAsk}
+        item={item}
+        onFinish={handleFinish}
+      />
 
-      <Dialog open={bagAsk} onOpenChange={(v) => !v && setBagAsk(false)}>
-        <DialogContent className="kiosk-root sm:max-w-lg">
-          <DialogHeader>
-            <DialogTitle className="text-2xl">Вы взяли новый пакет?</DialogTitle>
-          </DialogHeader>
-
-          {item && (
-            <div className="space-y-4">
-              <p className="text-lg text-muted-foreground">
-                {item.material && item.width
-                  ? `${item.material} ${item.width}×${item.height}`
-                  : item.product || 'Товар'}
-              </p>
-
-              <div className="grid grid-cols-2 gap-3">
-                <Button
-                  size="lg"
-                  className="h-24 bg-emerald-600 text-xl text-white hover:bg-emerald-700"
-                  onClick={() => handleFinish('repacked', true)}
-                  disabled={processing}
-                >
-                  <Icon name="PackagePlus" size={28} className="mr-2" />
-                  Да, новый
-                </Button>
-                <Button
-                  size="lg"
-                  variant="outline"
-                  className="h-24 text-xl"
-                  onClick={() => handleFinish('repacked', false)}
-                  disabled={processing}
-                >
-                  <Icon name="Package" size={28} className="mr-2" />
-                  Нет, прежний
-                </Button>
-              </div>
-            </div>
-          )}
-        </DialogContent>
-      </Dialog>
-
-      {/* Ничего не отсканировано — экран пустой. Список вещей намеренно не выводим:
-          упаковщица работает с той вещью, что держит в руках. */}
       {!item ? (
-        <div className="flex flex-col items-center gap-3 py-12">
-          <Icon name="ScanLine" size={72} className="text-muted-foreground" />
-          <p className="text-center text-2xl font-semibold">Отсканируйте вещь из тележки</p>
-          <p className="max-w-md text-center text-muted-foreground">
-            {countError
-              ? 'Очередь не загрузилась — сканировать можно, список вещей на экране не показываем'
-              : waiting > 0
-              ? `В этом месяце на перепаковке ${waiting} шт. Берите вещь и подносите к сканеру`
-              : 'Сюда попадают возвраты, которые кладовщик отправил переупаковать в этом месяце'}
-          </p>
-          {isAdmin && (
-            <Button
-              variant="outline"
-              className="mt-4 h-14 border-violet-300 text-base text-violet-800 hover:bg-violet-50"
-              onClick={() => setClearAsk(true)}
-              disabled={processing || (!countError && waiting === 0)}
-            >
-              <Icon name="RotateCcw" size={22} className="mr-2" />
-              Очистить очередь — начать с чистого листа
-            </Button>
-          )}
-        </div>
+        <RepackEmptyState
+          countError={countError}
+          waiting={waiting}
+          isAdmin={isAdmin}
+          processing={processing}
+          onAskClear={() => setClearAsk(true)}
+        />
       ) : (
-        <Card className="border-2 border-violet-500 shadow-none ring-4 ring-violet-200">
-          <CardContent className="space-y-3 pt-6">
-            <div className="flex flex-wrap items-start justify-between gap-2">
-              <div>
-                <p className="text-2xl font-bold">
-                  {item.material && item.width
-                    ? `${item.material} ${item.width}×${item.height}`
-                    : item.product || 'Товар'}
-                </p>
-                <p className="break-all font-mono-tech text-sm text-muted-foreground">
-                  {item.storageBarcode} · {item.orderNumber || '—'}
-                </p>
-              </div>
-              {item.marketplace && <Badge variant="secondary">{item.marketplace}</Badge>}
-            </div>
-
-            {item.returnReason && (
-              <div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
-                <p className="font-medium">Почему вернули:</p>
-                <p>{item.returnReason}</p>
-              </div>
-            )}
-
-            {/* ТРИ РЕШЕНИЯ — и всё. Раньше здесь сверху висели восемь кнопок с
-                причинами брака («дырка», «затяжка», «пятно»...), и упаковщица
-                сначала разбиралась с ними, а уже потом нажимала действие. На
-                потоке это лишний шаг: причину всё равно смотрит администратор,
-                когда вещь доходит до него со стикером.
-
-                Кнопки одного размера и в один ряд: у каждой вещи ровно один
-                исход, и выбор должен читаться с одного взгляда. */}
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-              <Button
-                size="lg"
-                className="h-24 bg-emerald-600 text-lg text-white hover:bg-emerald-700"
-                onClick={() => setBagAsk(true)}
-                disabled={processing}
-              >
-                <div className="flex flex-col items-center gap-1">
-                  <Icon
-                    name={processing ? 'Loader2' : 'Check'}
-                    size={30}
-                    className={processing ? 'animate-spin' : ''}
-                  />
-                  <span>Перепаковка</span>
-                </div>
-              </Button>
-              <Button
-                size="lg"
-                variant="outline"
-                className="h-24 border-2 border-destructive/40 text-lg text-destructive hover:bg-destructive/10 hover:text-destructive"
-                onClick={() => handleFinish('utilized')}
-                disabled={processing}
-              >
-                <div className="flex flex-col items-center gap-1">
-                  <Icon name="Trash2" size={30} />
-                  <span>Брак</span>
-                </div>
-              </Button>
-              {/* Остался годный кусок — отправляем его закройщикам в перешив.
-                  Рулон выбирать больше не нужно: кусок уходит в цех со своими
-                  размерами, и закройщик найдёт его под конкретный заказ.
-                  Раньше кусок «распускали» в рулон, он терял размеры и
-                  превращался в обезличенные метры. */}
-              <Button
-                size="lg"
-                variant="outline"
-                className="h-24 border-2 border-violet-300 text-lg text-violet-700 hover:bg-violet-50 hover:text-violet-800"
-                onClick={() => setRepairOpen(true)}
-                disabled={processing}
-              >
-                <div className="flex flex-col items-center gap-1">
-                  <Icon name="Scissors" size={30} />
-                  <span>В перешив</span>
-                </div>
-              </Button>
-            </div>
-
-            {/* Ошиблась вещью — можно вернуть экран к сканеру, ничего не закрывая. */}
-            <Button
-              variant="ghost"
-              className="h-12 w-full text-base"
-              onClick={() => {
-                setItem(null);
-                setNote('');
-                focusInput();
-              }}
-              disabled={processing}
-            >
-              Это не та вещь — отсканировать другую
-            </Button>
-          </CardContent>
-        </Card>
+        <RepackItemCard
+          item={item}
+          processing={processing}
+          onRepack={() => setBagAsk(true)}
+          onUtilize={() => handleFinish('utilized')}
+          onRepair={() => setRepairOpen(true)}
+          onWrongItem={() => {
+            setItem(null);
+            setNote('');
+            focusInput();
+          }}
+        />
       )}
     </div>
   );
