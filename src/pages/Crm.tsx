@@ -31,6 +31,9 @@ const CrmDashboard = () => {
     handleToggleShift,
     handleSwitchShift,
     handleToggleFree,
+    conveyorIssueEnabled,
+    conveyorSaving,
+    handleToggleConveyor,
   } = useCrmDashboardData();
 
   const content = (
@@ -46,6 +49,10 @@ const CrmDashboard = () => {
         shiftsLoading={shiftsLoading}
         shiftsError={shiftsError}
         onRetryShifts={loadShifts}
+        isAdmin={isAdmin}
+        conveyorIssueEnabled={conveyorIssueEnabled}
+        conveyorSaving={conveyorSaving}
+        onToggleConveyor={handleToggleConveyor}
       />
 
       <CrmDashboardSections

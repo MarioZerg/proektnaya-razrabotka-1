@@ -25,6 +25,8 @@ export interface DashboardSummary {
   awaitingShelf?: number;
   awaitingShipLabel?: number;
   returnsPickedUp?: number;
+  /** Выдача заказов с конвейера включена. Выключает админ на главной. */
+  conveyorIssueEnabled?: boolean;
 }
 
 /**

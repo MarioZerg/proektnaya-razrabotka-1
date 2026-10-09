@@ -141,6 +141,7 @@ const SewingItems = () => {
     maxOverlockOrders,
     overlockBusyBy,
     takeLocked,
+    conveyorIssueEnabled,
     inWork,
     maxOrders,
     refreshSewWaits,
@@ -244,6 +245,7 @@ const SewingItems = () => {
           takingOrder={takingOrder}
           takeOrderCooldown={takeOrderCooldown}
           takeLocked={takeLocked}
+          conveyorIssueEnabled={conveyorIssueEnabled}
           inWork={inWork}
           maxOrders={maxOrders}
           handleTakeOrder={handleTakeOrder}

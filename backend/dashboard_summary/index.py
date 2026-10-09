@@ -271,6 +271,15 @@ def handler(event: dict, context) -> dict:
             result['awaitingShelf'] = row[10]
             result['awaitingShipLabel'] = row[11]
             result['returnsPickedUp'] = row[12]
+
+        cur.execute(
+            "SELECT value FROM system_settings WHERE key = 'conveyor_issue_enabled'"
+        )
+        flag = cur.fetchone()
+        result['conveyorIssueEnabled'] = (
+            True if not flag or flag[0] in (None, '')
+            else str(flag[0]).strip().lower() != 'false'
+        )
     finally:
         conn.close()
 

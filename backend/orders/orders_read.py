@@ -15,6 +15,7 @@ from shared import (
     CANCELLED_SQL,
     CLOSED_ORDERS_LIMIT,
     _fit_orders_body,
+    conveyor_issue_enabled,
     cut_queue_order_sql,
     expand_material_names,
     get_setting_int,
@@ -463,6 +464,15 @@ def handle_get(event: dict, headers: dict, dsn: str) -> dict:
                 }
             return _handle_search(cur, headers, search)
 
+        if params.get('conveyor'):
+            return {
+                'statusCode': 200,
+                'headers': headers,
+                'body': json.dumps({
+                    'conveyorIssueEnabled': conveyor_issue_enabled(cur),
+                }),
+            }
+
         if params.get('liveFloor'):
             return _handle_live_floor(cur, headers)
 
@@ -554,6 +564,7 @@ def handle_get(event: dict, headers: dict, dsn: str) -> dict:
                     'overlockInWork': overlock_in_work,
                     'maxOverlockOrders': max_overlock,
                     'overlockBusyBy': holder_name if holder_id else None,
+                    'conveyorIssueEnabled': conveyor_issue_enabled(cur),
                 }, ensure_ascii=False),
             }
 

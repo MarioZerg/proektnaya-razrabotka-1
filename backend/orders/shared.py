@@ -971,6 +971,42 @@ def get_setting_int(cur, workshop_id, key, default=0):
         return default
 
 
+CONVEYOR_ISSUE_KEY = 'conveyor_issue_enabled'
+CONVEYOR_ISSUE_OFF_ERROR = (
+    'Конвейер выключен администратором — заказы сейчас не выдают'
+)
+
+
+def conveyor_issue_enabled(cur) -> bool:
+    """Можно ли выдавать заказы с конвейера (стек, пошив, оверлок).
+
+    Глобальный рубильник админа на главной. По умолчанию выдача включена:
+    нет строки в system_settings — работаем как раньше.
+    """
+    cur.execute(
+        "SELECT value FROM system_settings WHERE key = %s",
+        (CONVEYOR_ISSUE_KEY,),
+    )
+    row = cur.fetchone()
+    if not row or row[0] in (None, ''):
+        return True
+    return str(row[0]).strip().lower() != 'false'
+
+
+def conveyor_issue_blocked_response(headers):
+    """409: конвейер выключен, выдавать нельзя."""
+    return {
+        'statusCode': 409,
+        'headers': headers,
+        'body': json.dumps(
+            {
+                'error': CONVEYOR_ISSUE_OFF_ERROR,
+                'conveyorIssueEnabled': False,
+            },
+            ensure_ascii=False,
+        ),
+    }
+
 
 def ozon_cutoff_passed(cur, workshop_id):
     """Прошло ли время, после которого OZON уходит в конец очереди.

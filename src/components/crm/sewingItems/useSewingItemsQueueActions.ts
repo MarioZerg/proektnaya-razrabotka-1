@@ -4,6 +4,7 @@ import {
   takeStack,
   takeOrder,
   fetchSewingWaits,
+  fetchConveyorIssue,
   logPrintSheet,
   type SewingStatus,
   type TakenOrder,
@@ -116,6 +117,7 @@ export const useSewingItemsQueueActions = ({
   const [overlockInWork, setOverlockInWork] = useState(0);
   const [maxOverlockOrders, setMaxOverlockOrders] = useState(0);
   const [overlockBusyBy, setOverlockBusyBy] = useState<string | null>(null);
+  const [conveyorIssueEnabled, setConveyorIssueEnabled] = useState(true);
 
   /** Забрать с сервера актуальные остатки. Дёргаем редко: при открытии страницы,
    * после взятия заказа и когда очередной отсчёт добежал до нуля. Между этими точками
@@ -147,6 +149,7 @@ export const useSewingItemsQueueActions = ({
       setOverlockInWork(res.overlockInWork);
       setMaxOverlockOrders(res.maxOverlockOrders);
       setOverlockBusyBy(res.overlockBusyBy);
+      setConveyorIssueEnabled(res.conveyorIssueEnabled);
     } catch {
       // Сеть моргнула — не запираем кнопки: настоящую проверку всё равно делает
       // сервер при отправке, и швея не должна стоять из-за вспомогательного запроса.
@@ -169,6 +172,11 @@ export const useSewingItemsQueueActions = ({
     refreshSewWaits(userId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isSewer, userId]);
+
+  useEffect(() => {
+    if (isSewer) return;
+    fetchConveyorIssue().then(setConveyorIssueEnabled);
+  }, [isSewer]);
 
   // Секундный тик по всем вещам сразу.
   useEffect(() => {
@@ -363,6 +371,7 @@ export const useSewingItemsQueueActions = ({
     sewWaits,
     /** Лимит на руках исчерпан — на кнопке «Получить заказ» замочек. */
     takeLocked: maxOrders > 0 && inWork >= maxOrders,
+    conveyorIssueEnabled,
     inWork,
     maxOrders,
     /** Сколько ещё обмётывать каждую вещь на оверлоке: id заказа → секунды. */

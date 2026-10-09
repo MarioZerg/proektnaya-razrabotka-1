@@ -3,6 +3,7 @@ import { format } from 'date-fns';
 import { useAuth } from '@/context/AuthContext';
 import { useToast } from '@/hooks/use-toast';
 import { fetchDashboardSummary, type DashboardSummary } from '@/lib/dashboardSummaryApi';
+import { setConveyorIssue } from '@/lib/ordersApi';
 import { updateEmployee } from '@/lib/usersApi';
 import {
   fetchEmployeeShifts,
@@ -65,6 +66,7 @@ export const useCrmDashboardData = () => {
 
   const [selectedDate, setSelectedDate] = useState<Date | undefined>(new Date());
   const [calendarDays, setCalendarDays] = useState<ShiftCalendarDay[]>([]);
+  const [conveyorSaving, setConveyorSaving] = useState(false);
 
   // Цифры для плиток: ОДИН запрос вместо пяти.
   //
@@ -231,6 +233,28 @@ export const useCrmDashboardData = () => {
     }
   };
 
+  const handleToggleConveyor = async (enabled: boolean) => {
+    setConveyorSaving(true);
+    try {
+      await setConveyorIssue(enabled);
+      setSummary((prev) => (prev ? { ...prev, conveyorIssueEnabled: enabled } : prev));
+      toast({
+        title: enabled ? 'Выдача заказов включена' : 'Конвейер выключен',
+        description: enabled
+          ? 'Закройщики и швеи снова могут брать заказы'
+          : 'Новые заказы с конвейера сейчас не выдают',
+      });
+    } catch (e) {
+      toast({
+        title: 'Не удалось переключить конвейер',
+        description: e instanceof Error ? e.message : undefined,
+        variant: 'destructive',
+      });
+    } finally {
+      setConveyorSaving(false);
+    }
+  };
+
   const widgets: DashboardWidgetData[] = useMemo(
     () =>
       buildDashboardWidgets({
@@ -270,6 +294,9 @@ export const useCrmDashboardData = () => {
     handleToggleShift,
     handleSwitchShift,
     handleToggleFree,
+    conveyorIssueEnabled: summary?.conveyorIssueEnabled !== false,
+    conveyorSaving,
+    handleToggleConveyor,
   };
 };
 

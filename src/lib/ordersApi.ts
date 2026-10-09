@@ -547,6 +547,17 @@ export interface TakeOrderResult {
 export const takeOrder = (userId: number): Promise<TakeOrderResult> =>
   postAction({ action: 'take_order', userId });
 
+/** Можно ли сейчас выдавать заказы с конвейера. Рубильник админа на главной. */
+export const fetchConveyorIssue = async (): Promise<boolean> => {
+  const res = await fetch(`${ORDERS_URL}?conveyor=1`);
+  if (!res.ok) return true;
+  const data = await res.json();
+  return data.conveyorIssueEnabled !== false;
+};
+
+export const setConveyorIssue = (enabled: boolean): Promise<{ conveyorIssueEnabled: boolean }> =>
+  postAction({ action: 'set_conveyor_issue', enabled });
+
 /**
  * Сколько ещё шить каждую вещь, взятую швеёй в работу.
  *
@@ -590,6 +601,7 @@ export interface SewingWaits {
    * нажатия, — швея сразу видит причину и берёт обычный заказ.
    */
   overlockBusyBy: string | null;
+  conveyorIssueEnabled: boolean;
 }
 
 export const fetchSewingWaits = async (userId: number): Promise<SewingWaits> => {
@@ -602,6 +614,7 @@ export const fetchSewingWaits = async (userId: number): Promise<SewingWaits> => 
     overlockInWork: 0,
     maxOverlockOrders: 0,
     overlockBusyBy: null,
+    conveyorIssueEnabled: true,
   };
   const res = await fetch(`${ORDERS_URL}?sewingWaits=1&userId=${userId}`);
   if (!res.ok) return empty;
@@ -615,6 +628,7 @@ export const fetchSewingWaits = async (userId: number): Promise<SewingWaits> => 
     overlockInWork: Number(data.overlockInWork) || 0,
     maxOverlockOrders: Number(data.maxOverlockOrders) || 0,
     overlockBusyBy: data.overlockBusyBy || null,
+    conveyorIssueEnabled: data.conveyorIssueEnabled !== false,
   };
 };
 

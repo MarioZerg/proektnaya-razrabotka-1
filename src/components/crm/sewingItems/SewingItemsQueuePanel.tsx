@@ -20,6 +20,7 @@ interface SewingItemsQueuePanelProps {
   takingOrder: boolean;
   takeOrderCooldown: boolean;
   takeLocked: boolean;
+  conveyorIssueEnabled?: boolean;
   inWork: number;
   maxOrders: number;
   handleTakeOrder: () => void;
@@ -44,6 +45,7 @@ const SewingItemsQueuePanel = ({
   takingOrder,
   takeOrderCooldown,
   takeLocked,
+  conveyorIssueEnabled = true,
   inWork,
   maxOrders,
   handleTakeOrder,
@@ -54,6 +56,11 @@ const SewingItemsQueuePanel = ({
 
   return (
     <div className="flex flex-col gap-2">
+      {!conveyorIssueEnabled && (
+        <p className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-950">
+          Конвейер выключен администратором — новые заказы сейчас не выдают.
+        </p>
+      )}
       {/* Что сейчас первое в общей очереди цеха — связка или обычный стек. */}
       {isCutter && (
         <NextStackHint
@@ -65,7 +72,12 @@ const SewingItemsQueuePanel = ({
         <div className="flex flex-wrap gap-2">
           <Button
             onClick={() => handleTakeStack()}
-            disabled={takingStack || myUnfinishedCount > 0 || myStackTotal >= cutterLimit}
+            disabled={
+              !conveyorIssueEnabled ||
+              takingStack ||
+              myUnfinishedCount > 0 ||
+              myStackTotal >= cutterLimit
+            }
             className="w-full sm:w-auto"
           >
             {takingStack ? (
@@ -89,7 +101,7 @@ const SewingItemsQueuePanel = ({
           <Button
             variant="outline"
             onClick={() => handleTakeStack(true)}
-            disabled={takingStack || myStackTotal >= cutterLimit}
+            disabled={!conveyorIssueEnabled || takingStack || myStackTotal >= cutterLimit}
             className="w-full sm:w-auto"
             title={
               myStackTotal >= cutterLimit
@@ -124,13 +136,18 @@ const SewingItemsQueuePanel = ({
       {isSewer && (
         <Button
           onClick={handleTakeOrder}
-          disabled={takingOrder || takeOrderCooldown || takeLocked}
+          disabled={!conveyorIssueEnabled || takingOrder || takeOrderCooldown || takeLocked}
           className="w-full sm:w-auto"
         >
           {takingOrder ? (
             <>
               <Icon name="Loader2" size={16} className="mr-2 animate-spin" />
               Получаем заказ...
+            </>
+          ) : !conveyorIssueEnabled ? (
+            <>
+              <Icon name="Lock" size={16} className="mr-2" />
+              Конвейер выключен
             </>
           ) : takeLocked ? (
             <>
@@ -146,7 +163,7 @@ const SewingItemsQueuePanel = ({
         </Button>
       )}
 
-      {isSewer && takeLocked && (
+      {isSewer && takeLocked && conveyorIssueEnabled && (
         <p className="text-sm text-muted-foreground">
           Отправьте хотя бы один заказ на стикеровку — кнопка откроется сразу.
         </p>

@@ -39,6 +39,9 @@ from shared import (
     sewing_wait_for_order,
     consume_trim_roll,
     write_off_materials_once,
+    CONVEYOR_ISSUE_KEY,
+    conveyor_issue_enabled,
+    conveyor_issue_blocked_response,
 )
 
 
@@ -69,6 +72,30 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                 cur, conn, headers, body_data, admin['realUserId'], admin['name'],
             )
 
+        # Рубильник на главной: админ выключает выдачу заказов всем сразу.
+        if action == 'set_conveyor_issue':
+            try:
+                admin = require_admin(cur, event)
+            except AuthError as e:
+                return auth_error_response(e, headers)
+            enabled = bool(body_data.get('enabled'))
+            cur.execute(
+                "INSERT INTO system_settings (key, value) VALUES (%s, %s) "
+                "ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()",
+                (CONVEYOR_ISSUE_KEY, 'true' if enabled else 'false'),
+            )
+            log_action(
+                cur, admin['realUserId'], admin['name'],
+                'set_conveyor_issue', 'system', None,
+                f"{'Включил' if enabled else 'Выключил'} выдачу заказов с конвейера",
+            )
+            conn.commit()
+            return {
+                'statusCode': 200,
+                'headers': headers,
+                'body': json.dumps({'success': True, 'conveyorIssueEnabled': enabled}),
+            }
+
         if action == 'take_stack':
             user_id = body_data.get('userId')
             workshop_id = body_data.get('workshopId')
@@ -86,6 +113,9 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                     'headers': headers,
                     'body': json.dumps({'error': 'Укажите userId и workshopId'}),
                 }
+
+            if not conveyor_issue_enabled(cur):
+                return conveyor_issue_blocked_response(headers)
 
             # Двойное нажатие на планшете отправляет два запроса подряд. Без блокировки
             # оба видели «на руках 0» и выдавали по стеку — закройщица получала 40.
@@ -1833,6 +1863,9 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
             if not user_id:
                 return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите userId'})}
 
+            if not conveyor_issue_enabled(cur):
+                return conveyor_issue_blocked_response(headers)
+
             # Настройки лимитов/таймаута/приоритета берутся по цеху ТЕКУЩЕЙ открытой
             # рабочей смены швеи (учитывает гостевой режим), при её отсутствии — глобальные.
             cur.execute(
@@ -2800,6 +2833,8 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                                      'во вкладке «Раскроено». Из списка вещь не берут',
                         }, ensure_ascii=False),
                     }
+                if not conveyor_issue_enabled(cur):
+                    return conveyor_issue_blocked_response(headers)
                 if ov_done_at:
                     return {
                         'statusCode': 409,
