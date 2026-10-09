@@ -54,7 +54,7 @@ namespace YarplanLider
 
                 if (ctrl && shift && vk == VkQ)
                 {
-                    ExitChord?.Invoke();
+                    if (ExitChord != null) ExitChord();
                     return (IntPtr)1;
                 }
 

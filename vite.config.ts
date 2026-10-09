@@ -231,7 +231,7 @@ export default defineConfig(({mode}) => ({
         // Ядра OCR — десятки МБ. Следить за ними не нужно: иначе Vite долго
         // поднимается и тормозит HMR.
         watch: {
-            ignored: ['**/public/ocr/**'],
+            ignored: ['**/public/ocr/**', '**/desktop-kiosk/**'],
         },
         hmr: {
             overlay: false, // Disables the error overlay if you only want console errors

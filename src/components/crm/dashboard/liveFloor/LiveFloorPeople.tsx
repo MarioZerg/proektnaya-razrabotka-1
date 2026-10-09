@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import Icon from '@/components/ui/icon';
 import type { LiveEvent, LiveFloorData, LiveOrder, LivePerson } from '@/lib/liveFloorApi';
 import LiveOrderChip from '@/components/crm/dashboard/liveFloor/LiveOrderChip';
@@ -126,13 +127,16 @@ const PersonCard = ({
     >
       <div className="flex items-start gap-2.5">
         <div className="relative shrink-0 p-0.5">
-          <div
-            className={`flex h-10 w-10 items-center justify-center rounded-full bg-gradient-to-br text-sm font-bold text-white ${style.avatar} ${
-              working ? '' : 'opacity-70'
-            }`}
+          <Avatar
+            className={`h-10 w-10 text-sm font-bold text-white ${working ? '' : 'opacity-70'}`}
           >
-            {initials(person.name)}
-          </div>
+            {person.avatarUrl ? (
+              <AvatarImage src={person.avatarUrl} alt={person.name} referrerPolicy="no-referrer" className="object-cover" />
+            ) : null}
+            <AvatarFallback className={`bg-gradient-to-br text-white ${style.avatar}`}>
+              {initials(person.name)}
+            </AvatarFallback>
+          </Avatar>
           <span className="absolute -bottom-1 -right-1 flex h-5 w-5 items-center justify-center">
             {working && (
               <span className="absolute inset-0.5 animate-widget-pulse rounded-full bg-emerald-400 opacity-70" />

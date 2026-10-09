@@ -196,7 +196,7 @@ namespace YarplanLider
         {
             _retry.Stop();
             _hideCursor.Stop();
-            _keys?.Dispose();
+            if (_keys != null) _keys.Dispose();
             SetThreadExecutionState(EsContinuous);
             Cursor.Show();
         }

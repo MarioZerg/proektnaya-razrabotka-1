@@ -42,6 +42,8 @@ public/ocr/tesseract-core-simd*
 desktop-kiosk/bin/
 desktop-kiosk/obj/
 desktop-kiosk/publish/
+desktop-kiosk/lib/
+desktop-kiosk/dist/
 
 # Python (страховка: разовые Bash-скрипты должны класть venv в /tmp, но если
 # venv/кэш всё же оказался в проекте — не коммитить его через end-of-turn git add -A)

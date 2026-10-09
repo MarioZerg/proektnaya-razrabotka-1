@@ -9,6 +9,8 @@ export interface LivePerson {
   workshopName: string | null;
   shiftOpenedAt: string | null;
   canOverlock: boolean;
+  /** Фото из профиля или MAX: COALESCE(avatar_url, max_avatar_url). */
+  avatarUrl?: string | null;
 }
 
 export interface LiveOrder {
@@ -60,6 +62,27 @@ export interface LiveCounts {
   doneToday: number;
 }
 
+export interface LiveRaceRunner {
+  id: number;
+  name: string;
+  role: string;
+  avatarUrl?: string | null;
+  /** 0…1 по скрытой норме п.м. На карте цифры не показываем. */
+  progress?: number;
+  finished?: boolean;
+  steps?: number;
+  done?: number;
+  place: number;
+}
+
+export interface LiveRace {
+  prize: number;
+  winner: { id: number; name: string; variki: number } | null;
+  runners: LiveRaceRunner[];
+  metersGoal?: number;
+  steps?: number;
+}
+
 export interface LiveFloorData {
   now: string;
   people: LivePerson[];
@@ -69,6 +92,7 @@ export interface LiveFloorData {
   /** Сделано сегодня: userId → { cut, overlock, sewn, packed }. */
   today: Record<string, Partial<Record<'cut' | 'overlock' | 'sewn' | 'packed', number>>>;
   names: Record<string, string>;
+  race?: LiveRace | null;
 }
 
 const EMPTY_COUNTS: LiveCounts = {
@@ -99,5 +123,6 @@ export const fetchLiveFloor = async (): Promise<LiveFloorData> => {
     events: data.events || [],
     today: data.today || {},
     names: data.names || {},
+    race: data.race || null,
   };
 };

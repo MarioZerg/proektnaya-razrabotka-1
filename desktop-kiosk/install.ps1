@@ -33,13 +33,22 @@ if (-not $wv) {
 }
 
 $startup = [Environment]::GetFolderPath("Startup")
-$lnk = Join-Path $startup "YarplanLider.lnk"
+$desktop = [Environment]::GetFolderPath("Desktop")
 $shell = New-Object -ComObject WScript.Shell
-$sc = $shell.CreateShortcut($lnk)
-$sc.TargetPath = $exe
-$sc.WorkingDirectory = $dest
-$sc.WindowStyle = 1
-$sc.Save()
+foreach ($lnk in @(
+    (Join-Path $startup "Живой цех.lnk"),
+    (Join-Path $desktop "Живой цех.lnk")
+)) {
+    $sc = $shell.CreateShortcut($lnk)
+    $sc.TargetPath = $exe
+    $sc.WorkingDirectory = $dest
+    $sc.WindowStyle = 1
+    $sc.Description = "Живой цех на телевизоре"
+    $sc.IconLocation = "$exe,0"
+    $sc.Save()
+}
+$legacy = Join-Path $startup "YarplanLider.lnk"
+if (Test-Path $legacy) { Remove-Item $legacy -Force }
 
 try {
     powercfg /change monitor-timeout-ac 0 | Out-Null

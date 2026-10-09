@@ -9,9 +9,16 @@ namespace YarplanLider
     /// </summary>
     internal sealed class KioskConfig
     {
-        public string Url { get; private set; } = "https://yarplan.ru/lider";
-        public string Host { get; private set; } = "yarplan.ru";
-        public string Pin { get; private set; } = "2580";
+        public string Url { get; private set; }
+        public string Host { get; private set; }
+        public string Pin { get; private set; }
+
+        public KioskConfig()
+        {
+            Url = "https://yarplan.ru/lider";
+            Host = "yarplan.ru";
+            Pin = "2580";
+        }
 
         public static KioskConfig Load()
         {
@@ -29,9 +36,10 @@ namespace YarplanLider
                 map[line.Substring(0, eq).Trim()] = line.Substring(eq + 1).Trim();
             }
 
-            if (map.TryGetValue("url", out var url) && !string.IsNullOrWhiteSpace(url)) cfg.Url = url;
-            if (map.TryGetValue("host", out var host) && !string.IsNullOrWhiteSpace(host)) cfg.Host = host;
-            if (map.TryGetValue("pin", out var pin) && !string.IsNullOrWhiteSpace(pin)) cfg.Pin = pin;
+            string url, host, pin;
+            if (map.TryGetValue("url", out url) && !string.IsNullOrWhiteSpace(url)) cfg.Url = url;
+            if (map.TryGetValue("host", out host) && !string.IsNullOrWhiteSpace(host)) cfg.Host = host;
+            if (map.TryGetValue("pin", out pin) && !string.IsNullOrWhiteSpace(pin)) cfg.Pin = pin;
             return cfg;
         }
 

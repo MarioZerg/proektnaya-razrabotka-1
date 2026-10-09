@@ -1,3 +1,4 @@
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import Icon from '@/components/ui/icon';
 import type { LiveEvent, LiveFloorData, LiveOrder, LivePerson } from '@/lib/liveFloorApi';
 import {
@@ -134,13 +135,16 @@ const PersonCard = ({
       }`}
     >
       <div className="flex items-start gap-3">
-        <div
-          className={`flex h-14 w-14 shrink-0 items-center justify-center rounded-full bg-gradient-to-br text-xl font-bold text-white ${style.avatar} ${
-            working ? '' : 'opacity-70'
-          }`}
+        <Avatar
+          className={`h-14 w-14 shrink-0 text-xl font-bold text-white ${working ? '' : 'opacity-70'}`}
         >
-          {initials(person.name)}
-        </div>
+          {person.avatarUrl ? (
+            <AvatarImage src={person.avatarUrl} alt={person.name} referrerPolicy="no-referrer" className="object-cover" />
+          ) : null}
+          <AvatarFallback className={`bg-gradient-to-br text-white ${style.avatar}`}>
+            {initials(person.name)}
+          </AvatarFallback>
+        </Avatar>
         <div className="min-w-0 flex-1">
           <p className="truncate text-2xl font-bold leading-tight text-white">{shortName(person.name)}</p>
           <p className="truncate text-base text-slate-400">

@@ -65,6 +65,11 @@ export const workshopSettingsConfig: SettingConfigItem[] = [
   },
   { key: 'max_quantity_orders_to_cutter', label: 'Макс. заказов у закройщика', type: 'number' },
   { key: 'cutter_daily_limit', label: 'Метраж в день у закройщика, м', type: 'number' },
+  {
+    key: 'seamstress_daily_limit',
+    label: 'Норма швеи за смену, п.м.',
+    type: 'number',
+  },
   { key: 'cancel_order_penalty', label: 'Штраф за отмену заказа, руб.', type: 'number' },
   // Время на пошив вещи по её ширине. Отсчёт идёт от взятия заказа в работу, и пока он
   // не кончился, кнопка «Отправить на стикеровку» у этой вещи заблокирована — сдать её

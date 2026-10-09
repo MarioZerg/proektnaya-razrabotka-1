@@ -6,10 +6,17 @@
 """
 
 import json
+import os
+import ssl
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
 from datetime import timezone
 
 import psycopg2
 
+from floor_race import build_race
 from shared import (
     CANCELLED_ORDERS_LIMIT,
     CANCELLED_SQL,
@@ -271,8 +278,83 @@ _MSK_TODAY_START = "((now() + interval '3 hours')::date - interval '3 hours')"
 # Окно ленты событий и «недавно проехавших» вещей.
 _LIVE_WINDOW = "interval '3 hours'"
 
+# Живой цех ходит каждые ~12 с — MAX не дёргаем чаще пяти минут.
+_AVATAR_SYNC_SEC = 300
+_avatar_sync_at = 0.0
 
-def _handle_live_floor(cur, headers: dict) -> dict:
+
+def _fetch_max_avatars(max_ids: list) -> dict:
+    """user_id MAX → url фото. Пустой словарь, если токена нет или MAX не ответил."""
+    token = (os.environ.get('MAX_BOT_TOKEN') or '').strip()
+    if not token or not max_ids:
+        return {}
+    qs = urllib.parse.urlencode([('user_ids', uid) for uid in max_ids], doseq=True)
+    req = urllib.request.Request(
+        f'https://platform-api2.max.ru/users?{qs}',
+        headers={'Authorization': token},
+        method='GET',
+    )
+    ctx = ssl.create_default_context()
+    try:
+        with urllib.request.urlopen(req, timeout=6, context=ctx) as resp:
+            data = json.loads(resp.read().decode('utf-8') or '{}')
+    except (urllib.error.URLError, ssl.SSLError, TimeoutError, ValueError):
+        ctx = ssl._create_unverified_context()
+        try:
+            with urllib.request.urlopen(req, timeout=6, context=ctx) as resp:
+                data = json.loads(resp.read().decode('utf-8') or '{}')
+        except Exception:
+            return {}
+    users = data.get('users') or data.get('members') or []
+    if isinstance(data, list):
+        users = data
+    found = {}
+    for user in users:
+        uid = str(user.get('user_id') or user.get('id') or '')
+        url = (user.get('avatar_url') or user.get('photo_url') or '').strip()
+        if uid and url:
+            found[uid] = url
+    return found
+
+
+def _maybe_sync_shift_avatars(cur, conn, people: list, max_pairs: list) -> None:
+    """Подтягивает свежие фото MAX у тех, кто сейчас на смене.
+
+    Ручное avatar_url не затираем. GET живого цеха иначе откатит UPDATE при close.
+    """
+    global _avatar_sync_at
+    if not max_pairs:
+        return
+    now = time.monotonic()
+    if now - _avatar_sync_at < _AVATAR_SYNC_SEC:
+        return
+    _avatar_sync_at = now
+    try:
+        found = _fetch_max_avatars([mid for _uid, mid, _own in max_pairs])
+    except Exception:
+        return
+    if not found:
+        return
+    by_id = {p['id']: p for p in people}
+    for user_id, max_id, has_own in max_pairs:
+        url = found.get(max_id)
+        if not url:
+            continue
+        cur.execute(
+            "UPDATE users SET max_avatar_url = %s, updated_at = now() WHERE id = %s "
+            "AND (max_avatar_url IS DISTINCT FROM %s)",
+            (url, user_id, url),
+        )
+        person = by_id.get(user_id)
+        if person and not has_own:
+            person['avatarUrl'] = url
+    try:
+        conn.commit()
+    except Exception:
+        pass
+
+
+def _handle_live_floor(cur, conn, headers: dict) -> dict:
     """ЖИВОЙ ЦЕХ для администратора: кто на смене, что у кого в руках, что только что сдвинулось.
 
     Общий список конвейера для этого не годится — он весит мегабайты. Здесь только
@@ -290,7 +372,8 @@ def _handle_live_floor(cur, headers: dict) -> dict:
     # их по ошибке открыто две.
     cur.execute(
         "SELECT DISTINCT ON (u.id) u.id, u.full_name, COALESCE(ss.role, u.role), "
-        "       ss.workshop_id, w.name, ss.opened_at, COALESCE(u.can_overlock, false) "
+        "       ss.workshop_id, w.name, ss.opened_at, COALESCE(u.can_overlock, false), "
+        "       NULLIF(u.avatar_url, ''), NULLIF(u.max_avatar_url, ''), u.max_user_id "
         "FROM shift_sessions ss "
         "JOIN users u ON u.id = ss.user_id "
         "LEFT JOIN workshops w ON w.id = ss.workshop_id "
@@ -298,13 +381,17 @@ def _handle_live_floor(cur, headers: dict) -> dict:
         "  AND COALESCE(ss.role, u.role) IN ('cutter', 'sewer', 'packer', 'packer_returns') "
         "ORDER BY u.id, ss.opened_at DESC"
     )
-    people = [
-        {
+    people = []
+    max_pairs = []
+    for r in cur.fetchall():
+        people.append({
             'id': r[0], 'name': r[1], 'role': r[2], 'workshopId': r[3],
             'workshopName': r[4], 'shiftOpenedAt': _iso(r[5]), 'canOverlock': bool(r[6]),
-        }
-        for r in cur.fetchall()
-    ]
+            'avatarUrl': r[7] or r[8] or None,
+        })
+        if r[9]:
+            max_pairs.append((r[0], str(r[9]), bool(r[7])))
+    _maybe_sync_shift_avatars(cur, conn, people, max_pairs)
 
     # Вещи, которые сейчас движутся. Длинную очередь «крой готов» целиком не
     # везём — только то, что раскроили недавно или держат на оверлоке.
@@ -437,6 +524,8 @@ def _handle_live_floor(cur, headers: dict) -> dict:
         )
         names = {str(r[0]): r[1] for r in cur.fetchall()}
 
+    race = build_race(cur, conn, people, today)
+
     return {
         'statusCode': 200,
         'headers': headers,
@@ -448,6 +537,7 @@ def _handle_live_floor(cur, headers: dict) -> dict:
             'events': events,
             'today': today,
             'names': names,
+            'race': race,
         }, ensure_ascii=False, default=str),
     }
 
@@ -494,7 +584,7 @@ def handle_get(event: dict, headers: dict, dsn: str) -> dict:
             }
 
         if params.get('liveFloor'):
-            return _handle_live_floor(cur, headers)
+            return _handle_live_floor(cur, conn, headers)
 
         # Сколько ещё шить каждую вещь, взятую швеёй в работу.
         #

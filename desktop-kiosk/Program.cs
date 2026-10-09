@@ -9,7 +9,8 @@ namespace YarplanLider
         [STAThread]
         private static void Main()
         {
-            using (var mutex = new Mutex(true, "YarplanLiderTv", out var created))
+            bool created;
+            using (var mutex = new Mutex(true, "YarplanLiderTv", out created))
             {
                 if (!created) return;
                 Application.EnableVisualStyles();
