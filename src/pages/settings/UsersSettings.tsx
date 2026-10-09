@@ -9,6 +9,8 @@ import { useEmployeesData } from '@/components/crm/users/useEmployeesData';
 import { useEmployeeCard } from '@/components/crm/users/useEmployeeCard';
 import { useEmployeeActions } from '@/components/crm/users/useEmployeeActions';
 import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
+import { Button } from '@/components/ui/button';
+import Icon from '@/components/ui/icon';
 
 const UsersSettings = () => {
   const {
@@ -47,6 +49,8 @@ const UsersSettings = () => {
     handleUnarchive,
     enteringId,
     handleImpersonate,
+    syncingAvatars,
+    handleSyncMaxAvatars,
   } = useEmployeeActions({ load });
 
   const {
@@ -71,6 +75,21 @@ const UsersSettings = () => {
         <div className="flex flex-wrap items-center justify-between gap-3">
           <h1 className="text-xl font-bold">Пользователи</h1>
 
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => void handleSyncMaxAvatars()}
+              disabled={syncingAvatars}
+            >
+              <Icon
+                name={syncingAvatars ? 'Loader2' : 'RefreshCw'}
+                size={14}
+                className={`mr-1.5 ${syncingAvatars ? 'animate-spin' : ''}`}
+              />
+              Синхронизировать аватарки MAX
+            </Button>
           <CreateEmployeeDialog
             open={createOpen}
             onOpenChange={setCreateOpen}
@@ -81,6 +100,7 @@ const UsersSettings = () => {
             onCreate={handleCreate}
             createFileRef={createFileRef}
           />
+          </div>
         </div>
 
         <EmployeesTabsSwitch

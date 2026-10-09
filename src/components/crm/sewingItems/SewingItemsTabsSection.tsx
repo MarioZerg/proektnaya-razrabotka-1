@@ -1,3 +1,4 @@
+import { useEffect, useRef, useState } from 'react';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Badge } from '@/components/ui/badge';
 import Icon from '@/components/ui/icon';
@@ -26,7 +27,28 @@ const SewingItemsTabsSection = ({
   countForTab,
   isSewer,
   loading,
-}: SewingItemsTabsSectionProps) => (
+}: SewingItemsTabsSectionProps) => {
+  const prevCounts = useRef<Record<string, number>>({});
+  const [bumped, setBumped] = useState<Set<string>>(() => new Set());
+  const countsKey = visibleTabs.map((t) => `${t.value}:${countForTab(t.value)}`).join('|');
+
+  useEffect(() => {
+    const next = new Set<string>();
+    for (const tab of visibleTabs) {
+      const n = countForTab(tab.value);
+      const was = prevCounts.current[tab.value];
+      if (was !== undefined && was !== n) next.add(tab.value);
+      prevCounts.current[tab.value] = n;
+    }
+    if (next.size === 0) return undefined;
+    setBumped(next);
+    const t = window.setTimeout(() => setBumped(new Set()), 700);
+    return () => window.clearTimeout(t);
+    // countsKey меняется, когда на вкладке прибавилось или убавилось.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [countsKey]);
+
+  return (
   <>
     <Tabs
       value={activeTab}
@@ -39,7 +61,10 @@ const SewingItemsTabsSection = ({
         {visibleTabs.map((tab) => (
           <TabsTrigger key={tab.value} value={tab.value} className="shrink-0 gap-1.5">
             {tab.label}
-            <Badge variant="secondary" className="ml-1">
+            <Badge
+              variant="secondary"
+              className={`ml-1 ${bumped.has(tab.value) ? 'animate-count-bump' : ''}`}
+            >
               {countForTab(tab.value)}
             </Badge>
           </TabsTrigger>
@@ -79,6 +104,7 @@ const SewingItemsTabsSection = ({
       </div>
     )}
   </>
-);
+  );
+};
 
 export default SewingItemsTabsSection;

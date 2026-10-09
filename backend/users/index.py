@@ -10,6 +10,7 @@ import boto3
 import psycopg2
 
 from authz import AuthError, auth_error_response, require_admin
+from max_avatars import sync_max_avatars
 from onec_flush import enqueue_onec_entity, flush_onec_outbox
 
 
@@ -135,6 +136,8 @@ def handler(event: dict, context) -> dict:
     POST /  { action: 'reject_role', id, role } — отклоняет заявку новичка на должность:
         убирает её и отключает учётную запись, если других должностей не осталось
     POST /  { action: 'remove_role', id, role } — убирает должность у пользователя
+    POST /  { action: 'sync_max_avatars' } — подтягивает фото из профилей MAX
+        в max_avatar_url. Ручное фото сотрудника не затирается.
 
     Логин сотрудника генерируется из email (часть до @). Пароль хранится как
     PBKDF2-HMAC-SHA256 с солью. Аватар загружается в S3, сохраняется публичная ссылка.
@@ -713,6 +716,31 @@ def handler(event: dict, context) -> dict:
                 )
                 conn.commit()
                 return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True})}
+
+            if action == 'sync_max_avatars':
+                # Аватарки MAX пишутся при входе через бота. Если фото не
+                # подгрузилось или человек сменил его в мессенджере — админ
+                # обновляет все профили одной кнопкой в «Пользователи».
+                try:
+                    result = sync_max_avatars(cur)
+                except RuntimeError as e:
+                    return {
+                        'statusCode': 503,
+                        'headers': headers,
+                        'body': json.dumps({'error': str(e)}),
+                    }
+                except Exception as e:
+                    return {
+                        'statusCode': 502,
+                        'headers': headers,
+                        'body': json.dumps({'error': f'MAX не ответил: {e}'}),
+                    }
+                conn.commit()
+                return {
+                    'statusCode': 200,
+                    'headers': headers,
+                    'body': json.dumps({'success': True, **result}),
+                }
 
             if action == 'remove_role':
                 user_id = body_data.get('id')

@@ -1,0 +1,169 @@
+# Промпт для агента на poehali.dev — аватарки MAX на конвейере (09.10.2026)
+
+Скопируй текст НИЖЕ агенту на Поехали целиком.
+
+---
+
+Ты — агент деплоя на poehali.dev. Проект CRM «Мегатюль».
+Не создавай функции с нуля: обновляй существующие. URL после публикации
+должен остаться ПРЕЖНИМ. Секреты не ротируй, новые токены не выпускай.
+Базу и схему НЕ меняй: новых таблиц и колонок нет.
+`users.avatar_url` и `users.max_avatar_url` уже есть.
+
+На карточках заказа (ПК) — стопка маленьких кружков: кто кроил, кто взял
+в пошив, кто упаковал. Фото из профиля MAX (или ручная загрузка админа).
+Если фото не читается — у админа в «Пользователи» кнопка синхронизации
+с MAX. Ручное фото сотрудника не затирается.
+
+---
+
+## 1) Функция users
+
+**URL (не менять):**
+https://functions.poehali.dev/1db3a89a-f0f6-470e-bef4-fb5ca8fa02df
+
+Замени пакет целиком из `backend/users/`:
+- `index.py`
+- `max_avatars.py` — НОВЫЙ файл, без него ImportError
+- `authz.py`
+- `onec_flush.py`
+- `requirements.txt` — должны быть `psycopg2-binary`, `boto3`, `requests`, `certifi`
+
+**Секрет MAX_BOT_TOKEN**
+В эту функцию добавь переменную окружения `MAX_BOT_TOKEN` с ТЕМ ЖЕ значением,
+что уже стоит у функции max_bot
+(`https://functions.poehali.dev/b640dd15-78fa-45ad-9614-b4ba6879c7a9`).
+Токен не меняй и не перевыпускай. Без этой переменной кнопка синхронизации
+ответит 503.
+
+**Что должно появиться — action `sync_max_avatars`:**
+
+POST JSON: `{ action: 'sync_max_avatars' }`
+Только админ (уже стоит `require_admin` на весь POST).
+
+Поведение (`backend/users/max_avatars.py`):
+1. Берёт всех неархивных с `max_user_id`.
+2. GET `https://platform-api2.max.ru/users?user_ids=` пачками по 50.
+3. Заголовок `Authorization: <MAX_BOT_TOKEN>` (как у бота, без Bearer).
+4. Пишет только `max_avatar_url`. Колонку `avatar_url` НЕ трогать.
+5. SSL: сначала `certifi`, при SSLError — `verify=False` (российский УЦ MAX).
+6. Ответ `{ success, updated, missing, total }`. Коммит в той же транзакции.
+
+---
+
+## 2) Функция orders
+
+**URL (не менять):**
+https://functions.poehali.dev/1d8ed922-bded-4f5a-a367-a0742711203a
+
+Замени пакет целиком из `backend/orders/`:
+- `index.py`
+- `orders_actions.py`
+- `orders_read.py`
+- `shared.py`
+- `authz.py`
+- `bulk_cancel.py`
+- `requirements.txt`
+и остальные файлы папки, если уже лежат в функции.
+
+**Аватарки в списке конвейера** (`orders_read.py`):
+В `ORDER_LIST_COLUMNS` ПОСЛЕ `is_cancelled` добавлены 5 колонок — не в середину,
+иначе съедут индексы:
+
+```
+NULLIF(COALESCE(cu.avatar_url, cu.max_avatar_url), ''),  -- cutter
+NULLIF(COALESCE(su.avatar_url, su.max_avatar_url), ''),  -- sewer
+NULLIF(COALESCE(pu.avatar_url, pu.max_avatar_url), ''),  -- packer
+NULLIF(COALESCE(u.avatar_url,  u.max_avatar_url), ''),   -- assigned
+NULLIF(COALESCE(ou.avatar_url, ou.max_avatar_url), '')   -- overlock
+```
+
+В `_row_to_order` хвост: hangerName `r[-15]` … isCancelled `r[-6]`,
+затем `cutterAvatarUrl`…`overlockAvatarUrl` = `r[-5]`…`r[-1]`.
+Пустые URL `_strip_empty` выкидывает — так и должно быть.
+
+**Кто кроил на карточке ПК:**
+`cutter_user_id` через COALESCE: если статус «Раскроено» и швеи ещё нет —
+берём `assigned_user_id` (закройщица ещё в assigned). Иначе на ПК «Кроил»
+пустой, хотя вещь кроила Коротаева.
+
+---
+
+## 3) Фронт
+
+Опубликуй текущий фронт из репозитория.
+
+Конвейер:
+- `src/components/crm/sewingItems/OrderStageAvatars.tsx` — новый: стопка
+  кружков 28/32px, наложение `-ml-2`, фото либо инициалы;
+  кружок появляется только когда сотрудник реально на этапе
+  (швея взяла — её аватарка; пустой «Сшил/Упаковал» не рисуем);
+- `SewingItemsTable.tsx`, `SewingItemsCards.tsx` — аватарки слева внизу
+  у статусов с движением; на «Новый» стопки нет;
+- адаптивные карточки ПК: плашки в потоке, без absolute; дата у «Срочно»
+  (или на её месте); таймер маркетплейса рядом с OZON/WB + FBS/FBO;
+- «Кроил / Сшил / Упаковал» в левом низу; пустые роли скрыты;
+- вешалка скрыта на «Новый» и «Готовые»;
+- «Срочно» не показывать у отменённых с кроем.
+
+Пользователи:
+- `src/lib/usersApi.ts` — `syncMaxAvatars()`
+- `src/components/crm/users/useEmployeeActions.ts`
+- `src/pages/settings/UsersSettings.tsx` — кнопка
+  «Синхронизировать аватарки MAX» рядом с «Добавить сотрудника».
+
+`src/lib/ordersApi.ts` — поля `cutterAvatarUrl`, `sewerAvatarUrl`,
+`packerAvatarUrl`, `assignedAvatarUrl`, `overlockAvatarUrl`.
+
+---
+
+## 4) Если ещё не выкладывали с прошлых промптов — доложи в этот же заход
+
+Миграции (только если их нет в проде):
+- `db_migrations/V0700__conveyor_issue_switch.sql` — ключ
+  `conveyor_issue_enabled` = true. Новых таблиц нет.
+- `db_migrations/V0699__close_ozon_assembly_146_ready_no_pay.sql` —
+  ТОЛЬКО если 146 отправлений OZON ещё не закрывали. Если уже закрыли —
+  файл не гонять.
+
+Функция dashboard_summary (рубильник на главной), URL не менять:
+https://functions.poehali.dev/574f8f76-2208-488d-a90e-cbdd0b922111
+пакет `backend/dashboard_summary/`.
+
+Функция kiosk (очистка очереди перепаковки — только админ), URL не менять:
+https://functions.poehali.dev/646f604e-57e9-47fb-b2ca-dd424abfba48
+пакет `backend/kiosk/` целиком (`index.py`, `authz.py`, `requirements.txt`).
+Action `repack_clear_queue`: роль админа проверять по базе, не по телу
+запроса. Кнопка на экране только если `role === 'admin'`.
+Не DELETE из warehouse/returns, зарплату не трогать.
+
+---
+
+## 5) Проверка после публикации
+
+1. Конвейер ПК, вкладка не «Новый»: у заказа в работе виден кружок швеи.
+   На «Готовые» стопка из тех, кто кроил / шил / упаковал. Наведи —
+   подсказка «Кроил: Фамилия И.О.». Нет фото — инициалы, не битая картинка.
+2. Вкладка «Новый»: кружков нет, пустых «Кроил-Сшил-Упаковал» нет,
+   таймер дедлайна (сколько прошло с заказа маркетплейса) есть.
+3. Сузь окно: материал, размер, номер и оранжевая «Просмотр» не обрезаются.
+4. Пользователи (админ): кнопка «Синхронизировать аватарки MAX».
+   Нажать — тост «Подтянуто N из M», список обновился. У кого руками
+   загружено фото — оно осталось (avatar_url главнее max_avatar_url).
+5. Если MAX_BOT_TOKEN забыли — 503 с текстом про токен, не 500.
+6. Журнал: запись синхронизации не обязательна; в users пишется только
+   max_avatar_url.
+
+Если URL любой функции сменился — остановись и сообщи, не чини фронт наугад.
+
+---
+
+## Не делать
+
+- Не менять URL функций.
+- Не ротировать MAX_BOT_TOKEN и DATABASE_URL.
+- Не создавать новую функцию под аватарки.
+- Не UPDATE `avatar_url` при синхронизации MAX.
+- Не добавлять колонки в БД.
+- Не публиковать остальные функции без нужды.
+- Не начислять зарплату и не гонять V0699 повторно.

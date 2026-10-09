@@ -169,3 +169,12 @@ export const removeEmployeeRole = (id: number, role: Role) =>
  * если других должностей у него нет. Сам сотрудник остаётся в общем списке. */
 export const rejectEmployeeRole = (id: number, role: Role) =>
   postAction({ action: 'reject_role', id, role });
+
+/** Подтягивает фото из профилей MAX. Ручное фото в карточке сотрудника не затирается. */
+export const syncMaxAvatars = () =>
+  postAction({ action: 'sync_max_avatars' }) as Promise<{
+    success: true;
+    updated: number;
+    missing: number;
+    total: number;
+  }>;

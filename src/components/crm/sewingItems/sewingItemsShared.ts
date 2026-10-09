@@ -81,6 +81,19 @@ export const statusTabs: StatusTab[] = [
  * телефоне и на компьютере. Добавлены недостающие «Со склада» и «Отменён»: они
  * встречаются в таблице, но в карточках их не было — бейдж оставался бесцветным.
  */
+/** Цвет рельса слева у строки конвейера — тот же смысл, что у бейджа статуса. */
+export const statusRailClass: Record<string, string> = {
+  Новый: 'bg-slate-500',
+  'На раскрое': 'bg-amber-500',
+  'В работе': 'bg-sky-500',
+  Раскроено: 'bg-violet-500',
+  Оверлок: 'bg-fuchsia-600',
+  Стикеровка: 'bg-orange-500',
+  Готовые: 'bg-emerald-600',
+  'Со склада': 'bg-teal-600',
+  Отменён: 'bg-red-600',
+};
+
 export const statusBadgeClass: Record<string, string> = {
   Новый: 'bg-slate-500 text-white hover:bg-slate-500',
   'На раскрое': 'bg-amber-500 text-white hover:bg-amber-500',
@@ -171,6 +184,53 @@ export const isCancelledWithCut = (o: {
     || o.sewingStatus === 'Раскроено'
     || o.sewingStatus === 'В работе'
     || o.sewingStatus === 'Стикеровка';
+};
+
+/** Этапы, на которых крой уже сделан — даже если cutAt в базе не записался. */
+export const CUT_DONE_STATUSES: readonly string[] = [
+  'Раскроено',
+  'В работе',
+  'Стикеровка',
+  'Готовые',
+];
+
+export const isCutDone = (o: {
+  cutAt?: string | null;
+  sewingStatus: string;
+}): boolean => !!o.cutAt || CUT_DONE_STATUSES.includes(o.sewingStatus);
+
+/**
+ * Кто кроил заказ — имя для карточки, таблицы и таймлайна.
+ *
+ * cutterUserName пишется в момент кнопки «Раскроено». Если статус уже
+ * «Раскроено», а поле пустое (кнопку не нажали, перевёл админ, заказ отменили),
+ * закройщица ещё висит в assigned: без этой подстановки на ПК «Кроил» остаётся
+ * пустым кружком, хотя вещь кроила Коротаева (30798673-0299-1, 0125863093-0298-1).
+ */
+export const orderCutterName = (o: {
+  cutterUserName?: string | null;
+  assignedUserName?: string | null;
+  sewerUserId?: number | null;
+  sewingStatus: string;
+}): string | null => {
+  if (o.cutterUserName) return o.cutterUserName;
+  if (o.sewingStatus === 'Раскроено' && !o.sewerUserId && o.assignedUserName) {
+    return o.assignedUserName;
+  }
+  return null;
+};
+
+export const orderCutterUserId = (o: {
+  cutterUserId?: number | null;
+  assignedUserId?: number | null;
+  sewerUserId?: number | null;
+  sewingStatus: string;
+}): number | null => {
+  if (o.cutterUserId != null) return o.cutterUserId;
+  if (o.sewingStatus === 'Раскроено' && !o.sewerUserId && o.assignedUserId != null) {
+    return o.assignedUserId;
+  }
+  return null;
 };
 
 /** Сокращает ФИО до "Фамилия И.О." — например "Коротаева Наталья Александровна" → "Коротаева Н.А.". */

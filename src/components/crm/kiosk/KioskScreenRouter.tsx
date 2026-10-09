@@ -158,6 +158,8 @@ const KioskScreenRouter = ({
             // Цех киоска: список перепаковки у каждого цеха свой, иначе две
             // упаковщицы возьмут в работу одну и ту же вещь.
             workshopId={currentWorkshopId || Number(workshopId) || null}
+            // Должность из профиля, не из смены: очистку очереди жмёт только админ.
+            isAdmin={user.role === 'admin'}
           />
         )}
       </div>

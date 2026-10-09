@@ -1853,14 +1853,18 @@ def handler(event: dict, context) -> dict:
                 # трогаем — возвращаем на разбор (checking), снимаем закрепление
                 # за цехом и открываем заявку возврата, чтобы кладовщик снова
                 # нажал «в цех на осмотр» по живым коробкам.
-                blocked = repack_blocked_for_main_packer(
-                    cur, actor_id, body_data.get('workshopId'),
-                )
-                if blocked:
+                #
+                # Только админ: упаковщица на терминале эту кнопку не видит, но
+                # запрос можно отправить мимо экрана — роль проверяем по базе,
+                # а не по тому, что пришло в теле.
+                if not _is_admin(cur, actor_id):
                     return {
                         'statusCode': 403,
                         'headers': headers,
-                        'body': json.dumps({'error': blocked}, ensure_ascii=False),
+                        'body': json.dumps(
+                            {'error': 'Очистить очередь может только администратор'},
+                            ensure_ascii=False,
+                        ),
                     }
 
                 cur.execute(

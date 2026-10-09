@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { usePolling } from '@/hooks/usePolling';
 import { useAuth } from '@/context/AuthContext';
 import { fetchOrders, type Order } from '@/lib/ordersApi';
 import { fetchEmployees, type Employee } from '@/lib/usersApi';
@@ -124,6 +125,9 @@ export const useSewingItemsData = () => {
   const effectiveShiftNumber =
     sessionShiftNumber ?? user?.activeShiftNumber ?? user?.shiftNumber ?? null;
 
+  const historyFor = isSewer || isCutter ? user?.id : undefined;
+  const historyRole = isSewer ? 'sewer' : isCutter ? 'cutter' : undefined;
+
   const load = () => {
     setLoading(true);
     // forUserId — сервер отдаёт рулоны ТОЛЬКО цеха и смены текущей открытой смены
@@ -169,10 +173,7 @@ export const useSewingItemsData = () => {
     // а на вкладке «Готовые» человек всё равно видит только свои. Швея с семью
     // сотнями заказов за месяц видела около двух сотен — остальное вытесняли
     // чужие. Теперь весь запас истории достаётся ей одной.
-    fetchOrders(
-      isSewer || isCutter ? user?.id : undefined,
-      isSewer ? 'sewer' : isCutter ? 'cutter' : undefined,
-    )
+    fetchOrders(historyFor, historyRole)
       .then((list) => {
         setListError(null);
         setOrders(list);
@@ -190,6 +191,32 @@ export const useSewingItemsData = () => {
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id, user?.role, isProductionRole]);
+
+  // Конвейер сам подхватывает новые заказы и смену статусов: без обновления
+  // страницы строка приезжает, уезжает на другой этап или вспыхивает.
+  // Первый круг пропускаем — его уже сделал load() при входе.
+  const silentRefresh = useCallback(async () => {
+    try {
+      const list = await fetchOrders(historyFor, historyRole);
+      setListError(null);
+      setOrders(list);
+    } catch {
+      // Тихий опрос не сбивает уже показанный список ошибкой сети.
+    }
+  }, [historyFor, historyRole]);
+
+  const skipFirstPoll = useRef(true);
+  usePolling(
+    async () => {
+      if (skipFirstPoll.current) {
+        skipFirstPoll.current = false;
+        return;
+      }
+      await silentRefresh();
+    },
+    10000,
+    !!user?.id,
+  );
 
   // Настройка "печать листа закройщика при взятии стека" + список материалов цеха —
   // читаются из настроек ТЕКУЩЕГО цеха сотрудника. Ткани в фильтре ограничиваем

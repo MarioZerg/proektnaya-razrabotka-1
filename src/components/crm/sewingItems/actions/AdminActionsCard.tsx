@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import {
   Select,
   SelectContent,
@@ -9,21 +10,29 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Label } from '@/components/ui/label';
 import { Button } from '@/components/ui/button';
 import Icon from '@/components/ui/icon';
-import type { Order } from '@/lib/ordersApi';
+import type { Order, OrderDetail } from '@/lib/ordersApi';
 import type { Employee } from '@/lib/usersApi';
 import type { Workshop } from '@/lib/workshopsApi';
 import type { EmployeeShiftStatus } from '@/lib/shiftSessionsApi';
+import type { Roll } from '@/lib/rollsApi';
 import { statusOptions, employeeLabel } from '@/components/crm/sewingItems/sewingItemsShared';
 import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
+import { formatQuantity } from '@/lib/formatQuantity';
 
 interface AdminActionsCardProps {
   selectedOrder: Order;
+  orderDetail: OrderDetail | null;
   saving: boolean;
   cutting: boolean;
   isAlreadyCut: boolean;
   employees: Employee[];
   workshops: Workshop[];
-  onStatusChange: (status: string) => void;
+  fabricRolls: Roll[];
+  trimRolls: Roll[];
+  onStatusChange: (
+    status: string,
+    rolls?: { fabricRollId?: number; trimRollId?: number },
+  ) => void;
   onAssignUser: (userId: string) => void;
   onAssignWorkshop: (workshopId: string) => void;
   onCut: (rollId?: number, hangerNumber?: number) => void;
@@ -37,11 +46,14 @@ interface AdminActionsCardProps {
 /** Блок администратора: статус пошива, назначение сотрудника и цеха, ручной раскрой. */
 const AdminActionsCard = ({
   selectedOrder,
+  orderDetail,
   saving,
   cutting,
   isAlreadyCut,
   employees,
   workshops,
+  fabricRolls,
+  trimRolls,
   onStatusChange,
   onAssignUser,
   onAssignWorkshop,
@@ -51,7 +63,20 @@ const AdminActionsCard = ({
   assignedOtherWorkshop,
   shiftsError,
   onRetryShifts,
-}: AdminActionsCardProps) => (
+}: AdminActionsCardProps) => {
+  const [fabricRollId, setFabricRollId] = useState('');
+  const [trimRollId, setTrimRollId] = useState('');
+  const selectedFabric = fabricRolls.find((r) => String(r.id) === fabricRollId);
+  const selectedTrim = trimRolls.find((r) => String(r.id) === trimRollId);
+
+  const applyStatus = (status: string) => {
+    onStatusChange(status, {
+      fabricRollId: fabricRollId ? Number(fabricRollId) : undefined,
+      trimRollId: trimRollId ? Number(trimRollId) : undefined,
+    });
+  };
+
+  return (
   <Card className="border-border shadow-none">
     <CardHeader className="pb-3">
       <CardTitle className="text-sm">Действия</CardTitle>
@@ -59,7 +84,7 @@ const AdminActionsCard = ({
     <CardContent className="flex flex-wrap items-end gap-3">
       <div className="w-full space-y-1.5 sm:w-48">
         <Label>Статус пошива</Label>
-        <Select value={selectedOrder.sewingStatus} onValueChange={onStatusChange} disabled={saving}>
+        <Select value={selectedOrder.sewingStatus} onValueChange={applyStatus} disabled={saving}>
           <SelectTrigger>
             <SelectValue />
           </SelectTrigger>
@@ -71,6 +96,92 @@ const AdminActionsCard = ({
             ))}
           </SelectContent>
         </Select>
+      </div>
+
+      <div className="w-full space-y-1.5 sm:w-64">
+        <Label>
+          Рулон ткани
+          {orderDetail?.requiredFabricMaterialName
+            ? ` — «${orderDetail.requiredFabricMaterialName}»`
+            : ''}
+        </Label>
+        <Select value={fabricRollId} onValueChange={setFabricRollId} disabled={saving}>
+          <SelectTrigger className="h-auto min-h-10 py-1.5 text-left [&>span]:line-clamp-none [&>span]:whitespace-normal">
+            <SelectValue placeholder="С какого рулона кроить">
+              {selectedFabric ? (
+                <span className="flex min-w-0 flex-col">
+                  <span className="font-semibold">
+                    #{selectedFabric.barcode} — {formatQuantity(selectedFabric.remainingQuantity)}{' '}
+                    {selectedFabric.unit}
+                  </span>
+                  <span className="truncate text-xs text-muted-foreground">
+                    {selectedFabric.materialName}
+                  </span>
+                </span>
+              ) : undefined}
+            </SelectValue>
+          </SelectTrigger>
+          <SelectContent className="max-w-[calc(100vw-1rem)]">
+            {fabricRolls.length === 0 ? (
+              <div className="px-2 py-1.5 text-sm text-muted-foreground">Нет рулонов ткани в цехе</div>
+            ) : (
+              fabricRolls.map((r) => (
+                <SelectItem key={r.id} value={String(r.id)} className="whitespace-normal break-words">
+                  <span className="font-semibold">#{r.barcode}</span> — {formatQuantity(r.remainingQuantity)} {r.unit}
+                  <span className="block text-xs text-muted-foreground">{r.materialName}</span>
+                </SelectItem>
+              ))
+            )}
+          </SelectContent>
+        </Select>
+        <p className="text-xs text-muted-foreground">
+          Нужен при переводе в «Раскроено» и дальше. Тесьму здесь не списываем.
+        </p>
+      </div>
+
+      <div className="w-full space-y-1.5 sm:w-64">
+        <Label>
+          Рулон тесьмы
+          {orderDetail?.requiredTrimMaterialName
+            ? ` — «${orderDetail.requiredTrimMaterialName}»`
+            : ''}
+        </Label>
+        <Select
+          value={trimRollId}
+          onValueChange={setTrimRollId}
+          disabled={saving || !orderDetail?.requiredTrimMaterialId}
+        >
+          <SelectTrigger className="h-auto min-h-10 py-1.5 text-left [&>span]:line-clamp-none [&>span]:whitespace-normal">
+            <SelectValue placeholder="Нужен на стикеровке">
+              {selectedTrim ? (
+                <span className="flex min-w-0 flex-col">
+                  <span className="font-semibold">
+                    #{selectedTrim.barcode} — {formatQuantity(selectedTrim.remainingQuantity)}{' '}
+                    {selectedTrim.unit}
+                  </span>
+                  <span className="truncate text-xs text-muted-foreground">
+                    {selectedTrim.materialName}
+                  </span>
+                </span>
+              ) : undefined}
+            </SelectValue>
+          </SelectTrigger>
+          <SelectContent className="max-w-[calc(100vw-1rem)]">
+            {trimRolls.length === 0 ? (
+              <div className="px-2 py-1.5 text-sm text-muted-foreground">Нет рулонов тесьмы в цехе</div>
+            ) : (
+              trimRolls.map((r) => (
+                <SelectItem key={r.id} value={String(r.id)} className="whitespace-normal break-words">
+                  <span className="font-semibold">#{r.barcode}</span> — {formatQuantity(r.remainingQuantity)} {r.unit}
+                  <span className="block text-xs text-muted-foreground">{r.materialName}</span>
+                </SelectItem>
+              ))
+            )}
+          </SelectContent>
+        </Select>
+        <p className="text-xs text-muted-foreground">
+          Только когда переводите на стикеровку или в «Готовые». На «Раскроено» тесьмы ещё нет.
+        </p>
       </div>
 
       <div className="w-full space-y-1.5 sm:w-48">
@@ -168,6 +279,7 @@ const AdminActionsCard = ({
       </Button>
     </CardContent>
   </Card>
-);
+  );
+};
 
 export default AdminActionsCard;

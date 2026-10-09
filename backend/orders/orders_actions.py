@@ -38,7 +38,9 @@ from shared import (
     pick_order_trim,
     sewing_wait_for_order,
     consume_trim_roll,
-    write_off_materials_once,
+    consume_fabric_roll,
+    _order_inherited_cut,
+    _order_has_type_usage,
     CONVEYOR_ISSUE_KEY,
     conveyor_issue_enabled,
     conveyor_issue_blocked_response,
@@ -1017,6 +1019,10 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                 # удаления из раскроя начисления пропадают")
                 if body_data['sewingStatus'] in ('Новый', 'На раскрое'):
                     revert_cutter_accrual = True
+                    # Откат до раскроя стирает след этапа: иначе в строке заказа
+                    # остаётся «Кроил: админ», хотя статус снова «На раскрое».
+                    fields.append("cut_at = NULL")
+                    fields.append("cutter_user_id = NULL")
 
                 # ОТКАТ НАЗАД СНИМАЕТ ИСПОЛНИТЕЛЯ ЭТАПА, А НЕ ТОЛЬКО МЕНЯЕТ ВКЛАДКУ.
                 #
@@ -1069,6 +1075,31 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
             if rollback_packer:
                 fields.append("packer_user_id = NULL")
                 fields.append("packed_at = NULL")
+            # Админ продвинул заказ по этапам — в таймлайне и в строке списка
+            # должно быть видно, кто перевёл и когда. Без дат и имён этапы
+            # остаются пустыми кружками, хотя статус уже «Раскроено».
+            if (
+                'sewingStatus' in body_data
+                and body_data['sewingStatus'] in STATUS_ORDER
+                and current_sewing in STATUS_ORDER
+                and actor_id
+                and STATUS_ORDER.index(body_data['sewingStatus'])
+                > STATUS_ORDER.index(current_sewing)
+            ):
+                moved_to = body_data['sewingStatus']
+                moved_idx = STATUS_ORDER.index(moved_to)
+                actor_int = int(actor_id)
+                if moved_idx >= STATUS_ORDER.index('Раскроено'):
+                    fields.append("cut_at = COALESCE(cut_at, now())")
+                    fields.append(f"cutter_user_id = COALESCE(cutter_user_id, {actor_int})")
+                if moved_idx >= STATUS_ORDER.index('В работе'):
+                    fields.append("taken_at = COALESCE(taken_at, now())")
+                if moved_idx >= STATUS_ORDER.index('Стикеровка'):
+                    fields.append("sewn_at = COALESCE(sewn_at, now())")
+                    fields.append(f"sewer_user_id = COALESCE(sewer_user_id, {actor_int})")
+                if moved_idx >= STATUS_ORDER.index('Готовые'):
+                    fields.append("packed_at = COALESCE(packed_at, now())")
+                    fields.append(f"packer_user_id = COALESCE(packer_user_id, {actor_int})")
             if 'assignedUserId' in body_data:
                 val = body_data['assignedUserId']
                 fields.append(f"assigned_user_id = {int(val) if val not in (None, '') else 'NULL'}")
@@ -1149,25 +1180,79 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                     (int(item_id),),
                 )
 
-            # Админ перевёл статус на "Раскроено" или дальше по конвейеру — материал
-            # расходуется ОДИН раз (по FIFO из доступных рулонов). При откате статуса назад
-            # материалы не трогаются и не возвращаются (расход разовый).
+            # Админ перевёл статус руками — списываем только то, что соответствует
+            # этапу, и только с указанного рулона. Раньше write_off_materials_once
+            # забирал по FIFO и ткань, и тесьму сразу при переводе в «Раскроено»:
+            # швея ещё не шила, а тесьма уже ушла. Потом новый заказ того же
+            # размера либо не подбирал отменённый крой (не было cut_at), либо
+            # подбирал — и тесьма списывалась второй раз.
             if 'sewingStatus' in body_data:
                 new_status = body_data['sewingStatus']
-                if new_status in STATUS_ORDER and STATUS_ORDER.index(new_status) >= STATUS_ORDER.index('Раскроено'):
+                if (
+                    new_status in STATUS_ORDER
+                    and STATUS_ORDER.index(new_status) >= STATUS_ORDER.index('Раскроено')
+                ):
                     cur.execute(
                         "SELECT material, width, height, workshop_id FROM orders WHERE id = %s",
                         (int(item_id),),
                     )
                     mwh = cur.fetchone()
                     if mwh:
-                        # Материал списываем из цеха заказа: расход идёт только
-                        # внутри цеха, склад в него не входит.
-                        err = write_off_materials_once(
-                            cur, int(item_id), mwh[0], mwh[1], mwh[2], mwh[3])
-                        if err:
-                            conn.rollback()
-                            return {'statusCode': 409, 'headers': headers, 'body': json.dumps({'error': err})}
+                        # Крой от отменённого заказа: ткань уже списана на СТАРОМ
+                        # номере. Повторно рулон не трогаем — иначе дубль метров.
+                        if not _order_inherited_cut(cur, int(item_id)):
+                            fabric_err = consume_fabric_roll(
+                                cur,
+                                order_id=int(item_id),
+                                roll_id=body_data.get('rollId') or body_data.get('fabricRollId'),
+                                material=mwh[0],
+                                width=mwh[1],
+                                height=mwh[2],
+                                workshop_id=mwh[3],
+                                actor_id=actor_id,
+                            )
+                            if fabric_err:
+                                conn.rollback()
+                                return {
+                                    'statusCode': fabric_err.get('status', 409),
+                                    'headers': headers,
+                                    'body': json.dumps(
+                                        {'error': fabric_err['error']}, ensure_ascii=False
+                                    ),
+                                }
+
+                        # Тесьма — только когда вещь уже сшита: стикеровка и готовые.
+                        # На «Раскроено» / «В работе» её ещё нет — швея не шила.
+                        if (
+                            STATUS_ORDER.index(new_status) >= STATUS_ORDER.index('Стикеровка')
+                            and not _order_has_type_usage(cur, int(item_id), 'Аксессуары')
+                        ):
+                            cur.execute(
+                                "SELECT requires_overlock FROM orders WHERE id = %s",
+                                (int(item_id),),
+                            )
+                            ov_row = cur.fetchone()
+                            trim_err = consume_trim_roll(
+                                cur,
+                                order_id=int(item_id),
+                                roll_id=body_data.get('trimRollId'),
+                                material=mwh[0],
+                                width=mwh[1],
+                                height=mwh[2],
+                                requires_overlock=bool(ov_row and ov_row[0]),
+                                check_workshop_id=mwh[3],
+                                actor_shift_number=None,
+                                sewer_user_id=actor_id,
+                            )
+                            if trim_err:
+                                conn.rollback()
+                                return {
+                                    'statusCode': trim_err.get('status', 409),
+                                    'headers': headers,
+                                    'body': json.dumps(
+                                        {'error': trim_err['error']}, ensure_ascii=False
+                                    ),
+                                }
 
             # ЗАРПЛАТА ЗА ПОШИВ ПРИ РУЧНОМ ЗАКРЫТИИ ЗАКАЗА.
             #
@@ -1251,9 +1336,15 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                                          f'({int(sew_width)} см)'),
                                     )
 
+            if 'sewingStatus' in body_data:
+                log_desc = (
+                    f'Админ перевёл заказ #{item_id} в статус «{body_data["sewingStatus"]}»'
+                )
+            else:
+                log_desc = f'Изменил заказ #{item_id}'
             log_action(
                 cur, actor_id, actor_name, 'update_order', 'order', item_id,
-                f'Изменил заказ #{item_id}',
+                log_desc,
                 {k: v for k, v in body_data.items() if k not in ('action', 'id', 'actorId', 'actorName')},
             )
             conn.commit()
@@ -1733,12 +1824,17 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                 # cutter_user_id фиксирует, КТО именно раскроил заказ, отдельно от
                 # assigned_user_id — последний будет перезаписан на швею при take_order,
                 # а история "кто кроил" должна остаться видна на карточке товара.
-                cutter_sql = f", cutter_user_id = {order_assigned_user_id}" if order_assigned_user_id else ""
+                # Берём assigned, а если его нет — того, кто нажал «Раскроено»:
+                # иначе поле остаётся пустым, и на ПК не видно закройщицу.
+                cutter_id = order_assigned_user_id or (
+                    int(actor_id) if actor_id not in (None, '') else None
+                )
+                cutter_sql = f", cutter_user_id = {int(cutter_id)}" if cutter_id else ""
                 # Если закройщик выбрал вешалку — ставим её; иначе берём его последнюю вешалку
                 # (запоминается за закройщиком, чтобы не выбирать каждый раз заново).
                 effective_hanger = hanger_number
-                if effective_hanger is None and order_assigned_user_id:
-                        cur.execute("SELECT last_hanger_number FROM users WHERE id = %s", (order_assigned_user_id,))
+                if effective_hanger is None and cutter_id:
+                        cur.execute("SELECT last_hanger_number FROM users WHERE id = %s", (int(cutter_id),))
                         lh = cur.fetchone()
                         effective_hanger = lh[0] if lh and lh[0] else None
                 hanger_sql = f", hanger_number = {int(effective_hanger)}" if effective_hanger else ""
@@ -1780,10 +1876,10 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                         f"{cutter_sql}{hanger_sql}{overlock_sql} WHERE id = {int(item_id)}"
                 )
                 # Запоминаем выбранную вешалку за закройщиком для следующих заказов.
-                if hanger_number and order_assigned_user_id:
+                if hanger_number and cutter_id:
                         cur.execute(
                                 "UPDATE users SET last_hanger_number = %s WHERE id = %s",
-                                (int(hanger_number), order_assigned_user_id),
+                                (int(hanger_number), int(cutter_id)),
                         )
 
                 # Начисление закройщику: ставка за 1 пог.м. по материалу (одна на ткань)
@@ -1811,16 +1907,16 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                 # в момент раскроя его у заказа ещё нет. Такая же подстраховка
                 # давно стоит у пошива — у раскроя её просто забыли поставить.
                 cutter_workshop_for_rate = order_workshop_id
-                if order_assigned_user_id and not cutter_workshop_for_rate:
+                if cutter_id and not cutter_workshop_for_rate:
                         cur.execute(
                                 "SELECT w.id FROM users u JOIN workshops w ON w.name = CASE WHEN u.workshop IN ('Цех №2', 'Тестовый цех (QA)') THEN 'Цех №1' ELSE u.workshop END "
                                 "WHERE u.id = %s",
-                                (int(order_assigned_user_id),),
+                                (int(cutter_id),),
                         )
                         cw_row = cur.fetchone()
                         cutter_workshop_for_rate = cw_row[0] if cw_row else None
 
-                if fabric_material_id and order_assigned_user_id and cutter_workshop_for_rate and width:
+                if fabric_material_id and cutter_id and cutter_workshop_for_rate and width:
                         # Ставка задаётся ОДНА на ткань (width IS NULL) — раньше её
                         # требовалось заводить на каждую пару «ткань + ширина», то есть
                         # 56 полей на цех при одинаковом значении внутри ткани. Ширина
@@ -1839,7 +1935,7 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                                 amount = round(pay_meters * rate, 2)
                                 cur.execute(
                                         f"INSERT INTO salary_accruals (user_id, type, amount, order_id, description) "
-                                        f"VALUES ({order_assigned_user_id}, 'cutter_cut', {amount}, {int(item_id)}, "
+                                        f"VALUES ({int(cutter_id)}, 'cutter_cut', {amount}, {int(item_id)}, "
                                         f"'Раскрой заказа #{item_id} ({mat_name} {int(width)} см) - {pay_meters} пог.м.') "
                                         f"ON CONFLICT (order_id, type) WHERE order_id IS NOT NULL DO NOTHING"
                                 )

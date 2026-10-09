@@ -26,6 +26,16 @@ from shared import (
 )
 
 
+# Кто кроил: cutter_user_id, а если статус уже «Раскроено» и поле пустое —
+# закройщица ещё в assigned (кнопку не нажали, перевёл админ, заказ отменили).
+# Без этой подстановки на карточке ПК «Кроил» пустой, хотя вещь кроила
+# Коротаева: 30798673-0299-1 и 0125863093-0298-1.
+_CUTTER_ID_SQL = (
+    "COALESCE(o.cutter_user_id, "
+    "CASE WHEN o.sewing_status = 'Раскроено' AND o.sewer_user_id IS NULL "
+    "THEN o.assigned_user_id END)"
+)
+
 # ОДИН НАБОР КОЛОНОК НА ВСЕ СПИСКИ ЗАКАЗОВ.
 #
 # Списков теперь два: общий конвейер и поиск по номеру. Колонки у них обязаны
@@ -38,7 +48,7 @@ ORDER_LIST_COLUMNS = (
     "SELECT o.id, o.order_number, o.marketplace, o.order_type, o.status, o.cluster, o.product, "
     "o.quantity, o.source, o.created_at, o.completed_at, o.material, o.width, o.height, "
     "o.sewing_status, o.assigned_user_id, u.full_name, o.workshop_id, w.name, "
-    "o.cutter_user_id, cu.full_name, o.hanger_number, "
+    f"{_CUTTER_ID_SQL}, cu.full_name, o.hanger_number, "
     "o.sewer_user_id, su.full_name, o.packer_user_id, pu.full_name, "
     "o.ozon_status, o.ozon_posting_number, "
     # Код товара берём из заказа, а если там пусто (заказы из старой
@@ -95,13 +105,18 @@ ORDER_LIST_COLUMNS = (
     # него сдвинула бы отсчёт.
     "(SELECT c.order_number FROM orders c WHERE c.id = o.cut_from_order_id), "
     "o.cut_given_to_order_id, "
-    # Поле идёт ПОСЛЕДНИМ: остальные колонки читаются по номерам с конца
-    # (r[-1], r[-2] …), и вставка в середину сдвинула бы их все.
-    f"({CANCELLED_SQL}) AS is_cancelled "
+    f"({CANCELLED_SQL}) AS is_cancelled, "
+    # Аватарки участников — с конца ответа, чтобы не сдвигать номера колонок
+    # в середине. Сначала фото, которое загрузил админ, иначе из профиля MAX.
+    "NULLIF(COALESCE(cu.avatar_url, cu.max_avatar_url), ''), "
+    "NULLIF(COALESCE(su.avatar_url, su.max_avatar_url), ''), "
+    "NULLIF(COALESCE(pu.avatar_url, pu.max_avatar_url), ''), "
+    "NULLIF(COALESCE(u.avatar_url, u.max_avatar_url), ''), "
+    "NULLIF(COALESCE(ou.avatar_url, ou.max_avatar_url), '') "
     "FROM orders o "
     "LEFT JOIN users u ON u.id = o.assigned_user_id "
     "LEFT JOIN workshops w ON w.id = o.workshop_id "
-    "LEFT JOIN users cu ON cu.id = o.cutter_user_id "
+    f"LEFT JOIN users cu ON cu.id = {_CUTTER_ID_SQL} "
     "LEFT JOIN users su ON su.id = o.sewer_user_id "
     "LEFT JOIN users pu ON pu.id = o.packer_user_id "
     "LEFT JOIN marketplace_items mi ON mi.id = o.marketplace_item_id "
@@ -138,25 +153,30 @@ def _row_to_order(r) -> dict:
         # Хвост списка колонок: вешалка, магазин с цветом и этап
         # оверлока. Отсчёт с конца, потому что колонок много и
         # номера легко сбить.
-        'hangerName': r[-10],
-        'shopName': r[-9],
-        'shopColor': r[-8],
+        'hangerName': r[-15],
+        'shopName': r[-14],
+        'shopColor': r[-13],
         # Этап оверлока: нужен ли он вещи и прошла ли она его.
-        'requiresOverlock': bool(r[-7]) or None,
-        'overlockedAt': (r[-6].isoformat() + 'Z') if r[-6] else None,
-        'overlockUserId': r[-5],
-        'overlockUserName': r[-4],
+        'requiresOverlock': bool(r[-12]) or None,
+        'overlockedAt': (r[-11].isoformat() + 'Z') if r[-11] else None,
+        'overlockUserId': r[-10],
+        'overlockUserName': r[-9],
         # Номер на БИРКЕ переданного кроя: заказ отменили после раскроя, крой
         # отдали этому заказу, а бирка осталась со старым номером. Швея ищет
         # вешалку по нему — иначе вещь на вешалке не опознать.
-        'cutFromOrderNumber': r[-3],
+        'cutFromOrderNumber': r[-8],
         # Крой этого отменённого заказа уже отдан живому — из списка
         # «Отменённые с кроем» он уходит.
-        'cutGivenToOrderId': r[-2],
+        'cutGivenToOrderId': r[-7],
         # Отмена покупателем — уже посчитанный признак: у каждой
         # площадки своё слово для отмены, и разбирать их на экране
         # значит однажды забыть очередное.
-        'isCancelled': bool(r[-1]) or None,
+        'isCancelled': bool(r[-6]) or None,
+        'cutterAvatarUrl': r[-5],
+        'sewerAvatarUrl': r[-4],
+        'packerAvatarUrl': r[-3],
+        'assignedAvatarUrl': r[-2],
+        'overlockAvatarUrl': r[-1],
         'sewerUserId': r[22],
         'sewerUserName': r[23],
         'packerUserId': r[24],
@@ -674,7 +694,7 @@ def handle_get(event: dict, headers: dict, dsn: str) -> dict:
                 "COALESCE(o.cluster, sup.cluster), o.product, "
                 "o.quantity, o.source, o.created_at, o.completed_at, o.material, o.width, o.height, "
                 "o.sewing_status, o.assigned_user_id, u.full_name, o.workshop_id, w.name, "
-                "o.cutter_user_id, cu.full_name, o.hanger_number, "
+                f"{_CUTTER_ID_SQL}, cu.full_name, o.hanger_number, "
                 "o.sewer_user_id, su.full_name, o.packer_user_id, pu.full_name, "
                 # Код товара для стикера FBO. У заказов, перенесённых из старой
                 # системы, поля в самом заказе пустые — код лежит в привязанной
@@ -688,11 +708,13 @@ def handle_get(event: dict, headers: dict, dsn: str) -> dict:
                 "(SELECT h.name FROM hangers h WHERE h.number = o.hanger_number), "
                 # Этап оверлока. Запятой после последнего поля быть не должно —
                 # дальше идёт FROM.
-                "o.requires_overlock, o.overlocked_at "
+                "o.requires_overlock, o.overlocked_at, "
+                # Даты этапов — таймлайн в карточке после ручного перевода админом.
+                "o.cut_at, o.sewn_at, o.taken_at, o.packed_at "
                 "FROM orders o "
                 "LEFT JOIN users u ON u.id = o.assigned_user_id "
                 "LEFT JOIN workshops w ON w.id = o.workshop_id "
-                "LEFT JOIN users cu ON cu.id = o.cutter_user_id "
+                f"LEFT JOIN users cu ON cu.id = {_CUTTER_ID_SQL} "
                 "LEFT JOIN users su ON su.id = o.sewer_user_id "
                 "LEFT JOIN users pu ON pu.id = o.packer_user_id "
                 "LEFT JOIN marketplace_items mi ON mi.id = o.marketplace_item_id "
@@ -829,10 +851,14 @@ def handle_get(event: dict, headers: dict, dsn: str) -> dict:
                 'hangerNumber': row[21],
                 # Название вешалки («Синяя у окна»). Пустое — в интерфейсе
                 # покажется номер, как было раньше.
-                'hangerName': row[-3],
+                'hangerName': row[33],
                 # Этап оверлока: нужна ли обмётка и прошла ли вещь этот этап.
-                'requiresOverlock': bool(row[-2]),
-                'overlockedAt': (row[-1].isoformat() + 'Z') if row[-1] else None,
+                'requiresOverlock': bool(row[34]),
+                'overlockedAt': (row[35].isoformat() + 'Z') if row[35] else None,
+                'cutAt': (row[36].isoformat() + 'Z') if row[36] else None,
+                'sewnAt': (row[37].isoformat() + 'Z') if row[37] else None,
+                'takenAt': (row[38].isoformat() + 'Z') if row[38] else None,
+                'packedAt': (row[39].isoformat() + 'Z') if row[39] else None,
                 'sewerUserId': row[22],
                 'sewerUserName': row[23],
                 'packerUserId': row[24],

@@ -3,14 +3,6 @@ import { usePrintOrderSticker } from '@/components/crm/sewingItems/usePrintOrder
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table';
-import {
   Pagination,
   PaginationContent,
   PaginationEllipsis,
@@ -22,16 +14,19 @@ import ShopBadge from '@/components/crm/ShopBadge';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import type { Order } from '@/lib/ordersApi';
 import {
-  marketplaceLogo,
   formatDate,
   statusBadgeClass,
+  statusRailClass,
   isOrderCancelled,
+  isOnOverlock,
 } from '@/components/crm/sewingItems/sewingItemsShared';
 import OrderWaitTimer from '@/components/crm/sewingItems/OrderWaitTimer';
 import SewingItemsCards from '@/components/crm/sewingItems/SewingItemsCards';
 import { isUrgent } from '@/components/crm/sewingItems/orderUrgency';
 import OrderStagesDiagram from '@/components/crm/sewingItems/OrderStagesDiagram';
+import OrderStageAvatars from '@/components/crm/sewingItems/OrderStageAvatars';
 import { orderHangerLabel } from '@/lib/hangersApi';
+import { useConveyorRowMotion } from '@/components/crm/sewingItems/useConveyorRowMotion';
 
 /**
  * Печать стикера для готового заказа — прямо у номера в списке.
@@ -61,6 +56,25 @@ const buildPageList = (current: number, total: number): Array<number | 'ellipsis
   return pages;
 };
 
+const stageLabel = (o: Order) => (isOnOverlock(o) ? 'Оверлок' : o.sewingStatus);
+
+const marketplaceCornerClass: Record<string, string> = {
+  OZON: 'bg-[#005BFF] text-white',
+  WB: 'bg-[#CB11AB] text-white',
+  Yandex: 'bg-neutral-900 text-[#FFCC00]',
+};
+
+const marketplaceCornerLabel: Record<string, string> = {
+  OZON: 'OZON',
+  WB: 'WB',
+  Yandex: 'Яндекс',
+};
+
+const railOf = (o: Order) => {
+  if (isOrderCancelled(o)) return statusRailClass.Отменён;
+  return statusRailClass[stageLabel(o)] || 'bg-slate-400';
+};
+
 interface SewingItemsTableProps {
   loading: boolean;
   /** FRONTEND-ONLY: сбой GET — не писать «заказов не найдено». */
@@ -87,6 +101,7 @@ const SewingItemsTable = ({
   canPrintSticker = false,
 }: SewingItemsTableProps) => {
   const { printingId, printSticker: handlePrintSticker } = usePrintOrderSticker();
+  const { arrived, moved, bindRow } = useConveyorRowMotion(pagedOrders);
 
   if (loading && pagedOrders.length === 0) {
     return (
@@ -115,193 +130,238 @@ const SewingItemsTable = ({
         />
       </div>
 
-      <div className="hidden rounded-md border border-border md:block">
-        <Table>
-          <TableHeader>
-            <TableRow className="bg-primary hover:bg-primary">
-              {/* Колонок было 14, и таблица не помещалась на экран: чтобы открыть
-                  заказ, приходилось листать вправо до последней колонки.
-                  Родственные данные объединены в одну ячейку — ширина, высота и
-                  материал стали «Изделием», маркетплейс и схема — одной колонкой,
-                  даты — одной. Ничего не убрано, всё видно без прокрутки. */}
-              <TableHead className="text-primary-foreground">#</TableHead>
-              <TableHead className="text-primary-foreground">Статус</TableHead>
-              <TableHead className="text-primary-foreground">Заказ</TableHead>
-              <TableHead className="text-primary-foreground">Изделие</TableHead>
-              <TableHead className="text-primary-foreground">Площадка</TableHead>
-              <TableHead className="text-primary-foreground">Этапы</TableHead>
-              <TableHead className="text-primary-foreground">Вешалка</TableHead>
-              <TableHead className="text-primary-foreground">Даты</TableHead>
-              <TableHead className="text-primary-foreground" />
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {pagedOrders.map((o) => {
-              const urgent = isUrgent(o);
-              return (
-              // Клик по любому месту строки открывает заказ: на широком экране
-              // целиться в кнопку в самом конце строки неудобно, а просмотр —
-              // самое частое действие в этой таблице.
-              <TableRow
-                key={o.id}
-                onClick={() => onOpenDetail(o)}
-                className={`cursor-pointer ${
-                  urgent ? 'bg-red-50 hover:bg-red-100' : 'hover:bg-muted/60'
-                }`}
-              >
-                <TableCell>{o.id}</TableCell>
-                <TableCell>
-                  {/* Цвет статуса — тот же, что в карточках на телефоне: один этап
-                      всегда выглядит одинаково, где бы мастер его ни смотрел. */}
-                  <Badge
-                    className={`${statusBadgeClass[o.sewingStatus] || ''} whitespace-nowrap`}
-                  >
-                    {o.sewingStatus}
-                  </Badge>
-                  {/* ОТМЕНЁН, НО КРОЙ УЖЕ СДЕЛАН — вещь остаётся на конвейере.
-                      Ткань разрезана, вернуть её нельзя: вещь дошивают и кладут
-                      на склад хранения по стикеру GW, а не отгружают покупателю.
-                      Без этой метки швея не поняла бы, почему ярлыка нет. */}
-                  {isOrderCancelled(o) && (
-                    <Badge className="ml-1 whitespace-nowrap bg-red-600 text-white hover:bg-red-600">
-                      Отменён → склад
-                    </Badge>
-                  )}
-                </TableCell>
-                <TableCell>
-                  <span className="flex items-center gap-1.5 text-base font-bold">
-                    {/* Молния у просроченного заказа: за компьютером мастер раздаёт
-                        работу и должен видеть срочные строки, не вчитываясь в даты. */}
+      <div className="hidden space-y-2 md:block">
+        {pagedOrders.map((o) => {
+          const urgent = isUrgent(o);
+          const cancelled = isOrderCancelled(o);
+          const isNew = o.sewingStatus === 'Новый';
+          const isReady = o.sewingStatus === 'Готовые';
+          const showHanger = !isNew && !isReady;
+          const stage = stageLabel(o);
+          const justArrived = arrived.has(o.id);
+          const justMoved = moved.has(o.id);
+          return (
+            <div
+              key={o.id}
+              ref={bindRow(o.id)}
+              role="button"
+              tabIndex={0}
+              onClick={() => onOpenDetail(o)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  onOpenDetail(o);
+                }
+              }}
+              className={`relative flex min-w-0 cursor-pointer overflow-hidden rounded-lg border text-left shadow-none outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring ${
+                justArrived ? 'animate-conveyor-arrive' : ''
+              } ${
+                urgent
+                  ? 'border-red-400 bg-red-50 hover:bg-red-100'
+                  : cancelled
+                    ? 'border-red-200 bg-red-50/40 hover:bg-red-50'
+                    : 'border-border bg-card hover:bg-muted/40'
+              }`}
+            >
+              <span
+                aria-hidden
+                className={`w-1.5 shrink-0 ${railOf(o)} ${justArrived ? 'animate-belt' : ''}`}
+                style={
+                  justArrived
+                    ? {
+                        backgroundImage:
+                          'repeating-linear-gradient(180deg, rgba(255,255,255,0.35) 0 6px, transparent 6px 12px)',
+                        backgroundSize: '100% 24px',
+                      }
+                    : undefined
+                }
+              />
+
+              <div className="flex min-w-0 flex-1 flex-col">
+                <div className="flex flex-wrap items-start justify-between gap-1">
+                  <div className="flex min-w-0 flex-wrap items-stretch">
                     {urgent && (
-                      <Icon
-                        name="Zap"
-                        size={17}
-                        className="shrink-0 fill-red-600 text-red-600"
-                      />
+                      <span className="inline-flex items-center gap-1 rounded-br-md bg-red-600 px-2 py-1 text-[11px] font-extrabold uppercase leading-none text-white">
+                        <Icon name="Zap" size={12} className="shrink-0 fill-white text-white" />
+                        Срочно
+                        <span className="hidden lg:inline"> · вне очереди</span>
+                      </span>
                     )}
-                    {o.orderNumber}
-                    {/* Чья это вещь: цех общий, но упаковка и вложения у
-                        МЕГАТЮЛЬ и ДЮНЫ разные — различать надо одним взглядом. */}
-                    <ShopBadge name={o.shopName} color={o.shopColor} />
-                    {canPrintStickerForOrder(o, canPrintSticker) && (
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <button
-                            type="button"
-                            disabled={printingId === o.id}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              void handlePrintSticker(o);
-                            }}
-                            className="text-muted-foreground hover:text-blue-600 disabled:opacity-50"
-                            aria-label={
-                              o.orderType === 'FBS'
-                                ? 'Печать ярлыка маркетплейса'
-                                : 'Печать стикера FBO'
-                            }
+                    {(o.marketplaceCreatedAt || o.createdAt) && (
+                      <span
+                        className={`inline-flex items-center px-2 py-1 text-[11px] font-semibold leading-none tabular-nums ${
+                          urgent
+                            ? 'text-red-800'
+                            : 'rounded-br-md bg-slate-100 text-slate-700'
+                        }`}
+                      >
+                        {formatDate(o.marketplaceCreatedAt || o.createdAt)}
+                      </span>
+                    )}
+                    {o.completedAt && (
+                      <span className="inline-flex items-center px-2 py-1 text-[11px] leading-none text-muted-foreground">
+                        готов {formatDate(o.completedAt)}
+                      </span>
+                    )}
+                  </div>
+                  <div className="ml-auto flex items-center gap-1">
+                    <OrderWaitTimer order={o} compact />
+                    {(o.marketplace || o.orderType) && (
+                      <span className="inline-flex overflow-hidden rounded-bl-md">
+                        {o.marketplace && (
+                          <span
+                            className={`px-2 py-1 text-[11px] font-bold leading-none ${
+                              marketplaceCornerClass[o.marketplace] || 'bg-slate-700 text-white'
+                            }`}
                           >
-                            <Icon
-                              name={printingId === o.id ? 'Loader2' : 'Printer'}
-                              size={15}
-                              className={printingId === o.id ? 'animate-spin' : undefined}
-                            />
-                          </button>
-                        </TooltipTrigger>
-                        <TooltipContent>
-                          {o.orderType === 'FBS'
-                            ? `Ярлык ${o.marketplace || 'маркетплейса'}`
-                            : 'Печать стикера FBO'}
-                        </TooltipContent>
-                      </Tooltip>
+                            {marketplaceCornerLabel[o.marketplace] || o.marketplace}
+                          </span>
+                        )}
+                        {o.orderType && (
+                          <span
+                            className={`px-2 py-1 text-[11px] font-bold leading-none ${
+                              o.orderType === 'FBS'
+                                ? 'bg-emerald-600 text-white'
+                                : 'bg-sky-600 text-white'
+                            }`}
+                          >
+                            {o.orderType}
+                          </span>
+                        )}
+                      </span>
                     )}
-                  </span>
-                  {/* КРОЙ ВИСИТ С ЧУЖОЙ БИРКОЙ.
-                      Заказ отменили после раскроя, ткань уже разрезана — крой
-                      передали этому заказу, чтобы не шить такую же вещь заново.
-                      Но бирка на вешалке осталась от отменённого заказа:
-                      перепечатать её некому. Без этой строки швея искала бы
-                      вешалку по номеру, которого на ней нет. */}
-                  {o.cutFromOrderNumber && (
-                    <div className="mt-0.5 whitespace-nowrap rounded-sm bg-amber-100 px-1.5 py-0.5 text-[11px] font-medium text-amber-900">
-                      Крой с биркой {o.cutFromOrderNumber}
-                    </div>
-                  )}
-                </TableCell>
-                {/* Изделие: материал и размер вместе — так их и называют в цехе
-                    («Вуаль 300×255»), а не тремя отдельными числами. */}
-                <TableCell className="whitespace-nowrap text-base font-bold">
-                  {o.material || '—'}
-                  {o.width && o.height ? ` ${o.width}×${o.height}` : ''}
-                </TableCell>
-                <TableCell className="whitespace-nowrap">
-                  <span className={marketplaceLogo[o.marketplace]?.className}>
-                    {marketplaceLogo[o.marketplace]?.label || o.marketplace}
-                  </span>
-                  <span
-                    className={`ml-1.5 font-bold ${
-                      o.orderType === 'FBS' ? 'text-emerald-700' : 'text-sky-700'
-                    }`}
-                  >
-                    {o.orderType}
-                  </span>
-                  {/* Кластер важен только для FBO: у FBS его нет. */}
-                  {o.cluster && (
-                    <div className="text-sm font-semibold text-sky-800">{o.cluster}</div>
-                  )}
-                  {/* ЭТАП ОВЕРЛОКА. Закройщик видит, что вещь пойдёт сначала на
-                      обмётку края, а швея — что вещь уже обмётана и готова к
-                      прямострочке. */}
-                  {o.requiresOverlock && (
-                    <div
-                      className={`mt-0.5 inline-block whitespace-nowrap rounded-sm px-1.5 py-0.5 text-[10px] font-medium ${
-                        o.overlockedAt
-                          ? 'bg-emerald-100 text-emerald-800'
-                          : 'bg-fuchsia-100 text-fuchsia-800'
+                  </div>
+                </div>
+
+                <div className="flex flex-wrap items-start gap-x-3 gap-y-2 px-3 py-2.5">
+                  <div className="flex shrink-0 flex-col gap-1">
+                    <Badge
+                      className={`${statusBadgeClass[stage] || ''} w-fit whitespace-nowrap ${
+                        justMoved ? 'animate-moved-glow' : ''
                       }`}
                     >
-                      {o.overlockedAt ? 'Обработан на оверлоке' : 'Оверлок'}
-                    </div>
-                  )}
-                  {/* Покупатель — компания: заказ шьётся так же, но пометка нужна,
-                      чтобы в цехе понимали, кому уйдёт вещь. */}
-                  {o.isLegalEntity && (
-                    <div className="mt-0.5 inline-block whitespace-nowrap rounded-sm bg-indigo-100 px-1.5 py-0.5 text-[10px] font-medium text-indigo-800">
-                      Юр. лицо
-                    </div>
-                  )}
-                </TableCell>
-                <TableCell>
-                  <OrderStagesDiagram order={o} />
-                </TableCell>
-                <TableCell>{orderHangerLabel(o)}</TableCell>
-                <TableCell className="text-sm">
-                  <div className="whitespace-nowrap font-semibold">
-                    {formatDate(o.marketplaceCreatedAt || o.createdAt)}
+                      {stage}
+                    </Badge>
+                    {cancelled && (
+                      <Badge className="w-fit whitespace-nowrap bg-red-600 text-white hover:bg-red-600">
+                        Отменён
+                        <span className="hidden xl:inline"> → склад</span>
+                      </Badge>
+                    )}
                   </div>
-                  {o.completedAt && (
-                    <div className="whitespace-nowrap text-muted-foreground">
-                      готов {formatDate(o.completedAt)}
-                    </div>
-                  )}
-                  <div className="mt-1">
-                    <OrderWaitTimer order={o} />
+
+                  <div className="min-w-[9rem] flex-1 basis-[12rem]">
+                    <p className="truncate text-base font-bold leading-tight">
+                      {o.material || '—'}
+                      {o.width && o.height ? ` ${o.width}×${o.height}` : ''}
+                    </p>
+                    <p className="flex min-w-0 flex-wrap items-center gap-1.5">
+                      <span className="min-w-0 truncate font-mono-tech text-sm font-semibold">
+                        {o.orderNumber}
+                      </span>
+                      <ShopBadge name={o.shopName} color={o.shopColor} />
+                      {canPrintStickerForOrder(o, canPrintSticker) && (
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <button
+                              type="button"
+                              disabled={printingId === o.id}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                void handlePrintSticker(o);
+                              }}
+                              className="text-muted-foreground hover:text-blue-600 disabled:opacity-50"
+                              aria-label={
+                                o.orderType === 'FBS'
+                                  ? 'Печать ярлыка маркетплейса'
+                                  : 'Печать стикера FBO'
+                              }
+                            >
+                              <Icon
+                                name={printingId === o.id ? 'Loader2' : 'Printer'}
+                                size={15}
+                                className={printingId === o.id ? 'animate-spin' : undefined}
+                              />
+                            </button>
+                          </TooltipTrigger>
+                          <TooltipContent>
+                            {o.orderType === 'FBS'
+                              ? `Ярлык ${o.marketplace || 'маркетплейса'}`
+                              : 'Печать стикера FBO'}
+                          </TooltipContent>
+                        </Tooltip>
+                      )}
+                    </p>
+                    {(o.cluster ||
+                      (o.groupSize && o.groupSize > 1) ||
+                      (o.requiresOverlock && !isOnOverlock(o)) ||
+                      o.isLegalEntity) && (
+                    <p className="mt-0.5 flex flex-wrap items-center gap-1.5 text-sm">
+                      {o.cluster && (
+                        <span className="font-semibold text-sky-800">{o.cluster}</span>
+                      )}
+                      {o.groupSize && o.groupSize > 1 && (
+                        <Badge className="bg-violet-600 px-1.5 py-0 text-[10px] text-white hover:bg-violet-600">
+                          {o.groupPosition} из {o.groupSize}
+                        </Badge>
+                      )}
+                      {o.requiresOverlock && !isOnOverlock(o) && (
+                        <span
+                          className={`rounded-sm px-1.5 py-0.5 text-[10px] font-medium ${
+                            o.overlockedAt
+                              ? 'bg-emerald-100 text-emerald-800'
+                              : 'bg-fuchsia-100 text-fuchsia-800'
+                          }`}
+                        >
+                          {o.overlockedAt ? 'Обработан на оверлоке' : 'Оверлок'}
+                        </span>
+                      )}
+                      {o.isLegalEntity && (
+                        <span className="rounded-sm bg-indigo-100 px-1.5 py-0.5 text-[10px] font-medium text-indigo-800">
+                          Юр. лицо
+                        </span>
+                      )}
+                    </p>
+                    )}
+                    {o.cutFromOrderNumber && (
+                      <p className="mt-0.5 w-fit rounded-sm bg-amber-100 px-1.5 py-0.5 text-[11px] font-medium text-amber-900">
+                        Крой с биркой {o.cutFromOrderNumber}
+                      </p>
+                    )}
                   </div>
-                </TableCell>
-                <TableCell>
+
                   <Button
                     size="sm"
-                    className="bg-blue-600 text-white hover:bg-blue-700"
-                    onClick={() => onOpenDetail(o)}
+                    className="ml-auto shrink-0 bg-orange-500 text-white hover:bg-orange-600"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onOpenDetail(o);
+                    }}
                   >
                     <Icon name="Eye" size={14} className="mr-1.5" />
                     Просмотр
                   </Button>
-                </TableCell>
-              </TableRow>
-              );
-            })}
-          </TableBody>
-        </Table>
+                </div>
+
+                {!isNew && (
+                  <div className="mt-auto flex items-end justify-between gap-2 px-3 pb-2">
+                    <div className="flex min-w-0 items-end gap-2">
+                      <OrderStageAvatars order={o} />
+                      <div className="rounded-tr-md bg-slate-100/90 px-2 py-1 empty:hidden">
+                        <OrderStagesDiagram order={o} />
+                      </div>
+                    </div>
+                    {showHanger && (
+                      <p className="truncate text-xs font-semibold">
+                        {o.hangerNumber > 0 ? `вешалка ${orderHangerLabel(o)}` : 'вешалка —'}
+                      </p>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+          );
+        })}
       </div>
 
       {totalPages > 1 && (

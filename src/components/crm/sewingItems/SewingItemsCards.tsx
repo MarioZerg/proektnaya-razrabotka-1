@@ -13,6 +13,7 @@ import {
   isOrderCancelled,
 } from '@/components/crm/sewingItems/sewingItemsShared';
 import OrderStagesDiagram from '@/components/crm/sewingItems/OrderStagesDiagram';
+import OrderStageAvatars from '@/components/crm/sewingItems/OrderStageAvatars';
 import OrderWaitTimer from '@/components/crm/sewingItems/OrderWaitTimer';
 import { usePrintOrderSticker } from '@/components/crm/sewingItems/usePrintOrderSticker';
 import { isUrgent } from '@/components/crm/sewingItems/orderUrgency';
@@ -286,7 +287,10 @@ const SewingItemsCards = ({
                 </p>
               )}
 
-              {(o.assignedUserName || o.hangerNumber > 0) && (
+              {(o.assignedUserName ||
+                (o.hangerNumber > 0 &&
+                  o.sewingStatus !== 'Новый' &&
+                  o.sewingStatus !== 'Готовые')) && (
                 <p className="flex items-baseline gap-1.5 text-xs text-muted-foreground">
                   {/* ФИО сокращаем до «Фамилия И.О.»: полное имя занимало всю строку и
                       выдавливало номер вешалки за край — швея не видела, где искать крой.
@@ -295,7 +299,9 @@ const SewingItemsCards = ({
                   {o.assignedUserName && (
                     <span className="truncate">{shortFio(o.assignedUserName)}</span>
                   )}
-                  {o.hangerNumber > 0 && (
+                  {o.hangerNumber > 0 &&
+                    o.sewingStatus !== 'Новый' &&
+                    o.sewingStatus !== 'Готовые' && (
                     <span className="shrink-0 whitespace-nowrap font-semibold text-foreground">
                       вешалка {orderHangerLabel(o)}
                     </span>
@@ -303,8 +309,13 @@ const SewingItemsCards = ({
                 </p>
               )}
 
-              {(o.cutterUserName || o.sewerUserName || o.packerUserName) && (
-                <OrderStagesDiagram order={o} />
+              {o.sewingStatus !== 'Новый' && (
+                <div className="mt-auto flex items-end gap-2">
+                  <OrderStageAvatars order={o} />
+                  <div className="w-fit rounded-tr-md bg-slate-100/90 px-2 py-1 empty:hidden">
+                    <OrderStagesDiagram order={o} />
+                  </div>
+                </div>
               )}
 
               {/* Вещь отменена покупателем уже ПОСЛЕ раскроя: ткань разрезана,

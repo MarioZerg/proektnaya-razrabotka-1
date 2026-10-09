@@ -19,7 +19,10 @@ interface SewingItemActionsSectionProps {
   cutting: boolean;
   employees: Employee[];
   workshops: Workshop[];
-  onStatusChange: (status: string) => void;
+  onStatusChange: (
+    status: string,
+    rolls?: { fabricRollId?: number; trimRollId?: number },
+  ) => void;
   onAssignUser: (userId: string) => void;
   onAssignWorkshop: (workshopId: string) => void;
   onCut: (rollId?: number, hangerNumber?: number) => void;
@@ -226,11 +229,22 @@ const SewingItemActionsSection = ({
   return (
     <AdminActionsCard
       selectedOrder={selectedOrder}
+      orderDetail={orderDetail}
       saving={saving}
       cutting={cutting}
       isAlreadyCut={isAlreadyCut}
       employees={employees}
       workshops={workshops}
+      fabricRolls={
+        orderDetail?.requiredFabricMaterialId
+          ? availableRolls.filter((r) => r.materialId === orderDetail.requiredFabricMaterialId)
+          : []
+      }
+      trimRolls={
+        orderDetail?.requiredTrimMaterialId
+          ? availableRolls.filter((r) => r.materialId === orderDetail.requiredTrimMaterialId)
+          : []
+      }
       onStatusChange={onStatusChange}
       onAssignUser={onAssignUser}
       onAssignWorkshop={onAssignWorkshop}

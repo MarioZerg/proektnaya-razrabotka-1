@@ -20,6 +20,8 @@ import { Badge } from '@/components/ui/badge';
 import {
   statusBadgeClass,
   isOrderCancelled,
+  orderCutterName,
+  shortFio,
 } from '@/components/crm/sewingItems/sewingItemsShared';
 import { Button } from '@/components/ui/button';
 import Icon from '@/components/ui/icon';
@@ -48,7 +50,10 @@ interface SewingItemDetailDialogProps {
   cutting: boolean;
   employees: Employee[];
   workshops: Workshop[];
-  onStatusChange: (status: string) => void;
+  onStatusChange: (
+    status: string,
+    rolls?: { fabricRollId?: number; trimRollId?: number },
+  ) => void;
   onAssignUser: (userId: string) => void;
   onAssignWorkshop: (workshopId: string) => void;
   onCut: (rollId?: number, hangerNumber?: number) => void;
@@ -186,6 +191,7 @@ const SewingItemDetailDialog = ({
   // Швее и закройщику карточка нужна короткой: номер, материал, рулон.
   // Справку и таймлайн открывают сами, если понадобится.
   const compactCard = isCutterView || isSewerView;
+  const cutterName = selectedOrder ? orderCutterName(selectedOrder) : null;
 
   return (
     <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
@@ -214,6 +220,9 @@ const SewingItemDetailDialog = ({
                 <p className="text-sm text-muted-foreground">
                   вешалка {orderHangerLabel(selectedOrder)}
                 </p>
+              )}
+              {cutterName && (
+                <p className="text-sm font-medium">Кроил(а) {shortFio(cutterName)}</p>
               )}
             </div>
           ) : (
@@ -251,6 +260,11 @@ const SewingItemDetailDialog = ({
               <span className="w-full break-all font-mono-tech text-xs text-muted-foreground">
                 {selectedOrder.orderNumber}
               </span>
+              {cutterName && (
+                <span className="w-full text-sm font-medium">
+                  Кроил(а) {shortFio(cutterName)}
+                </span>
+              )}
             </div>
           )}
             </>

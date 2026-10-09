@@ -11,6 +11,7 @@ import OrderStagesDiagram from '@/components/crm/sewingItems/OrderStagesDiagram'
 import { formatQuantity } from '@/lib/formatQuantity';
 import { orderHangerLabel } from '@/lib/hangersApi';
 import { fabricUses4cmTape, is6cmTapeName } from '@/lib/tapeForFabric';
+import { orderCutterName } from '@/components/crm/sewingItems/sewingItemsShared';
 
 interface SewingItemInfoCardsProps {
   selectedOrder: Order;
@@ -166,14 +167,42 @@ const SewingItemInfoCards = ({
           <OrderStagesDiagram order={selectedOrder} />
           <Table className="min-w-0">
             <TableBody>
-              <TableRow>
-                <TableCell className="font-medium text-muted-foreground">Назначен сейчас</TableCell>
-                <TableCell>{selectedOrder.assignedUserName || '—'}</TableCell>
-              </TableRow>
-              <TableRow>
-                <TableCell className="font-medium text-muted-foreground">Вешалка</TableCell>
-                <TableCell>{orderHangerLabel(selectedOrder)}</TableCell>
-              </TableRow>
+              {orderCutterName(selectedOrder) && (
+                <TableRow>
+                  <TableCell className="font-medium text-muted-foreground">Кроил(а)</TableCell>
+                  <TableCell>{orderCutterName(selectedOrder)}</TableCell>
+                </TableRow>
+              )}
+              {selectedOrder.sewerUserName && (
+                <TableRow>
+                  <TableCell className="font-medium text-muted-foreground">Сшил(а)</TableCell>
+                  <TableCell>{selectedOrder.sewerUserName}</TableCell>
+                </TableRow>
+              )}
+              {selectedOrder.overlockUserName && (
+                <TableRow>
+                  <TableCell className="font-medium text-muted-foreground">Оверлок</TableCell>
+                  <TableCell>{selectedOrder.overlockUserName}</TableCell>
+                </TableRow>
+              )}
+              {selectedOrder.packerUserName && (
+                <TableRow>
+                  <TableCell className="font-medium text-muted-foreground">Упаковал(а)</TableCell>
+                  <TableCell>{selectedOrder.packerUserName}</TableCell>
+                </TableRow>
+              )}
+              {selectedOrder.assignedUserName && (
+                <TableRow>
+                  <TableCell className="font-medium text-muted-foreground">Назначен сейчас</TableCell>
+                  <TableCell>{selectedOrder.assignedUserName}</TableCell>
+                </TableRow>
+              )}
+              {selectedOrder.sewingStatus !== 'Готовые' && (
+                <TableRow>
+                  <TableCell className="font-medium text-muted-foreground">Вешалка</TableCell>
+                  <TableCell>{orderHangerLabel(selectedOrder)}</TableCell>
+                </TableRow>
+              )}
             </TableBody>
           </Table>
         </CardContent>

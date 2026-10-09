@@ -26,6 +26,8 @@ interface KioskRepackScreenProps {
   actorName: string;
   /** Цех этого киоска: перепаковка у каждого цеха своя. */
   workshopId: number | null;
+  /** Очистка очереди только у админа — упаковщица кнопку не видит и не нажмёт. */
+  isAdmin?: boolean;
 }
 
 /**
@@ -48,7 +50,12 @@ interface KioskRepackScreenProps {
  * Ищется вещь ТОЛЬКО среди переведённых кладовщиком на перепаковку — активный заказ,
  * который вот-вот уедет покупателю, сюда не попадёт даже случайным сканом.
  */
-const KioskRepackScreen = ({ actorId, actorName, workshopId }: KioskRepackScreenProps) => {
+const KioskRepackScreen = ({
+  actorId,
+  actorName,
+  workshopId,
+  isAdmin = false,
+}: KioskRepackScreenProps) => {
   const { toast } = useToast();
   /** Единственная вещь на экране — только что отсканированная. */
   const [item, setItem] = useState<RepackItem | null>(null);
@@ -124,6 +131,7 @@ const KioskRepackScreen = ({ actorId, actorName, workshopId }: KioskRepackScreen
   useScannerAutoSubmit(barcode, handleScan, !scanning && !item && !anyDialog);
 
   const handleClearQueue = () => {
+    if (!isAdmin) return;
     void run(async () => {
       setClearAsk(false);
       try {
@@ -299,7 +307,7 @@ const KioskRepackScreen = ({ actorId, actorName, workshopId }: KioskRepackScreen
         }}
       />
 
-      <Dialog open={clearAsk} onOpenChange={(v) => !v && setClearAsk(false)}>
+      <Dialog open={isAdmin && clearAsk} onOpenChange={(v) => !v && setClearAsk(false)}>
         <DialogContent className="kiosk-root sm:max-w-lg" confirmClose={false}>
           <DialogHeader>
             <DialogTitle className="text-2xl">Очистить очередь перепаковки?</DialogTitle>
@@ -388,15 +396,17 @@ const KioskRepackScreen = ({ actorId, actorName, workshopId }: KioskRepackScreen
               ? `В этом месяце на перепаковке ${waiting} шт. Берите вещь и подносите к сканеру`
               : 'Сюда попадают возвраты, которые кладовщик отправил переупаковать в этом месяце'}
           </p>
-          <Button
-            variant="outline"
-            className="mt-4 h-14 border-violet-300 text-base text-violet-800 hover:bg-violet-50"
-            onClick={() => setClearAsk(true)}
-            disabled={processing || (!countError && waiting === 0)}
-          >
-            <Icon name="RotateCcw" size={22} className="mr-2" />
-            Очистить очередь — начать с чистого листа
-          </Button>
+          {isAdmin && (
+            <Button
+              variant="outline"
+              className="mt-4 h-14 border-violet-300 text-base text-violet-800 hover:bg-violet-50"
+              onClick={() => setClearAsk(true)}
+              disabled={processing || (!countError && waiting === 0)}
+            >
+              <Icon name="RotateCcw" size={22} className="mr-2" />
+              Очистить очередь — начать с чистого листа
+            </Button>
+          )}
         </div>
       ) : (
         <Card className="border-2 border-violet-500 shadow-none ring-4 ring-violet-200">

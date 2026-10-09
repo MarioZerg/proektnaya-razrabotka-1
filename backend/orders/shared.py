@@ -288,7 +288,10 @@ def take_cancelled_cut(cur, order_id) -> dict | None:
         # Иначе отшитая вещь уезжала бы на склад со СТАРЫМ ярлыком, а новый заказ
         # кроили бы заново.
         "WHERE o.sewing_status IN ('Раскроено', 'В работе', 'Стикеровка') "
-        "  AND o.cut_at IS NOT NULL "
+        # Статус «Раскроено» и дальше — уже крой в цехе. cut_at раньше требовали
+        # обязательно, и крой, который админ перевёл руками (статус есть, даты нет),
+        # новый заказ того же размера не подбирал: ткань висела на вешалке, а
+        # закройщик резал её второй раз.
         # Крой ещё никому не передан: иначе одну вешалку отдали бы двум заказам.
         "  AND o.cut_given_to_order_id IS NULL "
         # Только ОТМЕНЁННЫЕ: живой заказ ждёт свой покупатель, его крой не трогаем.
@@ -331,7 +334,7 @@ def take_cancelled_cut(cur, order_id) -> dict | None:
     # в конец очереди, хотя крой давно готов.
     cur.execute(
         "UPDATE orders SET sewing_status = %s, "
-        "  cut_at = %s, cutter_user_id = %s, hanger_number = %s, "
+        "  cut_at = COALESCE(%s, now()), cutter_user_id = %s, hanger_number = %s, "
         "  workshop_id = COALESCE(%s, workshop_id), "
         "  requires_overlock = %s, overlocked_at = %s, overlock_user_id = %s, "
         "  cut_from_order_id = %s, "
@@ -716,6 +719,198 @@ def consume_trim_roll(
         f"actor_user_id, actor_workshop_id, actor_shift_number, is_foreign_shift) "
         f"VALUES ({int(order_id)}, {trim_material_id}, {roll_row[0]}, {trim_qty_needed}, "
         f"{actor_user_sql}, {actor_ws_sql}, {actor_shift_sql}, {str(is_foreign_shift).lower()})"
+    )
+    return None
+
+
+def _order_inherited_cut(cur, order_id) -> bool:
+    """Крой пришёл от отменённого заказа — материалы уже списаны там."""
+    cur.execute(
+        "SELECT cut_from_order_id FROM orders WHERE id = %s",
+        (int(order_id),),
+    )
+    row = cur.fetchone()
+    return bool(row and row[0])
+
+
+def _order_has_type_usage(cur, order_id, type_name) -> bool:
+    """Есть ли по заказу расход материала этого типа (Тюль / Аксессуары)."""
+    cur.execute(
+        "SELECT 1 FROM order_material_usage omu "
+        "JOIN materials m ON m.id = omu.material_id "
+        "JOIN material_types mt ON mt.id = m.type_id "
+        "WHERE omu.order_id = %s AND mt.name = %s LIMIT 1",
+        (int(order_id), type_name),
+    )
+    return bool(cur.fetchone())
+
+
+def consume_fabric_roll(
+    cur,
+    *,
+    order_id,
+    roll_id,
+    material,
+    width,
+    height,
+    workshop_id=None,
+    actor_id=None,
+):
+    """Списывает ТКАНЬ с выбранного рулона при ручном переводе админом в «Раскроено».
+
+    Тесьму и упаковку не трогает: тесьму списывает швея (или админ отдельно,
+    когда переводит на стикеровку), пакет — упаковщица на терминале.
+
+    Возвращает None при успехе или dict {'error': str, 'status': int}.
+    Если ткань уже списана, крой унаследован или взят с перешива — ничего
+    не делает. Рулон обязателен, только когда ткань ещё не израсходована.
+    """
+    if _order_inherited_cut(cur, order_id):
+        return None
+    if _order_has_type_usage(cur, order_id, 'Тюль'):
+        return None
+
+    cur.execute(
+        "SELECT id, status FROM repair_fabric_pieces "
+        "WHERE used_order_id = %s AND status IN ('reserved', 'used') "
+        "ORDER BY CASE status WHEN 'reserved' THEN 0 ELSE 1 END, id DESC LIMIT 1 "
+        "FOR UPDATE",
+        (int(order_id),),
+    )
+    piece_row = cur.fetchone()
+    if piece_row:
+        repair_piece_id = piece_row[0]
+        cur.execute("SELECT id FROM material_types WHERE name = 'Тюль'")
+        t_row = cur.fetchone()
+        tul_type_id = t_row[0] if t_row else None
+        fabric_material_id = None
+        fabric_qty = 0.0
+        if material and width and height and tul_type_id:
+            cur.execute(
+                "SELECT id FROM marketplace_items "
+                "WHERE material = %s AND width = %s AND height = %s LIMIT 1",
+                (material, width, height),
+            )
+            item_row = cur.fetchone()
+            if item_row:
+                cur.execute(
+                    "SELECT mim.material_id, mim.quantity FROM marketplace_item_materials mim "
+                    "JOIN materials m ON m.id = mim.material_id "
+                    "WHERE mim.marketplace_item_id = %s AND m.type_id = %s LIMIT 1",
+                    (item_row[0], tul_type_id),
+                )
+                fab = cur.fetchone()
+                if fab:
+                    fabric_material_id = fab[0]
+                    fabric_qty = float(fab[1])
+        cur.execute(
+            "UPDATE repair_fabric_pieces SET status = 'used', "
+            "  used_at = COALESCE(used_at, now()) "
+            "WHERE id = %s AND status = 'reserved'",
+            (repair_piece_id,),
+        )
+        if fabric_material_id and fabric_qty > 0:
+            cur.execute(
+                "INSERT INTO order_material_usage (order_id, material_id, roll_id, quantity) "
+                "VALUES (%s, %s, NULL, %s)",
+                (int(order_id), fabric_material_id, round(fabric_qty, 3)),
+            )
+        return None
+
+    if not (material and width and height):
+        return {
+            'error': 'Нельзя списать ткань: у заказа не указаны материал и размер',
+            'status': 409,
+        }
+
+    cur.execute(
+        "SELECT id FROM marketplace_items WHERE material = %s AND width = %s AND height = %s LIMIT 1",
+        (material, width, height),
+    )
+    item_row = cur.fetchone()
+    if not item_row:
+        return {
+            'error': 'Не найден товар маркетплейса для этого материала/размера',
+            'status': 404,
+        }
+
+    cur.execute("SELECT id FROM material_types WHERE name = 'Тюль'")
+    t_row = cur.fetchone()
+    if not t_row:
+        return None
+    tul_type_id = t_row[0]
+    cur.execute(
+        "SELECT mim.material_id, mim.quantity FROM marketplace_item_materials mim "
+        "JOIN materials m ON m.id = mim.material_id "
+        "WHERE mim.marketplace_item_id = %s AND m.type_id = %s LIMIT 1",
+        (item_row[0], tul_type_id),
+    )
+    fab = cur.fetchone()
+    if not fab:
+        return None
+    fabric_material_id, qty_needed = fab[0], float(fab[1])
+    if qty_needed <= 0:
+        return None
+
+    if not roll_id:
+        return {'error': 'Выберите рулон ткани — с какого списывать крой', 'status': 400}
+
+    cur.execute(
+        "SELECT id, remaining_quantity, workshop_id, accepted_at, defect_flagged_at "
+        "FROM rolls WHERE id = %s AND material_id = %s AND status = 'in_workshop'",
+        (int(roll_id), fabric_material_id),
+    )
+    roll_row = cur.fetchone()
+    if not roll_row:
+        return {
+            'error': 'Выбранный рулон ткани не найден или недоступен',
+            'status': 404,
+        }
+    if roll_row[3] is None:
+        return {
+            'error': 'Рулон ещё не принят сменой. Подтвердите приёмку, потом переводите статус',
+            'status': 409,
+        }
+    if roll_row[4] is not None:
+        return {
+            'error': 'Рулон отставлен как бракованный — работать с ним нельзя',
+            'status': 409,
+        }
+    if workshop_id and roll_row[2] and int(roll_row[2]) != int(workshop_id):
+        return {'error': 'Рулон не из цеха этого заказа', 'status': 409}
+
+    roll_remaining = float(roll_row[1])
+    if roll_remaining < qty_needed:
+        cur.execute("SELECT name, unit FROM materials WHERE id = %s", (fabric_material_id,))
+        mat_name, mat_unit = cur.fetchone()
+        return {
+            'error': f'{mat_name}: нужно {round(qty_needed, 2)} {mat_unit}, '
+                     f'в рулоне осталось {round(roll_remaining, 2)} {mat_unit}',
+            'status': 409,
+        }
+
+    cur.execute(
+        "UPDATE rolls SET remaining_quantity = round(remaining_quantity - %s, 3), "
+        "status = CASE WHEN remaining_quantity - %s <= 0 THEN 'completed' ELSE status END, "
+        "completed_at = CASE WHEN remaining_quantity - %s <= 0 THEN now() ELSE completed_at END "
+        "WHERE id = %s AND remaining_quantity >= %s "
+        "RETURNING remaining_quantity",
+        (qty_needed, qty_needed, qty_needed, roll_row[0], qty_needed - 0.001),
+    )
+    if not cur.fetchone():
+        cur.execute("SELECT name, unit FROM materials WHERE id = %s", (fabric_material_id,))
+        m_row = cur.fetchone()
+        return {
+            'error': f'{m_row[0] if m_row else "Ткань"}: материал разобрали, пока шло списание — '
+                     f'нужно {round(qty_needed, 2)} {m_row[1] if m_row else ""}, столько уже нет',
+            'status': 409,
+        }
+
+    actor_sql = int(actor_id) if actor_id not in (None, '') else None
+    cur.execute(
+        "INSERT INTO order_material_usage (order_id, material_id, roll_id, quantity, actor_user_id) "
+        "VALUES (%s, %s, %s, %s, %s)",
+        (int(order_id), fabric_material_id, roll_row[0], qty_needed, actor_sql),
     )
     return None
 

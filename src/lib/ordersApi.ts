@@ -50,14 +50,19 @@ export interface Order {
    * при take_order. Заполняется в момент раскроя (action 'cut') и дальше не меняется. */
   cutterUserId: number | null;
   cutterUserName: string | null;
+  cutterAvatarUrl?: string | null;
   /** Кто отшил заказ — заполняется при отправке на стикеровку (action 'send_to_stickering')
    * и дальше не меняется, аналогично cutterUserId. */
   sewerUserId: number | null;
   sewerUserName: string | null;
+  sewerAvatarUrl?: string | null;
   /** Кто упаковал (закрыл) заказ на терминале стикеровки — заполняется при закрытии
    * заказа (backend/kiosk, action 'close_order') и дальше не меняется. */
   packerUserId: number | null;
   packerUserName: string | null;
+  packerAvatarUrl?: string | null;
+  assignedAvatarUrl?: string | null;
+  overlockAvatarUrl?: string | null;
   /** Когда вещь раскроили и отшили — по этим датам цех сверяет свою выработку.
    * Дата заказа покупателя для этого не годится: заказ мог пролежать в очереди. */
   cutAt?: string | null;
@@ -306,6 +311,11 @@ export const updateOrder = (
     workshopId: number | null;
     marketplaceItemId: number | null;
     actorId: number;
+    /** Рулон ткани — обязателен, когда админ переводит заказ в «Раскроено» и дальше. */
+    rollId: number;
+    fabricRollId: number;
+    /** Рулон тесьмы — только при переводе на стикеровку / в готовые. */
+    trimRollId: number;
   }>
 ) => postAction({ action: 'update_order', id, ...fields });
 

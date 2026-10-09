@@ -37,6 +37,7 @@ const PackerRepack = () => {
             // каждого цеха свой, и с компьютера должно быть видно ровно то же, что
             // на планшете в этом цехе.
             workshopId={user.activeWorkshopId || user.workshopId || null}
+            isAdmin={user.role === 'admin'}
           />
         ) : (
           <div className="flex items-center gap-2 text-muted-foreground">

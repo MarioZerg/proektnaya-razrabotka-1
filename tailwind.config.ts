@@ -204,6 +204,16 @@ export default {
 					from: { opacity: '0', transform: 'translateY(-10px)' },
 					to: { opacity: '1', transform: 'translateY(0)' }
 				},
+				// Строка конвейера только что появилась: заезжает слева, как вещь
+				// на ленте, и на секунду подсвечивается.
+				'conveyor-arrive': {
+					'0%': { opacity: '0', transform: 'translateX(-32px)' },
+					'100%': { opacity: '1', transform: 'translateX(0)' }
+				},
+				'conveyor-arrive-glow': {
+					'0%': { backgroundColor: 'rgb(220 252 231)' },
+					'100%': { backgroundColor: 'transparent' }
+				},
 				'count-bump': {
 					'0%': { transform: 'scale(1)' },
 					'35%': { transform: 'scale(1.3)' },
@@ -244,6 +254,8 @@ export default {
 				'belt': 'belt 1s linear infinite',
 				'moved-glow': 'moved-glow 1.6s ease-out 2',
 				'feed-in': 'feed-in 0.5s ease-out both',
+				'conveyor-arrive': 'conveyor-arrive 0.55s cubic-bezier(0.22, 1, 0.36, 1) both',
+				'conveyor-arrive-glow': 'conveyor-arrive-glow 1.1s ease-out both',
 				'count-bump': 'count-bump 0.6s ease-out',
 				'breathe': 'breathe 3s ease-in-out infinite',
 				'widget-pulse': 'widget-pulse 1.5s cubic-bezier(0, 0, 0.2, 1) infinite'

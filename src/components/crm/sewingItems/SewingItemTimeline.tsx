@@ -3,8 +3,10 @@ import Icon from '@/components/ui/icon';
 import type { Order } from '@/lib/ordersApi';
 import { formatDateTime, formatTime, timeAgo } from '@/lib/dateUtils';
 import {
+  isCutDone,
   isOnOverlock,
   isOrderCancelled,
+  orderCutterName,
   shortFio,
 } from '@/components/crm/sewingItems/sewingItemsShared';
 
@@ -37,7 +39,7 @@ const waitingText: Record<string, string> = {
 const buildSteps = (o: Order): Step[] => {
   const status = o.sewingStatus;
   const fromStock = status === 'Со склада';
-  const cutDone = !!o.cutAt;
+  const cutDone = isCutDone(o);
   const ovNeeded = !!o.requiresOverlock;
   const ovDone = !!o.overlockedAt;
   const ovWork = isOnOverlock(o);
@@ -78,7 +80,7 @@ const buildSteps = (o: Order): Step[] => {
     icon: 'Scissors',
     hex: '#f59e0b',
     at: o.cutAt || null,
-    who: o.cutterUserName || (cuttingNow ? o.assignedUserName : null),
+    who: orderCutterName(o) || (cuttingNow ? o.assignedUserName : null),
     state: cutDone ? 'done' : cuttingNow ? 'current' : 'waiting',
   };
 

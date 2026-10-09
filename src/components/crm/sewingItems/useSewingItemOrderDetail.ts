@@ -50,6 +50,10 @@ export const useSewingItemOrderDetail = ({
     try {
       const detail = await fetchOrderDetail(orderId);
       setOrderDetail(detail);
+      setSelectedOrder((prev) => {
+        if (!prev || prev.id !== orderId) return prev;
+        return { ...prev, ...detail };
+      });
     } finally {
       setDetailLoading(false);
     }
@@ -95,13 +99,57 @@ export const useSewingItemOrderDetail = ({
     }
   };
 
-  const handleStatusChange = async (status: string) => {
+  const handleStatusChange = async (
+    status: string,
+    rolls?: { fabricRollId?: number; trimRollId?: number },
+  ) => {
     if (!selectedOrder) return;
+    const forward = ['Раскроено', 'В работе', 'Стикеровка', 'Готовые'].includes(status);
+    const inheritedCut = Boolean(selectedOrder.cutFromOrderNumber);
+    const fabricAlready =
+      Boolean(selectedOrder.cutAt) ||
+      Boolean(orderDetail?.repairPiece) ||
+      Boolean(
+        orderDetail?.materialUsage?.some(
+          (u) => u.materialId === orderDetail.requiredFabricMaterialId,
+        ),
+      );
+    if (forward && !inheritedCut && !fabricAlready && !rolls?.fabricRollId) {
+      toast({
+        title: 'Выберите рулон ткани',
+        description: 'При переводе по статусам нужно указать, с какого рулона списывать крой',
+        variant: 'destructive',
+      });
+      return;
+    }
+    const trimNeeded =
+      Boolean(orderDetail?.requiredTrimMaterialId) &&
+      (status === 'Стикеровка' || status === 'Готовые');
+    const trimAlready = Boolean(
+      orderDetail?.materialUsage?.some(
+        (u) => u.materialId === orderDetail.requiredTrimMaterialId,
+      ),
+    );
+    if (trimNeeded && !trimAlready && !rolls?.trimRollId) {
+      toast({
+        title: 'Выберите рулон тесьмы',
+        description: 'Тесьму списываем только когда вещь уже сшита — на стикеровке',
+        variant: 'destructive',
+      });
+      return;
+    }
     setSaving(true);
     try {
-      await updateOrder(selectedOrder.id, { sewingStatus: status as SewingStatus, actorId });
+      await updateOrder(selectedOrder.id, {
+        sewingStatus: status as SewingStatus,
+        actorId,
+        rollId: rolls?.fabricRollId,
+        trimRollId: rolls?.trimRollId,
+      });
       toast({ title: 'Статус обновлён' });
-      setSelectedOrder({ ...selectedOrder, sewingStatus: status });
+      const detail = await fetchOrderDetail(selectedOrder.id);
+      setOrderDetail(detail);
+      setSelectedOrder({ ...selectedOrder, ...detail, sewingStatus: status });
       load();
     } catch (e) {
       toast({ title: 'Ошибка', description: e instanceof Error ? e.message : undefined, variant: 'destructive' });

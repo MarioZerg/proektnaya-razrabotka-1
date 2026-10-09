@@ -1,4 +1,4 @@
-import type { Order } from '@/lib/ordersApi';
+import { isOrderCancelled, type Order } from '@/lib/ordersApi';
 
 /** Сколько часов заказ ждёт с момента оформления покупателем на маркетплейсе. */
 export const hoursSince = (iso: string) => (Date.now() - new Date(iso).getTime()) / 3600000;
@@ -27,6 +27,10 @@ export const getTone = (hours: number, orderType: string): UrgencyTone => {
  * молнией — на неё смотрят и швея на телефоне, и мастер за компьютером.
  */
 export const isUrgent = (order: Order): boolean => {
+  // Отменённый крой уходит во вкладку «Отменённые с кроем»: покупателю его
+  // уже не шьют. «Срочно! Шить вне очереди» в шапке только путает — срок
+  // отгрузки сгорел, но вещь поедет на склад, а не клиенту.
+  if (isOrderCancelled(order)) return false;
   const source = order.marketplaceCreatedAt || order.createdAt;
   if (!source) return false;
   return getTone(hoursSince(source), order.orderType) === 'critical';

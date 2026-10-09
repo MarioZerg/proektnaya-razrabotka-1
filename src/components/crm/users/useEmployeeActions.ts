@@ -8,6 +8,7 @@ import {
   deleteEmployee,
   archiveEmployee,
   unarchiveEmployee,
+  syncMaxAvatars,
   type Employee,
 } from '@/lib/usersApi';
 import {
@@ -38,6 +39,7 @@ export const useEmployeeActions = ({ load }: UseEmployeeActionsArgs) => {
   const [archiveTarget, setArchiveTarget] = useState<Employee | null>(null);
   const [archiveSaving, setArchiveSaving] = useState(false);
   const [enteringId, setEnteringId] = useState<number | null>(null);
+  const [syncingAvatars, setSyncingAvatars] = useState(false);
 
   const openCreate = () => {
     setCreateForm(emptyCreateForm);
@@ -148,6 +150,31 @@ export const useEmployeeActions = ({ load }: UseEmployeeActionsArgs) => {
     }
   };
 
+  const handleSyncMaxAvatars = async () => {
+    setSyncingAvatars(true);
+    try {
+      const result = await syncMaxAvatars();
+      load();
+      toast({
+        title: 'Аватарки MAX обновлены',
+        description:
+          result.updated > 0
+            ? `Подтянуто ${result.updated} из ${result.total}`
+            : result.total === 0
+              ? 'Нет сотрудников с привязкой к MAX'
+              : `MAX не отдал фото: ${result.missing} из ${result.total}. Попросите человека зайти через бота.`,
+      });
+    } catch (err) {
+      toast({
+        title: 'Не удалось синхронизировать аватарки',
+        description: err instanceof Error ? err.message : 'Попробуйте позже',
+        variant: 'destructive',
+      });
+    } finally {
+      setSyncingAvatars(false);
+    }
+  };
+
   const handleUnarchive = async (employee: Employee) => {
     try {
       await unarchiveEmployee(employee.id);
@@ -185,5 +212,7 @@ export const useEmployeeActions = ({ load }: UseEmployeeActionsArgs) => {
     handleUnarchive,
     enteringId,
     handleImpersonate,
+    syncingAvatars,
+    handleSyncMaxAvatars,
   };
 };
