@@ -103,8 +103,10 @@ const LiderTv = () => {
   }, [view, nowMs]);
 
   const floorReady = Boolean(view);
+  const goRaceTimer = useRef(0);
   useSlowScroll(scrollRef, panRef, floorReady && screen === 'floor', 32, () => {
-    window.setTimeout(() => setScreen('race'), 1600);
+    window.clearTimeout(goRaceTimer.current);
+    goRaceTimer.current = window.setTimeout(() => setScreen('race'), 1600);
   });
 
   // view — новый объект на каждый опрос цеха (12 с). Если повесить таймер на него,
@@ -121,7 +123,16 @@ const LiderTv = () => {
     const noOverflow = window.setTimeout(() => {
       const view = scrollRef.current;
       const content = panRef.current;
-      const max = view && content ? content.offsetHeight - view.clientHeight : 0;
+      if (!view || !content) {
+        go();
+        return;
+      }
+      const floor = view.closest('[data-tv-floor]') as HTMLElement | null;
+      const pipe = floor?.firstElementChild as HTMLElement | null;
+      const avail = floor
+        ? Math.max(0, floor.clientHeight - (pipe?.offsetHeight || 0))
+        : view.clientHeight;
+      const max = Math.max(content.offsetHeight, content.scrollHeight) - avail;
       if (max <= 8) go();
     }, FLOOR_MIN_MS);
     const safety = window.setTimeout(go, FLOOR_MAX_MS);
@@ -129,6 +140,7 @@ const LiderTv = () => {
       gone = true;
       window.clearTimeout(noOverflow);
       window.clearTimeout(safety);
+      window.clearTimeout(goRaceTimer.current);
     };
   }, [screen, floorReady]);
 
@@ -238,9 +250,10 @@ const LiderTv = () => {
             Подключаемся к цеху…
           </div>
         ) : (
-          <div className="relative h-[calc(1080px-88px)]">
+          <div data-tv-body="1" className="relative h-[calc(1080px-88px)] overflow-hidden">
             <div
-              className={`flex h-full min-h-0 flex-col px-6 pb-5 pt-2 ${
+              data-tv-floor="1"
+              className={`flex h-full min-h-0 flex-col overflow-hidden px-6 pb-5 pt-2 ${
                 screen === 'floor' ? '' : 'invisible pointer-events-none'
               }`}
             >
@@ -254,11 +267,11 @@ const LiderTv = () => {
                   onCometDone={removeComet}
                 />
               </div>
-              <div className="grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)_420px] gap-4">
+              <div className="grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)_420px] grid-rows-[minmax(0,1fr)] gap-4 overflow-hidden">
                 <div
                   ref={scrollRef}
                   data-tv-scroll="1"
-                  className="min-h-0 overflow-hidden"
+                  className="h-full min-h-0 overflow-hidden"
                 >
                   <div ref={panRef} data-tv-pan="1">
                     <LiderTvPeople

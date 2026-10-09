@@ -309,10 +309,13 @@ namespace YarplanLider
                 "var h=document.querySelector('h1');" +
                 "if(h&&h.textContent&&h.textContent.indexOf('Путь')>=0)return;" +
                 "var b=box();if(!b||!b.c||!b.v)return;" +
-                "var p=b.v.parentElement;" +
-                "if(p&&p.clientHeight>16){b.v.style.height=p.clientHeight+'px';b.v.style.maxHeight=p.clientHeight+'px';}" +
+                "var floor=document.querySelector('[data-tv-floor]');" +
+                "var cap=0;" +
+                "if(floor){var u=0,ch=floor.children;for(var i=0;i<ch.length;i++){if(ch[i]===b.v||ch[i].contains(b.v))break;u+=ch[i].offsetHeight;}cap=floor.clientHeight-u;}" +
+                "if(cap<16){var p=b.v.parentElement;if(p)cap=p.clientHeight;}" +
+                "if(cap>16){b.v.style.height=cap+'px';b.v.style.maxHeight=cap+'px';}" +
                 "b.v.style.overflow='hidden';" +
-                "var max=b.c.offsetHeight-b.v.clientHeight;if(max<8)return;" +
+                "var max=Math.max(b.c.offsetHeight,b.c.scrollHeight)-b.v.clientHeight;if(max<8)return;" +
                 "if(Date.now()<pause)return;" +
                 "y+=1.6*dir;if(y>=max){y=max;dir=-1;pause=Date.now()+1600;}" +
                 "if(y<=0){y=0;dir=1;pause=Date.now()+1600;}" +

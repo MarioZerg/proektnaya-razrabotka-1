@@ -170,12 +170,12 @@ const PersonCard = ({
       </p>
 
       {hands.length > 0 && (
-        <div className={`flex flex-wrap ${cutter ? 'gap-1' : 'gap-1.5'}`}>
+        <div className={cutter ? 'grid grid-cols-4 gap-1' : 'flex flex-wrap gap-1.5'}>
           {shown.map((o) =>
             cutter ? (
               <span
                 key={o.id}
-                className={`rounded-md border px-1.5 py-0.5 font-mono text-sm font-semibold ${
+                className={`truncate rounded-md border px-1.5 py-0.5 text-center font-mono text-sm font-semibold ${
                   movedIds.has(o.id)
                     ? 'border-emerald-400 bg-emerald-500/20 text-emerald-100'
                     : 'border-white/15 bg-black/30 text-slate-100'
