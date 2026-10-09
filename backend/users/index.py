@@ -9,7 +9,7 @@ import uuid
 import boto3
 import psycopg2
 
-from authz import AuthError, auth_error_response, require_admin
+from authz import AuthError, auth_error_response, require_admin, require_auth
 from max_avatars import sync_max_avatars
 from onec_flush import enqueue_onec_entity, flush_onec_outbox
 

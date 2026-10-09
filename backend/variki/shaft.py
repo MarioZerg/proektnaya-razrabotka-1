@@ -14,6 +14,8 @@
 
 import random
 from datetime import datetime
+from datetime import timedelta
+from datetime import timezone as dt_timezone
 
 SHAFT_DAYS = (15, 16, 17)
 HOUR_FROM = 17
@@ -70,8 +72,7 @@ def ensure_shaft_tables(cur):
 
 
 def _moscow_now(cur):
-    cur.execute("SELECT now() AT TIME ZONE 'Europe/Moscow'")
-    return cur.fetchone()[0]
+    return datetime.now(dt_timezone.utc).replace(tzinfo=None) + timedelta(hours=3)
 
 
 def _iso_msk(moment):
