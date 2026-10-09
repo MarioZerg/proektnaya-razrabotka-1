@@ -11,7 +11,7 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import type { ShopItem } from '@/lib/varikiApi';
-import { todayIso } from '@/components/crm/variki/shop/varikiShopUtils';
+import { isBubbleCase, todayIso } from '@/components/crm/variki/shop/varikiShopUtils';
 
 interface BuyConfirmDialogProps {
   confirmItem: ShopItem | null;
@@ -42,11 +42,13 @@ const BuyConfirmDialog = ({
         <AlertDialogTitle>Купить за {confirmItem?.price} вариков?</AlertDialogTitle>
         <AlertDialogDescription>
           {confirmItem?.title}. Варики спишутся сразу.{' '}
-          {confirmItem?.needsVisitDate
-            ? 'Администратор забронирует место на выбранный день и пришлёт сертификат сюда.'
-            : confirmItem && confirmItem.available > 0
-              ? 'Сертификат вы получите тут же — ждать не нужно.'
-              : 'Купон пришлёт администратор — он появится на этой странице.'}
+          {confirmItem && isBubbleCase(confirmItem)
+            ? 'Откроется случайная шляпа на вашем пузырьке. Если уже была шляпа — она пропадёт, останется новая.'
+            : confirmItem?.needsVisitDate
+              ? 'Администратор забронирует место на выбранный день и пришлёт сертификат сюда.'
+              : confirmItem && confirmItem.available > 0
+                ? 'Сертификат вы получите тут же — ждать не нужно.'
+                : 'Купон пришлёт администратор — он появится на этой странице.'}
         </AlertDialogDescription>
       </AlertDialogHeader>
 

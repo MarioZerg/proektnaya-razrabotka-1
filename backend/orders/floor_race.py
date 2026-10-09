@@ -151,6 +151,8 @@ def build_race(cur, conn, people: list, _today: dict) -> dict:
     done_map = _meters_map(cur, people)
     runners = []
     for p in people:
+        if p.get('role') != 'sewer':
+            continue
         done = float(done_map.get(p['id']) or 0)
         progress = min(1.0, done / goal)
         runners.append({

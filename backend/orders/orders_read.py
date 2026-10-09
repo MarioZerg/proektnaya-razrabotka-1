@@ -371,9 +371,15 @@ def _handle_live_floor(cur, conn, headers: dict) -> dict:
     # Кто сейчас на смене. Последняя открытая смена человека — на случай, если
     # их по ошибке открыто две.
     cur.execute(
+        "SELECT 1 FROM information_schema.columns "
+        "WHERE table_schema = 'public' AND table_name = 'users' AND column_name = 'bubble_hat'"
+    )
+    hat_sql = "NULLIF(u.bubble_hat, '')" if cur.fetchone() else "NULL"
+    cur.execute(
         "SELECT DISTINCT ON (u.id) u.id, u.full_name, COALESCE(ss.role, u.role), "
         "       ss.workshop_id, w.name, ss.opened_at, COALESCE(u.can_overlock, false), "
-        "       NULLIF(u.avatar_url, ''), NULLIF(u.max_avatar_url, ''), u.max_user_id "
+        "       NULLIF(u.avatar_url, ''), NULLIF(u.max_avatar_url, ''), u.max_user_id, "
+        f"      {hat_sql} "
         "FROM shift_sessions ss "
         "JOIN users u ON u.id = ss.user_id "
         "LEFT JOIN workshops w ON w.id = ss.workshop_id "
@@ -388,6 +394,7 @@ def _handle_live_floor(cur, conn, headers: dict) -> dict:
             'id': r[0], 'name': r[1], 'role': r[2], 'workshopId': r[3],
             'workshopName': r[4], 'shiftOpenedAt': _iso(r[5]), 'canOverlock': bool(r[6]),
             'avatarUrl': r[7] or r[8] or None,
+            'bubbleHat': r[10],
         })
         if r[9]:
             max_pairs.append((r[0], str(r[9]), bool(r[7])))

@@ -117,6 +117,8 @@ export interface VarikiPurchase {
   orgPhone?: string | null;
   /** На какую дату сотрудник хочет попасть. Заполнено — админу нужно бронировать. */
   visitDate?: string | null;
+  /** Выпавшая шляпа из кейс бокса. */
+  lootTitle?: string | null;
 }
 
 const postAction = async (payload: Record<string, unknown>) => {
@@ -177,6 +179,8 @@ export const buyShopItem = (userId: number, itemId: number, visitDate?: string) 
     /** Сертификат нашёлся на складе и выдан сразу — ждать администратора не нужно. */
     instant: boolean;
     hasCoupon: boolean;
+    lootTitle?: string;
+    lootKey?: string;
   }>;
 
 /** Админ прикрепляет PDF-купон к покупке — после этого его видит сотрудник. */

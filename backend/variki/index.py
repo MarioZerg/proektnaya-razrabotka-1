@@ -1,6 +1,7 @@
 import base64
 import json
 import os
+import random
 import uuid
 from datetime import date
 
@@ -23,6 +24,29 @@ CORS_HEADERS = {
 }
 
 PRODUCTION_ROLES = ('sewer', 'cutter', 'packer', 'packer_returns')
+
+# Шляпы кейс бокса. Ключи совпадают с фронтом bubbleHats.tsx.
+BUBBLE_HATS = (
+    ('cowboy', 'Ковбойская шляпа'),
+    ('crown', 'Бутафорская корона'),
+    ('propeller', 'Пропеллер'),
+    ('chef', 'Колпак повара'),
+    ('wizard', 'Колпак мага'),
+    ('sombrero', 'Сомбреро'),
+    ('party', 'Колпак именинника'),
+    ('ushanka', 'Ушанка'),
+    ('tophat', 'Цилиндр'),
+    ('viking', 'Шлем викинга'),
+    ('catears', 'Кошачьи ушки'),
+    ('duck', 'Уточка на голове'),
+    ('cone', 'Дорожный конус'),
+    ('banana', 'Банановая корона'),
+)
+
+
+def _roll_hat(current):
+    pool = [h for h in BUBBLE_HATS if h[0] != current] or list(BUBBLE_HATS)
+    return random.choice(pool)
 
 
 def _resp(status, body):
@@ -215,16 +239,20 @@ def handler(event: dict, context) -> dict:
                     "FROM variki_shop_items i WHERE i.is_active = true "
                     "ORDER BY i.sort_order, i.id"
                 )
-                items = [
-                    {'id': r[0], 'title': r[1], 'description': r[2],
-                     'price': r[3], 'animation': r[4], 'icon': r[5], 'imageUrl': r[6],
-                     'stockLimit': r[7], 'orgAddress': r[8], 'orgPhone': r[9],
-                     'validFrom': r[10].isoformat() if r[10] else None,
-                     'validTo': r[11].isoformat() if r[11] else None,
-                     'needsVisitDate': r[12],
-                     'available': int(r[13])}
-                    for r in cur.fetchall()
-                ]
+                items = []
+                for r in cur.fetchall():
+                    animation = r[4]
+                    available = 9999 if animation == 'bubble_case' else int(r[13])
+                    items.append({
+                        'id': r[0], 'title': r[1], 'description': r[2],
+                        'price': r[3], 'animation': animation, 'icon': r[5],
+                        'imageUrl': r[6],
+                        'stockLimit': r[7], 'orgAddress': r[8], 'orgPhone': r[9],
+                        'validFrom': r[10].isoformat() if r[10] else None,
+                        'validTo': r[11].isoformat() if r[11] else None,
+                        'needsVisitDate': r[12],
+                        'available': available,
+                    })
                 user_id = params.get('userId')
                 balance = 0
                 purchases = []
@@ -240,7 +268,7 @@ def handler(event: dict, context) -> dict:
                         "  p.coupon_url, p.coupon_name, p.coupon_at, p.cancel_reason, "
                         # Контакты нужны именно ЗДЕСЬ: сотрудник с сертификатом на
                         # руках открывает свои покупки, чтобы записаться на услугу.
-                        "  i.org_address, i.org_phone, p.visit_date "
+                        "  i.org_address, i.org_phone, p.visit_date, p.loot_title "
                         "FROM variki_purchases p "
                         "JOIN variki_shop_items i ON i.id = p.item_id "
                         "WHERE p.user_id = %s ORDER BY p.created_at DESC",
@@ -256,7 +284,8 @@ def handler(event: dict, context) -> dict:
                          'couponAt': r[8].isoformat() + 'Z' if r[8] else None,
                          'cancelReason': r[9],
                          'orgAddress': r[10], 'orgPhone': r[11],
-                         'visitDate': r[12].isoformat() if r[12] else None}
+                         'visitDate': r[12].isoformat() if r[12] else None,
+                         'lootTitle': r[13]}
                         for r in cur.fetchall()
                     ]
                 return _resp(200, {'items': items, 'balance': balance, 'purchases': purchases})
@@ -487,7 +516,7 @@ def handler(event: dict, context) -> dict:
                     return _resp(400, {'error': 'Укажите сотрудника и подарок'})
 
                 cur.execute(
-                    "SELECT title, price, valid_from, valid_to, needs_visit_date "
+                    "SELECT title, price, valid_from, valid_to, needs_visit_date, animation "
                     "FROM variki_shop_items "
                     "WHERE id = %s AND is_active = true",
                     (int(item_id),),
@@ -496,6 +525,7 @@ def handler(event: dict, context) -> dict:
                 if not item:
                     return _resp(404, {'error': 'Подарок не найден или снят с продажи'})
                 title, price = item[0], int(item[1])
+                is_case = item[5] == 'bubble_case'
 
                 # Проверяем период ЗДЕСЬ, а не только на кнопке: между открытием
                 # страницы и нажатием срок мог закончиться, и сотрудник потратил бы
@@ -514,9 +544,11 @@ def handler(event: dict, context) -> dict:
                 # Подарки с записью на дату (аквапарк, массаж) сертификатами заранее
                 # не запасают: админ бронирует место под конкретный день. Поэтому
                 # склад у них не проверяем, но требуем саму дату посещения.
-                needs_visit = bool(item[4])
+                needs_visit = bool(item[4]) and not is_case
                 visit_date = (body_data.get('visitDate') or '').strip() or None
-                if needs_visit:
+                if is_case:
+                    visit_date = None
+                elif needs_visit:
                     if not visit_date:
                         return _resp(400, {
                             'error': 'Выберите дату посещения',
@@ -545,13 +577,14 @@ def handler(event: dict, context) -> dict:
                         })
 
                 cur.execute(
-                    "SELECT COALESCE(variki, 0), full_name FROM users WHERE id = %s FOR UPDATE",
+                    "SELECT COALESCE(variki, 0), full_name, bubble_hat "
+                    "FROM users WHERE id = %s FOR UPDATE",
                     (int(user_id),),
                 )
                 urow = cur.fetchone()
                 if not urow:
                     return _resp(404, {'error': 'Сотрудник не найден'})
-                balance, user_name = int(urow[0]), urow[1]
+                balance, user_name, current_hat = int(urow[0]), urow[1], urow[2]
                 if balance < price:
                     return _resp(409, {
                         'error': f'Не хватает вариков: нужно {price}, у вас {balance}',
@@ -569,7 +602,14 @@ def handler(event: dict, context) -> dict:
                 # каждая получит свой файл, а не один и тот же. Без этого один
                 # сертификат мог уехать двоим.
                 cert = None
-                if not needs_visit:
+                loot_key = loot_title = None
+                if is_case:
+                    loot_key, loot_title = _roll_hat(current_hat)
+                    cur.execute(
+                        "UPDATE users SET bubble_hat = %s WHERE id = %s",
+                        (loot_key, int(user_id)),
+                    )
+                elif not needs_visit:
                     cur.execute(
                         "SELECT id, file_url, file_name FROM variki_certificates "
                         "WHERE item_id = %s AND purchase_id IS NULL "
@@ -578,17 +618,18 @@ def handler(event: dict, context) -> dict:
                     )
                     cert = cur.fetchone()
 
-                # Сертификат есть — покупка закрывается мгновенно, ждать админа не нужно.
+                # Сертификат или шляпа из кейса — покупка закрывается сразу.
                 # Нет — заявка уходит админу, как раньше.
-                status = 'issued' if cert else 'pending'
+                status = 'issued' if cert or is_case else 'pending'
                 cur.execute(
                     "INSERT INTO variki_purchases (item_id, user_id, user_name, price, "
-                    "  status, coupon_url, coupon_name, visit_date, coupon_at) "
+                    "  status, coupon_url, coupon_name, visit_date, coupon_at, "
+                    "  loot_key, loot_title) "
                     "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, "
-                    "  CASE WHEN %s THEN now() ELSE NULL END) RETURNING id",
+                    "  CASE WHEN %s THEN now() ELSE NULL END, %s, %s) RETURNING id",
                     (int(item_id), int(user_id), user_name, price, status,
                      cert[1] if cert else None, cert[2] if cert else None,
-                     visit_date, bool(cert)),
+                     visit_date, bool(cert or is_case), loot_key, loot_title),
                 )
                 purchase_id = cur.fetchone()[0]
                 if cert:
@@ -597,19 +638,22 @@ def handler(event: dict, context) -> dict:
                         "WHERE id = %s",
                         (purchase_id, cert[0]),
                     )
+                audit_extra = f', шляпа {loot_title}' if loot_title else ''
                 cur.execute(
                     "INSERT INTO audit_log (category, user_id, user_name, action, "
                     "  entity_type, entity_id, description) "
                     "VALUES ('variki', %s, %s, 'variki_buy', 'variki_purchase', %s, %s)",
                     (int(user_id), user_name, purchase_id,
-                     f'Купил за варики: {title} ({price} вариков)'),
+                     f'Купил за варики: {title} ({price} вариков){audit_extra}'),
                 )
                 conn.commit()
                 return _resp(200, {
                     'purchaseId': purchase_id, 'variki': new_balance, 'title': title,
                     # Сам файл фронт запросит по покупке — ключ хранилища наружу не уходит.
                     'hasCoupon': bool(cert),
-                    'instant': bool(cert),
+                    'instant': bool(cert or is_case),
+                    'lootKey': loot_key,
+                    'lootTitle': loot_title,
                 })
 
             if action == 'save_item':

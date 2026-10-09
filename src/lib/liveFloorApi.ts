@@ -11,6 +11,8 @@ export interface LivePerson {
   canOverlock: boolean;
   /** Фото из профиля или MAX: COALESCE(avatar_url, max_avatar_url). */
   avatarUrl?: string | null;
+  /** Шляпа с кейс бокса — одна на человека, новая заменяет старую. */
+  bubbleHat?: string | null;
 }
 
 export interface LiveOrder {
@@ -106,9 +108,25 @@ const EMPTY_COUNTS: LiveCounts = {
 };
 
 export const fetchLiveFloor = async (): Promise<LiveFloorData> => {
-  const res = await fetch(`${ORDERS_URL}?liveFloor=1`);
-  const data = await res.json();
-  if (!res.ok) throw new Error(data.error || 'Не удалось загрузить живой цех');
+  let res: Response;
+  try {
+    res = await fetch(`${ORDERS_URL}?liveFloor=1`);
+  } catch {
+    throw new Error(
+      'Нет связи с сервером цеха. Если в Poehali исчерпан лимит запросов — пополните баланс на poehali.dev/p/pay',
+    );
+  }
+  const raw = await res.text();
+  let data: Record<string, unknown> = {};
+  try {
+    data = raw ? JSON.parse(raw) : {};
+  } catch {
+    if (res.status === 402 || /лимит|пополните|poehali\.dev\/p\/pay/i.test(raw)) {
+      throw new Error('Исчерпан лимит запросов Poehali. Пополните баланс на poehali.dev/p/pay');
+    }
+    throw new Error(raw.slice(0, 160) || `Сервер цеха ответил ${res.status}`);
+  }
+  if (!res.ok) throw new Error((data.error as string) || 'Не удалось загрузить живой цех');
   // Ответ без снимка цеха (например, отвечала старая копия сервера сразу после
   // выкладки — она отдаёт обычный список заказов) считаем сбоем: иначе блок
   // получал пустые счётчики, падал и пропадал с главной целиком.

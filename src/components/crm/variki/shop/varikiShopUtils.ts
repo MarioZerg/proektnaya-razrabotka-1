@@ -1,5 +1,8 @@
 import type { ShopItem } from '@/lib/varikiApi';
 
+/** Кейс бокс: безлимитный лут шляпы, сертификаты не нужны. */
+export const isBubbleCase = (item: Pick<ShopItem, 'animation'>) => item.animation === 'bubble_case';
+
 /** Сегодня в виде ГГГГ-ММ-ДД — минимальная дата для поля выбора. */
 export const todayIso = () => {
   const t = new Date();

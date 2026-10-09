@@ -3,7 +3,7 @@ import SpaAnimation from '@/components/crm/variki/SpaAnimation';
 import { Button } from '@/components/ui/button';
 import Icon from '@/components/ui/icon';
 import type { ShopItem } from '@/lib/varikiApi';
-import { checkPeriod } from '@/components/crm/variki/shop/varikiShopUtils';
+import { checkPeriod, isBubbleCase } from '@/components/crm/variki/shop/varikiShopUtils';
 
 interface ShopItemCardProps {
   item: ShopItem;
@@ -16,10 +16,12 @@ interface ShopItemCardProps {
 /** Карточка подарка на витрине: фото, контакты, цена, остаток, срок и кнопка «Купить». */
 const ShopItemCard = ({ item, index, balance, userId, onBuy }: ShopItemCardProps) => {
   const enough = balance >= item.price;
+  const isCase = isBubbleCase(item);
   // У подарков с записью на дату склада нет вовсе: сертификат
   // бронирует админ под конкретный день. Считать их «закончившимися»
   // из-за пустого склада нельзя — купить можно всегда.
-  const soldOut = !item.needsVisitDate && item.available === 0;
+  // Кейс бокс безлимитный: сертификаты не нужны.
+  const soldOut = !isCase && !item.needsVisitDate && item.available === 0;
   const period = checkPeriod(item);
   return (
     <div className="relative flex min-h-[19rem] flex-col overflow-hidden rounded-xl border border-border bg-card">
@@ -41,9 +43,17 @@ const ShopItemCard = ({ item, index, balance, userId, onBuy }: ShopItemCardProps
         </div>
       )}
       {!item.imageUrl && item.animation === 'spa' && <SpaAnimation />}
+      {!item.imageUrl && isCase && (
+        <div className="relative flex h-36 shrink-0 items-end justify-center bg-gradient-to-b from-amber-200 via-amber-400 to-amber-700">
+          <div className="mb-4 h-20 w-28 rounded-md border-4 border-amber-900 bg-amber-500 shadow-inner">
+            <div className="h-6 rounded-t-sm bg-amber-800" />
+            <div className="mx-auto mt-4 h-4 w-8 rounded-sm bg-yellow-300 ring-2 ring-amber-900" />
+          </div>
+        </div>
+      )}
 
       <div className="relative flex flex-1 flex-col p-5">
-        {!item.imageUrl && (
+        {!item.imageUrl && !isCase && (
           <div className="flex h-16 w-16 items-center justify-center rounded-full bg-white/80 shadow-sm ring-1 ring-cyan-200">
             <Icon name={item.icon} size={34} className="text-cyan-600" />
           </div>
@@ -99,7 +109,13 @@ const ShopItemCard = ({ item, index, balance, userId, onBuy }: ShopItemCardProps
 
           {/* Остаток показываем, только когда он МАЛЕНЬКИЙ: «осталось 2»
               подталкивает решиться, а «осталось 47» — просто шум. */}
-          {!soldOut && period.active && !item.needsVisitDate
+          {isCase && period.active && (
+            <p className="text-xs font-medium text-amber-800">
+              Случайная шляпа на пузырьке. Новая заменит старую
+            </p>
+          )}
+
+          {!soldOut && period.active && !item.needsVisitDate && !isCase
             && item.available <= 3 && (
             <p className="text-xs font-semibold text-amber-700">
               Осталось {item.available}

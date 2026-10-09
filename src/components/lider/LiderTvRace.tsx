@@ -22,30 +22,16 @@ const PATH: { x: number; y: number }[] = [
 ];
 
 const CASTLE_SLOTS = [
-  { x: 1660, y: 188 },
-  { x: 1710, y: 198 },
-  { x: 1618, y: 192 },
-  { x: 1688, y: 158 },
-  { x: 1636, y: 154 },
-  { x: 1740, y: 176 },
+  { x: 1648, y: 196 },
+  { x: 1756, y: 188 },
+  { x: 1548, y: 210 },
+  { x: 1708, y: 128 },
+  { x: 1596, y: 132 },
+  { x: 1810, y: 168 },
 ];
 
-const LAWN = { x: 520, y: 300 };
-const LAWN_SLOTS = [
-  { x: 448, y: 318 },
-  { x: 498, y: 348 },
-  { x: 408, y: 348 },
-  { x: 548, y: 338 },
-  { x: 428, y: 278 },
-  { x: 568, y: 288 },
-];
-
-const ROLE_RING: Record<string, string> = {
-  cutter: '#f59e0b',
-  sewer: '#7dd3fc',
-  packer: '#fb923c',
-  packer_returns: '#c4b5fd',
-};
+const MIN_PATH_GAP = 0.07;
+const MIN_FIG_PX = 100;
 
 const atPath = (t: number, lane = 0, lanes = 1) => {
   const clamped = Math.max(0, Math.min(0.999, t));
@@ -59,7 +45,7 @@ const atPath = (t: number, lane = 0, lanes = 1) => {
   const dx = b.x - a.x;
   const dy = b.y - a.y;
   const len = Math.hypot(dx, dy) || 1;
-  const offset = (lane - (lanes - 1) / 2) * 48;
+  const offset = (lane - (lanes - 1) / 2) * 72;
   return { x: x + (-dy / len) * offset, y: y + (dx / len) * offset };
 };
 
@@ -75,99 +61,136 @@ interface LiderTvRaceProps {
   race: LiveRace;
   people: LivePerson[];
   workingIds: Set<number>;
-  idlePunishIds: Set<number>;
   active: boolean;
 }
 
-const Fireworks = ({ active }: { active: boolean }) => {
-  if (!active) return null;
-  const bursts = Array.from({ length: 14 }, (_, i) => ({
-    id: i,
-    left: 74 + (i % 5) * 4.4,
-    top: 4 + (i % 4) * 7,
-    delay: (i * 0.22) % 2.4,
-    color: ['#fbbf24', '#fb7185', '#38bdf8', '#a3e635', '#e879f9', '#fdba74'][i % 6],
-  }));
-  return (
-    <div className="pointer-events-none absolute inset-0 z-20 overflow-hidden">
-      {bursts.map((b) => (
-        <span
-          key={b.id}
-          className="absolute h-3 w-3 rounded-full"
-          style={{
-            left: `${b.left}%`,
-            top: `${b.top}%`,
-            background: b.color,
-            boxShadow: `0 0 12px ${b.color}`,
-            animation: `race-fw 1.6s ease-out ${b.delay}s infinite`,
-          }}
-        />
-      ))}
-      {bursts.map((b) => (
-        <span
-          key={`spark-${b.id}`}
-          className="absolute h-1.5 w-8 origin-left rounded-full"
-          style={{
-            left: `${b.left + 1}%`,
-            top: `${b.top + 1.5}%`,
-            background: b.color,
-            animation: `race-fw-spark 1.4s ease-out ${b.delay + 0.1}s infinite`,
-          }}
-        />
-      ))}
-    </div>
-  );
+const sewerRunners = (race: LiveRace, people: LivePerson[]): LiveRaceRunner[] => {
+  const onShift = new Set(people.filter((p) => p.role === 'sewer').map((p) => p.id));
+  return race.runners
+    .filter((r) => r.role === 'sewer' || onShift.has(r.id))
+    .sort((a, b) => runnerProgress(b, race) - runnerProgress(a, race) || a.name.localeCompare(b.name, 'ru'))
+    .map((r, i) => ({ ...r, place: i + 1 }));
 };
 
-/** Вечерний город швей: кто на смене, тот на тропе. Метраж на карте не пишем. */
-const LiderTvRace = ({ race, people, workingIds, idlePunishIds, active }: LiderTvRaceProps) => {
+const separate = (pts: { x: number; y: number }[]) => {
+  for (let iter = 0; iter < 12; iter += 1) {
+    for (let i = 0; i < pts.length; i += 1) {
+      for (let j = i + 1; j < pts.length; j += 1) {
+        const dx = pts[j].x - pts[i].x;
+        const dy = pts[j].y - pts[i].y;
+        const d = Math.hypot(dx, dy) || 0.01;
+        if (d >= MIN_FIG_PX) continue;
+        const push = (MIN_FIG_PX - d) / 2;
+        const ux = dx / d;
+        const uy = dy / d;
+        pts[i].x -= ux * push;
+        pts[i].y -= uy * push;
+        pts[j].x += ux * push;
+        pts[j].y += uy * push;
+      }
+    }
+  }
+};
+
+const RaceFigure = ({
+  name,
+  avatarUrl,
+  walking,
+  finished,
+  lead,
+}: {
+  name: string;
+  avatarUrl?: string | null;
+  walking: boolean;
+  finished: boolean;
+  lead: boolean;
+}) => (
+  <div className="flex flex-col items-center">
+    {lead && !finished ? <span className="mb-0.5 text-2xl leading-none text-amber-300">♛</span> : null}
+    {finished ? <span className="mb-0.5 text-xl leading-none text-amber-200">✦</span> : null}
+    <div
+      className="relative flex w-[4.6rem] flex-col items-center"
+      style={walking ? { animation: 'race-bob 0.72s ease-in-out infinite' } : undefined}
+    >
+      <Avatar className="relative z-10 h-14 w-14 border-[3px] border-sky-200 shadow-[0_4px_14px_rgba(0,0,0,.45)]">
+        {avatarUrl ? (
+          <AvatarImage src={avatarUrl} alt={name} referrerPolicy="no-referrer" className="object-cover" />
+        ) : null}
+        <AvatarFallback className="bg-sky-800 text-base font-bold text-white">{initials(name)}</AvatarFallback>
+      </Avatar>
+      <svg viewBox="0 0 72 72" className="-mt-1 h-[4.5rem] w-[4.6rem] overflow-visible">
+        <ellipse cx="36" cy="68" rx="16" ry="4" fill="#0f172a" opacity="0.35" />
+        <rect x="32" y="0" width="8" height="9" rx="3" fill="#e8b492" />
+        <path d="M24 8 C24 8 19 14 18 22 L22 46 L50 46 L54 22 C53 14 48 8 48 8 Z" fill="#38bdf8" />
+        <path d="M22 44 L50 44 L55 60 L17 60 Z" fill="#0284c7" />
+        <g
+          style={{
+            transformOrigin: '20px 16px',
+            animation: walking ? 'race-arm-l 0.72s ease-in-out infinite' : undefined,
+          }}
+        >
+          <path d="M22 14 C 8 20, 8 34, 14 42" fill="none" stroke="#7dd3fc" strokeWidth="7" strokeLinecap="round" />
+        </g>
+        <g
+          style={{
+            transformOrigin: '52px 16px',
+            animation: walking ? 'race-arm-r 0.72s ease-in-out infinite' : undefined,
+          }}
+        >
+          <path d="M50 14 C 64 20, 64 34, 58 42" fill="none" stroke="#7dd3fc" strokeWidth="7" strokeLinecap="round" />
+        </g>
+        <g
+          style={{
+            transformOrigin: '28px 58px',
+            animation: walking ? 'race-leg-l 0.72s ease-in-out infinite' : undefined,
+          }}
+        >
+          <rect x="24" y="58" width="8" height="14" rx="4" fill="#1e3a5f" />
+        </g>
+        <g
+          style={{
+            transformOrigin: '44px 58px',
+            animation: walking ? 'race-leg-r 0.72s ease-in-out infinite' : undefined,
+          }}
+        >
+          <rect x="40" y="58" width="8" height="14" rx="4" fill="#1e3a5f" />
+        </g>
+      </svg>
+    </div>
+    <span className="mt-0.5 max-w-[8rem] truncate rounded-md bg-[#1c140c]/80 px-1.5 py-0.5 text-center text-sm font-bold text-amber-50">
+      {shortName(name)}
+    </span>
+  </div>
+);
+
+/** На тропе только швеи, человечком с аватаркой вместо головы. Метраж не пишем. */
+const LiderTvRace = ({ race, people, workingIds, active }: LiderTvRaceProps) => {
   const byId = new Map(people.map((p) => [p.id, p]));
-  const punished = race.runners.filter((r) => idlePunishIds.has(r.id));
-  const racing = race.runners.filter((r) => !idlePunishIds.has(r.id));
+  const racing = sewerRunners(race, people);
   const lead = racing.reduce((m, r) => Math.max(m, runnerProgress(r, race)), 0);
-  const nearCastle = lead >= 0.68 || racing.some((r) => r.finished);
   const walking = racing.some((r) => workingIds.has(r.id) && !r.finished);
 
-  useRaceAudio({
-    enabled: active,
-    walking,
-    nearCastle,
-    whipping: punished.length > 0,
-  });
+  useRaceAudio({ enabled: active, walking });
 
-  const clustered = racing.map((r) => {
-    const t = runnerProgress(r, race);
-    const finished = t >= 1 || Boolean(r.finished);
-    const sameNear = racing.filter((o) => {
-      const ot = runnerProgress(o, race);
-      return Math.abs(ot - t) < 0.045;
-    });
-    const slot = sameNear.findIndex((o) => o.id === r.id);
-    const base = finished
-      ? CASTLE_SLOTS[Math.min(slot, CASTLE_SLOTS.length - 1)]
-      : atPath(t, slot, sameNear.length);
+  const n = Math.max(1, racing.length);
+  const items = racing.map((r) => ({ r, t: runnerProgress(r, race) }));
+  for (let i = 1; i < items.length; i += 1) {
+    items[i].t = Math.max(0, Math.min(items[i].t, items[i - 1].t - MIN_PATH_GAP));
+  }
+  const clustered = items.map((it, i) => {
+    const finished = it.t >= 0.98 || Boolean(it.r.finished);
+    const base = finished ? CASTLE_SLOTS[Math.min(i, CASTLE_SLOTS.length - 1)] : atPath(it.t, i, n);
     return {
-      ...r,
-      t,
+      ...it.r,
+      t: it.t,
       finished,
-      punished: false,
       x: base.x,
       y: base.y,
-      working: workingIds.has(r.id),
-      avatarUrl: r.avatarUrl || byId.get(r.id)?.avatarUrl,
+      working: workingIds.has(it.r.id),
+      avatarUrl: it.r.avatarUrl || byId.get(it.r.id)?.avatarUrl,
     };
   });
-
-  const onLawn = punished.map((r, i) => ({
-    ...r,
-    t: runnerProgress(r, race),
-    finished: false,
-    punished: true,
-    x: LAWN_SLOTS[i % LAWN_SLOTS.length].x,
-    y: LAWN_SLOTS[i % LAWN_SLOTS.length].y,
-    working: false,
-    avatarUrl: r.avatarUrl || byId.get(r.id)?.avatarUrl,
-  }));
+  separate(clustered);
 
   return (
     <div className="relative h-full min-h-0 overflow-hidden rounded-2xl">
@@ -182,26 +205,10 @@ const LiderTvRace = ({ race, people, workingIds, idlePunishIds, active }: LiderT
         }
         @keyframes race-twinkle { 0%,100% { opacity: .2; } 50% { opacity: 1; } }
         @keyframes race-boat { 0% { transform: translate(0,0); } 50% { transform: translate(70px,-8px); } 100% { transform: translate(0,0); } }
-        @keyframes race-whip {
-          0%, 38% { transform: rotate(-28deg); }
-          52% { transform: rotate(78deg); }
-          68%, 100% { transform: rotate(-18deg); }
-        }
-        @keyframes race-ouch {
-          0%, 100% { transform: translate(0,0) rotate(0); }
-          28% { transform: translate(10px, 6px) rotate(12deg); }
-          48% { transform: translate(-8px, 3px) rotate(-10deg); }
-        }
-        @keyframes race-fw {
-          0% { transform: translate(0, 18px) scale(0.2); opacity: 0; }
-          18% { opacity: 1; }
-          100% { transform: translate(18px, -56px) scale(1.4); opacity: 0; }
-        }
-        @keyframes race-fw-spark {
-          0% { transform: rotate(var(--r, 20deg)) scaleX(0.2); opacity: 0; }
-          25% { opacity: 1; }
-          100% { transform: rotate(var(--r, 20deg)) scaleX(1.6) translateX(22px); opacity: 0; }
-        }
+        @keyframes race-arm-l { 0%,100% { transform: rotate(14deg); } 50% { transform: rotate(-24deg); } }
+        @keyframes race-arm-r { 0%,100% { transform: rotate(-14deg); } 50% { transform: rotate(24deg); } }
+        @keyframes race-leg-l { 0%,100% { transform: rotate(-18deg); } 50% { transform: rotate(16deg); } }
+        @keyframes race-leg-r { 0%,100% { transform: rotate(18deg); } 50% { transform: rotate(-16deg); } }
       `}</style>
       <svg viewBox="0 0 1920 920" className="absolute inset-0 h-full w-full" preserveAspectRatio="xMidYMid slice">
         <defs>
@@ -407,27 +414,6 @@ const LiderTvRace = ({ race, people, workingIds, idlePunishIds, active }: LiderT
         <path d="M1600 282 L 1654 248" fill="none" stroke="#8b5a2b" strokeWidth="22" strokeLinecap="round" />
         <path d="M1600 282 L 1654 248" fill="none" stroke="#e8c48a" strokeWidth="10" strokeLinecap="round" strokeDasharray="10 8" />
 
-        <g>
-          <text x={LAWN.x - 40} y={LAWN.y - 92} fill="#fecaca" fontSize="24" fontWeight="800" fontFamily="Segoe UI, sans-serif">
-            Простой
-          </text>
-          <g transform={`translate(${LAWN.x - 10}, ${LAWN.y - 110}) scale(1.55)`}>
-            <ellipse cx="18" cy="118" rx="22" ry="8" fill="#0f172a" opacity="0.35" />
-            <rect x="8" y="48" width="22" height="52" rx="4" fill="#111827" />
-            <rect x="4" y="48" width="30" height="14" fill="#020617" />
-            <circle cx="19" cy="34" r="16" fill="#1c1917" />
-            <rect x="6" y="28" width="26" height="14" rx="6" fill="#09090b" />
-            <circle cx="13" cy="34" r="3.2" fill="#fca5a5" />
-            <circle cx="25" cy="34" r="3.2" fill="#fca5a5" />
-            <rect x="14" y="98" width="8" height="22" fill="#111827" />
-            <rect x="22" y="98" width="8" height="22" fill="#111827" />
-            <g style={{ transformOrigin: '32px 58px', animation: 'race-whip 1.3s ease-in-out infinite' }}>
-              <path d="M32 58 C 70 48, 108 22, 128 8" fill="none" stroke="#1c1917" strokeWidth="4" strokeLinecap="round" />
-              <path d="M128 8 C 136 4, 142 10, 134 16" fill="none" stroke="#7f1d1d" strokeWidth="3" strokeLinecap="round" />
-            </g>
-          </g>
-        </g>
-
         <text x="118" y="828" fill="#fed7aa" fontSize="26" fontWeight="800" fontFamily="Segoe UI, sans-serif">
           Цех
         </text>
@@ -445,45 +431,19 @@ const LiderTvRace = ({ race, people, workingIds, idlePunishIds, active }: LiderT
         </text>
       </svg>
 
-      <Fireworks active={active && nearCastle} />
-
-      {[...clustered, ...onLawn].map((r) => (
+      {clustered.map((r) => (
         <div
           key={r.id}
-          className="absolute -translate-x-1/2 -translate-y-[78%] transition-all duration-[1400ms] ease-out"
+          className="absolute -translate-x-1/2 -translate-y-[82%] transition-all duration-[1400ms] ease-out"
           style={{ left: `${(r.x / 1920) * 100}%`, top: `${(r.y / 920) * 100}%`, zIndex: 20 + (8 - r.place) }}
         >
-          <div
-            className="flex flex-col items-center"
-            style={
-              r.punished
-                ? { animation: 'race-ouch 0.65s ease-in-out infinite' }
-                : r.working && !r.finished
-                  ? { animation: 'race-bob 0.9s ease-in-out infinite' }
-                  : undefined
-            }
-          >
-            {r.place === 1 && !race.winner && !r.punished ? (
-              <span className="mb-0.5 text-2xl leading-none text-amber-300">♛</span>
-            ) : null}
-            {r.finished ? <span className="mb-0.5 text-xl leading-none text-amber-200">✦</span> : null}
-            <Avatar
-              className="h-[4.25rem] w-[4.25rem] shadow-lg"
-              style={{
-                boxShadow: `0 0 0 4px ${r.punished ? '#ef4444' : ROLE_RING[r.role] || '#94a3b8'}, 0 8px 18px rgba(0,0,0,.45)`,
-              }}
-            >
-              {r.avatarUrl ? (
-                <AvatarImage src={r.avatarUrl} alt={r.name} referrerPolicy="no-referrer" className="object-cover" />
-              ) : null}
-              <AvatarFallback className="bg-slate-800 text-base font-bold text-white">
-                {initials(r.name)}
-              </AvatarFallback>
-            </Avatar>
-            <span className="mt-1 rounded-md bg-[#1c140c]/80 px-1.5 py-0.5 text-center text-sm font-bold tracking-wide text-amber-50">
-              {initials(r.name)}
-            </span>
-          </div>
+          <RaceFigure
+            name={r.name}
+            avatarUrl={r.avatarUrl}
+            walking={r.working && !r.finished}
+            finished={r.finished}
+            lead={r.place === 1 && !race.winner}
+          />
         </div>
       ))}
 
@@ -501,22 +461,20 @@ const LiderTvRace = ({ race, people, workingIds, idlePunishIds, active }: LiderT
       )}
 
       <ol className="absolute bottom-3 left-1/2 z-30 flex max-w-[96%] -translate-x-1/2 gap-3 overflow-hidden rounded-2xl border border-white/10 bg-[#0b1020]/70 px-4 py-2 backdrop-blur-sm">
-        {race.runners.slice(0, 8).map((r) => (
+        {racing.slice(0, 8).map((r) => (
           <li key={r.id} className="flex items-center gap-2 whitespace-nowrap text-lg text-slate-100">
             <span
               className={`flex h-8 w-8 items-center justify-center rounded-full text-base font-black ${
-                idlePunishIds.has(r.id)
-                  ? 'bg-red-500 text-white'
-                  : r.place === 1
-                    ? 'bg-amber-400 text-stone-900'
-                    : r.place === 2
-                      ? 'bg-slate-300 text-slate-900'
-                      : r.place === 3
-                        ? 'bg-orange-400 text-stone-900'
-                        : 'bg-white/10 text-amber-200'
+                r.place === 1
+                  ? 'bg-amber-400 text-stone-900'
+                  : r.place === 2
+                    ? 'bg-slate-300 text-slate-900'
+                    : r.place === 3
+                      ? 'bg-orange-400 text-stone-900'
+                      : 'bg-white/10 text-amber-200'
               }`}
             >
-              {idlePunishIds.has(r.id) ? '!' : r.place}
+              {r.place}
             </span>
             {shortName(r.name)}
           </li>

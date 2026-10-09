@@ -1,15 +1,15 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import Icon from '@/components/ui/icon';
 import { buildLiveFloorView, useLiveFloorData } from '@/components/crm/dashboard/liveFloor/useLiveFloorData';
-import { personState, useTicker } from '@/components/crm/dashboard/liveFloor/liveFloorShared';
+import { useTicker } from '@/components/crm/dashboard/liveFloor/liveFloorShared';
 import LiderTvPipeline from '@/components/lider/LiderTvPipeline';
 import LiderTvPeople from '@/components/lider/LiderTvPeople';
 import LiderTvFeed from '@/components/lider/LiderTvFeed';
-import LiderTvRace from '@/components/lider/LiderTvRace';
+import LiderTvBubbles from '@/components/lider/LiderTvBubbles';
+import LiveFloorBoundary from '@/components/crm/dashboard/liveFloor/LiveFloorBoundary';
 import { useSlowScroll } from '@/components/lider/useSlowScroll';
 import { useTvCanvas } from '@/components/lider/useTvCanvas';
 import { useTvBuildWatch } from '@/components/lider/useTvBuildWatch';
-import type { LiveFloorData, LivePerson, LiveRace } from '@/lib/liveFloorApi';
 
 const MoscowClock = () => {
   useTicker();
@@ -24,40 +24,10 @@ const MoscowClock = () => {
   );
 };
 
-/** Пока сервер не отдал гонку: прячем норму, двигаем по заказам как по скрытым п.м. */
-const localRace = (people: LivePerson[], today: LiveFloorData['today']): LiveRace => {
-  const metersGoal = 250;
-  const metersPerOrder = 4;
-  const runners = people
-    .map((p) => {
-      const stats = today[String(p.id)] || {};
-      const items =
-        p.role === 'cutter'
-          ? stats.cut || 0
-          : p.role === 'packer' || p.role === 'packer_returns'
-            ? stats.packed || 0
-            : stats.sewn || 0;
-      const progress = Math.min(1, (items * metersPerOrder) / metersGoal);
-      return {
-        id: p.id,
-        name: p.name,
-        role: p.role,
-        avatarUrl: p.avatarUrl,
-        progress,
-        finished: progress >= 1,
-        place: 0,
-      };
-    })
-    .sort((a, b) => b.progress - a.progress || a.name.localeCompare(b.name, 'ru'))
-    .map((r, i) => ({ ...r, place: i + 1 }));
-  return { prize: 50, winner: null, runners };
-};
-
 /**
- * Экран «Живой цех» на телевизор: кадр цеха чередуется с гонкой до замка.
+ * Экран «Живой цех» на телевизор: кадр цеха чередуется с пузырями выработки.
  */
-const IDLE_PUNISH_MS = 5 * 60000;
-const RACE_HOLD_MS = 30000;
+const BUBBLES_HOLD_MS = 32000;
 const FLOOR_MIN_MS = 18000;
 const FLOOR_MAX_MS = 50000;
 
@@ -66,8 +36,9 @@ const LiderTv = () => {
   const scrollRef = useRef<HTMLDivElement>(null);
   const panRef = useRef<HTMLDivElement>(null);
   useTvBuildWatch();
-  const [screen, setScreen] = useState<'floor' | 'race'>('floor');
-  const nowTick = useTicker();
+  const [screen, setScreen] = useState<'floor' | 'bubbles'>(() =>
+    new URLSearchParams(window.location.search).get('screen') === 'bubbles' ? 'bubbles' : 'floor',
+  );
   const {
     data,
     error,
@@ -81,32 +52,11 @@ const LiderTv = () => {
   } = useLiveFloorData(true);
 
   const view = useMemo(() => buildLiveFloorView(data, 'all', clockOffset), [data, clockOffset]);
-  const race = data?.race || (view ? localRace(view.people, data?.today || {}) : null);
-  const nowMs = nowTick + clockOffset;
-  const workingIds = useMemo(() => {
-    const ids = new Set<number>();
-    if (!view) return ids;
-    view.people.forEach((p) => {
-      if (personState(p, view.orders, view.events, nowMs).working) ids.add(p.id);
-    });
-    return ids;
-  }, [view, nowMs]);
-  const idlePunishIds = useMemo(() => {
-    const ids = new Set<number>();
-    if (!view) return ids;
-    view.people.forEach((p) => {
-      if (p.role !== 'sewer' && p.role !== 'cutter') return;
-      const s = personState(p, view.orders, view.events, nowMs);
-      if (!s.working && s.idleMs >= IDLE_PUNISH_MS) ids.add(p.id);
-    });
-    return ids;
-  }, [view, nowMs]);
-
   const floorReady = Boolean(view);
-  const goRaceTimer = useRef(0);
+  const goBubblesTimer = useRef(0);
   useSlowScroll(scrollRef, panRef, floorReady && screen === 'floor', 32, () => {
-    window.clearTimeout(goRaceTimer.current);
-    goRaceTimer.current = window.setTimeout(() => setScreen('race'), 1600);
+    window.clearTimeout(goBubblesTimer.current);
+    goBubblesTimer.current = window.setTimeout(() => setScreen('bubbles'), 1600);
   });
 
   // view — новый объект на каждый опрос цеха (12 с). Если повесить таймер на него,
@@ -118,7 +68,7 @@ const LiderTv = () => {
     const go = () => {
       if (gone) return;
       gone = true;
-      setScreen('race');
+      setScreen('bubbles');
     };
     const noOverflow = window.setTimeout(() => {
       const view = scrollRef.current;
@@ -140,16 +90,16 @@ const LiderTv = () => {
       gone = true;
       window.clearTimeout(noOverflow);
       window.clearTimeout(safety);
-      window.clearTimeout(goRaceTimer.current);
+      window.clearTimeout(goBubblesTimer.current);
     };
   }, [screen, floorReady]);
 
   useEffect(() => {
-    if (screen !== 'race') return;
+    if (screen !== 'bubbles') return;
     const t = window.setTimeout(() => {
       if (panRef.current) panRef.current.style.transform = '';
       setScreen('floor');
-    }, RACE_HOLD_MS);
+    }, BUBBLES_HOLD_MS);
     return () => window.clearTimeout(t);
   }, [screen]);
 
@@ -209,10 +159,10 @@ const LiderTv = () => {
             <span className="relative h-4 w-4 rounded-full bg-red-500" />
           </span>
           <h1 className="text-4xl font-black tracking-tight text-white">
-            {screen === 'race' ? 'Путь к замку' : 'Живой цех'}
+            {screen === 'bubbles' ? 'Сотрудники смены' : 'Живой цех'}
           </h1>
           <span className="rounded bg-red-500/20 px-2 py-0.5 text-sm font-bold uppercase tracking-widest text-red-300">
-            {screen === 'race' ? 'замок' : 'live'}
+            {screen === 'bubbles' ? 'топ' : 'live'}
           </span>
           <span className="min-w-0 flex-1 truncate text-xl text-slate-400">
             {view ? (
@@ -305,21 +255,15 @@ const LiderTv = () => {
                 <LiderTvFeed events={view.events} names={data.names} freshKeys={freshKeys} />
               </div>
             </div>
-            {race ? (
-              <div
-                className={`absolute inset-0 z-20 px-5 pb-4 pt-1 ${
-                  screen === 'race' ? '' : 'hidden'
-                }`}
-              >
-                <LiderTvRace
-                  active={screen === 'race'}
-                  race={race}
-                  people={view.people}
-                  workingIds={workingIds}
-                  idlePunishIds={idlePunishIds}
-                />
-              </div>
-            ) : null}
+            <div
+              className={`absolute inset-0 z-20 px-5 pb-4 pt-1 ${
+                screen === 'bubbles' ? '' : 'hidden'
+              }`}
+            >
+              <LiveFloorBoundary>
+                <LiderTvBubbles active={screen === 'bubbles'} people={view.people} today={data.today || {}} />
+              </LiveFloorBoundary>
+            </div>
           </div>
         )}
       </div>

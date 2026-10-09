@@ -90,12 +90,18 @@ const VarikiShop = () => {
     try {
       const res = await buyShopItem(user.id, confirmItem.id, visitDate || undefined);
       toast({
-        title: res.instant ? 'Сертификат ваш!' : 'Куплено!',
-        description: res.instant
-          ? `${res.title} — сертификат уже готов, скачайте его ниже`
-          : confirmItem.needsVisitDate
-            ? `${res.title} — администратор забронирует место и пришлёт сертификат`
-            : `${res.title} — администратор пришлёт купон, он появится здесь`,
+        title: res.lootTitle
+          ? `Выпала шляпа: ${res.lootTitle}`
+          : res.instant
+            ? 'Сертификат ваш!'
+            : 'Куплено!',
+        description: res.lootTitle
+          ? 'Она уже на вашем пузырьке на экране «Сотрудники смены». Новая покупка заменит эту шляпу.'
+          : res.instant
+            ? `${res.title} — сертификат уже готов, скачайте его ниже`
+            : confirmItem.needsVisitDate
+              ? `${res.title} — администратор забронирует место и пришлёт сертификат`
+              : `${res.title} — администратор пришлёт купон, он появится здесь`,
       });
       setConfirmItem(null);
       setVisitDate('');

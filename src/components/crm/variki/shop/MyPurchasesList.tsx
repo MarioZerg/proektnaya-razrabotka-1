@@ -27,6 +27,11 @@ const MyPurchasesList = ({ purchases, userId }: MyPurchasesListProps) => (
             <p className="text-xs text-muted-foreground">
               {p.createdAt ? formatDateTime(p.createdAt) : ''} · {p.price} вариков
             </p>
+            {p.lootTitle && p.status !== 'cancelled' && (
+              <p className="mt-0.5 text-xs font-medium text-foreground">
+                Выпало: {p.lootTitle}
+              </p>
+            )}
             {/* Своя дата визита: сотрудник помнит, на когда записался,
                 и видит, что заявка ушла именно на этот день. */}
             {p.visitDate && p.status !== 'cancelled' && (
@@ -79,15 +84,23 @@ const MyPurchasesList = ({ purchases, userId }: MyPurchasesListProps) => (
                 Скачать купон
               </a>
             </Button>
+          ) : p.status === 'issued' && p.lootTitle ? (
+            <Badge className="shrink-0 bg-amber-100 text-amber-900 hover:bg-amber-100">
+              На пузырьке
+            </Badge>
           ) : p.status === 'pending' ? (
             <Badge variant="secondary" className="shrink-0">
               {p.visitDate
                 ? 'Бронируем место'
                 : 'Ждём купон от администратора'}
             </Badge>
-          ) : (
+          ) : p.status === 'cancelled' ? (
             <Badge variant="outline" className="shrink-0">
               Отменено
+            </Badge>
+          ) : (
+            <Badge variant="secondary" className="shrink-0">
+              Выдано
             </Badge>
           )}
         </div>
