@@ -109,8 +109,22 @@ def _next_open(now, claimed=False):
     return datetime(year, month, SHAFT_DAYS[0], HOUR_FROM, 0, 0)
 
 
+def _bag_from_ledger(cur):
+    """Сколько в мешке по записанным монетам и уже унесённым горстям."""
+    cur.execute("SELECT COUNT(*) FROM shaft_contributions")
+    gross = min(BAG_CAP, int(cur.fetchone()[0]) * FILL_PER_ORDER)
+    cur.execute("SELECT COALESCE(SUM(payout), 0) FROM shaft_claims")
+    taken = int(cur.fetchone()[0])
+    return max(0, gross - taken)
+
+
 def _reconcile(cur):
-    """Новые «Готовые» с момента запуска шахты кладут в мешок по 10, не выше потолка."""
+    """Новые «Готовые» с момента запуска шахты кладут в мешок по 10, не выше потолка.
+
+    Число вставленных строк берём из RETURNING, не из cur.rowcount.
+    На INSERT…SELECT rowcount здесь приходит -1, а -1 * 10 списывало
+    десятку при каждом открытии страницы.
+    """
     cur.execute("SELECT amount, started_at FROM shaft_bag WHERE id = 1 FOR UPDATE")
     amount, started_at = cur.fetchone()
     cur.execute(
@@ -118,11 +132,15 @@ def _reconcile(cur):
         "SELECT o.id FROM orders o "
         "WHERE o.sewing_status = 'Готовые' AND o.packed_at IS NOT NULL "
         "  AND o.packed_at >= %s "
-        "  AND NOT EXISTS (SELECT 1 FROM shaft_contributions c WHERE c.order_id = o.id)",
+        "  AND NOT EXISTS (SELECT 1 FROM shaft_contributions c WHERE c.order_id = o.id) "
+        "RETURNING order_id",
         (started_at,),
     )
-    added = cur.rowcount * FILL_PER_ORDER
-    if added:
+    added = len(cur.fetchall()) * FILL_PER_ORDER
+    if int(amount) < 0:
+        amount = _bag_from_ledger(cur)
+        cur.execute("UPDATE shaft_bag SET amount = %s WHERE id = 1", (amount,))
+    elif added:
         cur.execute(
             "UPDATE shaft_bag SET amount = LEAST(%s, amount + %s) WHERE id = 1 RETURNING amount",
             (BAG_CAP, added),
