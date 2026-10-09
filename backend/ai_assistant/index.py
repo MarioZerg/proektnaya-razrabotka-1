@@ -311,8 +311,8 @@ def _run_select(dsn, schema, sql, allowed_tables=None):
         return f'ОТКАЗАНО: {reason}'
     if allowed_tables is not None:
         ok, reason = _sql_uses_only_tables(sql, schema, allowed_tables)
-        if not ok:
-            return f'ОТКАЗАНО: {reason}'
+    if not ok:
+        return f'ОТКАЗАНО: {reason}'
 
     conn = psycopg2.connect(dsn)
     try:
@@ -1978,18 +1978,18 @@ def handler(event: dict, context) -> dict:
                     + practice_txt
                 )
     else:
-        schema_rule = (
-            f'\n\nВАЖНО ПРО ЗАПРОСЫ: все таблицы лежат в схеме "{schema}". '
-            f'ВСЕГДА пиши имя схемы перед таблицей, например: '
+    schema_rule = (
+        f'\n\nВАЖНО ПРО ЗАПРОСЫ: все таблицы лежат в схеме "{schema}". '
+        f'ВСЕГДА пиши имя схемы перед таблицей, например: '
             f'SELECT count(*) FROM {schema}.orders. '
             f'Без схемы запрос не сработает.'
-        )
-        date_rule = (
-            f'\n\nСЕГОДНЯ: {today_iso} (по Москве сейчас {now_human}). '
-            f'Вчера — это {today_iso} минус один день. Используй эти сведения, чтобы '
-            f'правильно понимать слова «сегодня», «вчера», «на этой неделе», но в '
-            f'самих запросах всё равно вычисляй даты от now(), как показано выше.'
-        )
+    )
+    date_rule = (
+        f'\n\nСЕГОДНЯ: {today_iso} (по Москве сейчас {now_human}). '
+        f'Вчера — это {today_iso} минус один день. Используй эти сведения, чтобы '
+        f'правильно понимать слова «сегодня», «вчера», «на этой неделе», но в '
+        f'самих запросах всё равно вычисляй даты от now(), как показано выше.'
+    )
         extra = schema_rule + date_rule + person_rule + '\n\nТАБЛИЦЫ БАЗЫ ДАННЫХ:\n' + schema_text
     prompt = ACCOUNTANT_SYSTEM_PROMPT if scope == 'accountant' else SYSTEM_PROMPT
     messages = [
@@ -2001,10 +2001,10 @@ def handler(event: dict, context) -> dict:
     hist_n = 40 if scope == 'accountant' else 24
     if not want_digest or scope != 'accountant':
         for m in history[-hist_n:]:
-            role = m.get('role')
-            content = (m.get('content') or '').strip()
-            if role in ('user', 'assistant') and content:
-                messages.append({'role': role, 'content': content})
+        role = m.get('role')
+        content = (m.get('content') or '').strip()
+        if role in ('user', 'assistant') and content:
+            messages.append({'role': role, 'content': content})
     doc_excerpt = ''
     image_parts = []
     if files:
@@ -2200,8 +2200,8 @@ def handler(event: dict, context) -> dict:
                     )
                     slot['q'] = 'sql: отказано'
                 else:
-                    sql = (args.get('sql') or '').strip()
-                    result = _run_select(dsn, schema, sql)
+            sql = (args.get('sql') or '').strip()
+            result = _run_select(dsn, schema, sql)
                     slot['q'] = sql
             elif name == 'fresh_help' and scope == 'accountant':
                 q = (args.get('query') or '').strip()
