@@ -111,7 +111,7 @@ const ShopItemCard = ({ item, index, balance, userId, onBuy }: ShopItemCardProps
               подталкивает решиться, а «осталось 47» — просто шум. */}
           {isCase && period.active && (
             <p className="text-xs font-medium text-amber-800">
-              Случайная шляпа на пузырьке. Новая заменит старую
+              Преимущество: 30 дней — 3 заказа в работе вместо 2
             </p>
           )}
 

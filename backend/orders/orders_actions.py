@@ -29,6 +29,7 @@ from shared import (
     get_setting,
     get_setting_float,
     get_setting_int,
+    hat_boost_limit,
     log_action,
     ozon_cutoff_passed,
     ozon_purchase_marks,
@@ -2010,7 +2011,11 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
             # ЛИМИТ ОБЩИЙ НА ВСЕ АКТИВНЫЕ ВЕЩИ: «В работе» + взятые на оверлок и ещё
             # не сданные. Не может быть 2 обычных и параллельно 2 оверлочных —
             # только 2 активных заказа в сумме.
-            max_orders = get_setting_int(cur, session_workshop_id, 'max_quantity_orders_to_seamstress', 0)
+            max_orders = hat_boost_limit(
+                cur,
+                user_id,
+                get_setting_int(cur, session_workshop_id, 'max_quantity_orders_to_seamstress', 0),
+            )
             if max_orders > 0 and not finishing_group:
                 cur.execute(
                     "SELECT COUNT(*) FROM orders "
@@ -3023,8 +3028,12 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                 ov_in_work = int(cur.fetchone()[0])
 
                 # Общий лимит активных вещей: обычные «В работе» + оверлок вместе.
-                max_active = get_setting_int(
-                    cur, ov_queue_workshop, 'max_quantity_orders_to_seamstress', 0
+                max_active = hat_boost_limit(
+                    cur,
+                    actor_id,
+                    get_setting_int(
+                        cur, ov_queue_workshop, 'max_quantity_orders_to_seamstress', 0
+                    ),
                 )
                 if max_active > 0:
                     cur.execute(

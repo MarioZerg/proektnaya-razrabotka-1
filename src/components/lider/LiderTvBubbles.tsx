@@ -1,8 +1,8 @@
 import { useEffect, useRef } from 'react';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import type { LiveFloorData, LivePerson } from '@/lib/liveFloorApi';
-import { initials, shortName } from '@/components/crm/dashboard/liveFloor/liveFloorShared';
-import { BUBBLE_HATS, BubbleHat } from '@/components/lider/bubbleHats';
+import { initials, shortName, useTicker } from '@/components/crm/dashboard/liveFloor/liveFloorShared';
+import { BubbleHat } from '@/components/lider/bubbleHats';
 
 const ROLE_RING: Record<string, string> = {
   cutter: '#f59e0b',
@@ -69,6 +69,19 @@ const fieldTarget = (w: number, h: number, r: number, zone: number) => {
   };
 };
 
+const boostLeft = (until: string | null | undefined, nowMs: number) => {
+  if (!until) return '';
+  const end = new Date(until).getTime();
+  if (!Number.isFinite(end) || end <= nowMs) return '';
+  const sec = Math.floor((end - nowMs) / 1000);
+  const days = Math.floor(sec / 86400);
+  const hours = Math.floor((sec % 86400) / 3600);
+  const mins = Math.floor((sec % 3600) / 60);
+  if (days > 0) return `3 заказа · ${days}д ${hours}ч`;
+  if (hours > 0) return `3 заказа · ${hours}ч ${mins}м`;
+  return `3 заказа · ${Math.max(1, mins)}м`;
+};
+
 const scatter = (w: number, h: number, r: number, zone: number, used: { x: number; y: number; r: number }[]) => {
   for (let tryN = 0; tryN < 28; tryN += 1) {
     const spot = fieldTarget(w, h, r, zone + tryN);
@@ -92,7 +105,7 @@ const LiderTvBubbles = ({ active, people, today }: LiderTvBubblesProps) => {
 
   const maxWork = Math.max(1, ...people.map((p) => workOf(p, today)));
   const ranked = [...people].sort((a, b) => workOf(b, today) - workOf(a, today) || a.name.localeCompare(b.name, 'ru'));
-  const demoHats = new URLSearchParams(window.location.search).has('hats');
+  const nowMs = useTicker();
 
   useEffect(() => {
     const wrap = wrapRef.current;
@@ -292,6 +305,7 @@ const LiderTvBubbles = ({ active, people, today }: LiderTvBubblesProps) => {
           const work = workOf(p, today);
           const r = radiusFor(work, maxWork);
           const ring = ROLE_RING[p.role] || '#94a3b8';
+          const boost = boostLeft(p.hatBoostUntil, nowMs);
           return (
             <div
               key={p.id}
@@ -302,7 +316,7 @@ const LiderTvBubbles = ({ active, people, today }: LiderTvBubblesProps) => {
               className="absolute left-0 top-0 overflow-visible will-change-transform"
               style={{ width: r * 2, zIndex: 10 + Math.round(r) }}
             >
-              {(p.bubbleHat || (demoHats ? BUBBLE_HATS[place % BUBBLE_HATS.length].key : null)) ? (
+              {p.bubbleHat ? (
                 <div
                   className="pointer-events-none absolute left-1/2 z-20"
                   style={{
@@ -312,7 +326,7 @@ const LiderTvBubbles = ({ active, people, today }: LiderTvBubblesProps) => {
                     transform: 'translateX(-50%)',
                   }}
                 >
-                  <BubbleHat kind={p.bubbleHat || BUBBLE_HATS[place % BUBBLE_HATS.length].key} />
+                  <BubbleHat kind={p.bubbleHat} />
                 </div>
               ) : null}
               <div
@@ -339,6 +353,9 @@ const LiderTvBubbles = ({ active, people, today }: LiderTvBubblesProps) => {
                 <p className="text-sm font-semibold text-slate-300">
                   {work} · {workLabel(p.role)}
                 </p>
+                {boost ? (
+                  <p className="mt-0.5 text-sm font-black text-amber-300 drop-shadow">{boost}</p>
+                ) : null}
               </div>
             </div>
           );

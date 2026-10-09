@@ -1166,6 +1166,30 @@ def get_setting_int(cur, workshop_id, key, default=0):
         return default
 
 
+HAT_BOOST_ORDERS = 3
+
+
+def hat_boost_limit(cur, user_id, max_orders):
+    """Кейс бокс: 30 дней можно держать минимум 3 заказа вместо 2."""
+    if not user_id or max_orders <= 0:
+        return max_orders
+    cur.execute(
+        "SELECT 1 FROM information_schema.columns "
+        "WHERE table_schema = 'public' AND table_name = 'users' "
+        "  AND column_name = 'hat_boost_until'"
+    )
+    if not cur.fetchone():
+        return max_orders
+    cur.execute(
+        "SELECT 1 FROM users WHERE id = %s AND hat_boost_until IS NOT NULL "
+        "AND hat_boost_until > now()",
+        (int(user_id),),
+    )
+    if cur.fetchone():
+        return max(int(max_orders), HAT_BOOST_ORDERS)
+    return max_orders
+
+
 CONVEYOR_ISSUE_KEY = 'conveyor_issue_enabled'
 CONVEYOR_ISSUE_OFF_ERROR = (
     'Конвейер выключен администратором — заказы сейчас не выдают'

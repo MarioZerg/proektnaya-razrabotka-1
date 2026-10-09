@@ -11,8 +11,10 @@ export interface LivePerson {
   canOverlock: boolean;
   /** Фото из профиля или MAX: COALESCE(avatar_url, max_avatar_url). */
   avatarUrl?: string | null;
-  /** Шляпа с кейс бокса — одна на человека, новая заменяет старую. */
+  /** Шляпа с кейс бокса — только после покупки, новая заменяет старую. */
   bubbleHat?: string | null;
+  /** До этой отметки швея держит 3 заказа вместо 2. */
+  hatBoostUntil?: string | null;
 }
 
 export interface LiveOrder {

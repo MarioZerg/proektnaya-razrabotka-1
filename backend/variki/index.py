@@ -49,6 +49,43 @@ def _roll_hat(current):
     return random.choice(pool)
 
 
+CASE_TITLE = 'Кейс бокс'
+CASE_PRICE = 15000
+CASE_DESCRIPTION = (
+    'Преимущество шляпы: 30 дней вы держите в работе 3 заказа вместо обычных 2 — '
+    'можно шить больше за смену. На пузырьке сотрудника смены появляется случайная '
+    'шляпа. Купили снова — старая шляпа пропадает, таймер усиления стартует заново '
+    'на 30 дней.'
+)
+
+
+def _ensure_bubble_case(cur):
+    """Карточка и колонки для кейса. Без этого витрина молчит, пока не прогнали миграцию."""
+    cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS bubble_hat VARCHAR(40)")
+    cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS hat_boost_until TIMESTAMPTZ")
+    cur.execute("ALTER TABLE variki_purchases ADD COLUMN IF NOT EXISTS loot_key VARCHAR(40)")
+    cur.execute("ALTER TABLE variki_purchases ADD COLUMN IF NOT EXISTS loot_title VARCHAR(200)")
+    cur.execute(
+        "INSERT INTO variki_shop_items ("
+        "  title, description, price, animation, icon, "
+        "  stock_limit, valid_from, valid_to, needs_visit_date, is_active, sort_order"
+        ") "
+        "SELECT %s, %s, %s, 'bubble_case', 'Package', "
+        "  NULL, NULL, NULL, false, true, 0 "
+        "WHERE NOT EXISTS ("
+        "  SELECT 1 FROM variki_shop_items WHERE animation = 'bubble_case'"
+        ")",
+        (CASE_TITLE, CASE_DESCRIPTION, CASE_PRICE),
+    )
+    cur.execute(
+        "UPDATE variki_shop_items SET title = %s, description = %s, price = %s, "
+        "  is_active = true, stock_limit = NULL, valid_from = NULL, valid_to = NULL, "
+        "  needs_visit_date = false "
+        "WHERE animation = 'bubble_case'",
+        (CASE_TITLE, CASE_DESCRIPTION, CASE_PRICE),
+    )
+
+
 def _resp(status, body):
     return {
         'statusCode': status,
@@ -230,6 +267,8 @@ def handler(event: dict, context) -> dict:
                 # Остаток считаем по СВОБОДНЫМ сертификатам на складе: сотрудник
                 # должен видеть, сколько подарков реально можно забрать сейчас, а
                 # не сколько их задумывал админ.
+                _ensure_bubble_case(cur)
+                conn.commit()
                 cur.execute(
                     "SELECT i.id, i.title, i.description, i.price, i.animation, i.icon, "
                     "  i.image_url, i.stock_limit, i.org_address, i.org_phone, "
@@ -325,6 +364,8 @@ def handler(event: dict, context) -> dict:
                 # с остатком сертификатов на складе.
                 if not _is_admin(cur, params.get('actorId')):
                     return _resp(403, {'error': 'Доступ только для администратора'})
+                _ensure_bubble_case(cur)
+                conn.commit()
                 cur.execute(
                     "SELECT i.id, i.title, i.description, i.price, i.animation, i.icon, "
                     "  i.image_url, i.stock_limit, i.is_active, i.sort_order, "
@@ -510,6 +551,7 @@ def handler(event: dict, context) -> dict:
                 # выдаёт купон. Баланс проверяем и списываем в одной транзакции с
                 # блокировкой строки: два нажатия подряд не должны увести баланс
                 # в минус и создать две покупки.
+                _ensure_bubble_case(cur)
                 user_id = body_data.get('userId')
                 item_id = body_data.get('itemId')
                 if not user_id or not item_id:
@@ -606,7 +648,9 @@ def handler(event: dict, context) -> dict:
                 if is_case:
                     loot_key, loot_title = _roll_hat(current_hat)
                     cur.execute(
-                        "UPDATE users SET bubble_hat = %s WHERE id = %s",
+                        "UPDATE users SET bubble_hat = %s, "
+                        "  hat_boost_until = now() + interval '30 days' "
+                        "WHERE id = %s",
                         (loot_key, int(user_id)),
                     )
                 elif not needs_visit:

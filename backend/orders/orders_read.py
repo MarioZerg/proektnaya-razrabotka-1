@@ -26,6 +26,7 @@ from shared import (
     cut_queue_order_sql,
     expand_material_names,
     get_setting_int,
+    hat_boost_limit,
     overlock_holder,
     overlock_wait_for_order,
     pick_order_trim,
@@ -371,15 +372,22 @@ def _handle_live_floor(cur, conn, headers: dict) -> dict:
     # Кто сейчас на смене. Последняя открытая смена человека — на случай, если
     # их по ошибке открыто две.
     cur.execute(
-        "SELECT 1 FROM information_schema.columns "
-        "WHERE table_schema = 'public' AND table_name = 'users' AND column_name = 'bubble_hat'"
+        "SELECT column_name FROM information_schema.columns "
+        "WHERE table_schema = 'public' AND table_name = 'users' "
+        "  AND column_name IN ('bubble_hat', 'hat_boost_until')"
     )
-    hat_sql = "NULLIF(u.bubble_hat, '')" if cur.fetchone() else "NULL"
+    hat_cols = {r[0] for r in cur.fetchall()}
+    hat_sql = "NULLIF(u.bubble_hat, '')" if 'bubble_hat' in hat_cols else "NULL"
+    boost_sql = (
+        "CASE WHEN u.hat_boost_until > now() THEN u.hat_boost_until END"
+        if 'hat_boost_until' in hat_cols
+        else "NULL"
+    )
     cur.execute(
         "SELECT DISTINCT ON (u.id) u.id, u.full_name, COALESCE(ss.role, u.role), "
         "       ss.workshop_id, w.name, ss.opened_at, COALESCE(u.can_overlock, false), "
         "       NULLIF(u.avatar_url, ''), NULLIF(u.max_avatar_url, ''), u.max_user_id, "
-        f"      {hat_sql} "
+        f"      {hat_sql}, {boost_sql} "
         "FROM shift_sessions ss "
         "JOIN users u ON u.id = ss.user_id "
         "LEFT JOIN workshops w ON w.id = ss.workshop_id "
@@ -395,6 +403,7 @@ def _handle_live_floor(cur, conn, headers: dict) -> dict:
             'workshopName': r[4], 'shiftOpenedAt': _iso(r[5]), 'canOverlock': bool(r[6]),
             'avatarUrl': r[7] or r[8] or None,
             'bubbleHat': r[10],
+            'hatBoostUntil': _iso(r[11]),
         })
         if r[9]:
             max_pairs.append((r[0], str(r[9]), bool(r[7])))
@@ -630,8 +639,10 @@ def handle_get(event: dict, headers: dict, dsn: str) -> dict:
             # Лимит заказов на руках отдаём фронту: по нему кнопка «Получить заказ»
             # показывает замочек, не дёргая сервер впустую. Проверку всё равно делает
             # сервер при взятии — это только подсказка для глаз.
-            max_orders = get_setting_int(
-                cur, session_ws, 'max_quantity_orders_to_seamstress', 0
+            max_orders = hat_boost_limit(
+                cur,
+                waits_user_id,
+                get_setting_int(cur, session_ws, 'max_quantity_orders_to_seamstress', 0),
             )
 
             # ТАЙМЕРЫ ОБМЁТКИ — ОТДЕЛЬНО ОТ ТАЙМЕРОВ ПОШИВА.
