@@ -35,7 +35,11 @@ createRoot(document.getElementById("root")!).render(
 // Новую версию НЕ применяем молча: сотрудник может заполнять приёмку или собирать
 // отгрузку, и внезапная перезагрузка стёрла бы введённое. Вместо этого показываем
 // плашку с кнопкой — решает человек. Этим занимается AppUpdateBanner.
-if ('serviceWorker' in navigator && import.meta.env.PROD) {
+if (
+  'serviceWorker' in navigator &&
+  import.meta.env.PROD &&
+  !window.location.pathname.startsWith('/lider')
+) {
   window.addEventListener('load', () => {
     navigator.serviceWorker.register('/sw.js').catch(() => {
       // Установка — не критичная функция: если не вышло, система работает как обычный сайт.

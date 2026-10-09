@@ -8,6 +8,7 @@ import LiderTvFeed from '@/components/lider/LiderTvFeed';
 import LiderTvRace from '@/components/lider/LiderTvRace';
 import { useSlowScroll } from '@/components/lider/useSlowScroll';
 import { useTvCanvas } from '@/components/lider/useTvCanvas';
+import { useTvBuildWatch } from '@/components/lider/useTvBuildWatch';
 import type { LiveFloorData, LivePerson, LiveRace } from '@/lib/liveFloorApi';
 
 const MoscowClock = () => {
@@ -62,6 +63,7 @@ const FLOOR_MIN_MS = 22000;
 const LiderTv = () => {
   const { scale, left, top, frameW, frameH } = useTvCanvas();
   const scrollRef = useRef<HTMLDivElement>(null);
+  useTvBuildWatch();
   const [screen, setScreen] = useState<'floor' | 'race'>('floor');
   const nowTick = useTicker();
   const {

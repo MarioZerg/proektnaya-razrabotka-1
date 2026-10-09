@@ -20,7 +20,14 @@ const AppUpdateBanner = () => {
   const [applying, setApplying] = useState(false);
 
   useEffect(() => {
-    watchForUpdates(setAvailable);
+    const tv = window.location.pathname.startsWith('/lider');
+    watchForUpdates((next) => {
+      if (next && tv) {
+        applyUpdate();
+        return;
+      }
+      setAvailable(next);
+    }, tv ? 60 * 1000 : undefined);
   }, []);
 
   useEffect(() => {

@@ -35,7 +35,7 @@ const trackWaiting = (worker: ServiceWorker | null) => {
  *
  * @param onAvailable вызывается, когда новая версия скачана и готова к установке
  */
-export const watchForUpdates = (onAvailable: UpdateListener) => {
+export const watchForUpdates = (onAvailable: UpdateListener, intervalMs = CHECK_INTERVAL_MS) => {
   listener = onAvailable;
 
   if (!('serviceWorker' in navigator)) return;
@@ -63,7 +63,8 @@ export const watchForUpdates = (onAvailable: UpdateListener) => {
       document.addEventListener('visibilitychange', () => {
         if (document.visibilityState === 'visible') check();
       });
-      window.setInterval(check, CHECK_INTERVAL_MS);
+      window.setInterval(check, intervalMs);
+      check();
     })
     .catch(() => {
       // Служебный файл недоступен — система работает как обычный сайт.
