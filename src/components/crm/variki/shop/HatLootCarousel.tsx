@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react';
 import { BUBBLE_HATS, BubbleHat } from '@/components/lider/bubbleHats';
+import { useAuth } from '@/context/AuthContext';
+import { fetchOwnAvatar } from '@/lib/usersApi';
 import {
   Carousel,
   CarouselContent,
@@ -9,11 +11,20 @@ import {
   type CarouselApi,
 } from '@/components/ui/carousel';
 
-/** Шляпы, которые могут выпасть из кейс бокса. Крутятся сами, стрелки листают вручную. */
+const initials = (name: string) =>
+  name.split(' ').slice(0, 2).map((part) => part[0]).join('').toUpperCase();
+
+/** Шляпы, которые могут выпасть из кейс бокса. Крутятся на аватарке того, кто смотрит витрину. */
 const HatLootCarousel = () => {
+  const { user } = useAuth();
   const [api, setApi] = useState<CarouselApi>();
   const [index, setIndex] = useState(0);
   const [paused, setPaused] = useState(false);
+  const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
+
+  useEffect(() => {
+    fetchOwnAvatar().then(setAvatarUrl).catch(() => setAvatarUrl(null));
+  }, [user?.id]);
 
   useEffect(() => {
     if (!api) return;
@@ -45,10 +56,21 @@ const HatLootCarousel = () => {
       <Carousel setApi={setApi} opts={{ loop: true }} className="h-full">
         <CarouselContent className="ml-0 h-44">
           {BUBBLE_HATS.map((item) => (
-            <CarouselItem key={item.key} className="flex h-44 basis-full flex-col items-center justify-end pb-10 pl-0">
-              <div className="relative h-24 w-28">
-                <div className="absolute bottom-0 left-1/2 h-16 w-16 -translate-x-1/2 rounded-full bg-slate-700 ring-4 ring-sky-400" />
-                <div className="absolute bottom-10 left-1/2 w-24 -translate-x-1/2">
+            <CarouselItem key={item.key} className="flex h-44 basis-full flex-col items-center justify-end overflow-visible pb-10 pl-0">
+              <div className="relative h-[4.5rem] w-[4.5rem] overflow-visible">
+                <div className="h-full w-full overflow-hidden rounded-full bg-slate-700 ring-4 ring-sky-400">
+                  {avatarUrl ? (
+                    <img src={avatarUrl} alt="" className="h-full w-full object-cover" referrerPolicy="no-referrer" />
+                  ) : (
+                    <span className="flex h-full w-full items-center justify-center text-sm font-black text-white">
+                      {initials(user?.name || 'Я')}
+                    </span>
+                  )}
+                </div>
+                <div
+                  className="pointer-events-none absolute left-1/2 z-20 -translate-x-1/2"
+                  style={{ bottom: '62%', width: '150%', aspectRatio: '80 / 56' }}
+                >
                   <BubbleHat kind={item.key} />
                 </div>
               </div>

@@ -1,11 +1,18 @@
 import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
-import Icon from '@/components/ui/icon';
 import { useToast } from '@/hooks/use-toast';
 import { claimShaft, fetchShaft, type ShaftDesk } from '@/lib/varikiApi';
 import { playShaftCoins } from '@/lib/gameSounds';
 
 const money = (value: number) => value.toLocaleString('ru-RU');
+
+const BAG_CLOSED = '/shaft/bag-closed.jpg';
+const BAG_OPEN = '/shaft/bag-open.jpg';
+
+const fadeMask = (at: string) => ({
+  WebkitMaskImage: `radial-gradient(ellipse 74% 80% at ${at}, #000 52%, transparent 78%)`,
+  maskImage: `radial-gradient(ellipse 74% 80% at ${at}, #000 52%, transparent 78%)`,
+});
 
 const dayTitle = (status: ShaftDesk['days'][number]['status']) => {
   if (status === 'open') return 'горит';
@@ -170,23 +177,33 @@ const ShaftTab = ({ userId }: ShaftTabProps) => {
           </p>
         </div>
 
-        <div className="relative mx-auto mt-6 flex max-w-sm flex-col items-center">
-          <div
-            className={`relative flex h-44 w-40 flex-col items-center justify-end rounded-b-[48px] rounded-t-[36px] border-4 ${
-              tied ? 'border-stone-600 bg-[#4a3b2a]' : 'border-amber-700 bg-[#6b4a28]'
-            }`}
-          >
-            <div className={`absolute -top-3 flex h-5 w-28 items-center justify-center rounded-full ${tied ? 'bg-stone-500' : 'bg-amber-800'}`}>
-              {tied && <Icon name="Lock" size={12} className="text-stone-200" />}
-            </div>
-            <div className="mb-6 text-center">
-              <p className="text-3xl font-black text-amber-100">
-                {desk ? `${money(desk.bag)} ₽` : '…'}
-              </p>
-              <p className="text-xs uppercase tracking-wide text-amber-200/80">уже в мешке</p>
-            </div>
+        <div className="relative mx-auto mt-4 flex max-w-sm flex-col items-center">
+          <div className="pointer-events-none absolute left-1/2 top-8 h-40 w-40 -translate-x-1/2 rounded-full bg-amber-400/25 blur-3xl" />
+          <div className="relative z-10 aspect-[3/4] w-56 sm:w-64">
+              <img
+                src={BAG_CLOSED}
+                alt=""
+                className={`absolute inset-0 h-full w-full object-cover object-center transition-opacity duration-700 ${
+                  tied ? 'opacity-100' : 'opacity-0'
+                }`}
+                style={fadeMask('50% 46%')}
+              />
+              <img
+                src={BAG_OPEN}
+                alt=""
+                className={`absolute inset-0 h-full w-full object-cover object-center transition-opacity duration-700 ${
+                  tied ? 'opacity-0' : 'opacity-100'
+                }`}
+                style={fadeMask('50% 58%')}
+              />
+              <div className="absolute inset-x-2 bottom-2 rounded-2xl bg-black/55 px-2 py-1.5 text-center shadow-[0_8px_24px_rgba(0,0,0,.45)] backdrop-blur-[2px] sm:inset-x-3 sm:bottom-3">
+                <p className="text-2xl font-black text-amber-100 sm:text-3xl">
+                  {desk ? `${money(desk.bag)} ₽` : '…'}
+                </p>
+                <p className="text-[10px] uppercase tracking-wide text-amber-200/80 sm:text-xs">уже в мешке</p>
+              </div>
           </div>
-          <p className="mt-3 text-sm text-amber-100/80">
+          <p className="mt-1 text-sm text-amber-100/80">
             {desk?.full
               ? 'Мешок переполнен, заберите хоть чуть-чуть'
               : tied

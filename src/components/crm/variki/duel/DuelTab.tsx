@@ -3,6 +3,8 @@ import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
 import Icon from '@/components/ui/icon';
 import { useToast } from '@/hooks/use-toast';
+import { useAuth } from '@/context/AuthContext';
+import { fetchOwnAvatar } from '@/lib/usersApi';
 import { BubbleHat } from '@/components/lider/bubbleHats';
 import {
   challengeDuel,
@@ -59,6 +61,8 @@ interface DuelTabProps {
 /** Вкладка «Дуэль»: арена и кого можно вызвать. Правила живут отдельно. */
 const DuelTab = ({ userId }: DuelTabProps) => {
   const { toast } = useToast();
+  const { user } = useAuth();
+  const [myAvatar, setMyAvatar] = useState<string | null>(null);
   const [desk, setDesk] = useState<DuelDesk | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<number | null>(null);
@@ -72,6 +76,10 @@ const DuelTab = ({ userId }: DuelTabProps) => {
       })
       .catch((e) => setError(e instanceof Error ? e.message : 'Не удалось открыть дуэль'));
   };
+
+  useEffect(() => {
+    fetchOwnAvatar().then(setMyAvatar).catch(() => setMyAvatar(null));
+  }, [userId]);
 
   useEffect(() => {
     load();
@@ -127,10 +135,17 @@ const DuelTab = ({ userId }: DuelTabProps) => {
         <div className="relative mx-auto mt-6 h-28 max-w-md">
           <div className="absolute inset-x-4 bottom-1 h-16 rounded-[50%] border-[5px] border-[#8a5a28] bg-gradient-to-b from-[#f0d59a] to-[#b88845] shadow-[inset_0_-8px_16px_rgba(90,40,0,.35)]" />
           <div className="absolute bottom-6 left-[8%] flex flex-col items-center">
-            <span className="flex h-14 w-14 items-center justify-center rounded-full border-4 border-amber-200 bg-[#3a2412] text-[10px] font-bold uppercase tracking-wide text-amber-100">
-              вы
+            <span className="flex h-14 w-14 overflow-hidden rounded-full border-4 border-amber-200 bg-[#3a2412]">
+              {myAvatar ? (
+                <img src={myAvatar} alt="" className="h-full w-full object-cover" referrerPolicy="no-referrer" />
+              ) : (
+                <span className="flex h-full w-full items-center justify-center text-xs font-bold text-amber-100">
+                  {initials(user?.name || 'Вы')}
+                </span>
+              )}
             </span>
-            <span className="mt-1 text-[10px] text-amber-100/80">без шляпы</span>
+            <span className="mt-1 text-[10px] font-bold uppercase tracking-wide text-amber-100">вы</span>
+            <span className="text-[10px] text-amber-100/80">без шляпы</span>
           </div>
           <div className="absolute bottom-6 right-[8%] flex flex-col items-center">
             <span className="relative flex h-14 w-14 items-center justify-center rounded-full border-4 border-amber-200 bg-[#3a2412] text-[10px] font-bold uppercase tracking-wide text-amber-100">

@@ -54,9 +54,19 @@ const ShopItemCard = ({ item, index, balance, userId, onBuy }: ShopItemCardProps
         )}
 
         <h2 className="text-lg font-bold leading-tight">{item.title}</h2>
-        {item.description && (
+        {isCase ? (
+          <div className="mt-2 space-y-1.5 text-sm leading-snug text-foreground/85">
+            <p>30 дней в работе 3 заказа вместо 2 — за смену выходит больше.</p>
+            <p>Шляпа садится на ваш кружок на телевизоре смены.</p>
+            <p>Мешок шахты для вас развязан: 15, 16 и 17 числа можно унести горсть живых денег.</p>
+            <p>Если на дуэли жребий оставит шляпу вам — плюс 5 000 вариков.</p>
+            <p className="text-xs text-muted-foreground">
+              Купили ещё раз — выпадает другая шляпа, и 30 дней начинаются заново.
+            </p>
+          </div>
+        ) : item.description ? (
           <p className="mt-1 text-sm text-foreground/80">{item.description}</p>
-        )}
+        ) : null}
 
         {/* Куда идти и куда звонить — видно ДО покупки: сотрудник
             решает, удобно ли ему добираться, пока не потратил варики.
@@ -103,14 +113,7 @@ const ShopItemCard = ({ item, index, balance, userId, onBuy }: ShopItemCardProps
 
           {/* Остаток показываем, только когда он МАЛЕНЬКИЙ: «осталось 2»
               подталкивает решиться, а «осталось 47» — просто шум. */}
-          {isCase && period.active && (
-            <p className="text-xs font-medium text-amber-800">
-              Преимущество: 30 дней — 3 заказа в работе вместо 2
-            </p>
-          )}
-
-          {!soldOut && period.active && !item.needsVisitDate && !isCase
-            && item.available <= 3 && (
+          {!soldOut && period.active && !item.needsVisitDate && !isCase && item.available <= 3 && (
             <p className="text-xs font-semibold text-amber-700">
               Осталось {item.available}
               {item.stockLimit ? ` из ${item.stockLimit}` : ''}
