@@ -65,10 +65,50 @@ export const statusTabs: StatusTab[] = [
   { value: 'Стикеровка', label: 'На стикеровке' },
   // Отменённые с готовым кроем стоят рядом с рабочими вкладками, а не в конце:
   // это незакрытая работа, которую надо довести, иначе крой потеряется в цехе.
-  { value: CANCELLED_CUT_TAB, label: 'Отменённые с кроем' },
+  { value: CANCELLED_CUT_TAB, label: 'Отменённый крой' },
   { value: 'Готовые', label: 'Готовые' },
   { value: 'Со склада', label: 'Со склада' },
 ];
+
+/**
+ * Группы вкладок конвейера — как идёт вещь по цеху, а не плоский ряд из девяти
+ * кнопок. В плоском ряду «На раскрое» и «Готовые» стоят рядом по месту на
+ * экране, хотя по смыслу это разные концы маршрута: мастер тычет не туда.
+ *
+ * Пустые группы (роль не видит ни одной вкладки) на экране не рисуем.
+ */
+export interface StatusTabGroup {
+  id: string;
+  label: string;
+  accent: string;
+  values: TabValue[];
+}
+
+export const tabGroups: StatusTabGroup[] = [
+  { id: 'queue', label: 'Очередь', accent: 'border-l-slate-400', values: ['Новый'] },
+  { id: 'cut', label: 'Раскрой', accent: 'border-l-amber-500', values: ['На раскрое', 'Раскроено'] },
+  {
+    id: 'sew',
+    label: 'Пошив',
+    accent: 'border-l-sky-500',
+    values: [OVERLOCK_TAB, 'В работе', CANCELLED_CUT_TAB],
+  },
+  { id: 'pack', label: 'Упаковка', accent: 'border-l-orange-500', values: ['Стикеровка'] },
+  { id: 'done', label: 'Готово', accent: 'border-l-emerald-600', values: ['Готовые', 'Со склада'] },
+];
+
+/** Оставляет в группах только вкладки, которые этой роли вообще показывают. */
+export const visibleTabGroups = (visible: StatusTab[]): Array<StatusTabGroup & { tabs: StatusTab[] }> => {
+  const byValue = new Map(visible.map((tab) => [tab.value, tab]));
+  return tabGroups
+    .map((group) => ({
+      ...group,
+      tabs: group.values
+        .map((value) => byValue.get(value))
+        .filter((tab): tab is StatusTab => !!tab),
+    }))
+    .filter((group) => group.tabs.length > 0);
+};
 
 /**
  * Цвет статуса на конвейере — общий для таблицы (ПК) и карточек (телефон).

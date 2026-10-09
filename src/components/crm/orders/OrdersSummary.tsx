@@ -92,13 +92,16 @@ const OrdersSummary = ({ orders }: OrdersSummaryProps) => {
   }).filter((g) => g.list.length > 0);
 
   return (
-    <div className="grid grid-cols-1 gap-4">
-      <Card className="border-border shadow-none">
-        <CardContent className="flex h-full flex-col gap-1 pt-5">
-          <span className="flex items-center gap-1.5 text-sm font-semibold">
-            <Icon name="Sparkles" size={15} className="text-blue-600" />
-            Новые заказы
-          </span>
+    <details className="rounded-xl border border-border bg-card px-3 py-2">
+      <summary className="flex cursor-pointer list-none items-center gap-2 text-sm">
+        <Icon name="Sparkles" size={15} className="text-blue-600" />
+        <span className="font-semibold">Ткань под новые</span>
+        <span className="tabular-nums font-bold">{newOrders.length}</span>
+        <span className="text-muted-foreground">шт · {meters(newOrders).toFixed(2)} п.м.</span>
+      </summary>
+      <div className="mt-3 border-t border-border pt-3">
+        <Card className="border-0 shadow-none">
+        <CardContent className="flex h-full flex-col gap-1 p-0">
           <div className="flex items-baseline gap-2">
             <span className="text-3xl font-bold">{newOrders.length}</span>
             <span className="text-sm text-muted-foreground">шт.</span>
@@ -133,7 +136,8 @@ const OrdersSummary = ({ orders }: OrdersSummaryProps) => {
           ))}
         </CardContent>
       </Card>
-    </div>
+      </div>
+    </details>
   );
 };
 

@@ -327,7 +327,7 @@ const MarketplaceOrders = () => {
   // больше тысячи заказов «Со склада» не показывались НИ В ОДНОМ фильтре: они
   // приходили с сервера, но проваливались мимо всех четырёх условий.
   const DONE_STAGES = ['Готовые', 'Со склада'];
-  const matchesStatus = (o: Order): boolean => {
+  const matchesStatus = (o: Order, filter: StatusFilter = statusFilter): boolean => {
     // Отменяют заказ на любом этапе, и sewingStatus при этом остаётся прежним
     // («Новый», «Готовые», «Со склада»), поэтому проверяем отмену первой.
     //
@@ -337,11 +337,11 @@ const MarketplaceOrders = () => {
     // на наш status — и вкладка «Отменённые» показывала 149 заказов вместо 1416.
     const cancelled =
       !!o.isCancelled || o.status === 'Отменён' || o.sewingStatus === 'Отменён';
-    if (statusFilter === 'cancelled') return cancelled;
+    if (filter === 'cancelled') return cancelled;
     if (cancelled) return false;
-    if (statusFilter === 'new') return o.sewingStatus === 'Новый';
-    if (statusFilter === 'in_progress') return IN_PROGRESS_STAGES.includes(o.sewingStatus);
-    if (statusFilter === 'done') return DONE_STAGES.includes(o.sewingStatus);
+    if (filter === 'new') return o.sewingStatus === 'Новый';
+    if (filter === 'in_progress') return IN_PROGRESS_STAGES.includes(o.sewingStatus);
+    if (filter === 'done') return DONE_STAGES.includes(o.sewingStatus);
     return true;
   };
 
@@ -371,10 +371,17 @@ const MarketplaceOrders = () => {
     new Set(orders.map((o) => o.material).filter((m): m is string => !!m))
   ).sort((a, b) => a.localeCompare(b, 'ru'));
 
+  const statusCounts: Record<StatusFilter, number> = {
+    new: orders.filter((o) => matchesStatus(o, 'new')).length,
+    in_progress: orders.filter((o) => matchesStatus(o, 'in_progress')).length,
+    done: orders.filter((o) => matchesStatus(o, 'done')).length,
+    cancelled: orders.filter((o) => matchesStatus(o, 'cancelled')).length,
+  };
+
   return (
     <CrmLayout>
-      <div className="space-y-6">
-        <h1 className="text-xl font-bold">Заказы</h1>
+      <div className="space-y-4 sm:space-y-6">
+        <h1 className="text-xl font-bold">Заказы с маркетплейса</h1>
 
         {!loading && duplicates.length > 0 && (
           <OrdersDuplicatesAlert duplicates={duplicates} />
@@ -412,6 +419,7 @@ const MarketplaceOrders = () => {
           onPullByNumber={() => setPullOpen(true)}
           statusFilter={statusFilter}
           onStatusChange={setStatusFilter}
+          statusCounts={statusCounts}
           marketplaceFilter={marketplaceFilter}
           onMarketplaceChange={setMarketplaceFilter}
           typeFilter={typeFilter}

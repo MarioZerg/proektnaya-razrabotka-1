@@ -80,7 +80,6 @@ const SewingItems = () => {
     totalMeters,
     totalPieces,
     countForTab,
-    piecesForTab,
     myUnfinishedCount,
     myStackTotal,
     myStackCancelled,
@@ -173,13 +172,6 @@ const SewingItems = () => {
           workshops={workshops}
           workshopFilter={workshopFilter}
           setWorkshopFilter={setWorkshopFilter}
-          searchQuery={searchQuery}
-          setSearchQuery={setSearchQuery}
-          activeTab={activeTab}
-          setActiveTab={setActiveTab}
-          setPage={setPage}
-          countForTab={countForTab}
-          piecesForTab={piecesForTab}
         />
 
         <SewingItemsFilters
@@ -200,6 +192,11 @@ const SewingItems = () => {
           setWorkshopFilter={setWorkshopFilter}
           marketplaceFilter={marketplaceFilter}
           setMarketplaceFilter={setMarketplaceFilter}
+          searchQuery={searchQuery}
+          setSearchQuery={setSearchQuery}
+          setPage={setPage}
+          showSearch={!isProductionRole}
+          onReset={resetUserFilters}
           showEmployeeFilter={!isSewer && !isCutter}
           showWorkshopFilter={false}
         />

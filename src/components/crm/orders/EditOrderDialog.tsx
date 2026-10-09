@@ -12,7 +12,7 @@ import {
 } from '@/components/ui/select';
 import Icon from '@/components/ui/icon';
 import type { Marketplace, Order, OrderStatus, OrderType } from '@/lib/ordersApi';
-import { productOptions, type EditFormState } from '@/components/crm/orders/ordersShared';
+import { isHiddenSystemNumber, publicOrderNumber, type EditFormState } from '@/components/crm/orders/ordersShared';
 
 interface EditOrderDialogProps {
   editingOrder: Order | null;
@@ -31,6 +31,16 @@ const EditOrderDialog = ({
   onClose,
   onSave,
 }: EditOrderDialogProps) => {
+  const shownNumber = editingOrder ? publicOrderNumber(editingOrder) : null;
+  const hideSystemNumber = form ? isHiddenSystemNumber(form.orderNumber) : false;
+  const productLabel = editingOrder
+    ? [editingOrder.material, editingOrder.width && editingOrder.height
+        ? `${editingOrder.width}×${editingOrder.height}`
+        : null]
+        .filter(Boolean)
+        .join(' ') || editingOrder.product || '—'
+    : '';
+
   return (
     <Dialog open={editingOrder !== null} onOpenChange={(open) => !open && onClose()}>
       <DialogContent className="sm:max-w-lg">
@@ -40,12 +50,22 @@ const EditOrderDialog = ({
 
         {form && (
           <div className="space-y-4">
-            <div className="space-y-1.5">
-              <Label>Номер заявки</Label>
-              <Input
-                value={form.orderNumber}
-                onChange={(e) => setForm((f) => f && { ...f, orderNumber: e.target.value })}
-              />
+            {!hideSystemNumber && (
+              <div className="space-y-1.5">
+                <Label>Номер заявки</Label>
+                <Input
+                  value={form.orderNumber}
+                  onChange={(e) => setForm((f) => f && { ...f, orderNumber: e.target.value })}
+                />
+              </div>
+            )}
+            {hideSystemNumber && shownNumber && (
+              <p className="font-mono-tech text-sm font-semibold">{shownNumber}</p>
+            )}
+
+            <div className="rounded-md border border-border bg-slate-50 px-3 py-2 text-sm">
+              <p className="text-xs text-muted-foreground">Товар</p>
+              <p className="font-semibold">{productLabel}</p>
             </div>
 
             <div className="grid grid-cols-2 gap-3">
@@ -84,7 +104,7 @@ const EditOrderDialog = ({
             </div>
 
             <div className="space-y-1.5">
-              <Label>Статус</Label>
+              <Label>Статус заказа</Label>
               <Select
                 value={form.status}
                 onValueChange={(v) => setForm((f) => f && { ...f, status: v as OrderStatus })}
@@ -102,28 +122,6 @@ const EditOrderDialog = ({
                   <SelectItem value="Отменён">Отменён</SelectItem>
                 </SelectContent>
               </Select>
-            </div>
-
-            <div className="space-y-1.5">
-              <Label>Товар</Label>
-              <Select
-                value={form.product}
-                onValueChange={(v) => setForm((f) => f && { ...f, product: v })}
-              >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {productOptions.map((p) => (
-                    <SelectItem key={p} value={p}>
-                      {p}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <p className="text-xs text-muted-foreground">
-                Один заказ — всегда 1 шт. Для нескольких единиц создайте отдельные заказы.
-              </p>
             </div>
 
             <Button

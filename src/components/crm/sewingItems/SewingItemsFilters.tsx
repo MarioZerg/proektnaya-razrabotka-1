@@ -7,11 +7,17 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import Icon from '@/components/ui/icon';
 import type { Employee } from '@/lib/usersApi';
 import type { Material } from '@/lib/materialsApi';
 import type { Workshop } from '@/lib/workshopsApi';
-import { widthOptions, heightOptions, marketplaceOptions, marketplaceLogo } from '@/components/crm/sewingItems/sewingItemsShared';
+import {
+  widthOptions,
+  heightOptions,
+  marketplaceOptions,
+  marketplaceLogo,
+} from '@/components/crm/sewingItems/sewingItemsShared';
 
 interface SewingItemsFiltersProps {
   employees: Employee[];
@@ -31,6 +37,11 @@ interface SewingItemsFiltersProps {
   setWorkshopFilter: (v: string) => void;
   marketplaceFilter: string;
   setMarketplaceFilter: (v: string) => void;
+  searchQuery: string;
+  setSearchQuery: (v: string) => void;
+  setPage: (v: number) => void;
+  showSearch?: boolean;
+  onReset: () => void;
   /** Закройщик/швея видят только заказы, назначенные на себя — выбирать другого
    * сотрудника им незачем, поэтому фильтр сотрудников для них скрыт. */
   /** Показывать выбор сотрудника. Швее и закройщику его не показываем: их вкладки
@@ -42,6 +53,11 @@ interface SewingItemsFiltersProps {
   /** Закройщик и швея работают только в своём цехе — выбор цеха им не нужен, фильтр скрыт. */
   showWorkshopFilter?: boolean;
 }
+
+const triggerClass = (active: boolean) =>
+  `h-8 w-[calc(50%-0.25rem)] shrink-0 px-2.5 text-xs sm:w-[9rem] ${
+    active ? 'border-sky-400 bg-sky-50 text-sky-900' : ''
+  }`;
 
 const SewingItemsFilters = ({
   employees,
@@ -61,6 +77,11 @@ const SewingItemsFilters = ({
   setWorkshopFilter,
   marketplaceFilter,
   setMarketplaceFilter,
+  searchQuery,
+  setSearchQuery,
+  setPage,
+  showSearch = false,
+  onReset,
   showEmployeeFilter = true,
   showWorkshopFilter = true,
 }: SewingItemsFiltersProps) => {
@@ -90,25 +111,22 @@ const SewingItemsFilters = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [workshopFilter, visibleMaterials.length]);
 
-  return (
-    <div>
-      <Button
-        variant="outline"
-        size="sm"
-        className="w-full justify-between sm:hidden"
-        onClick={() => setMobileOpen((v) => !v)}
-      >
-        <span className="flex items-center gap-1.5">
-          <Icon name="SlidersHorizontal" size={14} />
-          Фильтры
-        </span>
-        <Icon name={mobileOpen ? 'ChevronUp' : 'ChevronDown'} size={14} />
-      </Button>
+  const activeCount = [
+    typeFilter !== 'all',
+    showEmployeeFilter && employeeFilter !== 'all',
+    materialFilter !== 'all',
+    widthFilter !== 'all',
+    heightFilter !== 'all',
+    showWorkshopFilter && workshopFilter !== 'all',
+    marketplaceFilter !== 'all',
+    showSearch && searchQuery.trim().length > 0,
+  ].filter(Boolean).length;
 
-      <div className={`grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-7 ${mobileOpen ? 'mt-3 grid' : 'hidden'} sm:mt-0 sm:grid`}>
+  const filters = (
+    <>
       <Select value={typeFilter} onValueChange={setTypeFilter}>
-        <SelectTrigger>
-          <SelectValue placeholder="Все типы" />
+        <SelectTrigger className={triggerClass(typeFilter !== 'all')}>
+          <SelectValue placeholder="Тип" />
         </SelectTrigger>
         <SelectContent>
           <SelectItem value="all">Все типы</SelectItem>
@@ -121,8 +139,8 @@ const SewingItemsFilters = ({
 
       {showEmployeeFilter && (
         <Select value={employeeFilter} onValueChange={setEmployeeFilter}>
-          <SelectTrigger>
-            <SelectValue placeholder="Все сотрудники" />
+          <SelectTrigger className={triggerClass(employeeFilter !== 'all')}>
+            <SelectValue placeholder="Сотрудник" />
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="all">Все сотрудники</SelectItem>
@@ -136,8 +154,8 @@ const SewingItemsFilters = ({
       )}
 
       <Select value={materialFilter} onValueChange={setMaterialFilter}>
-        <SelectTrigger>
-          <SelectValue placeholder="Все ткани" />
+        <SelectTrigger className={triggerClass(materialFilter !== 'all')}>
+          <SelectValue placeholder="Ткань" />
         </SelectTrigger>
         <SelectContent>
           <SelectItem value="all">Все ткани</SelectItem>
@@ -150,8 +168,8 @@ const SewingItemsFilters = ({
       </Select>
 
       <Select value={widthFilter} onValueChange={setWidthFilter}>
-        <SelectTrigger>
-          <SelectValue placeholder="Все ширины" />
+        <SelectTrigger className={triggerClass(widthFilter !== 'all')}>
+          <SelectValue placeholder="Ширина" />
         </SelectTrigger>
         <SelectContent>
           <SelectItem value="all">Все ширины</SelectItem>
@@ -164,8 +182,8 @@ const SewingItemsFilters = ({
       </Select>
 
       <Select value={heightFilter} onValueChange={setHeightFilter}>
-        <SelectTrigger>
-          <SelectValue placeholder="Все высоты" />
+        <SelectTrigger className={triggerClass(heightFilter !== 'all')}>
+          <SelectValue placeholder="Высота" />
         </SelectTrigger>
         <SelectContent>
           <SelectItem value="all">Все высоты</SelectItem>
@@ -179,8 +197,8 @@ const SewingItemsFilters = ({
 
       {showWorkshopFilter && (
         <Select value={workshopFilter} onValueChange={setWorkshopFilter}>
-          <SelectTrigger>
-            <SelectValue placeholder="Все цеха" />
+          <SelectTrigger className={triggerClass(workshopFilter !== 'all')}>
+            <SelectValue placeholder="Цех" />
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="all">Все цеха</SelectItem>
@@ -194,11 +212,11 @@ const SewingItemsFilters = ({
       )}
 
       <Select value={marketplaceFilter} onValueChange={setMarketplaceFilter}>
-        <SelectTrigger>
-          <SelectValue placeholder="Все маркетплейсы" />
+        <SelectTrigger className={triggerClass(marketplaceFilter !== 'all')}>
+          <SelectValue placeholder="Площадка" />
         </SelectTrigger>
         <SelectContent>
-          <SelectItem value="all">Все маркетплейсы</SelectItem>
+          <SelectItem value="all">Все площадки</SelectItem>
           {marketplaceOptions.map((mp) => (
             <SelectItem key={mp} value={mp}>
               {marketplaceLogo[mp]?.label || mp}
@@ -206,6 +224,64 @@ const SewingItemsFilters = ({
           ))}
         </SelectContent>
       </Select>
+
+      {activeCount > 0 && (
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          className="h-8 shrink-0 px-2 text-xs text-slate-600"
+          onClick={onReset}
+        >
+          <Icon name="X" size={12} className="mr-1" />
+          Сбросить
+        </Button>
+      )}
+    </>
+  );
+
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      {showSearch && (
+        <div className="relative w-full min-w-[12rem] sm:w-56 sm:flex-none">
+          <Icon
+            name="Search"
+            size={14}
+            className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground"
+          />
+          <Input
+            placeholder="Номер заказа или ШК"
+            value={searchQuery}
+            onChange={(e) => {
+              setSearchQuery(e.target.value);
+              setPage(1);
+            }}
+            className="h-8 pl-8 text-xs"
+          />
+        </div>
+      )}
+
+      <Button
+        variant="outline"
+        size="sm"
+        className="h-8 shrink-0 sm:hidden"
+        onClick={() => setMobileOpen((v) => !v)}
+      >
+        <Icon name="SlidersHorizontal" size={14} className="mr-1.5" />
+        Фильтры
+        {activeCount > 0 && (
+          <span className="ml-1.5 rounded-full bg-sky-100 px-1.5 text-[10px] font-semibold text-sky-800">
+            {activeCount}
+          </span>
+        )}
+      </Button>
+
+      <div
+        className={`${
+          mobileOpen ? 'flex w-full flex-wrap items-center gap-2' : 'hidden'
+        } sm:contents`}
+      >
+        {filters}
       </div>
     </div>
   );

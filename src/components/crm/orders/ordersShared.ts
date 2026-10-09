@@ -8,6 +8,26 @@ export const productOptions = [
   'Шифон 300x255',
 ];
 
+/**
+ * Заявка OZON FBO приходит с системным номером вида 108113… — это id заявки
+ * в кабинете, не ярлык вещи. На карточке его прячем: ищут по ткани, размеру
+ * и номеру отправления.
+ */
+export const isHiddenSystemNumber = (value: string | null | undefined): boolean =>
+  /^108113/.test(String(value || '').trim());
+
+/** Номер, который показываем на карточке: отправление, а не служебный id OZON. */
+export const publicOrderNumber = (o: {
+  orderNumber: string;
+  ozonPostingNumber?: string | null;
+}): string | null => {
+  const posting = (o.ozonPostingNumber || '').trim();
+  const num = (o.orderNumber || '').trim();
+  if (posting && !isHiddenSystemNumber(posting)) return posting;
+  if (num && !isHiddenSystemNumber(num)) return num;
+  return null;
+};
+
 export const marketplaceLogo: Record<Marketplace, { label: string; className: string }> = {
   OZON: { label: 'OZON', className: 'text-[#005BFF] font-bold' },
   WB: { label: 'Wildberries', className: 'text-[#CB11AB] font-bold' },

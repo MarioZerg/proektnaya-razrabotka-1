@@ -1,14 +1,4 @@
 import { useEffect, useState } from 'react';
-import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table';
 import {
   Pagination,
   PaginationContent,
@@ -17,8 +7,7 @@ import {
   PaginationLink,
 } from '@/components/ui/pagination';
 import Icon from '@/components/ui/icon';
-import ShopBadge from '@/components/crm/ShopBadge';
-import { canPullFromConveyor, canRestoreOrder, type Order } from '@/lib/ordersApi';
+import type { Order } from '@/lib/ordersApi';
 import OrdersCards from '@/components/crm/orders/OrdersCards';
 
 const PAGE_SIZE = 50;
@@ -35,12 +24,6 @@ const buildPageList = (current: number, total: number): Array<number | 'ellipsis
   pages.push(total);
   return pages;
 };
-import {
-  formatDate,
-  marketplaceLogo,
-  statusVariant,
-  timeAgo,
-} from '@/components/crm/orders/ordersShared';
 
 // Человекочитаемые подписи статусов отправления OZON (только для отображения).
 const OZON_STATUS_LABELS: Record<string, string> = {
@@ -86,8 +69,6 @@ const OrdersTable = ({
   const [page, setPage] = useState(1);
   const totalPages = Math.max(1, Math.ceil(orders.length / PAGE_SIZE));
 
-  // При изменении набора заказов (фильтры, обновление) возвращаемся на первую страницу,
-  // а также не даём странице выйти за пределы диапазона.
   useEffect(() => {
     setPage((p) => Math.min(p, totalPages));
   }, [totalPages]);
@@ -113,7 +94,7 @@ const OrdersTable = ({
 
   return (
     <div className="space-y-4">
-    <div className="md:hidden">
+      <p className="text-sm text-muted-foreground">Всего заказов: {orders.length}</p>
       <OrdersCards
         orders={pagedOrders}
         onEdit={onEdit}
@@ -122,119 +103,6 @@ const OrdersTable = ({
         canManage={canManage}
         ozonStatusLabel={ozonStatusLabel}
       />
-    </div>
-    <div className="hidden overflow-x-auto rounded-md border border-border md:block">
-      <Table>
-        <TableHeader>
-          <TableRow className="bg-primary hover:bg-primary">
-            <TableHead className="text-primary-foreground">#</TableHead>
-            <TableHead className="text-primary-foreground">Статус</TableHead>
-            <TableHead className="text-primary-foreground">Номер заказа</TableHead>
-            <TableHead className="text-primary-foreground">Маркетплейс</TableHead>
-            <TableHead className="text-primary-foreground">Тип</TableHead>
-            <TableHead className="text-primary-foreground">Статус OZON</TableHead>
-            <TableHead className="text-primary-foreground">Кластер</TableHead>
-            <TableHead className="text-primary-foreground">Товары</TableHead>
-            <TableHead className="text-primary-foreground">Заказан</TableHead>
-            <TableHead className="text-primary-foreground">Выполнен</TableHead>
-            <TableHead className="text-primary-foreground" />
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {pagedOrders.map((o) => {
-            // Отмену видит маркетплейс: наш status при этом не меняется,
-            // поэтому берём готовый признак с сервера (isCancelled).
-            const isCancelled =
-              !!o.isCancelled || o.status === 'Отменён' || o.sewingStatus === 'Отменён';
-            return (
-            <TableRow key={o.id} className={isCancelled ? 'text-muted-foreground line-through opacity-70' : ''}>
-              <TableCell>{o.id}</TableCell>
-              <TableCell>
-                <Badge variant={statusVariant(o.status)}>{o.status}</Badge>
-              </TableCell>
-              <TableCell className="font-medium">
-                <div className="flex items-center gap-1.5">
-                  {o.orderNumber}
-                  <ShopBadge name={o.shopName} color={o.shopColor} />
-                </div>
-              </TableCell>
-              <TableCell>
-                <span className={marketplaceLogo[o.marketplace]?.className}>
-                  {marketplaceLogo[o.marketplace]?.label || o.marketplace}
-                </span>
-              </TableCell>
-              <TableCell>{o.orderType}</TableCell>
-              <TableCell>
-                {ozonStatusLabel(o.ozonStatus) ? (
-                  <Badge variant="outline" className="font-normal">
-                    {ozonStatusLabel(o.ozonStatus)}
-                  </Badge>
-                ) : (
-                  '—'
-                )}
-              </TableCell>
-              <TableCell>{o.cluster || '—'}</TableCell>
-              <TableCell>
-                {o.product} - {o.quantity} шт.
-              </TableCell>
-              <TableCell>
-                {/* Показываем, когда покупатель оформил заказ, а не когда мы его
-                    загрузили: заказы приезжают из маркетплейса пачками, и дата
-                    загрузки у сотни заказов одинаковая — по ней не понять, какой
-                    заказ ждёт дольше всех. По этой же дате список и отсортирован. */}
-                <div className="whitespace-nowrap">
-                  {formatDate(o.marketplaceCreatedAt || o.createdAt)}
-                </div>
-                <Badge variant="destructive" className="mt-1 font-normal">
-                  {timeAgo(o.marketplaceCreatedAt || o.createdAt)}
-                </Badge>
-              </TableCell>
-              <TableCell>{o.completedAt ? formatDate(o.completedAt) : ''}</TableCell>
-              <TableCell>
-                <div className="flex justify-end gap-2">
-                  {canManage && (
-                    <>
-                      <Button size="icon" variant="secondary" onClick={() => onEdit(o)}>
-                        <Icon name="Pencil" size={14} />
-                      </Button>
-                      {/* Снять с конвейера можно только НЕТРОНУТЫЙ заказ: его никто не
-                          взял и ткань на него не резали. Раскроенную или шьющуюся вещь
-                          отменять поздно — материал потрачен, швея за работу получила
-                          деньги, вещь нужно довести и отгрузить. Раньше кнопка стояла
-                          у любого заказа, и ею снимали уже сшитые. */}
-                      {canPullFromConveyor(o) && (
-                        <Button
-                          size="icon"
-                          variant="destructive"
-                          title="Снять с конвейера и отменить на маркетплейсе"
-                          onClick={() => onDelete(o.id)}
-                        >
-                          <Icon name="Trash2" size={14} />
-                        </Button>
-                      )}
-                      {/* Промахнулись кнопкой снятия — заказ можно вернуть на конвейер.
-                          Кнопка появляется только у НАШЕЙ отмены: отменённое самим
-                          маркетплейсом не возвращается, отгружать вещь будет некуда. */}
-                      {canRestoreOrder(o) && (
-                        <Button
-                          size="icon"
-                          variant="outline"
-                          title="Вернуть заказ в работу"
-                          onClick={() => onRestore(o)}
-                        >
-                          <Icon name="Undo2" size={14} />
-                        </Button>
-                      )}
-                    </>
-                  )}
-                </div>
-              </TableCell>
-            </TableRow>
-            );
-          })}
-        </TableBody>
-      </Table>
-    </div>
 
       {totalPages > 1 && (
         <Pagination>

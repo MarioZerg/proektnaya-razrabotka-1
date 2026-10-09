@@ -228,7 +228,9 @@ const SewingItemDetailDialog = ({
           ) : (
             <>
           <div className="flex flex-wrap items-center gap-2 pr-8">
-            <DialogTitle>Товар #{selectedOrder?.id}</DialogTitle>
+            <DialogTitle className="break-all font-mono-tech text-base">
+              {selectedOrder?.orderNumber}
+            </DialogTitle>
             {selectedOrder && (
               <Badge className={statusBadgeClass[selectedOrder.sewingStatus] || ''}>
                 {selectedOrder.sewingStatus}

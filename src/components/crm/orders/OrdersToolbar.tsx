@@ -1,5 +1,6 @@
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Badge } from '@/components/ui/badge';
 import {
   Select,
   SelectContent,
@@ -21,6 +22,18 @@ export type StatusFilter = 'new' | 'in_progress' | 'done' | 'cancelled';
 export type MarketplaceFilter = 'all' | 'OZON' | 'WB' | 'Yandex';
 export type TypeFilter = 'all' | 'FBO' | 'FBS' | 'Индивидуальный';
 
+const STATUS_TABS: { value: StatusFilter; label: string }[] = [
+  { value: 'new', label: 'Новые' },
+  { value: 'in_progress', label: 'В работе' },
+  { value: 'done', label: 'Выполненные' },
+  { value: 'cancelled', label: 'Отменённые' },
+];
+
+const triggerClass = (active: boolean) =>
+  `h-8 w-[calc(50%-0.25rem)] shrink-0 px-2.5 text-xs sm:w-[9rem] ${
+    active ? 'border-sky-400 bg-sky-50 text-sky-900' : ''
+  }`;
+
 interface OrdersToolbarProps {
   /** Может ли пользователь заводить и загружать заказы. Кладовщик и менеджер смотрят
    * эту вкладку только как справку — управляет заказами администратор. */
@@ -38,6 +51,7 @@ interface OrdersToolbarProps {
   onPullByNumber: () => void;
   statusFilter: StatusFilter;
   onStatusChange: (v: StatusFilter) => void;
+  statusCounts: Record<StatusFilter, number>;
   marketplaceFilter: MarketplaceFilter;
   onMarketplaceChange: (v: MarketplaceFilter) => void;
   typeFilter: TypeFilter;
@@ -69,6 +83,7 @@ const OrdersToolbar = ({
   onPullByNumber,
   statusFilter,
   onStatusChange,
+  statusCounts,
   marketplaceFilter,
   onMarketplaceChange,
   typeFilter,
@@ -91,133 +106,141 @@ const OrdersToolbar = ({
           ? 'Обновляем статусы OZON...'
           : null;
 
-  return (
-    <>
-      {/* Загрузка, ручной заказ и догрузка по номеру — только у администратора.
-          Раньше это был ряд из шести кнопок, и на экране не оставалось места
-          под сам список. Кладовщик и менеджер вкладку только смотрят. */}
-      {canManage && (
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button variant="outline">
-              <Icon
-                name={busyLabel ? 'Loader2' : 'Ellipsis'}
-                size={16}
-                className={`mr-2 ${busyLabel ? 'animate-spin' : ''}`}
-              />
-              {busyLabel || 'Действия'}
-              <Icon name="ChevronDown" size={14} className="ml-2" />
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="start" className="w-64">
-            <DropdownMenuItem onClick={onOpenManual}>
-              <Icon name="Plus" size={16} className="mr-2" />
-              Индивидуальный заказ
-            </DropdownMenuItem>
-            <DropdownMenuItem onClick={onPullByNumber}>
-              <Icon name="Search" size={16} className="mr-2" />
-              Заказ по номеру
-            </DropdownMenuItem>
-            <DropdownMenuSeparator />
-            <DropdownMenuLabel>Загрузить с API</DropdownMenuLabel>
-            <DropdownMenuItem onClick={onSyncWb} disabled={syncing}>
-              <Icon
-                name={syncing ? 'Loader2' : 'RefreshCw'}
-                size={16}
-                className={`mr-2 ${syncing ? 'animate-spin' : ''}`}
-              />
-              {syncing ? 'Загружаем WB...' : 'Wildberries FBS'}
-            </DropdownMenuItem>
-            <DropdownMenuItem onClick={onSyncOzon} disabled={syncingOzon}>
-              <Icon
-                name={syncingOzon ? 'Loader2' : 'RefreshCw'}
-                size={16}
-                className={`mr-2 ${syncingOzon ? 'animate-spin' : ''}`}
-              />
-              {syncingOzon ? 'Загружаем OZON...' : 'OZON FBS'}
-            </DropdownMenuItem>
-            <DropdownMenuItem onClick={onSyncYandex} disabled={syncingYandex}>
-              <Icon
-                name={syncingYandex ? 'Loader2' : 'RefreshCw'}
-                size={16}
-                className={`mr-2 ${syncingYandex ? 'animate-spin' : ''}`}
-              />
-              {syncingYandex ? 'Загружаем Яндекс...' : 'Яндекс FBS'}
-            </DropdownMenuItem>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem onClick={onRefreshOzonStatuses} disabled={refreshingOzon}>
-              <Icon
-                name={refreshingOzon ? 'Loader2' : 'RefreshCcw'}
-                size={16}
-                className={`mr-2 ${refreshingOzon ? 'animate-spin' : ''}`}
-              />
-              {refreshingOzon ? 'Обновляем...' : 'Обновить статусы OZON'}
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
-      )}
+  const filtersActive =
+    marketplaceFilter !== 'all' || typeFilter !== 'all' || materialFilter !== 'all';
 
-      {/* ПОИСК ПО НОМЕРУ — ОТДЕЛЬНО ОТ ФИЛЬТРОВ И ВЫШЕ НИХ.
-          Фильтры просеивают то, что уже на экране, а список показывает лишь свежую
-          часть истории: заказа прошлого квартала в нём нет вовсе. Поиск спрашивает
-          сервер напрямую и находит заказ любой давности, поэтому пока в поле что-то
-          введено, фильтры к результату не применяются — иначе найденный заказ снова
-          пропал бы за выбранной вкладкой статуса. */}
-      <div className="relative w-full sm:max-w-md">
-        <Icon
-          name={searching ? 'Loader2' : 'Search'}
-          size={16}
-          className={`absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground ${
-            searching ? 'animate-spin' : ''
-          }`}
-        />
-        <Input
-          value={search}
-          onChange={(e) => onSearchChange(e.target.value)}
-          placeholder="Поиск по номеру заказа или отправления"
-          className="pl-9 pr-9"
-        />
-        {search && (
-          <button
-            type="button"
-            onClick={() => onSearchChange('')}
-            title="Очистить поиск"
-            className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-1 text-muted-foreground hover:bg-muted"
-          >
-            <Icon name="X" size={14} />
-          </button>
+  return (
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-center gap-2">
+        {canManage && (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="outline" size="sm" className="h-8">
+                <Icon
+                  name={busyLabel ? 'Loader2' : 'Ellipsis'}
+                  size={16}
+                  className={`mr-2 ${busyLabel ? 'animate-spin' : ''}`}
+                />
+                {busyLabel || 'Действия'}
+                <Icon name="ChevronDown" size={14} className="ml-2" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="start" className="w-64">
+              <DropdownMenuItem onClick={onOpenManual}>
+                <Icon name="Plus" size={16} className="mr-2" />
+                Индивидуальный заказ
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={onPullByNumber}>
+                <Icon name="Search" size={16} className="mr-2" />
+                Заказ по номеру
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuLabel>Загрузить с API</DropdownMenuLabel>
+              <DropdownMenuItem onClick={onSyncWb} disabled={syncing}>
+                <Icon
+                  name={syncing ? 'Loader2' : 'RefreshCw'}
+                  size={16}
+                  className={`mr-2 ${syncing ? 'animate-spin' : ''}`}
+                />
+                {syncing ? 'Загружаем WB...' : 'Wildberries FBS'}
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={onSyncOzon} disabled={syncingOzon}>
+                <Icon
+                  name={syncingOzon ? 'Loader2' : 'RefreshCw'}
+                  size={16}
+                  className={`mr-2 ${syncingOzon ? 'animate-spin' : ''}`}
+                />
+                {syncingOzon ? 'Загружаем OZON...' : 'OZON FBS'}
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={onSyncYandex} disabled={syncingYandex}>
+                <Icon
+                  name={syncingYandex ? 'Loader2' : 'RefreshCw'}
+                  size={16}
+                  className={`mr-2 ${syncingYandex ? 'animate-spin' : ''}`}
+                />
+                {syncingYandex ? 'Загружаем Яндекс...' : 'Яндекс FBS'}
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onClick={onRefreshOzonStatuses} disabled={refreshingOzon}>
+                <Icon
+                  name={refreshingOzon ? 'Loader2' : 'RefreshCcw'}
+                  size={16}
+                  className={`mr-2 ${refreshingOzon ? 'animate-spin' : ''}`}
+                />
+                {refreshingOzon ? 'Обновляем...' : 'Обновить статусы OZON'}
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         )}
+
+        <div className="relative min-w-[12rem] flex-1 sm:max-w-md">
+          <Icon
+            name={searching ? 'Loader2' : 'Search'}
+            size={14}
+            className={`absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground ${
+              searching ? 'animate-spin' : ''
+            }`}
+          />
+          <Input
+            value={search}
+            onChange={(e) => onSearchChange(e.target.value)}
+            placeholder="Номер заказа или отправления"
+            className="h-8 pl-8 pr-8 text-xs"
+          />
+          {search && (
+            <button
+              type="button"
+              onClick={() => onSearchChange('')}
+              title="Очистить поиск"
+              className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-1 text-muted-foreground hover:bg-muted"
+            >
+              <Icon name="X" size={14} />
+            </button>
+          )}
+        </div>
       </div>
 
-      <div className="flex flex-wrap gap-3">
-        <Select value={statusFilter} onValueChange={(v) => onStatusChange(v as StatusFilter)}>
-          <SelectTrigger className="w-full sm:w-[200px]">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="new">Новые заказы</SelectItem>
-            <SelectItem value="in_progress">В работе</SelectItem>
-            <SelectItem value="done">Выполненные</SelectItem>
-            <SelectItem value="cancelled">Отменённые</SelectItem>
-          </SelectContent>
-        </Select>
+      <div className="flex flex-wrap items-stretch gap-2">
+        {STATUS_TABS.map((tab) => {
+          const active = statusFilter === tab.value;
+          return (
+            <button
+              key={tab.value}
+              type="button"
+              onClick={() => onStatusChange(tab.value)}
+              className={`flex h-8 items-center gap-1.5 rounded-lg border px-2.5 text-xs font-medium ${
+                active
+                  ? 'border-slate-300 bg-white shadow-sm'
+                  : 'border-slate-200 bg-slate-50/80 text-slate-600 hover:bg-white'
+              }`}
+            >
+              {tab.label}
+              <Badge variant="secondary" className="px-1.5 py-0 text-[10px]">
+                {statusCounts[tab.value]}
+              </Badge>
+            </button>
+          );
+        })}
+      </div>
+
+      <div className="flex flex-wrap items-center gap-2">
         <Select
           value={marketplaceFilter}
           onValueChange={(v) => onMarketplaceChange(v as MarketplaceFilter)}
         >
-          <SelectTrigger className="w-full sm:w-[160px]">
-            <SelectValue />
+          <SelectTrigger className={triggerClass(marketplaceFilter !== 'all')}>
+            <SelectValue placeholder="Площадка" />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="all">Все маркетплейсы</SelectItem>
+            <SelectItem value="all">Все площадки</SelectItem>
             <SelectItem value="OZON">OZON</SelectItem>
             <SelectItem value="WB">Wildberries</SelectItem>
             <SelectItem value="Yandex">Яндекс.Маркет</SelectItem>
           </SelectContent>
         </Select>
         <Select value={typeFilter} onValueChange={(v) => onTypeChange(v as TypeFilter)}>
-          <SelectTrigger className="w-full sm:w-[160px]">
-            <SelectValue />
+          <SelectTrigger className={triggerClass(typeFilter !== 'all')}>
+            <SelectValue placeholder="Тип" />
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="all">Все типы</SelectItem>
@@ -226,14 +249,12 @@ const OrdersToolbar = ({
             <SelectItem value="Индивидуальный">Индивидуальный</SelectItem>
           </SelectContent>
         </Select>
-
-        {/* Материал — по нему снимают заказы, когда ткань кончилась. */}
         <Select value={materialFilter} onValueChange={onMaterialChange}>
-          <SelectTrigger className="w-full sm:w-[220px]">
-            <SelectValue placeholder="Все материалы" />
+          <SelectTrigger className={triggerClass(materialFilter !== 'all')}>
+            <SelectValue placeholder="Ткань" />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="all">Все материалы</SelectItem>
+            <SelectItem value="all">Все ткани</SelectItem>
             {materials.map((m) => (
               <SelectItem key={m} value={m}>
                 {m}
@@ -242,16 +263,31 @@ const OrdersToolbar = ({
           </SelectContent>
         </Select>
 
-        {/* Кнопка появляется только когда материал выбран: снимать «всё подряд»
-            нельзя — это отмена сотен заказов и у нас, и на маркетплейсе. */}
+        {filtersActive && (
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="h-8 px-2 text-xs text-slate-600"
+            onClick={() => {
+              onMarketplaceChange('all');
+              onTypeChange('all');
+              onMaterialChange('all');
+            }}
+          >
+            <Icon name="X" size={12} className="mr-1" />
+            Сбросить
+          </Button>
+        )}
+
         {canManage && materialFilter !== 'all' && (
-          <Button variant="destructive" onClick={onBulkCancel}>
-            <Icon name="Trash2" size={16} className="mr-1.5" />
+          <Button variant="destructive" size="sm" className="h-8" onClick={onBulkCancel}>
+            <Icon name="Trash2" size={14} className="mr-1.5" />
             Удалить с конвейера
           </Button>
         )}
       </div>
-    </>
+    </div>
   );
 };
 
