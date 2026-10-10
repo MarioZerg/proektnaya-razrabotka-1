@@ -101,7 +101,9 @@ const StorekeeperTasksWidget = ({ topOffset }: { topOffset: number }) => {
     // Обновляем сами: кладовщик выполняет работу на других страницах, и список
     // должен догонять её без перезагрузки. Полминуты — незаметно для человека и
     // не нагружает систему.
-    const timer = window.setInterval(load, 30000);
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === 'visible') load();
+    }, 30000);
     // Вернулся на вкладку — сразу освежаем: за время отсутствия он мог сделать
     // работу на терминале склада.
     const onFocus = () => load();

@@ -109,6 +109,8 @@ const LiderTv = () => {
     removeComet,
   } = useLiveFloorData(true);
 
+  const duelActive = Boolean(duel);
+
   useEffect(() => {
     let stop = false;
     const tick = () => {
@@ -119,12 +121,12 @@ const LiderTv = () => {
         .catch(() => undefined);
     };
     tick();
-    const timer = window.setInterval(tick, 3000);
+    const timer = window.setInterval(tick, duelActive ? 3000 : 10000);
     return () => {
       stop = true;
       window.clearInterval(timer);
     };
-  }, []);
+  }, [duelActive]);
 
   useEffect(() => {
     if (!duel) return;

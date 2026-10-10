@@ -416,7 +416,7 @@ const CrmLayout = ({ children }: { children: ReactNode }) => {
             Сам решает, показываться ли: только кладовщику и только при
             открытой смене. */}
         <StorekeeperTasksWidget topOffset={headerOffset} />
-        {user?.id ? <DuelWatcher userId={user.id} /> : null}
+        {user?.id && user.role === 'sewer' ? <DuelWatcher userId={user.id} /> : null}
         {/* Сбой внутри страницы не должен гасить меню и весь экран. */}
         <div
           className={

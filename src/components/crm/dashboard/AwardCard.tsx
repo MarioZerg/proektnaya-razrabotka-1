@@ -65,7 +65,9 @@ const AwardCard = ({ userId }: AwardCardProps) => {
 
   useEffect(() => {
     load();
-    const refresh = setInterval(load, 60000);
+    const refresh = setInterval(() => {
+      if (document.visibilityState === 'visible') load();
+    }, 60000);
     return () => clearInterval(refresh);
   }, [load]);
 

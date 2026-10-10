@@ -214,7 +214,7 @@ export const useSewingItemsData = () => {
       }
       await silentRefresh();
     },
-    10000,
+    20000,
     !!user?.id,
   );
 
