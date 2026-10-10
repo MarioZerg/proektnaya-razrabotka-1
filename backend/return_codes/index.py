@@ -347,7 +347,7 @@ def stock_picked_up_returns(cur, ids=None):
 
     cur.execute(
         "SELECT r.id, r.order_id, r.marketplace, r.external_id, r.product_name, "
-        "       mi.material, mi.width, mi.height, mi.name, r.shop_id "
+        "       mi.material, mi.width, mi.height, mi.name, r.shop_id, r.marketplace_item_id "
         "FROM marketplace_returns r "
         "LEFT JOIN marketplace_items mi ON mi.id = r.marketplace_item_id "
         "WHERE r.status = 'picked_up' AND r.goods_warehouse_id IS NULL "
@@ -371,7 +371,7 @@ def stock_picked_up_returns(cur, ids=None):
     created = 0
 
     for (r_id, order_id, marketplace, external_id, product_name, material,
-         width, height, item_name, ret_shop_id) in rows:
+         width, height, item_name, ret_shop_id, ret_item_id) in rows:
         if not order_id:
             product = (
                 f'{material} {width}x{height}'
@@ -381,12 +381,14 @@ def stock_picked_up_returns(cur, ids=None):
             order_number = f'RET-{marketplace}-{external_id}'
             cur.execute(
                 "INSERT INTO orders (order_number, marketplace, order_type, status, "
-                "sewing_status, product, quantity, source, material, width, height, shop_id) "
-                "VALUES (%s, %s, 'FBO', 'Выполнен', 'Готовые', %s, 1, 'return', %s, %s, %s, %s) "
+                "sewing_status, product, quantity, source, material, width, height, shop_id, "
+                "marketplace_item_id) "
+                "VALUES (%s, %s, 'FBO', 'Выполнен', 'Готовые', %s, 1, 'return', %s, %s, %s, %s, %s) "
                 "ON CONFLICT (order_number) DO NOTHING RETURNING id",
                 # Магазин берём у самой заявки: вернувшаяся вещь принадлежит тому
                 # кабинету, из которого уехала, и на склад должна лечь под ним.
-                (order_number, marketplace, product, material, width, height, ret_shop_id),
+                (order_number, marketplace, product, material, width, height, ret_shop_id,
+                 ret_item_id),
             )
             created_order = cur.fetchone()
             if created_order:

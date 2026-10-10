@@ -1248,7 +1248,7 @@ def stock_picked_up_returns(cur, ids=None, limit=None):
 
     cur.execute(
         "SELECT r.id, r.order_id, r.marketplace, r.external_id, r.product_name, "
-        "       mi.material, mi.width, mi.height, mi.name "
+        "       mi.material, mi.width, mi.height, mi.name, r.marketplace_item_id "
         "FROM marketplace_returns r "
         "LEFT JOIN marketplace_items mi ON mi.id = r.marketplace_item_id "
         "WHERE r.status = 'picked_up' AND r.goods_warehouse_id IS NULL "
@@ -1272,7 +1272,8 @@ def stock_picked_up_returns(cur, ids=None, limit=None):
     rows = cur.fetchall()
     created = 0
 
-    for r_id, order_id, marketplace, external_id, product_name, material, width, height, item_name in rows:
+    for (r_id, order_id, marketplace, external_id, product_name, material, width, height,
+         item_name, ret_item_id) in rows:
         # Ни один шаг ниже не должен ронять приёмку целиком: спотыкались на
         # одной вещи — на складе не появлялось НИ ОДНОЙ коробки, включая
         # нормальные, и кладовщик шёл принимать руками. Поэтому спорные случаи
@@ -1286,10 +1287,11 @@ def stock_picked_up_returns(cur, ids=None, limit=None):
             order_number = f'RET-{marketplace}-{external_id}'
             cur.execute(
                 "INSERT INTO orders (order_number, marketplace, order_type, status, "
-                "sewing_status, product, quantity, source, material, width, height) "
-                "VALUES (%s, %s, 'FBO', 'Выполнен', 'Готовые', %s, 1, 'return', %s, %s, %s) "
+                "sewing_status, product, quantity, source, material, width, height, "
+                "marketplace_item_id) "
+                "VALUES (%s, %s, 'FBO', 'Выполнен', 'Готовые', %s, 1, 'return', %s, %s, %s, %s) "
                 "ON CONFLICT (order_number) DO NOTHING RETURNING id",
-                (order_number, marketplace, product, material, width, height),
+                (order_number, marketplace, product, material, width, height, ret_item_id),
             )
             created_order = cur.fetchone()
             if created_order:
@@ -1349,13 +1351,14 @@ def stock_picked_up_returns(cur, ids=None, limit=None):
             own_number = f'RET-{marketplace}-{external_id}'
             cur.execute(
                 "INSERT INTO orders (order_number, marketplace, order_type, status, "
-                "sewing_status, product, quantity, source, material, width, height) "
-                "VALUES (%s, %s, 'FBO', 'Выполнен', 'Готовые', %s, 1, 'return', %s, %s, %s) "
+                "sewing_status, product, quantity, source, material, width, height, "
+                "marketplace_item_id) "
+                "VALUES (%s, %s, 'FBO', 'Выполнен', 'Готовые', %s, 1, 'return', %s, %s, %s, %s) "
                 "ON CONFLICT (order_number) DO NOTHING RETURNING id",
                 (own_number, marketplace,
                  (f'{material} {width}x{height}' if material and width and height
                   else (product_name or item_name or 'Возврат')),
-                 material, width, height),
+                 material, width, height, ret_item_id),
             )
             own = cur.fetchone()
             if not own:
@@ -2436,7 +2439,8 @@ def handler(event: dict, context) -> dict:
                 if outcome != 'utilized' and not order_id:
                     cur.execute(
                         "SELECT mi.material, mi.width, mi.height, mi.name, r.marketplace, "
-                        "r.external_id, r.product_name FROM marketplace_returns r "
+                        "r.external_id, r.product_name, r.marketplace_item_id "
+                        "FROM marketplace_returns r "
                         "LEFT JOIN marketplace_items mi ON mi.id = r.marketplace_item_id "
                         "WHERE r.id = %s",
                         (int(return_id),),
@@ -2450,8 +2454,9 @@ def handler(event: dict, context) -> dict:
                     )
                     cur.execute(
                         "INSERT INTO orders (order_number, marketplace, order_type, status, "
-                        "sewing_status, product, quantity, source, material, width, height) "
-                        "VALUES (%s, %s, 'FBO', 'Выполнен', 'Готовые', %s, 1, 'return', %s, %s, %s) "
+                        "sewing_status, product, quantity, source, material, width, height, "
+                        "marketplace_item_id) "
+                        "VALUES (%s, %s, 'FBO', 'Выполнен', 'Готовые', %s, 1, 'return', %s, %s, %s, %s) "
                         "ON CONFLICT (order_number) DO NOTHING RETURNING id",
                         (
                             f'RET-{info[4]}-{info[5]}',
@@ -2460,6 +2465,7 @@ def handler(event: dict, context) -> dict:
                             material,
                             width,
                             height,
+                            info[7],
                         ),
                     )
                     created_order = cur.fetchone()
