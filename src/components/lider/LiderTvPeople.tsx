@@ -168,8 +168,8 @@ const PersonCard = ({
       </p>
 
       {hands.length > 0 && (
-        <div className={cutter ? 'grid grid-cols-4 gap-1' : 'flex flex-wrap gap-1.5'}>
-          {hands.map((o) =>
+        <div className={cutter ? 'grid grid-cols-4 gap-1' : 'flex max-h-16 flex-wrap gap-1.5 overflow-hidden'}>
+          {hands.slice(0, cutter ? 8 : 4).map((o) =>
             cutter ? (
               <span
                 key={o.id}
@@ -186,6 +186,10 @@ const PersonCard = ({
             ),
           )}
         </div>
+      )}
+
+      {hands.length > (cutter ? 8 : 4) && (
+        <p className="text-sm text-slate-400">ещё {hands.length - (cutter ? 8 : 4)}</p>
       )}
 
       {packedRecently.length > 0 && (
@@ -239,7 +243,11 @@ const LiderTvPeople = ({ people, ...rest }: LiderTvPeopleProps) => {
                 <span className="rounded-full bg-amber-500/20 px-2.5 py-0.5 text-base text-amber-200">простой {idle}</span>
               )}
             </header>
-            <div className="grid grid-cols-3 gap-2">
+            <div
+              className={`grid gap-2 ${
+                group.length > 8 ? 'grid-cols-5' : group.length > 4 ? 'grid-cols-4' : 'grid-cols-3'
+              }`}
+            >
               {group.map((p) => (
                 <PersonCard key={p.id} person={p} {...rest} />
               ))}

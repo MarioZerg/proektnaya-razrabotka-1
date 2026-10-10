@@ -1,5 +1,6 @@
 import type jsPDFType from 'jspdf';
 import type { TakenOrder } from '@/lib/ordersApi';
+import { fetchRepairPieces, type RepairPiece } from '@/lib/repairFabricApi';
 
 /*
  * Библиотеки для PDF (jspdf, html2canvas, qrcode) весят вместе больше 400 КБ и нужны
@@ -10,11 +11,13 @@ import type { TakenOrder } from '@/lib/ordersApi';
 
 /**
  * Печать "листа закройщика" по взятому стеку заказов — генерирует один PDF-файл из
- * ДВУХ документов подряд:
+ * ТРЁХ документов подряд:
  *   1) чек-лист для закройщика (материал+размер крупно, маркетплейс+номер заказа мелко,
  *      пустой квадратик справа для галочки) — закройщик отмечает раскроенные позиции
  *   2) лист с QR-кодами под нарезку — те же позиции, но с QR-кодом (зашит номер заказа
  *      как есть) вместо квадратика; лист режется на отдельные бирки и крепится к ткани
+ *   3) лист кусков — какие отрезы с перешива подходят под заказы этого стека,
+ *      стрелка на номер заказа и дефект куска
  * Заказы группируются по материалу (одинаковый материал идёт подряд без разрыва), чтобы
  * закройщик раскраивал одним куском ткани не переключаясь между рулонами.
  */
@@ -543,6 +546,145 @@ export type CuttingSheetMode = 'download' | 'print';
  * виду экран; всплывающие окна к тому же часто блокируются браузером. Здесь
  * документ живёт в невидимом iframe текущей страницы: браузер показывает
  * обычный диалог печати, а терминал остаётся на том же месте. */
+/** Строка листа кусков не должна протащить в PDF разметку из текста дефекта. */
+const esc = (value: string | number | null | undefined) =>
+  String(value ?? '').replace(/[<>&]/g, (ch) =>
+    ch === '<' ? '&lt;' : ch === '>' ? '&gt;' : '&amp;'
+  );
+
+interface PieceSheetRow {
+  barcode: string;
+  material: string;
+  width: number;
+  height: number;
+  defect: string;
+  /** Ближайший по размеру заказ стека — на него смотрит стрелка. */
+  orderNumber: string;
+  orderWidth: number;
+  orderHeight: number;
+  /** Сколько ещё заказов этого стека кусок тоже закрывает. */
+  more: number;
+}
+
+/**
+ * Кусок подходит заказу, только если ткань та же и отрез не меньше изделия.
+ * Из 300×255 штору 400×265 не скроить — это то же правило, что в карточке заказа.
+ */
+const piecesForStack = (orders: TakenOrder[], pieces: RepairPiece[]): PieceSheetRow[] => {
+  const rows: PieceSheetRow[] = [];
+  for (const piece of pieces) {
+    if (piece.status && piece.status !== 'available') continue;
+    const material = (piece.material || '').trim().toLowerCase();
+    const fits = orders
+      .filter((order) => {
+        const width = order.width || 0;
+        const height = order.height || 0;
+        return (
+          width > 0 &&
+          height > 0 &&
+          (order.material || '').trim().toLowerCase() === material &&
+          piece.width >= width &&
+          piece.height >= height
+        );
+      })
+      .map((order) => ({
+        orderNumber: order.orderNumber || '—',
+        width: order.width || 0,
+        height: order.height || 0,
+        waste: piece.width - (order.width || 0) + (piece.height - (order.height || 0)),
+      }))
+      .sort((a, b) => a.waste - b.waste || a.orderNumber.localeCompare(b.orderNumber));
+    if (!fits.length) continue;
+    const best = fits[0];
+    rows.push({
+      barcode: piece.barcode || `кусок ${piece.id}`,
+      material: piece.material,
+      width: piece.width,
+      height: piece.height,
+      defect: (piece.reasonLabel || '').trim() || 'дефект не указан',
+      orderNumber: best.orderNumber,
+      orderWidth: best.width,
+      orderHeight: best.height,
+      more: Math.max(0, fits.length - 1),
+    });
+  }
+  rows.sort((a, b) => a.material.localeCompare(b.material, 'ru') || a.barcode.localeCompare(b.barcode));
+  return rows;
+};
+
+/** Сколько строк кусков влезает на лист A4 под шапкой. */
+const PIECE_ROWS = 11;
+
+const moreOrders = (count: number) => {
+  const mod10 = count % 10;
+  const mod100 = count % 100;
+  const word =
+    mod10 === 1 && mod100 !== 11
+      ? 'заказ'
+      : mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)
+        ? 'заказа'
+        : 'заказов';
+  return `ещё ${count} ${word} этого стека`;
+};
+
+const buildPiecesPageHtml = (
+  rows: PieceSheetRow[],
+  cutterName: string,
+  date: string,
+  pageNo: number,
+  pageCount: number,
+  emptyNote: string | null
+) => {
+  const header = `
+    <div style="display:flex;justify-content:space-between;align-items:stretch;margin-bottom:8px;">
+      <div style="border:2px solid #000;padding:4px 12px;font-size:16px;font-weight:800;">
+        ЛИСТ КУСКОВ · ${esc(cutterName)}
+      </div>
+      <div style="border:2px solid #000;padding:4px 12px;font-size:16px;font-weight:800;">
+        ${esc(date)} ${formatNowTime()}${pageCount > 1 ? ` · ${pageNo}/${pageCount}` : ''}
+      </div>
+    </div>
+    <div style="font-size:13px;font-weight:700;margin-bottom:8px;">
+      Стрелка показывает заказ этого стека, под который кусок подходит. Дефект — где смотреть ткань до раскроя.
+    </div>`;
+  if (emptyNote) {
+    return page(
+      header +
+        `<div style="border:3px solid #000;padding:18px;font-size:20px;font-weight:800;">${esc(emptyNote)}</div>`
+    );
+  }
+  const body = rows
+    .map(
+      (row) => `
+      <div style="display:grid;grid-template-columns:1fr 36px 1fr;border:2px solid #000;
+                  margin-bottom:6px;height:78px;overflow:hidden;box-sizing:border-box;">
+        <div style="padding:6px 8px;">
+          <div style="font-size:16px;font-weight:800;line-height:1.15;">${esc(row.barcode)}</div>
+          <div style="font-size:15px;font-weight:800;margin-top:2px;">
+            ${esc(row.material)} ${row.width}×${row.height}
+          </div>
+          <div style="font-size:13px;font-weight:700;margin-top:4px;">дефект: ${esc(row.defect)}</div>
+        </div>
+        <div style="display:flex;align-items:center;justify-content:center;font-size:28px;
+                    font-weight:900;border-left:2px solid #000;border-right:2px solid #000;">→</div>
+        <div style="padding:6px 8px;display:flex;flex-direction:column;justify-content:center;">
+          <div style="font-size:11px;font-weight:700;">подойдёт на заказ</div>
+          <div style="font-size:15px;font-weight:800;line-height:1.15;margin-top:2px;">${esc(row.orderNumber)}</div>
+          <div style="font-size:14px;font-weight:800;margin-top:2px;">
+            ${esc(row.material)} ${row.orderWidth}×${row.orderHeight}
+          </div>
+          ${
+            row.more > 0
+              ? `<div style="font-size:12px;font-weight:700;margin-top:3px;">${esc(moreOrders(row.more))}</div>`
+              : ''
+          }
+        </div>
+      </div>`
+    )
+    .join('');
+  return page(header + body);
+};
+
 const sendPdfToPrinter = (pdf: jsPDFType) => {
   pdf.autoPrint();
   const url = pdf.output('bloburl') as unknown as string;
@@ -603,6 +745,26 @@ export const printCuttingSheet = async (
   for (const pageOrders of pages) {
     await renderPageToPdf(pdf, buildQrPageHtml(pageOrders, qrDataUrls, cutterId), isFirstPage);
     isFirstPage = false;
+  }
+
+  // Третий документ — только если хотя бы один кусок подходит под заказ стека.
+  // Пустой лист не печатаем: закройщице достаточно двух прежних.
+  try {
+    const stock = await fetchRepairPieces({ status: 'available' });
+    const pieceRows = piecesForStack(grouped, stock.pieces || []);
+    const piecePages: PieceSheetRow[][] = [];
+    for (let i = 0; i < pieceRows.length; i += PIECE_ROWS) {
+      piecePages.push(pieceRows.slice(i, i + PIECE_ROWS));
+    }
+    for (let i = 0; i < piecePages.length; i += 1) {
+      await renderPageToPdf(
+        pdf,
+        buildPiecesPageHtml(piecePages[i], cutterName, date, i + 1, piecePages.length, null),
+        false
+      );
+    }
+  } catch {
+    // Список кусков не дошёл — два основных листа всё равно уходят на печать.
   }
 
   if (mode === 'print') {

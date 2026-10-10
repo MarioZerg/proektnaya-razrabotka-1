@@ -290,11 +290,44 @@ def suitable_for_order(cur, event):
 
 
 def lookup_item(cur, event):
-    """Кладовщик сканирует стикер брака GW-… — показываем вещь до отправки в куски."""
+    """Кладовщик сканирует стикер.
+
+    RS-… с перепаковки — кусок ещё не в цехе, его надо принять.
+    GW-… брака — вещь из утилизации, её можно завести в куски.
+    """
     q = event.get('queryStringParameters') or {}
     barcode = (q.get('barcode') or '').strip()
     if not barcode:
         return _resp(400, {'error': 'Отсканируйте стикер вещи'})
+
+    cur.execute(
+        "SELECT p.id, p.status, p.barcode, p.material, p.width, p.height, "
+        "       p.reason_label, src.order_number "
+        "FROM repair_fabric_pieces p "
+        "LEFT JOIN goods_warehouse gw ON gw.id = p.goods_warehouse_id "
+        "LEFT JOIN orders src ON src.id = COALESCE(gw.reserved_order_id, gw.order_id) "
+        "WHERE upper(p.barcode) = upper(%s)",
+        (barcode,),
+    )
+    piece = cur.fetchone()
+    if piece:
+        piece_id, piece_status, piece_barcode, material, width, height, reason, order_number = piece
+        if piece_status == 'incoming':
+            return _resp(200, {
+                'item': None,
+                'incoming': {
+                    'pieceId': piece_id,
+                    'barcode': piece_barcode,
+                    'material': material,
+                    'width': width,
+                    'height': height,
+                    'reasonLabel': reason,
+                    'orderNumber': order_number,
+                },
+            })
+        if piece_status == 'available':
+            return _resp(409, {'error': 'Этот кусок уже в цехе'})
+        return _resp(409, {'error': 'Этот кусок уже забрали или списали'})
 
     cur.execute(
         "SELECT gw.id, gw.status, gw.storage_barcode, o.material, o.width, o.height, "
@@ -409,7 +442,8 @@ def send_to_repair(cur, conn, event, body):
         added_by_role = 'admin'
 
     cur.execute(
-        "SELECT 1 FROM repair_fabric_pieces WHERE goods_warehouse_id = %s AND status = 'available'",
+        "SELECT 1 FROM repair_fabric_pieces WHERE goods_warehouse_id = %s "
+        "AND status IN ('available', 'incoming', 'reserved')",
         (int(gw_id),),
     )
     if cur.fetchone():
@@ -449,18 +483,21 @@ def send_to_repair(cur, conn, event, body):
         comment_parts.append(who)
     comment = '. '.join(comment_parts) or None
 
+    # Упаковщица печатает стикер, но в цех кусок кладёт кладовщик сканом.
+    # Пока он не отсканировал RS, закройщица этот отрез не видит.
+    piece_status = 'incoming' if added_by_role == 'packer' else 'available'
     cur.execute(
         "INSERT INTO repair_fabric_pieces "
         "  (goods_warehouse_id, material_id, material, width, height, "
         "   workshop_id, shift_number, created_by, created_by_name, comment, "
-        "   barcode, reason_code, reason_label, added_by_role) "
-        "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id",
+        "   barcode, reason_code, reason_label, added_by_role, status) "
+        "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id",
         (
             int(gw_id), material_id, material, int(width), int(height),
             workshop_id, shift_number,
             int(actor_id) if actor_id else None, actor_name,
             comment,
-            barcode, reason_code or None, reason_label, added_by_role,
+            barcode, reason_code or None, reason_label, added_by_role, piece_status,
         ),
     )
     piece_id = cur.fetchone()[0]
@@ -715,7 +752,7 @@ def delete_piece(cur, conn, event, body):
     # Раз куска больше нет — возвращаем туда, откуда её взяли:
     # с перепаковки — обратно упаковщице, с утиля кладовщика — снова в брак.
     # Раскроенный обратно вещью не станет.
-    if gw_id and status in ('available', 'reserved'):
+    if gw_id and status in ('available', 'reserved', 'incoming'):
         back = 'to_dispose' if added_by_role in ('storekeeper', 'admin') else 'repacking'
         cur.execute(
             "UPDATE goods_warehouse SET status = %s, shipped_at = NULL, "
@@ -768,6 +805,65 @@ def write_off_piece(cur, conn, event, body):
     )
     conn.commit()
     return _resp(200, {'success': True})
+
+
+def accept_piece(cur, conn, event, body):
+    """Кладовщик сканирует стикер RS и кладёт кусок в цех.
+
+    Упаковщица уже напечатала наклейку и назвала причину. До скана кусок
+    в списке закройщицы не появляется: иначе вещь числилась бы в цехе,
+    пока ещё лежит у кладовщика.
+    """
+    barcode = (body.get('barcode') or '').strip()
+    if not barcode:
+        return _resp(400, {'error': 'Отсканируйте стикер куска'})
+
+    user = current_user(cur, event)
+    actor_id = user['id'] if user else body.get('userId')
+    actor_name = user['name'] if user else body.get('userName')
+    actor_role = user['role'] if user else None
+    if not actor_role and actor_id:
+        cur.execute("SELECT role FROM users WHERE id = %s", (int(actor_id),))
+        role_row = cur.fetchone()
+        actor_role = role_row[0] if role_row else None
+    if actor_role not in ('storekeeper', 'senior_storekeeper', 'admin'):
+        return _resp(403, {'error': 'Добавить кусок в цех может кладовщик'})
+
+    cur.execute(
+        "SELECT id, material, width, height, reason_label, status "
+        "FROM repair_fabric_pieces WHERE upper(barcode) = upper(%s)",
+        (barcode,),
+    )
+    row = cur.fetchone()
+    if not row:
+        return _resp(404, {'error': 'Кусок с таким стикером не найден'})
+    piece_id, material, width, height, reason_label, status = row
+    if status == 'available':
+        return _resp(409, {'error': 'Этот кусок уже в цехе'})
+    if status != 'incoming':
+        return _resp(409, {'error': 'Этот кусок уже забрали или списали'})
+
+    who = actor_name or 'кладовщик'
+    cur.execute(
+        "UPDATE repair_fabric_pieces SET status = 'available', "
+        "  comment = CONCAT_WS('. ', comment, %s) "
+        "WHERE id = %s",
+        (f'В цех принял {who}', int(piece_id)),
+    )
+    log_action(
+        cur, actor_id, actor_name, 'repair_piece_accept', piece_id,
+        f'Кладовщик принял в цех {barcode}: {material} {width}x{height}',
+    )
+    conn.commit()
+    return _resp(200, {
+        'success': True,
+        'pieceId': piece_id,
+        'barcode': barcode,
+        'material': material,
+        'width': width,
+        'height': height,
+        'reasonLabel': reason_label,
+    })
 
 
 def handler(event: dict, context) -> dict:
@@ -838,6 +934,8 @@ def handler(event: dict, context) -> dict:
         try:
             if action == 'send':
                 return send_to_repair(cur, conn, event, body)
+            if action == 'accept':
+                return accept_piece(cur, conn, event, body)
             if action == 'use':
                 return use_piece(cur, conn, event, body)
             if action == 'release':

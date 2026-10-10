@@ -37,6 +37,8 @@ export type StockMap = Map<string, { qty: number; unit: string }>;
 interface MaterialNeedsTableProps {
   rows: ReturnType<typeof byMaterial>;
   stock: StockMap;
+  /** Пока остаток не дошёл, в ячейке не ставим прочерк: это не «ткани нет». */
+  stockState: 'loading' | 'ready' | 'error';
 }
 
 /**
@@ -49,7 +51,7 @@ interface MaterialNeedsTableProps {
  * Числа выровнены по правому краю и набраны моноширинными цифрами: остаток разных
  * тканей сравнивают взглядом сверху вниз, а не выискивают в строке текста.
  */
-const MaterialNeedsTable = ({ rows, stock }: MaterialNeedsTableProps) => {
+const MaterialNeedsTable = ({ rows, stock, stockState }: MaterialNeedsTableProps) => {
   if (rows.length === 0) return null;
 
   return (
@@ -96,7 +98,11 @@ const MaterialNeedsTable = ({ rows, stock }: MaterialNeedsTableProps) => {
                     low ? 'font-semibold text-destructive' : 'text-muted-foreground'
                   }`}
                 >
-                  {left === undefined ? (
+                  {stockState === 'loading' ? (
+                    '…'
+                  ) : stockState === 'error' ? (
+                    'нет связи'
+                  ) : left === undefined ? (
                     '—'
                   ) : (
                     <>

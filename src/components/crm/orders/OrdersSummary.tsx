@@ -52,25 +52,48 @@ const OrdersSummary = ({ orders }: OrdersSummaryProps) => {
   // сшить, а хватит ли материала — приходилось смотреть в другом разделе. Решение
   // «пора заказывать» принимается по двум числам сразу, поэтому они стоят рядом.
   const [stock, setStock] = useState<StockMap>(new Map());
+  const [stockState, setStockState] = useState<'loading' | 'ready' | 'error'>('loading');
+
+  const hasOrders = orders.length > 0;
 
   useEffect(() => {
-    fetchMaterialsData()
-      .then((d) => {
-        const map: StockMap = new Map();
-        // Ключ в нижнем регистре: в заказах ткань пишут как придётся, а совпасть
-        // со справочником она должна в любом написании.
-        d.materials.forEach((m) => {
-          map.set(m.name.trim().toLowerCase(), {
-            qty: m.warehouseQuantity,
-            unit: m.unit,
+    // Список заказов тяжёлый и сам занимает базу. Если спросить остатки в ту же
+    // секунду, функция материалов получает отказ, а колонка «На складе» рисует
+    // прочерк — будто со складом нет связи. Ждём список и при отказе повторяем.
+    if (!hasOrders) return;
+    let stop = false;
+    const load = async () => {
+      for (let attempt = 0; attempt < 4; attempt += 1) {
+        try {
+          const d = await fetchMaterialsData();
+          if (stop) return;
+          const map: StockMap = new Map();
+          d.materials.forEach((m) => {
+            const name = (m.name || '').trim().toLowerCase();
+            if (!name) return;
+            map.set(name, {
+              qty: Number(m.warehouseQuantity) || 0,
+              unit: m.unit || 'м',
+            });
           });
-        });
-        setStock(map);
-      })
-      // Справочник не дошёл — сводка по заказам всё равно показывается: это
-      // главное на странице, а остаток здесь дополнение.
-      .catch(() => {});
-  }, []);
+          setStock(map);
+          setStockState('ready');
+          return;
+        } catch {
+          if (stop) return;
+          await new Promise((resolve) => window.setTimeout(resolve, 700 * (attempt + 1)));
+        }
+      }
+      if (!stop) setStockState('error');
+    };
+    const timer = window.setTimeout(() => {
+      void load();
+    }, 800);
+    return () => {
+      stop = true;
+      window.clearTimeout(timer);
+    };
+  }, [hasOrders]);
 
   const newOrders = orders.filter(
     (o) =>
@@ -131,7 +154,7 @@ const OrdersSummary = ({ orders }: OrdersSummaryProps) => {
                   </span>
                 </span>
               </div>
-              <MaterialNeedsTable rows={g.rows} stock={stock} />
+              <MaterialNeedsTable rows={g.rows} stock={stock} stockState={stockState} />
             </div>
           ))}
         </CardContent>

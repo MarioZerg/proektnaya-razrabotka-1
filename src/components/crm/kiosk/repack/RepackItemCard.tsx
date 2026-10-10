@@ -71,30 +71,25 @@ const RepackItemCard = ({
         <Button
           size="lg"
           variant="outline"
-          className="h-24 border-2 border-destructive/40 text-lg text-destructive hover:bg-destructive/10 hover:text-destructive"
-          onClick={onUtilize}
-          disabled={processing}
-        >
-          <div className="flex flex-col items-center gap-1">
-            <Icon name="Trash2" size={30} />
-            <span>Брак</span>
-          </div>
-        </Button>
-        {/* Остался годный кусок — отправляем его закройщикам в перешив.
-            Рулон выбирать больше не нужно: кусок уходит в цех со своими
-            размерами, и закройщик найдёт его под конкретный заказ.
-            Раньше кусок «распускали» в рулон, он терял размеры и
-            превращался в обезличенные метры. */}
-        <Button
-          size="lg"
-          variant="outline"
           className="h-24 border-2 border-violet-300 text-lg text-violet-700 hover:bg-violet-50 hover:text-violet-800"
           onClick={onRepair}
           disabled={processing}
         >
           <div className="flex flex-col items-center gap-1">
             <Icon name="Scissors" size={30} />
-            <span>В перешив</span>
+            <span>Кусок на перешив</span>
+          </div>
+        </Button>
+        <Button
+          size="lg"
+          variant="outline"
+          className="h-24 border-2 border-destructive/40 text-lg text-destructive hover:bg-destructive/10 hover:text-destructive"
+          onClick={onUtilize}
+          disabled={processing}
+        >
+          <div className="flex flex-col items-center gap-1">
+            <Icon name="Trash2" size={30} />
+            <span>Утилизация</span>
           </div>
         </Button>
       </div>

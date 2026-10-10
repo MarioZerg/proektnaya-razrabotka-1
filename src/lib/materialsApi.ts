@@ -67,7 +67,12 @@ export interface MaterialsData {
 
 export const fetchMaterialsData = async (): Promise<MaterialsData> => {
   const res = await fetch(MATERIALS_URL);
-  const data = await res.json();
+  const data = await res.json().catch(() => ({}));
+  // Ошибка функции — это не пустой справочник. Иначе остаток на складе
+  // превращается в прочерк, будто связи с рулонами нет.
+  if (!res.ok || data.errorMessage || data.errorType) {
+    throw new Error(data.errorMessage || 'Не удалось загрузить материалы');
+  }
   return {
     types: data.types || [],
     materials: data.materials || [],

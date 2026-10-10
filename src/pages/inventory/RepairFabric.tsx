@@ -37,6 +37,9 @@ import StorekeeperSendToRepairDialog from '@/components/crm/goodsWarehouse/Store
  * который только взяли в руки, уже числился потраченным.
  */
 const StatusBadge = ({ status }: { status: RepairPieceStatus }) => {
+  if (status === 'incoming') {
+    return <Badge className="bg-amber-500 text-white hover:bg-amber-500">Ждёт кладовщика</Badge>;
+  }
   if (status === 'available') {
     return <Badge className="bg-emerald-600 text-white hover:bg-emerald-600">В цехе</Badge>;
   }

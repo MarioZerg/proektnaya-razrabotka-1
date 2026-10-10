@@ -104,7 +104,7 @@ const WarehouseMaterials = () => {
 
   return (
     <CrmLayout>
-      <div className="min-w-0 space-y-6 overflow-x-hidden">
+      <div className="min-w-0 space-y-4 overflow-x-hidden sm:space-y-6">
         <div>
           <h1 className="text-xl font-bold">Материалы на складе</h1>
           <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
@@ -121,7 +121,7 @@ const WarehouseMaterials = () => {
           />
         )}
 
-        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <div className="grid grid-cols-2 gap-2 sm:gap-3 lg:grid-cols-4">
           {STOCK_TABS.map((tab) => (
             <button
               key={tab.value}

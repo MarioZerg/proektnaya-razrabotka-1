@@ -161,7 +161,7 @@ const KioskRepackScreen = ({
     // с вещью не так, всё равно будет администратор, когда вещь дойдёт до него
     // со стикером. Лишний экран выбора только тормозил работу на потоке.
     const current = item;
-    const text = note.trim() || 'Брак при перепаковке';
+    const text = note.trim() || 'Утилизация при перепаковке';
     void run(async () => {
       setBagAsk(false);
       setItem(null);
@@ -204,8 +204,8 @@ const KioskRepackScreen = ({
             });
           }
           toast({
-            title: 'Товар отправлен на утилизацию',
-            description: 'Наклейте стикер брака — кладовщик передаст вещь администратору',
+            title: 'Товар утилизирован',
+            description: `${res.storageBarcode || current.storageBarcode} вышел из оборота. Администратор увидит номер на панели`,
           });
         }
 

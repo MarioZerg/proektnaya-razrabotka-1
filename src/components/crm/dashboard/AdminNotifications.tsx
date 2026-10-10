@@ -23,6 +23,7 @@ import { formatDateTime } from '@/lib/dateUtils';
 /** Иконка и человеческое имя типа события — админ узнаёт его с одного взгляда. */
 const KINDS: Record<string, { icon: string; label: string }> = {
   send_to_sewing: { icon: 'Shirt', label: 'Отправлено перешивать' },
+  repack_utilized: { icon: 'Trash2', label: 'Утилизация на перепаковке' },
   // Товар числился на полке, а физически его нет — расхождение остатков.
   not_found: { icon: 'SearchX', label: 'Не нашли на полке' },
   // Недостача по рулону сверх нормы поставщика — стоит денег.

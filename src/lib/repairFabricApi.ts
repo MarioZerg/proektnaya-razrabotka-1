@@ -13,7 +13,7 @@ const REPAIR_FABRIC_URL = 'https://functions.poehali.dev/580fc69a-16df-4299-ae73
  * used      — разрезан при раскрое, вернуть нельзя;
  * written_off — списан администратором (брак, потеря).
  */
-export type RepairPieceStatus = 'available' | 'reserved' | 'used' | 'written_off';
+export type RepairPieceStatus = 'incoming' | 'available' | 'reserved' | 'used' | 'written_off';
 
 /**
  * Причина, по которой вещь ушла в перешив.
@@ -168,7 +168,7 @@ export const sendToRepair = (
     userName: actor?.name,
   }) as Promise<SendToRepairResult>;
 
-/** Кладовщик сканирует стикер брака — что за вещь и можно ли в куски. */
+/** Кладовщик сканирует стикер: либо кусок RS ждёт приёмки в цех, либо брак GW. */
 export const lookupRepairItem = (barcode: string) =>
   request(`${REPAIR_FABRIC_URL}?action=lookup&barcode=${encodeURIComponent(barcode)}`) as Promise<{
     item: {
@@ -181,7 +181,35 @@ export const lookupRepairItem = (barcode: string) =>
       orderNumber: string | null;
       disposeReason: string | null;
       canSend: boolean;
-    };
+    } | null;
+    incoming?: {
+      pieceId: number;
+      barcode: string;
+      material: string | null;
+      width: number | null;
+      height: number | null;
+      reasonLabel: string | null;
+      orderNumber: string | null;
+    } | null;
+  }>;
+
+/** Кладовщик сканом RS кладёт кусок с перепаковки в цех. */
+export const acceptRepairPiece = (
+  barcode: string,
+  actor?: { id?: number | null; name?: string | null },
+) =>
+  post({
+    action: 'accept',
+    barcode,
+    userId: actor?.id,
+    userName: actor?.name,
+  }) as Promise<{
+    success: boolean;
+    barcode: string;
+    material: string | null;
+    width: number | null;
+    height: number | null;
+    reasonLabel: string | null;
   }>;
 
 /**

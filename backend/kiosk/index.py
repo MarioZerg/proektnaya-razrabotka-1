@@ -2069,8 +2069,9 @@ def handler(event: dict, context) -> dict:
                 # Упаковщик осмотрел вещь и решил её судьбу:
                 #   repacked  — переупакована, годна: печатает стикер хранения и вещь едет
                 #               на склад, кладовщик по этому стикеру кладёт её на полку;
-                #   utilized  — при вскрытии обнаружен брак: вещь списывается, на склад не
-                #               попадает, причина уходит в отчёт админу.
+                #   utilized  — упаковщица утилизировала вещь: она сразу выходит из оборота
+                #               (status lost), админ видит номер на панели, в анализе
+                #               возвратов штука считается убытком;
                 gw_id = body_data.get('id')
                 outcome = (body_data.get('outcome') or 'repacked').strip()
                 note = (body_data.get('note') or '').strip()
@@ -2108,9 +2109,11 @@ def handler(event: dict, context) -> dict:
 
                 cur.execute(
                     "SELECT gw.storage_barcode, gw.status, gw.repack_return_id, "
-                    "       gw.repack_workshop_id, w.name "
+                    "       gw.repack_workshop_id, w.name, "
+                    "       o.material, o.width, o.height, o.order_number, o.product "
                     "FROM goods_warehouse gw "
                     "LEFT JOIN workshops w ON w.id = gw.repack_workshop_id "
+                    "LEFT JOIN orders o ON o.id = COALESCE(gw.reserved_order_id, gw.order_id) "
                     "WHERE gw.id = %s",
                     (int(gw_id),),
                 )
@@ -2139,17 +2142,28 @@ def handler(event: dict, context) -> dict:
                         ensure_ascii=False)}
 
                 if outcome == 'utilized':
-                    # Упаковщица нашла брак. Вещь НЕ списываем сразу: кладовщик всё равно
-                    # физически забирает её из цеха и несёт старшему кладовщику. Ставим
-                    # «На утилизацию» — оттуда кладку чистит только админ.
+                    # Упаковщица утилизировала вещь. Она сразу выходит из оборота:
+                    # не лежит «на утилизации» и не ждёт, пока админ её спишет.
+                    # Админ получает номер на панели и может открыть карточку.
+                    # В анализе возвратов эта штука уже считается утилем — убытком.
+                    product_bits = []
+                    if row[5] and row[6] and row[7]:
+                        product_bits.append(f'{row[5]} {row[6]}×{row[7]}')
+                    elif row[9]:
+                        product_bits.append(str(row[9]))
+                    if row[8]:
+                        product_bits.append(f'заказ {row[8]}')
+                    product_text = ', '.join(product_bits) or 'товар'
+                    reason_text = f'Утилизация при перепаковке: {note}'
                     cur.execute(
-                        # repack_workshop_id снимаем: перепаковка окончена, вещь больше
-                        # не числится работой цеха и не занимает место в его списке.
-                        "UPDATE goods_warehouse SET status = 'to_dispose', "
-                        "dispose_reason = %s, inspected_at = now(), inspected_by = %s, "
+                        "UPDATE goods_warehouse SET status = 'lost', "
+                        "dispose_reason = %s, disposed_at = now(), disposed_by = %s, "
+                        "lost_reason = %s, lost_at = now(), "
+                        "inspected_at = now(), inspected_by = %s, "
+                        "shelf_id = NULL, reserved_order_id = NULL, "
                         "repack_return_id = NULL, repack_workshop_id = NULL WHERE id = %s",
-                        (f'Брак при перепаковке: {note}',
-                         int(actor_id) if actor_id else None, int(gw_id)),
+                        (reason_text, int(actor_id) if actor_id else None,
+                         reason_text, int(actor_id) if actor_id else None, int(gw_id)),
                     )
                     if row[2]:
                         cur.execute(
@@ -2157,9 +2171,19 @@ def handler(event: dict, context) -> dict:
                             "outcome_by = %s, damage_note = %s WHERE id = %s",
                             (int(actor_id) if actor_id else None, note, int(row[2])),
                         )
+                    who = actor_name or 'Упаковщица'
+                    notify_admin(
+                        cur, 'repack_utilized',
+                        f'Утилизация · {row[0]}',
+                        f'{who} утилизировала {product_text}. Номер {row[0]}. '
+                        f'Вещь вышла из оборота и в анализах идёт как убыток.',
+                        actor_id, actor_name,
+                        link=f'/crm/inventory/goods/{int(gw_id)}',
+                        entity_type='goods_warehouse', entity_id=gw_id,
+                    )
                     log_action(
                         cur, actor_id, actor_name, 'repack_utilized', 'goods_warehouse', gw_id,
-                        f'Вещь {row[0]} списана при перепаковке: {note}',
+                        f'Вещь {row[0]} утилизирована при перепаковке: {note}',
                     )
                     conn.commit()
                     # Отдаём штрихкод: упаковщица клеит стикер и на бракованную вещь.

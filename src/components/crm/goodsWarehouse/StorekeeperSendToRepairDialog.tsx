@@ -14,12 +14,22 @@ import { useAuth } from '@/context/AuthContext';
 import { useScannerAutoSubmit } from '@/hooks/useScannerAutoSubmit';
 import { printRepairSticker } from '@/lib/printRepairSticker';
 import {
+  acceptRepairPiece,
   fetchRepairReasons,
   lookupRepairItem,
   sendToRepair,
   type RepairReason,
 } from '@/lib/repairFabricApi';
 import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
+
+interface IncomingPiece {
+  barcode: string;
+  material: string | null;
+  width: number | null;
+  height: number | null;
+  reasonLabel: string | null;
+  orderNumber: string | null;
+}
 
 interface KnownItem {
   id: number;
@@ -60,6 +70,7 @@ const StorekeeperSendToRepairDialog = ({
   const [customReason, setCustomReason] = useState('');
   const [barcode, setBarcode] = useState('');
   const [lookup, setLookup] = useState<KnownItem | null>(null);
+  const [incoming, setIncoming] = useState<IncomingPiece | null>(null);
   const [lookupError, setLookupError] = useState<string | null>(null);
   const [scanning, setScanning] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -88,6 +99,7 @@ const StorekeeperSendToRepairDialog = ({
       setCustomReason('');
       setBarcode('');
       setLookup(null);
+      setIncoming(null);
       setLookupError(null);
     }
   }, [open]);
@@ -109,13 +121,21 @@ const StorekeeperSendToRepairDialog = ({
     setLookupError(null);
     try {
       const r = await lookupRepairItem(code);
-      if (!r.item.canSend) {
+      if (r.incoming) {
+        setIncoming(r.incoming);
+        setLookup(null);
+        setLookupError(null);
+        setBarcode('');
+        return;
+      }
+      if (!r.item || !r.item.canSend) {
         setLookup(null);
         setLookupError(
           'В куски кладовщик добавляет только вещи со статусом брак или утилизация после перепаковки',
         );
         return;
       }
+      setIncoming(null);
       setLookup({
         id: r.item.id,
         material: r.item.material,
@@ -133,10 +153,33 @@ const StorekeeperSendToRepairDialog = ({
     }
   };
 
-  useScannerAutoSubmit(barcode, handleLookup, open && needScan && !item && !scanning);
+  useScannerAutoSubmit(barcode, handleLookup, open && needScan && !item && !incoming && !scanning);
 
   const needsCustom = chosen?.code === 'other';
   const canSend = !!item?.id && !!chosen && (!needsCustom || customReason.trim().length > 0);
+
+  const handleAccept = () => {
+    if (!incoming) return;
+    void run(async () => {
+      try {
+        const r = await acceptRepairPiece(incoming.barcode, { id: user?.id, name: user?.name });
+        onOpenChange(false);
+        onSent?.();
+        toast({
+          title: `Кусок в цехе · ${r.barcode}`,
+          description: r.reasonLabel
+            ? `${r.reasonLabel}. Закройщица возьмёт его по этому номеру`
+            : 'Закройщица возьмёт его по этому номеру',
+        });
+      } catch (e) {
+        toast({
+          title: 'Не удалось добавить в цех',
+          description: e instanceof Error ? e.message : undefined,
+          variant: 'destructive',
+        });
+      }
+    });
+  };
 
   const handleSend = () => {
     if (!item?.id || !chosen) return;
@@ -185,11 +228,11 @@ const StorekeeperSendToRepairDialog = ({
         </DialogHeader>
 
         <div className="space-y-4">
-          {needScan && !item && (
+          {needScan && !item && !incoming && (
             <div className="space-y-2">
               <p className="text-sm text-muted-foreground">
-                Отсканируйте стикер брака — кусок получит тот же номер GW, цепочка заказа
-                не пропадёт
+                Отсканируйте стикер куска с перепаковки (RS) — он встанет в цех.
+                Стикер брака (GW) тоже можно: кусок заведётся заново
               </p>
               <Input
                 ref={inputRef}
@@ -197,7 +240,7 @@ const StorekeeperSendToRepairDialog = ({
                 value={barcode}
                 onChange={(e) => setBarcode(e.target.value)}
                 onKeyDown={(e) => e.key === 'Enter' && void handleLookup()}
-                placeholder="GW-000123"
+                placeholder="RS-000123 или GW-000123"
                 className="font-mono-tech"
                 disabled={scanning}
               />
@@ -219,6 +262,25 @@ const StorekeeperSendToRepairDialog = ({
               )}
               <p className="mt-1 text-xs text-violet-800">
                 В кусках останется этот номер. Пометка: добавил кладовщик
+              </p>
+            </div>
+          )}
+
+          {incoming && (
+            <div className="rounded-lg border border-violet-300 bg-violet-50 p-3">
+              <p className="font-mono-tech text-sm font-bold text-violet-900">{incoming.barcode}</p>
+              <p className="text-lg font-semibold text-violet-900">
+                {incoming.material || '—'}{' '}
+                {incoming.width && incoming.height ? `${incoming.width}×${incoming.height}` : ''}
+              </p>
+              {incoming.orderNumber && (
+                <p className="text-sm text-violet-800">заказ {incoming.orderNumber}</p>
+              )}
+              {incoming.reasonLabel && (
+                <p className="mt-1 text-sm text-violet-800">Причина: {incoming.reasonLabel}</p>
+              )}
+              <p className="mt-1 text-xs text-violet-800">
+                Стикер уже на куске. После подтверждения он появится у закройщицы
               </p>
             </div>
           )}
@@ -279,13 +341,17 @@ const StorekeeperSendToRepairDialog = ({
             <Button variant="outline" className="flex-1" onClick={() => onOpenChange(false)} disabled={saving}>
               Отмена
             </Button>
-            <Button className="flex-1 bg-violet-600 hover:bg-violet-700" onClick={handleSend} disabled={saving || !canSend}>
+            <Button
+              className="flex-1 bg-violet-600 hover:bg-violet-700"
+              onClick={incoming ? handleAccept : handleSend}
+              disabled={saving || (incoming ? false : !canSend)}
+            >
               <Icon
                 name={saving ? 'Loader2' : 'Scissors'}
                 size={16}
                 className={`mr-2 ${saving ? 'animate-spin' : ''}`}
               />
-              {saving ? 'Добавляем…' : 'Добавить в куски'}
+              {saving ? 'Добавляем…' : incoming ? 'Добавить в цех' : 'Добавить в куски'}
             </Button>
           </div>
           {item && !chosen && (

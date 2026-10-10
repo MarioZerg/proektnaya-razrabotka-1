@@ -67,7 +67,8 @@ const ReturnsAnalysis = () => {
           <div>
             <h1 className="text-xl font-bold">Анализ возвратов</h1>
             <p className="mt-1 text-sm text-muted-foreground">
-              У кого чаще возвращают товар и по каким причинам
+              У кого чаще возвращают товар и по каким причинам. Утилизация — убыток:
+              вещь выходит из оборота и в остатках больше не считается
             </p>
           </div>
           <Select value={days} onValueChange={setDays}>
@@ -94,7 +95,7 @@ const ReturnsAnalysis = () => {
           <Card className="border-border shadow-none">
             <CardContent className="flex flex-col gap-0.5 px-3 py-3 sm:flex-row sm:items-center sm:gap-2 sm:px-4">
               <Icon name="Trash2" size={18} className="text-destructive" />
-              <span className="text-xs text-muted-foreground sm:text-sm">Утилизировано</span>
+              <span className="text-xs text-muted-foreground sm:text-sm">Убыток, шт.</span>
               <span className="text-lg font-bold">{totalUtilized}</span>
             </CardContent>
           </Card>
@@ -157,7 +158,7 @@ const ReturnsAnalysis = () => {
                                 </Badge>
                               )}
                             </span>
-                            <span className="text-muted-foreground">Утиль</span>
+                            <span className="text-muted-foreground">Убыток</span>
                             <span
                               className={`text-right tabular-nums ${
                                 r.utilized > 0 ? 'font-medium text-destructive' : ''
@@ -180,7 +181,7 @@ const ReturnsAnalysis = () => {
                             <TableHead className="text-primary-foreground">Отшито</TableHead>
                             <TableHead className="text-primary-foreground">Вернулось</TableHead>
                             <TableHead className="text-primary-foreground">% возвратов</TableHead>
-                            <TableHead className="text-primary-foreground">Утилизировано</TableHead>
+                            <TableHead className="text-primary-foreground">Убыток</TableHead>
                             <TableHead className="text-primary-foreground">Перепаковка</TableHead>
                           </TableRow>
                         </TableHeader>

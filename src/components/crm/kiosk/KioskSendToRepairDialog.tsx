@@ -144,8 +144,8 @@ const KioskSendToRepairDialog = ({
         onSent?.();
 
         toast({
-          title: `Отправлено в перешив · ${r.barcode}`,
-          description: `${r.reasonLabel}. Наклейте стикер на вещь — закройщик найдёт её по номеру`,
+          title: `Стикер на перешив · ${r.barcode}`,
+          description: `${r.reasonLabel}. Наклейте стикер на кусок. Кладовщик отсканирует его и добавит кусок в цех`,
         });
 
         // 300 мс — время закрытия окна. Печатать раньше нельзя: окно ещё в DOM
@@ -174,7 +174,7 @@ const KioskSendToRepairDialog = ({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="kiosk-root max-h-[92vh] overflow-y-auto sm:max-w-2xl">
         <DialogHeader>
-          <DialogTitle className="text-2xl">Отправить в перешив?</DialogTitle>
+          <DialogTitle className="text-2xl">Кусок на перешив</DialogTitle>
         </DialogHeader>
 
         <div className="space-y-4">
@@ -258,8 +258,8 @@ const KioskSendToRepairDialog = ({
           </div>
 
           <p className="text-base text-muted-foreground">
-            Кусок уйдёт закройщикам в цех со своими размерами. Рулон указывать не
-            нужно. После отправки напечатается стикер — наклейте его на вещь
+            Кусок получит стикер для швеи. В цех его добавит кладовщик: он
+            отсканирует этот стикер на странице «Куски на перешив»
           </p>
 
           <div className="flex gap-3">
@@ -281,7 +281,7 @@ const KioskSendToRepairDialog = ({
                 size={20}
                 className={`mr-2 ${saving ? 'animate-spin' : ''}`}
               />
-              {saving ? 'Отправляем…' : 'В перешив и печать'}
+              {saving ? 'Печатаем…' : 'Стикер и в очередь'}
             </Button>
           </div>
 

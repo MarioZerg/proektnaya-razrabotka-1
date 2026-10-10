@@ -3,7 +3,6 @@ import type { Material } from '@/lib/materialsApi';
 import {
   formatRolls,
   remainderLabel,
-  stockBarClass,
   stockQtyClass,
   warehouseStatus,
 } from '@/components/crm/warehouseMaterials/warehouseMaterialsShared';
@@ -12,40 +11,48 @@ interface WarehouseMaterialsCardsProps {
   materials: Material[];
 }
 
-/** Мобильный вид склада материалов. Четыре колонки таблицы на телефоне
- *  уезжали вбок — остаток и статус приходилось искать горизонтальной прокруткой. */
+/**
+ * Телефон: те же три колонки, что в таблице склада, только сеткой на ширину экрана.
+ * Таблица с min-w-max здесь уезжала вбок, и остаток приходилось искать прокруткой.
+ */
 const WarehouseMaterialsCards = ({ materials }: WarehouseMaterialsCardsProps) => (
-  <div className="space-y-3">
-    {materials.map((item) => {
-      const status = warehouseStatus(item);
-      return (
-        <div
-          key={item.id}
-          className="relative min-w-0 overflow-hidden rounded-lg border border-border bg-card p-3 pl-4"
-        >
-          <span
-            className={`absolute inset-y-0 left-0 w-1.5 ${stockBarClass[status.kind]}`}
-          />
-          <div className="flex items-start justify-between gap-2">
-            <div className="min-w-0 break-words font-semibold">{item.name}</div>
-            <Badge
-              variant={status.kind === 'empty' ? 'outline' : 'secondary'}
-              className={`shrink-0 ${status.className}`}
-            >
-              {status.label}
-            </Badge>
-          </div>
-          <div className="mt-2 flex items-baseline justify-between gap-3">
-            <div>
-              <div className={`text-lg tabular-nums leading-none ${stockQtyClass[status.kind]}`}>
+  <div>
+    <div className="grid grid-cols-[minmax(0,1.3fr)_minmax(0,0.9fr)_minmax(0,1fr)] bg-primary text-[11px] text-primary-foreground">
+      <div className="px-3 py-2">Материал</div>
+      <div className="px-2 py-2 text-right">Остаток</div>
+      <div className="px-2 py-2">Статус</div>
+    </div>
+    <div className="divide-y divide-border">
+      {materials.map((item) => {
+        const status = warehouseStatus(item);
+        return (
+          <div
+            key={item.id}
+            className="grid grid-cols-[minmax(0,1.3fr)_minmax(0,0.9fr)_minmax(0,1fr)] items-start"
+          >
+            <div className="min-w-0 break-words px-3 py-2.5 text-sm font-medium leading-snug">
+              {item.name}
+            </div>
+            <div className="px-2 py-2.5 text-right">
+              <div className={`text-sm tabular-nums leading-none ${stockQtyClass[status.kind]}`}>
                 {remainderLabel(item)}
               </div>
-              <div className="mt-1 text-xs text-muted-foreground">{formatRolls(item.warehouseRolls)}</div>
+              <div className="mt-1 text-[11px] text-muted-foreground">
+                {formatRolls(item.warehouseRolls)}
+              </div>
+            </div>
+            <div className="px-2 py-2.5">
+              <Badge
+                variant={status.kind === 'empty' ? 'outline' : 'secondary'}
+                className={`h-auto max-w-full whitespace-normal px-1.5 py-0.5 text-center text-[11px] leading-tight ${status.className}`}
+              >
+                {status.label}
+              </Badge>
             </div>
           </div>
-        </div>
-      );
-    })}
+        );
+      })}
+    </div>
   </div>
 );
 

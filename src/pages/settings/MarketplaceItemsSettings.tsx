@@ -203,11 +203,12 @@ const MarketplaceItemsSettings = () => {
     setSyncing(true);
     try {
       const res = await syncMarketplaceItems(shopId);
-      const warn = res.warnings.length ? ` Предупреждения: ${res.warnings.join('; ')}` : '';
+      const warn = res.warnings?.length ? ` Предупреждения: ${res.warnings.join('; ')}` : '';
       toast({
         title: `Синхронизация завершена`,
         description:
-          `Добавлено новых: ${res.created}. Всего карточек с площадок: ${res.totalArticles} ` +
+          `Привязано к карточкам: ${res.linked ?? 0}. Добавлено новых: ${res.created}. ` +
+          `Всего карточек с площадок: ${res.totalArticles} ` +
           `(OZON ${res.ozonCards}, WB ${res.wbCards}).` + warn,
       });
       load();

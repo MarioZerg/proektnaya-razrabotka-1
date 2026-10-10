@@ -104,6 +104,8 @@ const SYNC_URL = 'https://functions.poehali.dev/f43a35f0-f914-443a-92c0-fc08a2a0
 
 export interface SyncResult {
   created: number;
+  /** Сколько уже существующих карточек получили артикул или пустой код площадки. */
+  linked?: number;
   ozonCards: number;
   wbCards: number;
   totalArticles: number;

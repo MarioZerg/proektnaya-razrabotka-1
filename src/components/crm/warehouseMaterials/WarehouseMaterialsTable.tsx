@@ -1,20 +1,8 @@
-import { Badge } from '@/components/ui/badge';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table';
 import Icon from '@/components/ui/icon';
 import type { MaterialTypeGroup } from '@/components/crm/warehouseMaterials/warehouseMaterialsShared';
 import {
   formatRolls,
-  remainderLabel,
-  stockQtyClass,
   typeTotals,
-  warehouseStatus,
 } from '@/components/crm/warehouseMaterials/warehouseMaterialsShared';
 import WarehouseMaterialsCards from '@/components/crm/warehouseMaterials/WarehouseMaterialsCards';
 
@@ -42,8 +30,8 @@ const GroupHeader = ({ group }: { group: MaterialTypeGroup }) => {
   );
 };
 
-/** Склад материалов: на телефоне карточки, на широком экране компактная таблица
- *  без горизонтальной прокрутки. Количество и рулоны собраны в одну ячейку. */
+/** Склад материалов: три колонки сеткой на ширину окна и на телефоне, и на компьютере.
+ *  Обычная таблица уезжала вбок, и остаток приходилось искать прокруткой. */
 const WarehouseMaterialsTable = ({
   loading,
   error = null,
@@ -82,55 +70,7 @@ const WarehouseMaterialsTable = ({
         <div key={group.type.id} className="min-w-0 overflow-hidden rounded-md border border-border">
           <GroupHeader group={group} />
 
-          <div className="md:hidden p-3">
-            <WarehouseMaterialsCards materials={group.items} />
-          </div>
-
-          <div className="hidden min-w-0 overflow-hidden md:block">
-            <Table className="min-w-0 table-fixed">
-              <TableHeader>
-                <TableRow className="bg-primary hover:bg-primary">
-                  <TableHead className="w-[46%] whitespace-normal text-primary-foreground">
-                    Материал
-                  </TableHead>
-                  <TableHead className="w-[28%] whitespace-normal text-primary-foreground">
-                    Остаток
-                  </TableHead>
-                  <TableHead className="w-[26%] whitespace-normal text-primary-foreground">
-                    Статус
-                  </TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {group.items.map((item) => {
-                  const status = warehouseStatus(item);
-                  return (
-                    <TableRow key={item.id}>
-                      <TableCell className="whitespace-normal break-words align-top font-medium">
-                        {item.name}
-                      </TableCell>
-                      <TableCell className="whitespace-normal align-top">
-                        <div className={`tabular-nums ${stockQtyClass[status.kind]}`}>
-                          {remainderLabel(item)}
-                        </div>
-                        <div className="text-xs text-muted-foreground">
-                          {formatRolls(item.warehouseRolls)}
-                        </div>
-                      </TableCell>
-                      <TableCell className="align-top">
-                        <Badge
-                          variant={status.kind === 'empty' ? 'outline' : 'secondary'}
-                          className={status.className}
-                        >
-                          {status.label}
-                        </Badge>
-                      </TableCell>
-                    </TableRow>
-                  );
-                })}
-              </TableBody>
-            </Table>
-          </div>
+          <WarehouseMaterialsCards materials={group.items} />
         </div>
       ))}
     </div>

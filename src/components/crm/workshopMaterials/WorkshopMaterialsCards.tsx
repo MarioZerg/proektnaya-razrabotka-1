@@ -1,4 +1,3 @@
-import { Badge } from '@/components/ui/badge';
 import { formatQuantity } from '@/lib/formatQuantity';
 import { getStockLevel, stockCellClass } from '@/lib/stockLevels';
 import type {
@@ -20,8 +19,8 @@ const qtyLine = (quantity: number, unit: string, rolls: number) =>
   `${formatQuantity(quantity)} ${unit} · ${rolls} рул.`;
 
 /**
- * Телефон: таблица смен цеха не помещается и страницу приходится двигать вправо.
- * Карточки — материал сверху, смены столбиком, всё читается без боковой прокрутки.
+ * Телефон: та же таблица цеха, только ячейки смен стоят сеткой по ширине экрана.
+ * Широкая таблица уезжала вбок, а отдельный вид карточек выглядел иначе, чем склад.
  */
 const WorkshopMaterialsCards = ({
   types,
@@ -33,21 +32,29 @@ const WorkshopMaterialsCards = ({
 }: WorkshopMaterialsCardsProps) => (
   <div className="space-y-4">
     {types.map((type) => (
-      <div key={type.id} className="space-y-2">
-        <div className="flex items-center justify-between gap-2 px-0.5">
+      <div key={type.id} className="min-w-0 overflow-hidden rounded-md border border-border">
+        <div className="flex min-w-0 items-baseline justify-between gap-2 border-b border-border bg-muted/50 px-3 py-2">
           <span className="text-sm font-semibold">{type.name}</span>
-          <Badge variant="secondary">{type.materials.length} поз.</Badge>
+          <span className="shrink-0 text-xs text-muted-foreground">{type.materials.length} поз.</span>
         </div>
-        <div className="space-y-2">
+        <div className="divide-y divide-border">
           {type.materials.map((m) => {
             const total = totalFor(m);
+            const cells = visibleColumns.length + (showTotal ? 1 : 0);
             return (
-              <div
-                key={m.materialId}
-                className="min-w-0 overflow-hidden rounded-lg border border-border bg-card p-3"
-              >
-                <div className="break-words font-semibold leading-snug">{m.materialName}</div>
-                <div className="mt-2 space-y-1.5">
+              <div key={m.materialId} className="px-3 py-2.5">
+                <div className="min-w-0 break-words text-sm font-medium leading-snug">
+                  {m.materialName}
+                </div>
+                <div
+                  className={`mt-2 grid gap-1.5 ${
+                    cells <= 1
+                      ? 'grid-cols-1'
+                      : cells === 2
+                        ? 'grid-cols-2'
+                        : 'grid-cols-2 lg:grid-cols-3 xl:grid-cols-4'
+                  }`}
+                >
                   {visibleColumns.map((col) => {
                     const cell = m.cells.find(
                       (c) =>
@@ -57,23 +64,21 @@ const WorkshopMaterialsCards = ({
                     return (
                       <div
                         key={`${col.workshopId}-${col.shiftNumber}`}
-                        className={`rounded-md px-2.5 py-1.5 ${
+                        className={`min-w-0 rounded-md px-2 py-1.5 ${
                           isActiveColumn(col) ? 'ring-2 ring-primary' : ''
-                        } ${level ? stockCellClass[level] : cell ? 'bg-muted/50' : 'bg-muted/30'}`}
+                        } ${level ? stockCellClass[level] : cell ? 'bg-emerald-50' : 'bg-muted/40'}`}
                       >
-                        <div className="flex items-start justify-between gap-2">
-                          <div className="min-w-0 text-xs leading-snug">
-                            {showWorkshopName && (
-                              <div className="text-muted-foreground">{col.workshopName}</div>
-                            )}
-                            <div>{col.shiftLabel}</div>
-                          </div>
-                          <div className="shrink-0 text-right text-sm tabular-nums">
-                            {cell ? qtyLine(cell.quantity, m.unit, cell.rollCount) : '—'}
-                          </div>
+                        <div className="text-[11px] font-normal leading-snug">
+                          {showWorkshopName && (
+                            <div className="truncate">{col.workshopName}</div>
+                          )}
+                          <div className="truncate">{col.shiftLabel}</div>
+                        </div>
+                        <div className="mt-0.5 break-words text-sm tabular-nums leading-snug">
+                          {cell ? qtyLine(cell.quantity, m.unit, cell.rollCount) : '—'}
                         </div>
                         {(cell?.pendingQuantity ?? 0) > 0 && (
-                          <div className="mt-0.5 text-right text-xs font-medium text-amber-700">
+                          <div className="mt-0.5 text-[11px] font-medium text-amber-700">
                             в пути: {formatQuantity(cell?.pendingQuantity ?? 0)} {m.unit}
                           </div>
                         )}
@@ -82,19 +87,17 @@ const WorkshopMaterialsCards = ({
                   })}
                   {showTotal && (
                     <div
-                      className={`rounded-md px-2.5 py-1.5 font-semibold ${(() => {
+                      className={`min-w-0 rounded-md px-2 py-1.5 ${(() => {
                         const lvl = getStockLevel(total.quantity, m.unit);
                         return lvl ? stockCellClass[lvl] : 'bg-muted/40';
                       })()}`}
                     >
-                      <div className="flex items-start justify-between gap-2">
-                        <div className="text-xs">Итого</div>
-                        <div className="text-right text-sm tabular-nums">
-                          {qtyLine(total.quantity, m.unit, total.rolls)}
-                        </div>
+                      <div className="text-[11px] font-normal leading-snug">Итого</div>
+                      <div className="mt-0.5 break-words text-sm font-semibold tabular-nums leading-snug">
+                        {qtyLine(total.quantity, m.unit, total.rolls)}
                       </div>
                       {total.pending > 0 && (
-                        <div className="mt-0.5 text-right text-xs font-medium text-amber-700">
+                        <div className="mt-0.5 text-[11px] font-medium text-amber-700">
                           в пути: {formatQuantity(total.pending)} {m.unit}
                         </div>
                       )}

@@ -1,28 +1,13 @@
 import { useEffect, useMemo, useState } from 'react';
 import CrmLayout from '@/components/crm/CrmLayout';
-import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table';
 import Icon from '@/components/ui/icon';
 import {
   fetchWorkshopMaterials,
   type WorkshopMaterialType,
   type WorkshopMaterialColumn,
 } from '@/lib/workshopMaterialsApi';
-import { formatQuantity } from '@/lib/formatQuantity';
-import {
-  getStockLevel,
-  stockCellClass,
-  STOCK_LOW_LIMIT,
-  STOCK_MEDIUM_LIMIT,
-} from '@/lib/stockLevels';
+import { STOCK_LOW_LIMIT, STOCK_MEDIUM_LIMIT } from '@/lib/stockLevels';
 import { useAuth } from '@/context/AuthContext';
 import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
 import WorkshopMaterialsCards from '@/components/crm/workshopMaterials/WorkshopMaterialsCards';
@@ -124,11 +109,8 @@ const WorkshopMaterials = () => {
       ? roleColumns.filter((c) => String(c.workshopId) === activeTab)
       : roleColumns;
 
-  // «Итого» на телефоне прячем, когда колонка всего одна: у швеи это её смена, и
-  // итог дословно повторяет соседнюю ячейку. Лишняя колонка вытесняла таблицу за
-  // край экрана — ради повтора приходилось листать вбок. На планшете и компьютере
-  // место есть, там итог остаётся всегда.
-  const hideTotalOnMobile = visibleColumns.length <= 1;
+  // Одна колонка смены и так показывает остаток. «Итого» рядом повторяет ту же цифру.
+  const hideTotal = visibleColumns.length <= 1;
 
   // При выборе цеха «Итого» должно считать ПО ЭТОМУ ЦЕХУ: общая цифра по компании
   // рядом с колонками одного цеха выглядит как ошибка в остатках.
@@ -162,7 +144,7 @@ const WorkshopMaterials = () => {
 
   return (
     <CrmLayout>
-      <div className="space-y-6">
+      <div className="min-w-0 space-y-4 overflow-x-hidden sm:space-y-6">
         <div>
           <h1 className="text-xl font-bold">Материал на производстве</h1>
           <p className="mt-1 text-sm text-muted-foreground">
@@ -224,133 +206,14 @@ const WorkshopMaterials = () => {
               </Tabs>
             )}
 
-            <div className="md:hidden">
-              <WorkshopMaterialsCards
-                types={types}
-                visibleColumns={visibleColumns}
-                showWorkshopName={!isProduction && activeTab === 'all'}
-                showTotal={!hideTotalOnMobile}
-                isActiveColumn={isActiveColumn}
-                totalFor={totalFor}
-              />
-            </div>
-
-            <div className="hidden space-y-4 md:block">
-            {types.map((type) => (
-              <div key={type.id} className="rounded-md border border-border">
-                <div className="flex items-center justify-between gap-2 border-b border-border bg-muted/50 px-4 py-2">
-                  <span className="text-sm font-semibold">{type.name}</span>
-                  <Badge variant="secondary">{type.materials.length} поз.</Badge>
-                </div>
-                <Table className="min-w-0">
-                  <TableHeader>
-                    <TableRow>
-                      {/* БЕЗ w-full — ИНАЧЕ НА ТЕЛЕФОНЕ ПРОПАДАЮТ ОСТАТКИ.
-                          Таблица объявлена как min-w-max и прокручивается вбок.
-                          «w-full» на первой колонке отдавало ей всю ширину экрана,
-                          и колонки смен с «Итого» уезжали за край — прокрутки при
-                          этом не появлялось, швея видела только названия материалов
-                          без единой цифры. Ширину задаём только с планшета. */}
-                      <TableHead className="min-w-[8.5rem] sm:w-56">Материал</TableHead>
-                      {visibleColumns.map((col) => (
-                        <TableHead
-                          key={`${col.workshopId}-${col.shiftNumber}`}
-                          className={`text-center ${isActiveColumn(col) ? 'border-x-2 border-primary' : ''}`}
-                        >
-                          {/* Цех в заголовке нужен только на вкладке «Все цеха»: там
-                              «Смена №1» есть и в первом цехе, и во втором — без названия
-                              две одинаковые колонки не различить. Когда цех выбран
-                              вкладкой, его имя в каждой колонке — лишний повтор. */}
-                          {!isProduction && activeTab === 'all' && (
-                            <div className="text-xs font-normal text-muted-foreground">
-                              {col.workshopName}
-                            </div>
-                          )}
-                          {col.shiftLabel}
-                        </TableHead>
-                      ))}
-                      <TableHead
-                        className={`w-48 text-center ${hideTotalOnMobile ? 'hidden sm:table-cell' : ''}`}
-                      >
-                        Итого
-                      </TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {type.materials.map((m) => (
-                      <TableRow key={m.materialId}>
-                        <TableCell className="font-medium">{m.materialName}</TableCell>
-                        {visibleColumns.map((col) => {
-                          const cell = m.cells.find(
-                            (c) => c.workshopId === col.workshopId && c.shiftNumber === col.shiftNumber
-                          );
-                          // Подсветка остатка: до 200 пог.м — красная, до 500 — жёлтая,
-                          // свыше 500 — зелёная. Сразу видно, где материал заканчивается.
-                          const level = cell ? getStockLevel(cell.quantity, m.unit) : null;
-                          return (
-                            <TableCell
-                              key={`${col.workshopId}-${col.shiftNumber}`}
-                              className={`text-center ${isActiveColumn(col) ? 'border-x-2 border-primary' : ''} ${
-                                level ? stockCellClass[level] : cell ? 'bg-emerald-50' : ''
-                              }`}
-                            >
-                              {cell ? (
-                                <>
-                                  <div className="whitespace-normal">
-                                    {formatQuantity(cell.quantity)} {m.unit}
-                                  </div>
-                                  <div className="text-xs font-normal text-muted-foreground">
-                                    {cell.rollCount} рул.
-                                  </div>
-                                </>
-                              ) : (
-                                '—'
-                              )}
-                              {/* «В пути» живёт в колонке «Итого», но на телефоне её
-                                  скрываем — и предупреждение пропадало вместе с ней.
-                                  Материал, который смена ещё не приняла, в раскрой не
-                                  пойдёт: швея обязана видеть это в своей ячейке. */}
-                              {hideTotalOnMobile && (cell?.pendingQuantity ?? 0) > 0 && (
-                                <div className="text-xs font-medium text-amber-600 sm:hidden">
-                                  в пути: {formatQuantity(cell?.pendingQuantity ?? 0)} {m.unit}
-                                </div>
-                              )}
-                            </TableCell>
-                          );
-                        })}
-                        <TableCell
-                          className={`text-center font-semibold ${
-                            hideTotalOnMobile ? 'hidden sm:table-cell' : ''
-                          } ${(() => {
-                            // Итог подсвечиваем по той же шкале, что и ячейки смен.
-                            const lvl = getStockLevel(totalFor(m).quantity, m.unit);
-                            return lvl ? stockCellClass[lvl] : '';
-                          })()}`}
-                        >
-                          {/* Итог считается по тому, что человек сейчас видит: работнику —
-                              по его смене, при выбранной вкладке — по цеху, на «Все цеха» —
-                              по компании. Иначе цифра не сходилась бы с колонками рядом. */}
-                          {(() => {
-                            const t = totalFor(m);
-                            return `${formatQuantity(t.quantity)} ${m.unit}, ${t.rolls} рул.`;
-                          })()}
-                          {/* Часть остатка доехала до цеха, но смена её ещё не приняла.
-                              Без этой пометки материал не виден нигде: в работу он не
-                              пойдёт, а в общем остатке уже учтён — цех считает, что
-                              ткань есть, и планирует раскрой, которого не будет. */}
-                          {totalFor(m).pending > 0 && (
-                            <div className="text-xs font-medium text-amber-600">
-                              в пути: {formatQuantity(totalFor(m).pending)} {m.unit}
-                            </div>
-                          )}
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </div>
-            ))}
-            </div>
+            <WorkshopMaterialsCards
+              types={types}
+              visibleColumns={visibleColumns}
+              showWorkshopName={!isProduction && activeTab === 'all'}
+              showTotal={!hideTotal}
+              isActiveColumn={isActiveColumn}
+              totalFor={totalFor}
+            />
           </div>
         )}
       </div>
