@@ -70,12 +70,7 @@ ORDER_LIST_COLUMNS = (
     # Реальный расход ткани на одно изделие из карточки товара: он включает
     # запас на подгибку и потому больше «чистой» ширины. Именно эту цифру
     # кладовщик должен видеть в сводке — столько ткани уйдёт со склада.
-    "(SELECT mim.quantity FROM marketplace_items fmi "
-    " JOIN marketplace_item_materials mim ON mim.marketplace_item_id = fmi.id "
-    " JOIN materials mm ON mm.id = mim.material_id "
-    " JOIN material_types mmt ON mmt.id = mm.type_id "
-    " WHERE mmt.name = 'Тюль' AND fmi.material = o.material "
-    "   AND fmi.width = o.width AND fmi.height = o.height LIMIT 1) AS fabric_per_item, "
+    "fab.quantity AS fabric_per_item, "
     # Когда вещь реально раскроили и отшили. По этим датам закройщик и швея
     # сверяют свою выработку за смену или неделю: дата заказа покупателя для
     # этого не годится — заказ мог пролежать в очереди неделю.
@@ -86,7 +81,7 @@ ORDER_LIST_COLUMNS = (
     "o.taken_at, o.packed_at, o.overlock_taken_at, "
     # Название вешалки — последним полем, чтобы не сдвигать индексы
     # остальных колонок (их читают по номерам).
-    "(SELECT h.name FROM hangers h WHERE h.number = o.hanger_number), "
+    "hg.name, "
     # Магазин заказа: цех общий, но швея должна видеть, чью вещь
     # шьёт — у МЕГАТЮЛЬ и ДЮНА разные упаковка и вложения.
     "shp.name, shp.color, "
@@ -130,6 +125,20 @@ ORDER_LIST_COLUMNS = (
     "LEFT JOIN marketplace_items mi ON mi.id = o.marketplace_item_id "
     "LEFT JOIN shops shp ON shp.id = o.shop_id "
     "LEFT JOIN users ou ON ou.id = o.overlock_user_id "
+    # Справочники вешалок и расхода ткани собираем ОДИН раз на весь список и
+    # приклеиваем по ключу. Раньше это были подзапросы в каждой строке: на
+    # тысячу заказов — тысяча обращений к вешалкам и тысяча к карточкам товара.
+    "LEFT JOIN (SELECT DISTINCT ON (number) number, name FROM hangers "
+    "           ORDER BY number, id) hg ON hg.number = o.hanger_number "
+    "LEFT JOIN (SELECT DISTINCT ON (fmi.material, fmi.width, fmi.height) "
+    "                  fmi.material, fmi.width, fmi.height, mim.quantity "
+    "           FROM marketplace_items fmi "
+    "           JOIN marketplace_item_materials mim ON mim.marketplace_item_id = fmi.id "
+    "           JOIN materials mm ON mm.id = mim.material_id "
+    "           JOIN material_types mmt ON mmt.id = mm.type_id "
+    "           WHERE mmt.name = 'Тюль' "
+    "           ORDER BY fmi.material, fmi.width, fmi.height, fmi.id, mim.id) fab "
+    "  ON fab.material = o.material AND fab.width = o.width AND fab.height = o.height "
 )
 
 
