@@ -371,18 +371,8 @@ def _handle_live_floor(cur, conn, headers: dict) -> dict:
 
     # Кто сейчас на смене. Последняя открытая смена человека — на случай, если
     # их по ошибке открыто две.
-    cur.execute(
-        "SELECT column_name FROM information_schema.columns "
-        "WHERE table_schema = 'public' AND table_name = 'users' "
-        "  AND column_name IN ('bubble_hat', 'hat_boost_until')"
-    )
-    hat_cols = {r[0] for r in cur.fetchall()}
-    hat_sql = "NULLIF(u.bubble_hat, '')" if 'bubble_hat' in hat_cols else "NULL"
-    boost_sql = (
-        "CASE WHEN u.hat_boost_until > now() THEN u.hat_boost_until END"
-        if 'hat_boost_until' in hat_cols
-        else "NULL"
-    )
+    hat_sql = "NULLIF(u.bubble_hat, '')"
+    boost_sql = "CASE WHEN u.hat_boost_until > now() THEN u.hat_boost_until END"
     cur.execute(
         "SELECT DISTINCT ON (u.id) u.id, u.full_name, COALESCE(ss.role, u.role), "
         "       ss.workshop_id, w.name, ss.opened_at, COALESCE(u.can_overlock, false), "
