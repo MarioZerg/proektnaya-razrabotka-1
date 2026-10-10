@@ -63,8 +63,14 @@ CASE_DESCRIPTION = (
 )
 
 
+_BUBBLE_CASE_READY = False
+
+
 def _ensure_bubble_case(cur):
-    """Карточка и колонки для кейса. Без этого витрина молчит, пока не прогнали миграцию."""
+    """Карточка и колонки для кейса. Проверяем один раз на запуск функции, а не на каждый запрос."""
+    global _BUBBLE_CASE_READY
+    if _BUBBLE_CASE_READY:
+        return
     cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS bubble_hat VARCHAR(40)")
     cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS hat_boost_until TIMESTAMPTZ")
     cur.execute("ALTER TABLE variki_purchases ADD COLUMN IF NOT EXISTS loot_key VARCHAR(40)")
@@ -88,6 +94,7 @@ def _ensure_bubble_case(cur):
         "WHERE animation = 'bubble_case'",
         (CASE_TITLE, CASE_DESCRIPTION, CASE_PRICE),
     )
+    _BUBBLE_CASE_READY = True
 
 
 def _resp(status, body):

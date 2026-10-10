@@ -34,7 +34,22 @@ HAT_TITLES = {
 }
 
 
+_DUEL_SCHEMA_READY = False
+
+
 def ensure_duel_tables(cur):
+    global _DUEL_SCHEMA_READY
+    if not _DUEL_SCHEMA_READY:
+        _create_duel_schema(cur)
+        _DUEL_SCHEMA_READY = True
+    cur.execute(
+        "UPDATE variki_duels SET status = 'expired', finished_at = now() "
+        "WHERE status = 'pending' AND created_at < now() - make_interval(mins => %s)",
+        (PENDING_MINUTES,)
+    )
+
+
+def _create_duel_schema(cur):
     cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS bubble_hat VARCHAR(40)")
     cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS hat_boost_until TIMESTAMPTZ")
     cur.execute(
@@ -60,11 +75,6 @@ def ensure_duel_tables(cur):
         "  accepted_at TIMESTAMPTZ,"
         "  finished_at TIMESTAMPTZ"
         ")"
-    )
-    cur.execute(
-        "UPDATE variki_duels SET status = 'expired', finished_at = now() "
-        "WHERE status = 'pending' AND created_at < now() - make_interval(mins => %s)",
-        (PENDING_MINUTES,)
     )
 
 

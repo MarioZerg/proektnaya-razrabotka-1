@@ -26,7 +26,18 @@ PERCENT_MIN = 10
 PERCENT_MAX = 15
 
 
+_SHAFT_SCHEMA_READY = False
+
+
 def ensure_shaft_tables(cur):
+    global _SHAFT_SCHEMA_READY
+    if _SHAFT_SCHEMA_READY:
+        return
+    _create_shaft_schema(cur)
+    _SHAFT_SCHEMA_READY = True
+
+
+def _create_shaft_schema(cur):
     cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS bubble_hat VARCHAR(40)")
     cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS hat_boost_until TIMESTAMPTZ")
     cur.execute(

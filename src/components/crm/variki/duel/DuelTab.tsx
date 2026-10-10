@@ -83,7 +83,9 @@ const DuelTab = ({ userId }: DuelTabProps) => {
 
   useEffect(() => {
     load();
-    const timer = window.setInterval(load, 4000);
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === 'visible') load();
+    }, 8000);
     return () => window.clearInterval(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userId]);

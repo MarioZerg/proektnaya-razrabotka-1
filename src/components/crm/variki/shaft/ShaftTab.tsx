@@ -122,7 +122,9 @@ const ShaftTab = ({ userId }: ShaftTabProps) => {
 
   useEffect(() => {
     load();
-    const timer = window.setInterval(load, 15000);
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === 'visible') load();
+    }, 30000);
     return () => window.clearInterval(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userId]);

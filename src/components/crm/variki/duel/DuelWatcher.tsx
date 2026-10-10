@@ -59,6 +59,7 @@ const DuelWatcher = ({ userId }: DuelWatcherProps) => {
   useEffect(() => {
     let stop = false;
     const tick = () => {
+      if (document.visibilityState !== 'visible') return;
       fetchDuelDesk(userId)
         .then((desk) => {
           if (stop) return;
@@ -90,7 +91,7 @@ const DuelWatcher = ({ userId }: DuelWatcherProps) => {
         .catch(() => undefined);
     };
     tick();
-    const timer = window.setInterval(tick, liveRef.current ? 1500 : 3000);
+    const timer = window.setInterval(tick, liveRef.current ? 2500 : 20000);
     return () => {
       stop = true;
       window.clearInterval(timer);

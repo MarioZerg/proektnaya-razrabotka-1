@@ -119,7 +119,7 @@ const LiderTv = () => {
         .catch(() => undefined);
     };
     tick();
-    const timer = window.setInterval(tick, 1500);
+    const timer = window.setInterval(tick, 3000);
     return () => {
       stop = true;
       window.clearInterval(timer);
