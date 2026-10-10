@@ -2,42 +2,20 @@ import { useCallback, useEffect, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import CrmLayout from '@/components/crm/CrmLayout';
 import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import Icon from '@/components/ui/icon';
-import { fetchRollDetail, type RollDetail, type RollMovement, type RollStatus } from '@/lib/rollsApi';
-import { formatDateTime } from '@/lib/dateUtils';
-import { formatQuantity } from '@/lib/formatQuantity';
+import { fetchRollDetail, type RollDetail } from '@/lib/rollsApi';
 import { useAuth } from '@/context/AuthContext';
 import { isStorekeeperRole } from '@/lib/roles';
-import { printBarcodes } from '@/lib/printBarcodes';
 import RollWriteOffDialog from '@/components/crm/rolls/RollWriteOffDialog';
 import RollMoveDialog from '@/components/crm/rolls/RollMoveDialog';
 import RollEditDialog from '@/components/crm/rolls/RollEditDialog';
 import RollRemoveDialog from '@/components/crm/rolls/RollRemoveDialog';
 import { fetchWorkshops, type Workshop } from '@/lib/workshopsApi';
-import { currencySymbols } from '@/lib/suppliersApi';
 import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
-
-const statusLabels: Record<RollStatus, { label: string; variant: 'secondary' | 'default' | 'outline' }> = {
-  in_storage: { label: 'На складе', variant: 'secondary' },
-  in_workshop: { label: 'В цехе', variant: 'default' },
-  completed: { label: 'Завершён', variant: 'outline' },
-};
-
-const movementMeta: Record<RollMovement['kind'], { label: string; icon: string; className: string }> = {
-  order: { label: 'Заказ', icon: 'Scissors', className: 'text-sky-600' },
-  defect: { label: 'Списание брака', icon: 'TriangleAlert', className: 'text-red-600' },
-  return_to_supplier: { label: 'Возврат поставщику', icon: 'Undo2', className: 'text-amber-600' },
-  workshop_writeoff: { label: 'Списание в цехе', icon: 'PackageMinus', className: 'text-amber-600' },
-  close: { label: 'Рулон закрыт', icon: 'CircleCheck', className: 'text-emerald-600' },
-};
-
-const stageIcon: Record<string, string> = {
-  cutter: 'Scissors',
-  sewer: 'Shirt',
-  packer: 'Package',
-};
+import RollHeaderActions from '@/components/crm/rolls/show/RollHeaderActions';
+import RollStockCards from '@/components/crm/rolls/show/RollStockCards';
+import RollCostCard from '@/components/crm/rolls/show/RollCostCard';
+import RollHistory from '@/components/crm/rolls/show/RollHistory';
 
 const RollShow = () => {
   const { id } = useParams();
@@ -149,99 +127,16 @@ const RollShow = () => {
           >
             <Icon name="ChevronLeft" size={16} className="mr-1" />К рулонам
           </Button>
-          <div className="flex flex-wrap items-center gap-3">
-            <h1 className="text-xl font-bold">Рулон #{roll.id}</h1>
-            <span className="font-mono-tech text-sm text-muted-foreground">{roll.barcode}</span>
-            <Badge variant={(statusLabels[roll.status] || { variant: 'outline' as const }).variant}>
-              {(statusLabels[roll.status] || { label: roll.status }).label}
-            </Badge>
-            {/* Тип материала и кто отвечает за брак именно по нему: Тюль — закройщик,
-                Аксессуары — швея, Упаковка — упаковщик. */}
-            <Badge variant="outline">
-              {roll.materialType || 'Тип не указан'}
-              {roll.defectRoleLabel ? ` · брак: ${roll.defectRoleLabel}` : ''}
-            </Badge>
-
-            {/* Перепечатка стикера рулона: наклейка теряется и затирается на складе,
-                а без штрихкода рулон не отсканировать при отгрузке в цех. Доступна
-                кладовщикам и администратору — они работают с рулонами физически. */}
-            {canPrintSticker && (
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={() =>
-                  printBarcodes(
-                    [
-                      {
-                        code: roll.barcode,
-                        label: `${roll.materialName || ''} ${formatQuantity(roll.initialQuantity)} ${unit}`.trim(),
-                        supplier: roll.supplierName,
-                        receivedAt: roll.createdAt,
-                      },
-                    ],
-                    `Стикер рулона ${roll.barcode}`
-                  )
-                }
-              >
-                <Icon name="Printer" size={14} className="mr-1" />
-                Стикер рулона
-              </Button>
-            )}
-
-            {/* Ручное списание метража: материал уходит не только в пошив —
-                его продают, отрезают на образец, портят при перемотке. Без
-                этой кнопки остаток в системе расходился с полкой, и понять
-                причину можно было только на инвентаризации. */}
-            {isAdmin && roll.remainingQuantity > 0 && (
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={() => setWriteOffOpen(true)}
-              >
-                <Icon name="Minus" size={14} className="mr-1" />
-                Списать метраж
-              </Button>
-            )}
-
-            {/* ПЕРЕМЕЩЕНИЕ РУЛОНА. Рулон уехал в цех, а там не нужен — смену
-                закрыли, заказ отменили. Или материал нужен соседней смене: раньше
-                ради этого рулон «возвращали» на склад и тут же выдавали заново,
-                хотя ткань физически не двигалась. Закрытый рулон не трогаем: его
-                остаток обнулён и недостача уже посчитана. */}
-            {isAdmin && roll.status !== 'completed' && (
-              <Button size="sm" variant="outline" onClick={() => setMoveOpen(true)}>
-                <Icon name="ArrowRightLeft" size={14} className="mr-1" />
-                {roll.status === 'in_workshop' ? 'Вернуть или передать' : 'Выдать в цех'}
-              </Button>
-            )}
-
-            {/* ПРАВКА МЕТРАЖА. Бирки поставщика врут: на рулоне «50 м», по факту 47.
-                Правим только целый рулон на складе — у тронутого за цифрой уже стоят
-                чужие раскрои, списания и зарплата за работу. */}
-            {isAdmin
-              && roll.status === 'in_storage'
-              && roll.remainingQuantity === roll.initialQuantity && (
-              <Button size="sm" variant="outline" onClick={() => setEditOpen(true)}>
-                <Icon name="Pencil" size={14} className="mr-1" />
-                Изменить метраж
-              </Button>
-            )}
-
-            {/* УБРАТЬ РУЛОН. Завели ошибочно — дубль при разгрузке, опечатка,
-                приёмка оформлена дважды. Рулон с раскроями система не отдаст:
-                за ним стоит выполненная работа. */}
-            {isAdmin && (
-              <Button
-                size="sm"
-                variant="outline"
-                className="text-destructive hover:bg-destructive/5 hover:text-destructive"
-                onClick={() => setRemoveOpen(true)}
-              >
-                <Icon name="Trash2" size={14} className="mr-1" />
-                Убрать рулон
-              </Button>
-            )}
-          </div>
+          <RollHeaderActions
+            roll={roll}
+            unit={unit}
+            isAdmin={isAdmin}
+            canPrintSticker={canPrintSticker}
+            onWriteOff={() => setWriteOffOpen(true)}
+            onMove={() => setMoveOpen(true)}
+            onEdit={() => setEditOpen(true)}
+            onRemove={() => setRemoveOpen(true)}
+          />
 
           <RollEditDialog
             open={editOpen}
@@ -298,188 +193,15 @@ const RollShow = () => {
           </p>
         </div>
 
-        <div className="grid gap-4 md:grid-cols-3">
-          <Card className="border-border shadow-none md:col-span-2">
-            <CardHeader className="pb-3">
-              <CardTitle className="text-base">Остаток материала</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              <div className="flex items-end justify-between">
-                <div>
-                  <div className="text-3xl font-bold">
-                    {formatQuantity(roll.remainingQuantity)} <span className="text-lg font-normal text-muted-foreground">{unit}</span>
-                  </div>
-                  <p className="text-sm text-muted-foreground">
-                    из {formatQuantity(roll.initialQuantity)} {unit} · осталось {Math.round(remainPct)}%
-                  </p>
-                </div>
-                <div className="text-right text-sm text-muted-foreground">
-                  Израсходовано<br />
-                  <span className="font-medium text-foreground">{formatQuantity(usedQty)} {unit}</span>
-                </div>
-              </div>
-              <div className="h-3 w-full overflow-hidden rounded-full bg-muted">
-                <div
-                  className={`h-full rounded-full ${remainPct <= 15 ? 'bg-red-500' : remainPct <= 40 ? 'bg-amber-500' : 'bg-emerald-500'}`}
-                  style={{ width: `${remainPct}%` }}
-                />
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card className="border-border shadow-none">
-            <CardHeader className="pb-3">
-              <CardTitle className="text-base">Данные рулона</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-2 text-sm">
-              <div className="flex justify-between">
-                <span className="text-muted-foreground">Смена</span>
-                <span className="font-medium">{roll.shiftNumber ?? '—'}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-muted-foreground">Создан</span>
-                <span className="font-medium">{formatDateTime(roll.createdAt)}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-muted-foreground">Завершён</span>
-                <span className="font-medium">{roll.completedAt ? formatDateTime(roll.completedAt) : '—'}</span>
-              </div>
-            </CardContent>
-          </Card>
-        </div>
+        <RollStockCards roll={roll} unit={unit} usedQty={usedQty} remainPct={remainPct} />
 
         {/* Себестоимость рулона — коммерческая информация, показываем ТОЛЬКО
             администратору. Закройщику и кладовщику знать закупочные цены не нужно. */}
         {isAdmin && roll.costPerUnit != null && (
-          <Card className="border-border shadow-none">
-            <CardHeader className="pb-3">
-              <CardTitle className="text-base">Себестоимость</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-2 text-sm">
-              <div className="flex justify-between">
-                <span className="text-muted-foreground">Поставщик</span>
-                <span className="font-medium">{roll.supplierName || '—'}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-muted-foreground">Цена закупки</span>
-                <span className="font-medium">
-                  {roll.purchasePrice != null
-                    ? `${roll.purchasePrice} ${currencySymbols[roll.purchaseCurrency || 'RUB'] || roll.purchaseCurrency || ''}`
-                    : '—'}
-                </span>
-              </div>
-              {/* Курс показываем только для валютных закупок — у рублёвых он равен 1. */}
-              {roll.purchaseCurrency && roll.purchaseCurrency !== 'RUB' && (
-                <div className="flex justify-between">
-                  <span className="text-muted-foreground">Курс на день приёмки</span>
-                  <span className="font-medium">{roll.purchaseRate ?? '—'} ₽</span>
-                </div>
-              )}
-              <div className="flex justify-between">
-                <span className="text-muted-foreground">Логистика на {unit}</span>
-                <span className="font-medium">
-                  {(roll.logisticsPerUnit ?? 0).toFixed(2)} ₽
-                </span>
-              </div>
-              <div className="flex justify-between border-t border-border pt-2">
-                <span className="font-medium">Итого за 1 {unit}</span>
-                <span className="text-base font-bold">{roll.costPerUnit.toFixed(2)} ₽</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-muted-foreground">Стоимость остатка</span>
-                <span className="font-medium">
-                  {(roll.remainingQuantity * roll.costPerUnit).toFixed(2)} ₽
-                </span>
-              </div>
-            </CardContent>
-          </Card>
+          <RollCostCard roll={{ ...roll, costPerUnit: roll.costPerUnit }} unit={unit} />
         )}
 
-        <div className="space-y-2">
-          <h2 className="font-semibold">История использования ({history.length})</h2>
-          {untracked > 0 && (
-            <div className="flex gap-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm">
-              <Icon name="Info" size={16} className="mt-0.5 shrink-0 text-amber-600" />
-              <p>
-                По {formatQuantity(untracked)} {unit} нет записей о расходе — рулон перенесён
-                из старой системы вместе с остатком. Движения по заказам записываются с
-                момента перехода на терминалы.
-              </p>
-            </div>
-          )}
-
-          {history.length === 0 ? (
-            <p className="text-sm text-muted-foreground">
-              {untracked > 0
-                ? 'Записей о списании по этому рулону не сохранилось'
-                : 'Из этого рулона ещё не списывали материал'}
-            </p>
-          ) : (
-            <div className="space-y-3">
-              {history.map((m, i) => {
-                const meta = movementMeta[m.kind] || movementMeta.order;
-                return (
-                  <div key={i} className="rounded-md border border-border p-3">
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <span className="flex items-center gap-1.5 font-medium">
-                        <Icon name={meta.icon} size={16} className={meta.className} />
-                        {m.kind === 'order' && m.orderNumber ? `Заказ ${m.orderNumber}` : meta.label}
-                        {m.kind === 'defect' && m.defectRoleLabel && (
-                          <Badge variant="outline" className="ml-1 capitalize">{m.defectRoleLabel}</Badge>
-                        )}
-                      </span>
-                      <span className="flex items-center gap-3 text-sm">
-                        <span className="font-semibold text-red-600">-{formatQuantity(m.quantity)} {unit}</span>
-                        <span className="text-muted-foreground">{formatDateTime(m.createdAt)}</span>
-                      </span>
-                    </div>
-
-                    {/* Лесенка этапов заказа: кто раскроил → сшил → упаковал */}
-                    {m.kind === 'order' && m.stages && (
-                      <div className="mt-3 flex flex-wrap items-center gap-2">
-                        {m.stages.map((s, si) => (
-                          <div key={s.role} className="flex items-center gap-2">
-                            <div
-                              className={`flex items-center gap-2 rounded-md border px-2.5 py-1.5 ${
-                                s.userName ? 'border-border bg-muted/40' : 'border-dashed border-border/60'
-                              }`}
-                            >
-                              <Icon
-                                name={stageIcon[s.role] || 'User'}
-                                size={15}
-                                className={s.userName ? 'text-sky-600' : 'text-muted-foreground'}
-                              />
-                              <div className="leading-tight">
-                                <div className="text-[11px] text-muted-foreground">{s.label}</div>
-                                <div className={`text-sm ${s.userName ? 'font-medium' : 'text-muted-foreground'}`}>
-                                  {s.userName || '—'}
-                                </div>
-                                {s.at && (
-                                  <div className="text-[10px] text-muted-foreground">{formatDateTime(s.at)}</div>
-                                )}
-                              </div>
-                            </div>
-                            {si < m.stages!.length - 1 && (
-                              <Icon name="ChevronRight" size={16} className="text-muted-foreground" />
-                            )}
-                          </div>
-                        ))}
-                      </div>
-                    )}
-
-                    {/* Брак / прочие списания: кто зафиксировал и комментарий */}
-                    {m.kind !== 'order' && (
-                      <div className="mt-2 text-sm text-muted-foreground">
-                        {m.userName ? <span>Зафиксировал: <span className="text-foreground">{m.userName}</span></span> : null}
-                        {m.comment ? <span className="ml-2">· {m.comment}</span> : null}
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </div>
+        <RollHistory history={history} untracked={untracked} unit={unit} />
       </div>
     </CrmLayout>
   );
