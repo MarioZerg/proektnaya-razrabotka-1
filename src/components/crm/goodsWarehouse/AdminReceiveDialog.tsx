@@ -1,21 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
 import {
   Dialog,
   DialogContent,
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
-import Icon from '@/components/ui/icon';
 import { useToast } from '@/hooks/use-toast';
 import { useScannerAutoSubmit } from '@/hooks/useScannerAutoSubmit';
 import { useAuth } from '@/context/AuthContext';
@@ -28,6 +17,16 @@ import {
 } from '@/lib/goodsWarehouseApi';
 import { printStorageStickers } from '@/lib/printStorageSticker';
 import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
+import AdminReceiveSetup from '@/components/crm/goodsWarehouse/adminReceive/AdminReceiveSetup';
+import AdminReceiveSizePicker from '@/components/crm/goodsWarehouse/adminReceive/AdminReceiveSizePicker';
+import AdminReceiveCart from '@/components/crm/goodsWarehouse/adminReceive/AdminReceiveCart';
+import {
+  SHELF_KEY,
+  SHOP_KEY,
+  type CartRow,
+  type CatalogHit,
+  type Step,
+} from '@/components/crm/goodsWarehouse/adminReceive/adminReceiveShared';
 
 interface AdminReceiveDialogProps {
   open: boolean;
@@ -35,32 +34,6 @@ interface AdminReceiveDialogProps {
   shelves: Shelf[];
   onDone: () => void;
 }
-
-/** Полку спрашиваем один раз: дальше кладовщик меняет её сам, когда понадобится. */
-const SHELF_KEY = 'goods-manual-receive-shelf';
-const SHOP_KEY = 'goods-manual-receive-shop';
-
-interface CartRow {
-  key: string;
-  hit: CatalogHit;
-  title: string;
-  storageBarcode?: string;
-  orderNumber?: string;
-}
-
-type Step = 'material' | 'width' | 'height';
-
-interface CatalogHit {
-  id: number;
-  name: string;
-  material: string | null;
-  width: number | null;
-  height: number | null;
-  shopId?: number | null;
-}
-
-const choiceClass =
-  'rounded-md border border-border bg-card px-3 py-2 text-sm font-semibold hover:bg-muted disabled:opacity-50';
 
 /**
  * Ручной приём на склад.
@@ -371,156 +344,51 @@ const AdminReceiveDialog = ({ open, onOpenChange, shelves, onDone }: AdminReceiv
 
           {!confirmed && (
           <>
-          <div className="space-y-1.5">
-            <Label>Магазин</Label>
-            <div className="flex flex-wrap gap-2">
-              {shops.map((s) => (
-                <button
-                  key={s.id}
-                  type="button"
-                  onClick={() => rememberShop(s.id)}
-                  className={
-                    String(s.id) === shopId
-                      ? 'rounded-md bg-primary px-3 py-2 text-sm font-semibold text-primary-foreground'
-                      : choiceClass
-                  }
-                >
-                  {s.name}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <div className="space-y-1.5">
-            <Label>Полка</Label>
-            {shelfId && shelfName && !changeShelf ? (
-              <div className="flex items-center justify-between gap-2 rounded-md border border-border px-3 py-2">
-                <span className="text-sm font-semibold">полка № {shelfName}</span>
-                <Button type="button" variant="ghost" size="sm" onClick={() => setChangeShelf(true)}>
-                  Сменить
-                </Button>
-              </div>
-            ) : (
-              <Select value={shelfId} onValueChange={rememberShelf}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Укажите полку один раз — дальше она запомнится" />
-                </SelectTrigger>
-                <SelectContent>
-                  {shelves.map((s) => (
-                    <SelectItem key={s.id} value={String(s.id)}>
-                      {s.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            )}
-          </div>
-
-          <div className="space-y-1.5">
-            <Label>Скан стикера</Label>
-            <Input
-              autoFocus
-              placeholder="Любой наш стикер"
-              value={scan}
-              onChange={(e) => setScan(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') {
-                  e.preventDefault();
-                  void handleScan();
-                }
-              }}
-              disabled={saving || scanning}
-              className="font-mono-tech"
-            />
-            <p className="text-xs text-muted-foreground">
-              {scanning
-                ? 'Смотрим стикер…'
-                : 'Подойдёт стикер товара, заказа или прослеживаемости. Вещь, которая уже на складе, второй раз не добавится'}
-            </p>
-          </div>
+          <AdminReceiveSetup
+            shops={shops}
+            shopId={shopId}
+            onPickShop={rememberShop}
+            shelves={shelves}
+            shelfId={shelfId}
+            shelfName={shelfName}
+            changeShelf={changeShelf}
+            onChangeShelf={() => setChangeShelf(true)}
+            onPickShelf={rememberShelf}
+            scan={scan}
+            onScanChange={setScan}
+            onScan={handleScan}
+            saving={saving}
+            scanning={scanning}
+          />
 
           {shopId && (
-            <div className="space-y-2">
-              {step !== 'material' && (
-                <div className="flex items-center justify-between gap-2">
-                  <p className="text-sm font-semibold">
-                    {material}
-                    {step === 'height' && width ? ` · ${width}` : ''}
-                  </p>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => {
-                      if (step === 'height') {
-                        setStep('width');
-                        setWidth(null);
-                      } else {
-                        resetChoice();
-                      }
-                    }}
-                  >
-                    Назад
-                  </Button>
-                </div>
-              )}
-              {step === 'material' && (
-                <div className="flex max-h-36 flex-wrap gap-2 overflow-y-auto">
-                  {materials.length === 0 ? (
-                    <p className="text-sm text-muted-foreground">В этом магазине нет товаров с размером</p>
-                  ) : (
-                    materials.map((name) => (
-                      <button
-                        key={name}
-                        type="button"
-                        disabled={saving}
-                        className={choiceClass}
-                        onClick={() => {
-                          setMaterial(name);
-                          setWidth(null);
-                          setStep('width');
-                        }}
-                      >
-                        {name}
-                      </button>
-                    ))
-                  )}
-                </div>
-              )}
-              {step === 'width' && (
-                <div className="flex max-h-36 flex-wrap gap-2 overflow-y-auto">
-                  {widths.map((value) => (
-                    <button
-                      key={value}
-                      type="button"
-                      disabled={saving}
-                      className={choiceClass}
-                      onClick={() => {
-                        setWidth(value);
-                        setStep('height');
-                      }}
-                    >
-                      {value}
-                    </button>
-                  ))}
-                </div>
-              )}
-              {step === 'height' && (
-                <div className="flex max-h-36 flex-wrap gap-2 overflow-y-auto">
-                  {heights.map((value) => (
-                    <button
-                      key={value}
-                      type="button"
-                      disabled={saving}
-                      className={choiceClass}
-                      onClick={() => pickHeight(value)}
-                    >
-                      {value}
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
+            <AdminReceiveSizePicker
+              step={step}
+              material={material}
+              width={width}
+              materials={materials}
+              widths={widths}
+              heights={heights}
+              saving={saving}
+              onBack={() => {
+                if (step === 'height') {
+                  setStep('width');
+                  setWidth(null);
+                } else {
+                  resetChoice();
+                }
+              }}
+              onPickMaterial={(name) => {
+                setMaterial(name);
+                setWidth(null);
+                setStep('width');
+              }}
+              onPickWidth={(value) => {
+                setWidth(value);
+                setStep('height');
+              }}
+              onPickHeight={pickHeight}
+            />
           )}
           </>
           )}
@@ -532,48 +400,14 @@ const AdminReceiveDialog = ({ open, onOpenChange, shelves, onDone }: AdminReceiv
           )}
 
           {cart.length > 0 && (
-            <div className="space-y-2">
-              <Label>Корзина · {cart.length}</Label>
-              <div className="max-h-[12.5rem] space-y-1 overflow-y-auto pr-1">
-                {cart.map((row) => (
-                  <div
-                    key={row.key}
-                    className="flex h-9 items-center gap-2 rounded-md border border-border px-2"
-                  >
-                    <p className="min-w-0 flex-1 truncate text-sm font-medium">{row.title}</p>
-                    {row.storageBarcode && (
-                      <span className="shrink-0 font-mono-tech text-xs font-bold">{row.storageBarcode}</span>
-                    )}
-                    {!confirmed && (
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        aria-label="Убрать из корзины"
-                        onClick={() => removeFromCart(row.key)}
-                      >
-                        <Icon name="X" size={14} />
-                      </Button>
-                    )}
-                  </div>
-                ))}
-              </div>
-              {confirmed ? (
-                <Button className="w-full" size="lg" onClick={printStrip}>
-                  <Icon name="Printer" size={16} className="mr-2" />
-                  Лента стикеров
-                </Button>
-              ) : (
-                <Button className="w-full" size="lg" onClick={() => void confirmCart()} disabled={saving}>
-                  {saving ? (
-                    <Icon name="Loader2" size={16} className="mr-2 animate-spin" />
-                  ) : (
-                    <Icon name="PackagePlus" size={16} className="mr-2" />
-                  )}
-                  Подтвердить ({cart.length})
-                </Button>
-              )}
-            </div>
+            <AdminReceiveCart
+              cart={cart}
+              confirmed={confirmed}
+              saving={saving}
+              onRemove={removeFromCart}
+              onPrint={printStrip}
+              onConfirm={confirmCart}
+            />
           )}
         </div>
       </DialogContent>
