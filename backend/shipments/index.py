@@ -2547,30 +2547,30 @@ def handler(event: dict, context) -> dict:
                 busy_names = []
                 missing_stock = []
                 for material_id in material_ids:
-                cur.execute(
-                    "SELECT s.id FROM shipments s "
-                    "JOIN shipment_items si ON si.shipment_id = s.id "
-                    "WHERE s.type = 'to_workshop' AND s.workshop_id = %s AND s.shift_number = %s "
-                    "AND si.material_id = %s AND s.status != 'Получено' "
-                    "LIMIT 1",
-                    (int(workshop_id), int(shift_number), int(material_id)),
-                )
-                if cur.fetchone():
+                    cur.execute(
+                        "SELECT s.id FROM shipments s "
+                        "JOIN shipment_items si ON si.shipment_id = s.id "
+                        "WHERE s.type = 'to_workshop' AND s.workshop_id = %s AND s.shift_number = %s "
+                        "AND si.material_id = %s AND s.status != 'Получено' "
+                        "LIMIT 1",
+                        (int(workshop_id), int(shift_number), int(material_id)),
+                    )
+                    if cur.fetchone():
                         cur.execute("SELECT name FROM materials WHERE id = %s", (int(material_id),))
                         name_row = cur.fetchone()
                         busy_names.append(name_row[0] if name_row else f'#{material_id}')
-                # Нельзя запросить материал, которого физически нет на складе — иначе
-                # кладовщик получит заявку, которую невозможно собрать.
-                cur.execute(
-                    "SELECT COALESCE(SUM(remaining_quantity), 0), m.name FROM materials m "
-                    "LEFT JOIN rolls r ON r.material_id = m.id AND r.status = 'in_storage' "
-                    "WHERE m.id = %s GROUP BY m.name",
-                    (int(material_id),),
-                )
-                stock_row = cur.fetchone()
-                warehouse_qty = float(stock_row[0]) if stock_row else 0
-                material_name = stock_row[1] if stock_row else None
-                if warehouse_qty <= 0:
+                    # Нельзя запросить материал, которого физически нет на складе — иначе
+                    # кладовщик получит заявку, которую невозможно собрать.
+                    cur.execute(
+                        "SELECT COALESCE(SUM(remaining_quantity), 0), m.name FROM materials m "
+                        "LEFT JOIN rolls r ON r.material_id = m.id AND r.status = 'in_storage' "
+                        "WHERE m.id = %s GROUP BY m.name",
+                        (int(material_id),),
+                    )
+                    stock_row = cur.fetchone()
+                    warehouse_qty = float(stock_row[0]) if stock_row else 0
+                    material_name = stock_row[1] if stock_row else None
+                    if warehouse_qty <= 0:
                         missing_stock.append(material_name or f'#{material_id}')
                 if busy_names:
                     return {
@@ -2608,10 +2608,10 @@ def handler(event: dict, context) -> dict:
 
                 requested_qty_sql = float(requested_qty) if requested_qty not in (None, '') else 'NULL'
                 for material_id in material_ids:
-                cur.execute(
-                    f"INSERT INTO shipment_items (shipment_id, material_id, requested_quantity) "
-                    f"VALUES ({shipment_id}, {int(material_id)}, {requested_qty_sql})"
-                )
+                    cur.execute(
+                        f"INSERT INTO shipment_items (shipment_id, material_id, requested_quantity) "
+                        f"VALUES ({shipment_id}, {int(material_id)}, {requested_qty_sql})"
+                    )
 
                 is_admin_request = bool(actor_row and actor_row[0] == 'admin')
                 log_action(
