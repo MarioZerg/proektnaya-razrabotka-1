@@ -129,13 +129,24 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                 }
 
             cur.execute(
-                "SELECT name, material, width, height, barcode, ozon_sku FROM marketplace_items WHERE id = %s",
+                "SELECT name, material, width, height, barcode, ozon_sku, shop_id "
+                "FROM marketplace_items WHERE id = %s",
                 (int(item_id),),
             )
             item_row = cur.fetchone()
             if not item_row:
                 return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': 'Товар не найден'})}
-            item_name, item_material, item_width, item_height, item_barcode, item_ozon_sku = item_row
+            item_name, item_material, item_width, item_height, item_barcode, item_ozon_sku, item_shop = item_row
+            # Магазин пишет кладовщик в окне приёмки. Если не прислал — берём магазин
+            # карточки. Без shop_id на служебном заказе вещь на складе остаётся без
+            # метки магазина, и её не отличить от товара другого кабинета.
+            body_shop = body_data.get('shopId')
+            try:
+                shop_val = int(body_shop) if body_shop not in (None, '') else None
+            except (TypeError, ValueError):
+                shop_val = None
+            if shop_val is None and item_shop:
+                shop_val = int(item_shop)
             product = (
                 f"{item_material} {item_width}x{item_height}"
                 if item_material and item_width and item_height
@@ -161,14 +172,15 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                 cur.execute(
                     "INSERT INTO orders (order_number, marketplace, order_type, status, product, quantity, "
                     "source, material, width, height, marketplace_item_id, product_barcode, product_ozon_sku, "
-                    "sewing_status) "
-                    "VALUES (%s, 'OZON', 'FBS', 'Новый', %s, 1, 'manual', %s, %s, %s, %s, %s, %s, 'Готовые') "
+                    "sewing_status, shop_id) "
+                    "VALUES (%s, 'OZON', 'FBS', 'Новый', %s, 1, 'manual', %s, %s, %s, %s, %s, %s, 'Готовые', %s) "
                     "RETURNING id",
                     (
                         order_number, product, item_material,
                         int(item_width) if item_width else None,
                         int(item_height) if item_height else None,
                         int(item_id), item_barcode or None, item_ozon_sku or None,
+                        shop_val,
                     ),
                 )
                 new_order_id = cur.fetchone()[0]
@@ -235,57 +247,137 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
             }
 
         if action == 'find_item_by_code':
-            # Поиск товара по отсканированному FBO-стикеру.
-            #
-            # Сложность в том, что стикеры печатаются по-разному, и в одном и том же
-            # штрихкоде может лежать что угодно: код с префиксом (OZN1579985267),
-            # тот же код без префикса (1579985267), артикул продавца или SKU WB /
-            # Яндекса. Кладовщик не должен в этом разбираться — сверяем со всеми
-            # колонками справочника сразу, а префикс OZN приписываем и отбрасываем
-            # сами. Именно из-за него скан не срабатывал: в баркоде стикера префикса
-            # нет, а в справочнике он есть.
+            # Любой наш стикер: FBO (код товара), хранение GW, прослеживаемость TR,
+            # номер заказа с индивидуального стикера. Штуку, которая уже лежит на
+            # складе, второй раз не заводим. Код товара (его клеят на каждую такую
+            # же вещь) наоборот можно сканировать снова — это ещё одна штука.
             raw = (body_data.get('code') or '').strip()
             if not raw:
                 return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Пустой код'})}
 
-            # Сканер иногда добавляет невидимые символы и ведущие нули — чистим.
             code = raw.strip().strip('\r\n\t ').upper()
             bare = code[3:] if code.startswith('OZN') else code
             variants = {code, bare, f'OZN{bare}', bare.lstrip('0')}
-            variants = {v for v in variants if v}
-            vals = ', '.join(
-                "'" + v.replace("'", "''") + "'" for v in variants
-            )
-            cur.execute(
-                "SELECT id, name, material, width, height, barcode, sku, ozon_sku, wb_sku, ym_sku "
-                "FROM marketplace_items WHERE "
-                f"upper(trim(coalesce(barcode, ''))) IN ({vals}) "
-                f"OR upper(trim(coalesce(sku, ''))) IN ({vals}) "
-                f"OR upper(trim(coalesce(ozon_sku, ''))) IN ({vals}) "
-                f"OR upper(trim(coalesce(wb_sku, ''))) IN ({vals}) "
-                f"OR upper(trim(coalesce(ym_sku, ''))) IN ({vals}) "
-                "LIMIT 1"
-            )
-            found_row = cur.fetchone()
-            if not found_row:
+            variants = [v for v in variants if v]
+
+            def already_response():
+                return {
+                    'statusCode': 409,
+                    'headers': headers,
+                    'body': json.dumps({
+                        'error': 'Этот стикер уже есть в системе. Повторно на склад его добавлять не нужно.',
+                    }, ensure_ascii=False),
+                }
+
+            def item_response(item_id):
+                cur.execute(
+                    "SELECT id, name, material, width, height, shop_id "
+                    "FROM marketplace_items WHERE id = %s",
+                    (int(item_id),),
+                )
+                row = cur.fetchone()
+                if not row:
+                    return None
+                return {
+                    'statusCode': 200,
+                    'headers': headers,
+                    'body': json.dumps({
+                        'id': row[0],
+                        'name': row[1],
+                        'material': row[2],
+                        'width': row[3],
+                        'height': row[4],
+                        'shopId': row[5],
+                    }, ensure_ascii=False),
+                }
+
+            # Стикер хранения — это уже конкретная вещь склада.
+            if code.startswith('GW-'):
+                cur.execute(
+                    "SELECT 1 FROM goods_warehouse WHERE upper(trim(storage_barcode)) = %s LIMIT 1",
+                    (code,),
+                )
+                if cur.fetchone():
+                    return already_response()
                 return {
                     'statusCode': 404,
                     'headers': headers,
                     'body': json.dumps(
-                        {'error': f'Товар по коду {raw} не найден в справочнике'},
+                        {'error': f'Стикер {raw} в системе не найден'},
                         ensure_ascii=False,
                     ),
                 }
+
+            # TR{id заказа} и точный номер заказа — одна конкретная вещь.
+            # Если она уже на складе, не дублируем. Если ещё нет — заводим
+            # по карточке этого заказа.
+            unit_order = None
+            if code.startswith('TR') and code[2:].isdigit():
+                cur.execute(
+                    "SELECT id, marketplace_item_id FROM orders WHERE id = %s",
+                    (int(code[2:]),),
+                )
+                unit_order = cur.fetchone()
+            if unit_order is None:
+                cur.execute(
+                    "SELECT id, marketplace_item_id FROM orders "
+                    "WHERE upper(trim(order_number)) = %s LIMIT 1",
+                    (code,),
+                )
+                unit_order = cur.fetchone()
+            if unit_order is not None:
+                cur.execute(
+                    "SELECT 1 FROM goods_warehouse "
+                    "WHERE order_id = %s OR reserved_order_id = %s LIMIT 1",
+                    (unit_order[0], unit_order[0]),
+                )
+                if cur.fetchone():
+                    return already_response()
+                if unit_order[1]:
+                    payload = item_response(unit_order[1])
+                    if payload:
+                        return payload
+
+            cur.execute(
+                "SELECT id FROM marketplace_items WHERE "
+                "upper(trim(coalesce(barcode, ''))) = ANY(%s) "
+                "OR upper(trim(coalesce(sku, ''))) = ANY(%s) "
+                "OR upper(trim(coalesce(ozon_sku, ''))) = ANY(%s) "
+                "OR upper(trim(coalesce(wb_sku, ''))) = ANY(%s) "
+                "OR upper(trim(coalesce(ym_sku, ''))) = ANY(%s) "
+                "LIMIT 1",
+                (variants, variants, variants, variants, variants),
+            )
+            found_row = cur.fetchone()
+            if not found_row:
+                cur.execute(
+                    "SELECT marketplace_item_id FROM orders "
+                    "WHERE marketplace_item_id IS NOT NULL AND ("
+                    "upper(trim(coalesce(product_barcode, ''))) = ANY(%s) "
+                    "OR upper(trim(coalesce(product_ozon_sku, ''))) = ANY(%s)"
+                    ") LIMIT 1",
+                    (variants, variants),
+                )
+                found_row = cur.fetchone()
+            if not found_row or not found_row[0]:
+                return {
+                    'statusCode': 404,
+                    'headers': headers,
+                    'body': json.dumps(
+                        {'error': f'Товар по коду {raw} не найден. Выберите материал, ширину и высоту.'},
+                        ensure_ascii=False,
+                    ),
+                }
+            payload = item_response(found_row[0])
+            if payload:
+                return payload
             return {
-                'statusCode': 200,
+                'statusCode': 404,
                 'headers': headers,
-                'body': json.dumps({
-                    'id': found_row[0],
-                    'name': found_row[1],
-                    'material': found_row[2],
-                    'width': found_row[3],
-                    'height': found_row[4],
-                }, ensure_ascii=False),
+                'body': json.dumps(
+                    {'error': f'Товар по коду {raw} не найден в справочнике'},
+                    ensure_ascii=False,
+                ),
             }
 
         if action == 'ship_label':

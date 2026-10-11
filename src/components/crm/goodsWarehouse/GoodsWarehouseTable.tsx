@@ -1,18 +1,9 @@
 import { Button } from '@/components/ui/button';
-import {
-  Table,
-  TableBody,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table';
 import Icon from '@/components/ui/icon';
 import GoodsWarehouseCards from '@/components/crm/goodsWarehouse/GoodsWarehouseCards';
-import GoodsWarehouseTableRow from '@/components/crm/goodsWarehouse/GoodsWarehouseTableRow';
 import GoodsWarehouseTableDialogs from '@/components/crm/goodsWarehouse/GoodsWarehouseTableDialogs';
 import { useGoodsWarehouseTableActions } from '@/components/crm/goodsWarehouse/useGoodsWarehouseTableActions';
 import type { GoodsWarehouseItem } from '@/lib/goodsWarehouseApi';
-import { Checkbox } from '@/components/ui/checkbox';
 
 interface GoodsWarehouseTableProps {
   loading: boolean;
@@ -49,8 +40,6 @@ const GoodsWarehouseTable = ({
   pickMode = false,
   pickedIds = [],
   onTogglePick,
-  onToggleAllPicked,
-  allPicked = false,
 }: GoodsWarehouseTableProps) => {
   const a = useGoodsWarehouseTableActions({ items, onMarkLost, onDelete });
 
@@ -71,8 +60,7 @@ const GoodsWarehouseTable = ({
 
   return (
     <>
-      {/* На телефоне — карточки, на компьютере привычная таблица. */}
-      <div className="md:hidden">
+      <div>
         <GoodsWarehouseCards
           items={items}
           onReturnToWorkshop={onReturnToWorkshop}
@@ -81,14 +69,16 @@ const GoodsWarehouseTable = ({
           pickMode={pickMode}
           pickedIds={pickedIds}
           onTogglePick={onTogglePick}
+          canSelectStickers={a.canPrintStickers}
+          selectedIds={a.selectedIds}
+          onToggleSelect={a.toggleOne}
+          isAdmin={isAdmin}
+          onRequestDelete={a.setDeleteId}
         />
       </div>
 
-      {/* Панель выбора: видна, как только отмечена хотя бы одна вещь. Кладовщик
-          набирает пачку, проверяет её глазами и печатает одним заданием — вместо
-          того чтобы допечатывать наклейки поштучно и потом искать в них ошибку. */}
       {a.canPrintStickers && a.selectedItems.length > 0 && (
-        <div className="mb-3 hidden items-center justify-between gap-3 rounded-md border border-primary bg-primary/5 px-3 py-2 md:flex">
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-3 rounded-md border border-primary bg-primary/5 px-3 py-2">
           <div className="text-sm font-medium">Выбрано: {a.selectedItems.length} шт.</div>
           <div className="flex items-center gap-2">
             <Button variant="ghost" size="sm" onClick={() => a.setSelectedIds([])}>
@@ -101,65 +91,6 @@ const GoodsWarehouseTable = ({
           </div>
         </div>
       )}
-
-      <div className="hidden rounded-md border border-border md:block">
-        <Table>
-          <TableHeader>
-            <TableRow className="bg-primary hover:bg-primary">
-              {/* Галочка отбора менеджера. В шапке — «отметить всё, что сейчас
-                  показывает фильтр»: он открыл нужный размер и берёт его целиком. */}
-              {pickMode && (
-                <TableHead className="w-10 text-primary-foreground">
-                  <Checkbox
-                    checked={allPicked}
-                    onCheckedChange={() => onToggleAllPicked?.()}
-                    aria-label="Отметить все показанные"
-                    className="border-primary-foreground data-[state=checked]:bg-primary-foreground data-[state=checked]:text-primary"
-                  />
-                </TableHead>
-              )}
-              {a.canPrintStickers && (
-                <TableHead className="w-10 text-primary-foreground">
-                  <Checkbox
-                    checked={a.allSelected}
-                    onCheckedChange={a.toggleAll}
-                    aria-label="Выбрать все"
-                    className="border-primary-foreground data-[state=checked]:bg-primary-foreground data-[state=checked]:text-primary"
-                  />
-                </TableHead>
-              )}
-              <TableHead className="text-primary-foreground">Товар</TableHead>
-              <TableHead className="text-primary-foreground">Статус</TableHead>
-              <TableHead className="text-primary-foreground">Стикеры</TableHead>
-              <TableHead className="text-primary-foreground">№ полки</TableHead>
-              {isAdmin && <TableHead className="text-primary-foreground">Действия</TableHead>}
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {/* Товары, принятые администратором вручную, подсвечены: их не было в заказах
-                маркетплейса, по ним может понадобиться отдельная сверка. */}
-            {items.map((i) => (
-              <GoodsWarehouseTableRow
-                key={i.id}
-                i={i}
-                isAdmin={isAdmin}
-                onDelete={onDelete}
-                pickMode={pickMode}
-                picked={pickedIds.includes(i.id)}
-                onTogglePick={onTogglePick}
-                canPrintStickers={a.canPrintStickers}
-                canPrintShelfSticker={a.canPrintShelfSticker}
-                canPrintMpLabels={a.canPrintMpLabels}
-                selected={a.selectedIds.includes(i.id)}
-                toggleOne={a.toggleOne}
-                labelBusyId={a.labelBusyId}
-                onPrintMpLabel={a.handlePrintMpLabel}
-                onRequestDelete={a.setDeleteId}
-              />
-            ))}
-          </TableBody>
-        </Table>
-      </div>
 
       <GoodsWarehouseTableDialogs
         lostId={a.lostId}

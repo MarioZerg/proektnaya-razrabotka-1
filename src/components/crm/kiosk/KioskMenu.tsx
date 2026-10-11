@@ -11,7 +11,8 @@ export type KioskScreen =
   | 'defect'
   | 'repack'
   | 'flyer'
-  | 'cutterSheet';
+  | 'cutterSheet'
+  | 'vacation';
 
 interface KioskMenuProps {
   onSelect: (screen: KioskScreen) => void;
@@ -86,6 +87,12 @@ const tiles: Array<{ screen: KioskScreen; label: string; icon: string; className
     label: 'Стикер на листовку',
     icon: 'Tag',
     className: 'bg-cyan-600 hover:bg-cyan-700 text-white',
+  },
+  {
+    screen: 'vacation',
+    label: 'Отпуск',
+    icon: 'Calendar',
+    className: 'bg-teal-600 hover:bg-teal-700 text-white',
   },
 ];
 

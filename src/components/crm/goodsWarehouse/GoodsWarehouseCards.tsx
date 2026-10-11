@@ -1,7 +1,5 @@
 import { Link } from 'react-router-dom';
-import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Checkbox } from '@/components/ui/checkbox';
 import Icon from '@/components/ui/icon';
 import { zoneBarClass, zoneLabels } from '@/lib/workZone';
 import { shortProductName } from '@/lib/shortProductName';
@@ -9,21 +7,15 @@ import ShopBadge from '@/components/crm/ShopBadge';
 import SupplyLink from '@/components/crm/goodsWarehouse/SupplyLink';
 import type { GoodsWarehouseItem } from '@/lib/goodsWarehouseApi';
 import { useAuth } from '@/context/AuthContext';
-import { getAccessZone } from '@/lib/roles';
 import { printStorageSticker } from '@/lib/printStorageSticker';
 import { printIndividualSticker } from '@/lib/printIndividualSticker';
 import {
   statusLabels,
   statusVariant,
   statusZone,
-  reasonLabels,
-  reasonIcons,
-  reasonClass,
-  canPrintMarketplaceLabel,
   canPrintStorageSticker,
 } from '@/components/crm/goodsWarehouse/goodsWarehouseShared';
-import { lifeFromWarehouseItem } from '@/lib/goodsLifeTimeline';
-import GoodsLifeTimeline from '@/components/crm/goodsWarehouse/GoodsLifeTimeline';
+import { formatDateTime } from '@/lib/dateUtils';
 
 interface GoodsWarehouseCardsProps {
   items: GoodsWarehouseItem[];
@@ -35,18 +27,21 @@ interface GoodsWarehouseCardsProps {
   pickMode?: boolean;
   pickedIds?: number[];
   onTogglePick?: (id: number) => void;
+  /** Лента стикеров хранения: галочка на карточке. */
+  canSelectStickers?: boolean;
+  selectedIds?: number[];
+  onToggleSelect?: (id: number) => void;
+  isAdmin?: boolean;
+  onRequestDelete?: (id: number) => void;
 }
 
 /** Мобильный вид склада готового товара — карточки вместо широкой таблицы,
  * чтобы на телефоне не нужно было листать вбок. */
 const GoodsWarehouseCards = ({
   items,
-  onReturnToWorkshop,
   onMarkLost,
-  onPrintMpLabel,
-  pickMode = false,
-  pickedIds = [],
-  onTogglePick,
+  isAdmin = false,
+  onRequestDelete,
 }: GoodsWarehouseCardsProps) => {
   const { user } = useAuth();
   // Печать наклеек из списка — только старшему кладовщику: см. пояснение в таблице.
@@ -60,157 +55,131 @@ const GoodsWarehouseCards = ({
   // Без наклейки её не положить на полку, поэтому печать разрешена.
   const canPrintShelfSticker = (item: GoodsWarehouseItem) =>
     canPrintStickers || item.status === 'in_stock' || item.status === 'shipped';
-  // Ярлык отправления — любому кладовщику: это перепечатка того же кода, когда
-  // порвался пакет и вещь перекладывают в новый.
-  const canPrintMpLabels = getAccessZone(user?.role) === 'warehouse' || user?.role === 'admin';
-  // В пошив с полки — только администратор. Кладовщику кнопка не нужна: свободная
-  // вещь сама уходит в подбор, а если её нет — «Утерян». Отправка в цех сбрасывала
-  // заказ в работу и запускала повторный пошив без нужды.
-  const canSendToWorkshop = user?.role === 'admin';
 
   return (
-    <div className="space-y-3">
+    <div className="flex flex-col gap-2">
       {items.map((i) => {
         const canAct = i.status === 'in_stock' || i.status === 'picking';
+        const addedByHand = i.receiveReason === 'admin' || i.receiveReason === 'manual';
+        const size = i.width && i.height ? `${i.width}×${i.height}` : '';
+        const whNumber = i.orderNumber?.startsWith('WH-') ? i.orderNumber : null;
+        const orderNumber = i.reservedOrderNumber || (whNumber ? null : i.orderNumber);
         return (
           <div
             key={i.id}
-            className={`relative overflow-hidden rounded-md border border-border p-3 pl-4 ${
-              // Принятые администратором вручную подсвечены: их не было в заказах
-              // маркетплейса, по ним может понадобиться отдельная сверка.
-              i.receiveReason === 'admin' ? 'bg-amber-50' : ''
+            className={`group relative grid min-w-0 grid-cols-1 items-center gap-x-3 gap-y-1 overflow-hidden rounded-md border border-border bg-card px-3 py-2 pl-4 sm:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] ${
+              addedByHand ? 'bg-amber-50/70' : ''
             }`}
           >
-            {/* Полоса слева = чья это работа: фиолетовая — цех, зелёная — склад,
-                двухцветная — вещь передают из рук в руки. Видно на бегу, не читая. */}
             <span
-              className={`absolute inset-y-0 left-0 w-1.5 ${zoneBarClass[statusZone[i.status]]}`}
+              className={`absolute inset-y-0 left-0 w-1 ${zoneBarClass[statusZone[i.status]]}`}
               title={zoneLabels[statusZone[i.status]]}
             />
-            <div className="flex items-start justify-between gap-2">
-              {/* Галочка отбора на телефоне: менеджер ходит вдоль стеллажей и
-                  отмечает то, что забирает. */}
-              {pickMode && i.status === 'in_stock' && (
-                <Checkbox
-                  checked={pickedIds.includes(i.id)}
-                  onCheckedChange={() => onTogglePick?.(i.id)}
-                  aria-label={`Забрать ${i.storageBarcode}`}
-                  className="mt-1 h-5 w-5 shrink-0"
-                />
+
+            <div className="flex min-w-0 flex-col items-start gap-0.5">
+              {addedByHand && (
+                <span className="rounded-br-md bg-amber-500 px-1.5 py-0.5 text-[10px] font-bold leading-none text-white">
+                  Вручную
+                </span>
               )}
-              <div className="min-w-0">
-                <div className="flex items-center gap-1.5">
-                  {/* Чья вещь — видно до того, как её понесут к коробу. */}
-                  <ShopBadge name={i.shopName} color={i.shopColor} />
-                  <Link
-                    to={`/crm/inventory/goods/${i.id}`}
-                    className="font-semibold underline-offset-2 hover:underline"
-                    title={i.product || ''}
-                  >
-                    {shortProductName(i)}
-                  </Link>
-                </div>
-                <div className="text-xs text-muted-foreground">
-                  {i.orderNumber || 'без заказа'} · #{i.id}
-                </div>
+              {i.shelfName && (
+                <span className="text-[11px] font-semibold leading-tight">
+                  полка № {i.shelfName}
+                </span>
+              )}
+              {i.receivedAt && (
+                <span className="whitespace-nowrap text-[11px] leading-tight text-muted-foreground">
+                  {formatDateTime(i.receivedAt)}
+                </span>
+              )}
+              <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                <ShopBadge name={i.shopName} color={i.shopColor} />
+                {addedByHand && i.receivedByName && (
+                  <span className="text-sm">Добавил {i.receivedByName}</span>
+                )}
+                <SupplyLink i={i} />
               </div>
-              <Badge variant={statusVariant[i.status]}>{statusLabels[i.status]}</Badge>
             </div>
 
-            {canPrintShelfSticker(i) && canPrintStorageSticker(i) ? (
-              <button
-                type="button"
-                onClick={() =>
-                  i.receiveReason === 'individual'
-                    ? printIndividualSticker({
-                        orderNumber: i.orderNumber || '',
-                        material: i.material,
-                        width: i.width,
-                        height: i.height,
-                        storageBarcode: i.storageBarcode,
-                        product: i.product,
-                      })
-                    : printStorageSticker({
-                        storageBarcode: i.storageBarcode,
-                        title: i.product,
-                        orderNumber: i.orderNumber,
-                      })
-                }
-                className="mt-2 flex items-center gap-1.5 font-mono-tech text-xs text-muted-foreground underline-offset-2 hover:underline"
-              >
-                <Icon name="Barcode" size={12} />
-                {i.storageBarcode}
-              </button>
-            ) : (
-              /* Обычному кладовщику показываем только номер: по нему он находит вещь
-                 на полке, а печать делает на сборке, держа вещь в руках. */
-              <div className="mt-2 flex items-center gap-1.5 font-mono-tech text-xs text-muted-foreground">
-                <Icon name="Barcode" size={12} />
-                {i.storageBarcode}
-              </div>
-            )}
+            <div className="flex min-w-0 flex-col items-center px-2 text-center">
+              <p className="break-words text-base font-extrabold leading-tight">
+                {i.material || shortProductName(i)}
+              </p>
+              {size && <span className="text-sm font-semibold">{size}</span>}
+            </div>
 
-            {/* ПЕРЕпечатка ярлыка для вещи, закреплённой за отправлением: порвался
-                пакет — кладовщик печатает тот же ярлык прямо с телефона у стеллажа. */}
-            {canPrintMpLabels && canPrintMarketplaceLabel(i) && (
-              <button
-                type="button"
-                onClick={() => onPrintMpLabel?.(i)}
-                className="mt-1.5 flex items-center gap-1.5 text-xs text-primary underline-offset-2 hover:underline"
-              >
-                <Icon name="Printer" size={12} />
-                Ярлык {(i.marketplace || '').toUpperCase() || 'маркетплейса'}
-              </button>
-            )}
-
-            <div className="mt-2 flex flex-wrap items-center gap-2">
-              <Badge
-                variant="secondary"
-                className={`${reasonClass[i.receiveReason] || ''} gap-1 font-normal`}
-              >
-                <Icon name={reasonIcons[i.receiveReason] || 'Hand'} size={12} />
-                {reasonLabels[i.receiveReason] || 'Принят вручную'}
-              </Badge>
-              {i.shelfName && (
-                <Badge variant="outline" className="gap-1 font-normal">
-                  <Icon name="LayoutGrid" size={12} />
-                  {i.shelfName}
-                </Badge>
+            <div className="flex shrink-0 flex-col items-end justify-self-end text-right leading-tight">
+              <Badge variant={statusVariant[i.status]} className="mb-1">{statusLabels[i.status]}</Badge>
+              {whNumber && (
+                <span className="font-mono-tech text-xs font-semibold">{whNumber}</span>
               )}
-              {/* Отгрузка, в которую вещь уже отсканирована: с телефона у стеллажа
-                  кладовщик открывает её одним нажатием, а не ищет в общем списке. */}
-              <SupplyLink i={i} />
+              {canPrintShelfSticker(i) && canPrintStorageSticker(i) ? (
+                <button
+                  type="button"
+                  onClick={() =>
+                    i.receiveReason === 'individual'
+                      ? printIndividualSticker({
+                          orderNumber: i.orderNumber || '',
+                          material: i.material,
+                          width: i.width,
+                          height: i.height,
+                          storageBarcode: i.storageBarcode,
+                          product: i.product,
+                        })
+                      : printStorageSticker({
+                          storageBarcode: i.storageBarcode,
+                          title: i.product,
+                          orderNumber: i.orderNumber,
+                        })
+                  }
+                  className="font-mono-tech text-sm font-bold underline-offset-2 hover:underline"
+                >
+                  {i.storageBarcode}
+                </button>
+              ) : (
+                <span className="font-mono-tech text-sm font-bold">{i.storageBarcode}</span>
+              )}
+              {orderNumber && (
+                <Link
+                  to={`/crm/inventory/goods/${i.id}`}
+                  className="font-mono-tech text-xs text-muted-foreground underline-offset-2 hover:underline"
+                >
+                  {orderNumber}
+                </Link>
+              )}
+              <div className="mt-1 flex items-center justify-end gap-0.5 sm:opacity-0 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100">
+                {canAct && (
+                  <button
+                    type="button"
+                    title="Утерян"
+                    aria-label="Утерян"
+                    className="grid h-6 w-6 place-items-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
+                    onClick={() => onMarkLost(i.id)}
+                  >
+                    <Icon name="HelpCircle" size={14} />
+                  </button>
+                )}
+                {isAdmin && onRequestDelete && (i.status === 'in_stock' || i.status === 'awaiting_shelf') && (
+                  <button
+                    type="button"
+                    title="Удалить со склада"
+                    aria-label="Удалить со склада"
+                    className="grid h-6 w-6 place-items-center rounded-md text-destructive hover:bg-muted"
+                    onClick={() => onRequestDelete(i.id)}
+                  >
+                    <Icon name="Trash2" size={14} />
+                  </button>
+                )}
+              </div>
             </div>
 
             {i.status === 'lost' && i.lostReason && (
-              <p className="mt-2 text-xs text-destructive">
+              <p className="col-span-full text-xs text-destructive">
                 {i.lostReason.includes('пошив')
                   ? `Отправлена в пошив: ${i.lostReason.replace(/^Брак, отправлен в пошив:\s*/, '')}`
                   : `Причина: ${i.lostReason}`}
                 {i.lostByName ? ` · ${i.lostByName}` : ''}
               </p>
-            )}
-
-            <div className="mt-3">
-              <GoodsLifeTimeline events={lifeFromWarehouseItem(i)} compact />
-            </div>
-
-            {canAct && (
-              <div className="mt-3 flex flex-wrap justify-end gap-2">
-                {/* «В цех» — только админ: свободная вещь с полки сама идёт в подбор,
-                    кладовщику достаточно «Утерян», если пакета нет. Для отменённого
-                    заказа кнопку не показываем даже админу: возврат сбрасывал заказ
-                    в работу, и цех шил для покупателя, который уже отказался. */}
-                {canSendToWorkshop && !i.orderCancelled && (
-                  <Button variant="outline" size="sm" onClick={() => onReturnToWorkshop(i.id)}>
-                    <Icon name="Undo2" size={14} className="mr-1.5" />В цех
-                  </Button>
-                )}
-                <Button variant="ghost" size="sm" onClick={() => onMarkLost(i.id)}>
-                  <Icon name="HelpCircle" size={14} className="mr-1.5" />
-                  Утерян
-                </Button>
-              </div>
             )}
           </div>
         );

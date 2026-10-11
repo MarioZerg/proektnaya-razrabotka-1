@@ -51,9 +51,8 @@ interface StorekeeperSendToRepairDialogProps {
 /**
  * Кладовщик кладёт брак/утиль после перепаковки в куски на перешив.
  *
- * Номер остаётся тот, что был на стикере «БРАК» (GW-…): иначе цепочка
- * заказа пропадёт. Причину спрашиваем обязательно — без неё закройщица
- * не знает, где искать дефект.
+ * Приём только по стикеру брака с перепаковки. Стикер хранения GW
+ * сюда не сканируют: по нему вещь лежит на полке, а не в кусках.
  */
 const StorekeeperSendToRepairDialog = ({
   open,
@@ -117,6 +116,13 @@ const StorekeeperSendToRepairDialog = ({
   const handleLookup = async () => {
     const code = barcode.trim();
     if (!code || scanning) return;
+    if (code.toUpperCase().startsWith('GW-')) {
+      setLookup(null);
+      setIncoming(null);
+      setLookupError('Стикер хранения GW в куски не принимается. Отсканируйте стикер брака с перепаковки');
+      setBarcode('');
+      return;
+    }
     setScanning(true);
     setLookupError(null);
     try {
@@ -231,8 +237,7 @@ const StorekeeperSendToRepairDialog = ({
           {needScan && !item && !incoming && (
             <div className="space-y-2">
               <p className="text-sm text-muted-foreground">
-                Отсканируйте стикер куска с перепаковки (RS) — он встанет в цех.
-                Стикер брака (GW) тоже можно: кусок заведётся заново
+                Отсканируйте стикер брака с перепаковки. Стикер хранения GW сюда не подходит
               </p>
               <Input
                 ref={inputRef}
@@ -240,7 +245,7 @@ const StorekeeperSendToRepairDialog = ({
                 value={barcode}
                 onChange={(e) => setBarcode(e.target.value)}
                 onKeyDown={(e) => e.key === 'Enter' && void handleLookup()}
-                placeholder="RS-000123 или GW-000123"
+                placeholder="Стикер брака"
                 className="font-mono-tech"
                 disabled={scanning}
               />

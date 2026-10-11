@@ -70,6 +70,7 @@ const ShiftsList = lazy(() => import("./pages/shifts/ShiftsList"));
 const GuestShifts = lazy(() => import("./pages/shifts/GuestShifts"));
 const ShiftDetail = lazy(() => import("./pages/shifts/ShiftDetail"));
 const ShiftsCalendar = lazy(() => import("./pages/shifts/ShiftsCalendar"));
+const Vacations = lazy(() => import("./pages/shifts/Vacations"));
 const SuppliersSettings = lazy(() => import("./pages/settings/SuppliersSettings"));
 const MarketplaceItemsSettings = lazy(() => import("./pages/settings/MarketplaceItemsSettings"));
 const MarketplaceIntegrationsSettings = lazy(() => import("./pages/settings/MarketplaceIntegrationsSettings"));
@@ -195,6 +196,7 @@ const App = () => (
             <Route path="/crm/shifts/list" element={<ShiftsList />} />
             <Route path="/crm/shifts/:id" element={<ShiftDetail />} />
             <Route path="/crm/shifts/calendar" element={<ShiftsCalendar />} />
+            <Route path="/crm/shifts/vacation" element={<Vacations />} />
             <Route path="/crm/shifts/guests" element={<GuestShifts />} />
             <Route path="/crm/settings/suppliers" element={<SuppliersSettings />} />
             <Route path="/crm/settings/marketplace-items" element={<MarketplaceItemsSettings />} />

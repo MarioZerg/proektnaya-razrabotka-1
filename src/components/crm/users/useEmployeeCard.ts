@@ -50,6 +50,7 @@ export const useEmployeeCard = ({ setEmployees, load }: UseEmployeeCardArgs) => 
       avatarBase64: '',
       maxUserId: emp.maxUserId || '',
       canOverlock: !!emp.canOverlock,
+      hiredAt: (emp.hiredAt || '').slice(0, 10),
     });
   };
 
@@ -71,6 +72,7 @@ export const useEmployeeCard = ({ setEmployees, load }: UseEmployeeCardArgs) => 
         workSchedule: cardForm.workSchedule || '',
         lateToleranceMinutes: Number(cardForm.lateToleranceMinutes) || 0,
         canOverlock: cardForm.canOverlock,
+        hiredAt: cardForm.hiredAt || null,
         workHours: cardForm.workHours.trim() ? Number(cardForm.workHours) : null,
         maxUserId: cardForm.maxUserId.trim() || null,
         ...(cardForm.newPassword.trim() ? { password: cardForm.newPassword.trim() } : {}),

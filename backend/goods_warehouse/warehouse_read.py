@@ -759,7 +759,30 @@ def handle_get(event: dict, headers: dict, dsn: str) -> dict:
                     #   вещь из нашего же цеха и к покупателю не уезжала.
                     # Действия одинаковые (на полку + стикер хранения), но
                     # осматривать вещь, которая никуда не ездила, незачем.
-                    "       gw.receive_reason "
+                    "       gw.receive_reason, "
+                    # Номер отправления, с которым вещь вернулась В ПОСЛЕДНИЙ раз.
+                    # Хвост старой поставки снимают отдельно, и на плашке его уже нет.
+                    # Повторный возврат тогда узнают по свежему заказу клиента.
+                    "       COALESCE(NULLIF(trim(mr.posting_number), ''), ("
+                    "         SELECT COALESCE(NULLIF(trim(h.posting_number), ''), "
+                    "                        NULLIF(trim(h.order_number), '')) "
+                    "         FROM goods_return_history h "
+                    "         WHERE h.goods_warehouse_id = gw.id "
+                    "         ORDER BY h.return_number DESC LIMIT 1"
+                    "       )), "
+                    # Предыдущие отправления той же вещи — хвост старых возвратов.
+                    # Показываем его, только если свежего номера клиента нет.
+                    "       (SELECT string_agg(older.num, ', ' ORDER BY older.n) "
+                    "        FROM ("
+                    "          SELECT h.return_number AS n, "
+                    "                 COALESCE(NULLIF(trim(h.posting_number), ''), "
+                    "                          NULLIF(trim(h.order_number), '')) AS num "
+                    "          FROM goods_return_history h "
+                    "          WHERE h.goods_warehouse_id = gw.id "
+                    "            AND h.return_number < ("
+                    "              SELECT MAX(h2.return_number) FROM goods_return_history h2 "
+                    "              WHERE h2.goods_warehouse_id = gw.id)"
+                    "        ) older WHERE older.num IS NOT NULL) "
                     "FROM goods_warehouse gw "
                     "LEFT JOIN orders o ON o.id = gw.order_id "
                     # Заявка на возврат берётся ОДНА, самая свежая.
@@ -774,7 +797,7 @@ def handle_get(event: dict, headers: dict, dsn: str) -> dict:
                     # LATERAL с LIMIT 1 даёт ровно одну строку на вещь, сколько
                     # бы заявок к ней ни было. Каждая вещь проверяется отдельно.
                     "LEFT JOIN LATERAL ("
-                    "  SELECT mr.return_barcode, mr.product_name "
+                    "  SELECT mr.return_barcode, mr.product_name, mr.posting_number "
                     "  FROM marketplace_returns mr "
                     "  WHERE mr.goods_warehouse_id = gw.id "
                     "  ORDER BY mr.id DESC LIMIT 1"
@@ -811,6 +834,8 @@ def handle_get(event: dict, headers: dict, dsn: str) -> dict:
                         'packedAt': (r[21].isoformat() + 'Z') if r[21] else None,
                         'clientOrderNumber': r[22],
                         'receiveReason': r[23],
+                        'latestClientOrder': r[24],
+                        'previousOrderNumbers': r[25],
                     }
                     for r in cur.fetchall()
                 ]
@@ -1575,11 +1600,22 @@ def handle_get(event: dict, headers: dict, dsn: str) -> dict:
             f"COALESCE(ro.ozon_status, o.ozon_status), "
             f"COALESCE(ro.ym_status, o.ym_status), "
             f"COALESCE(ro.status, o.status), "
-            f"COALESCE(ro.completed_at, o.completed_at) "
+            f"COALESCE(ro.completed_at, o.completed_at), "
+            # Кто завёл вещь руками. Имя есть только у приёмки администратора:
+            # у остальных причин на складе нет отдельного «кто принял».
+            f"CASE WHEN gw.receive_reason = 'admin' THEN ("
+            f"  SELECT a.user_name FROM audit_log a "
+            f"  WHERE a.entity_type = 'goods_warehouse' AND a.entity_id = gw.id "
+            f"    AND a.action = 'admin_receive' "
+            f"  ORDER BY a.created_at ASC LIMIT 1"
+            f") END "
             f"FROM goods_warehouse gw "
             f"LEFT JOIN orders o ON o.id = gw.order_id "
             f"LEFT JOIN orders ro ON ro.id = gw.reserved_order_id "
-            f"LEFT JOIN shops shp ON shp.id = COALESCE(ro.shop_id, o.shop_id) "
+            # У ручной приёмки магазин мог не записаться в заказ. Тогда берём его
+            # с карточки товара, по которой вещь заводили.
+            f"LEFT JOIN marketplace_items mi_shop ON mi_shop.id = COALESCE(ro.marketplace_item_id, o.marketplace_item_id) "
+            f"LEFT JOIN shops shp ON shp.id = COALESCE(ro.shop_id, o.shop_id, mi_shop.shop_id) "
             f"LEFT JOIN shelves s ON s.id = gw.shelf_id "
             # ПОСТАВКА, В КОТОРОЙ ВЕЩЬ УЖЕ ЛЕЖИТ.
             #
@@ -1726,6 +1762,7 @@ def handle_get(event: dict, headers: dict, dsn: str) -> dict:
                         else None
                     ),
                 ),
+                'receivedByName': r[39],
             }
             for r in cur.fetchall()
         ]

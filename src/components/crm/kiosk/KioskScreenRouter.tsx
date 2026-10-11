@@ -10,6 +10,7 @@ import KioskReviewsScreen from '@/components/crm/kiosk/KioskReviewsScreen';
 import KioskRollsScreen from '@/components/crm/kiosk/KioskRollsScreen';
 import KioskUnlabeledScreen from '@/components/crm/kiosk/KioskUnlabeledScreen';
 import KioskShiftScreen from '@/components/crm/kiosk/KioskShiftScreen';
+import KioskVacationScreen from '@/components/crm/kiosk/KioskVacationScreen';
 import { isReturnsPacker, type Role } from '@/lib/roles';
 import type { KioskUser, KioskShift } from '@/lib/kioskApi';
 
@@ -87,6 +88,8 @@ const KioskScreenRouter = ({
           </Button>
         </div>
       ))}
+
+    {screen === 'vacation' && <KioskVacationScreen userId={user.id} />}
 
     {screen === 'shift' && (
       <KioskShiftScreen

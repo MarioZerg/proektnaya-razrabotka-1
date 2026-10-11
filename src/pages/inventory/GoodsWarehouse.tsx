@@ -6,7 +6,6 @@ import GoodsWarehouseTable from '@/components/crm/goodsWarehouse/GoodsWarehouseT
 import GoodsWarehouseHeader from '@/components/crm/goodsWarehouse/GoodsWarehouseHeader';
 import GoodsWarehouseWorkTiles from '@/components/crm/goodsWarehouse/GoodsWarehouseWorkTiles';
 import GoodsWarehouseDialogs from '@/components/crm/goodsWarehouse/GoodsWarehouseDialogs';
-import UnplacedGoodsPanel from '@/components/crm/goodsWarehouse/UnplacedGoodsPanel';
 import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
 import { useGoodsWarehouseState } from '@/components/crm/goodsWarehouse/useGoodsWarehouseState';
 import TablePager from '@/components/crm/finance/TablePager';
@@ -41,7 +40,7 @@ const GoodsWarehouse = () => {
             поставки и вещей не касается. */}
         {!s.stockOnly && (
         <GoodsWarehouseWorkTiles
-          pendingShelfCount={s.pendingShelf.length}
+          pendingShelfCount={s.pendingShelf.length + s.unplaced.length}
           pendingReturnsCount={s.pendingReturns.length}
           inspectedReady={s.inspectedReady}
           pickingPending={s.pickingPending}
@@ -54,13 +53,6 @@ const GoodsWarehouse = () => {
           onPickup={() => s.setPickupOpen(true)}
           onPlaceInspected={() => s.setPlaceInspectedOpen(true)}
         />
-        )}
-
-        {!s.stockOnly && (
-          <UnplacedGoodsPanel
-            items={s.unplaced}
-            onPlace={() => s.setPlaceOpen(true)}
-          />
         )}
 
         {!s.stockOnly && s.queuesError && (

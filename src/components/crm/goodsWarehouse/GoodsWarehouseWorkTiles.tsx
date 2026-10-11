@@ -79,7 +79,7 @@ const GoodsWarehouseWorkTiles = ({
         <WorkTile
           icon="Boxes"
           title="Разложить по полкам"
-          hint="Отказы клиентов из цеха"
+          hint="Отказы из цеха и вещи, которые уже на складе, но без полки"
           count={pendingShelfCount}
           loading={queuesLoading}
           zone="both"

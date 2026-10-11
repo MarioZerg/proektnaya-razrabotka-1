@@ -1,4 +1,5 @@
 import type { Role } from '@/lib/roles';
+import { getAuthToken } from '@/lib/authToken';
 
 const USERS_URL = 'https://functions.poehali.dev/1db3a89a-f0f6-470e-bef4-fb5ca8fa02df';
 
@@ -70,6 +71,8 @@ export interface Employee {
   archiveReason?: string | null;
   /** Кто из администраторов отправил сотрудника в архив. */
   archivedByName?: string | null;
+  /** Дата выхода на работу. Отпуск открывается через полгода после неё. */
+  hiredAt?: string | null;
   roles: UserRoleEntry[];
 }
 
@@ -80,9 +83,12 @@ export const fetchEmployees = async (): Promise<Employee[]> => {
 };
 
 const postAction = async (payload: Record<string, unknown>) => {
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  const token = getAuthToken();
+  if (token) headers['X-Auth-Token'] = token;
   const res = await fetch(USERS_URL, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers,
     body: JSON.stringify(payload),
   });
   const data = await res.json();
@@ -126,6 +132,7 @@ export const updateEmployee = (
     shiftNumber: number | null;
     shiftFree: boolean;
     canOverlock: boolean;
+    hiredAt: string | null;
   }>
 ) => postAction({ action: 'update', id, ...fields });
 
@@ -195,3 +202,53 @@ export const setOwnAvatar = (avatarBase64: string) =>
     success: true;
     avatarUrl: string;
   }>;
+
+export interface VacationBooking {
+  id: number;
+  from: string;
+  to: string;
+  days: number;
+}
+
+export interface VacationPerson {
+  id: number;
+  fullName: string;
+  role: Role;
+  avatarUrl: string | null;
+  hiredAt: string | null;
+  eligibleFrom: string | null;
+  /** Текущее полугодие, в котором можно выбрать отпуск. */
+  periodFrom?: string | null;
+  periodTo?: string | null;
+  /** Дни, перешедшие переработкой с прошлых полугодий без отпуска. */
+  carriedDays?: number;
+  /** В этом полугодии отпуск уже выбран. */
+  takenThisPeriod?: boolean;
+  /** Сколько дней подряд нужно забронировать за один раз. */
+  tripDays?: number;
+  daysLeft: number;
+  bookings: VacationBooking[];
+}
+
+export interface VacationBoard {
+  today: string;
+  allowance: number;
+  people: VacationPerson[];
+}
+
+export const fetchVacationBoard = async (): Promise<VacationBoard> => {
+  const res = await fetch(`${USERS_URL}?vacations=1`);
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || 'Не удалось загрузить отпуска');
+  return {
+    today: data.today,
+    allowance: data.allowance || 28,
+    people: data.people || [],
+  };
+};
+
+export const bookVacation = (userId: number, dateFrom: string, dateTo: string) =>
+  postAction({ action: 'vacation_book', userId, dateFrom, dateTo });
+
+export const cancelVacation = (id: number, userId?: number) =>
+  postAction({ action: 'vacation_cancel', id, userId });

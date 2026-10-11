@@ -1,30 +1,9 @@
 import { Badge } from '@/components/ui/badge';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table';
 import Icon from '@/components/ui/icon';
 import ShopBadge from '@/components/crm/ShopBadge';
 import type { PickingOrder } from '@/lib/goodsWarehouseApi';
 import { shortProductName } from '@/lib/shortProductName';
-
-/** Дата в привычном виде: «10.08.2026, 16:15». */
-const formatDate = (value: string | null) => {
-  if (!value) return '—';
-  const d = new Date(value);
-  if (Number.isNaN(d.getTime())) return '—';
-  return d.toLocaleString('ru-RU', {
-    day: '2-digit',
-    month: '2-digit',
-    year: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-  });
-};
+import { formatDateTime } from '@/lib/dateUtils';
 
 interface GoodsPickingTableProps {
   loading: boolean;
@@ -94,101 +73,99 @@ const GoodsPickingTable = ({
           </Badge>
         ))}
       </div>
-      <div className="rounded-md border border-border">
-        <Table>
-          <TableHeader>
-            <TableRow className="bg-primary hover:bg-primary">
-              <TableHead className="text-primary-foreground">Товар</TableHead>
-              <TableHead className="text-primary-foreground">Куда поедет</TableHead>
-              <TableHead className="text-primary-foreground">Полка</TableHead>
-              <TableHead className="text-primary-foreground">Дата создания</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {filtered.map((o) => (
-              <TableRow
-                key={o.id}
-                onClick={() => onOpenCard(o.id)}
-                className="cursor-pointer hover:bg-muted/60"
-              >
-                <TableCell>
-                  <div className="flex items-center gap-1.5">
-                    {/* Чья вещь: короба МЕГАТЮЛЬ и ДЮНЫ стоят рядом, и
-                        отсканировать её можно только в свою поставку. */}
-                    <ShopBadge name={o.shopName} color={o.shopColor} />
-                    <span className="font-medium" title={o.product || ''}>
-                      {shortProductName(o)}
-                    </span>
-                  </div>
-                  <div className="text-xs text-muted-foreground">
-                    {o.orderNumber || '—'}
-                    {o.storageBarcode ? ` · ${o.storageBarcode}` : ''}
-                  </div>
-                  {/* Стикер напечатан — вещь ОСТАЁТСЯ в общем списке и просто
-                      помечается. Раньше она уезжала на отдельную вкладку или
-                      вовсе исчезала: кладовщик шёл вдоль стеллажа по списку,
-                      строка пропадала, а на полке сотни одинаковых пакетов —
-                      найти вещь без номера полки на экране почти невозможно.
-                      Из списка вещь уходит только после отправки на поставку. */}
-                  {o.shippingLabeledAt && (
-                    <div className="mt-1 inline-flex items-center gap-1 rounded bg-amber-100 px-1.5 py-0.5 text-xs font-medium text-amber-900">
-                      <Icon name="Printer" size={12} />
-                      {o.status === 'awaiting_supply'
-                        ? 'Стикер наклеен — отсканируйте в короб'
-                        : 'Стикер наклеен — отправьте на поставку'}
-                    </div>
-                  )}
-                </TableCell>
-                {/* Куда поедет вещь: площадка и схема. Работа у них разная —
-                    на FBS клеится ярлык маркетплейса и вещь едет своим пакетом,
-                    FBO уходит коробкой на склад площадки. Кладовщик должен видеть
-                    это в списке, а не открывать карточку каждой вещи. */}
-                <TableCell className="whitespace-nowrap">
-                  <div className="flex items-center gap-1.5">
-                    <Badge variant="secondary" className="font-normal">
-                      {(o.marketplace || '—').toUpperCase()}
+      <div className="flex flex-col gap-2">
+        {filtered.map((o) => {
+          const size = o.width && o.height ? `${o.width}×${o.height}` : '';
+          const bar =
+            o.orderType === 'FBS'
+              ? 'bg-sky-500'
+              : o.orderType === 'FBO'
+                ? 'bg-violet-500'
+                : 'bg-muted-foreground';
+          return (
+            <div
+              key={o.id}
+              role="button"
+              tabIndex={0}
+              onClick={() => onOpenCard(o.id)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') onOpenCard(o.id);
+              }}
+              className={`relative grid min-w-0 cursor-pointer grid-cols-1 items-center gap-x-3 gap-y-1 overflow-hidden rounded-md border border-border bg-card px-3 py-2 pl-4 hover:bg-muted/40 sm:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] ${
+                o.shippingLabeledAt ? 'bg-amber-50/70' : ''
+              }`}
+            >
+              <span className={`absolute inset-y-0 left-0 w-1 ${bar}`} />
+
+              <div className="flex min-w-0 flex-col items-start gap-0.5">
+                {o.shippingLabeledAt && (
+                  <span className="inline-flex items-center gap-1 rounded-br-md bg-amber-500 px-1.5 py-0.5 text-[10px] font-bold leading-none text-white">
+                    <Icon name="Printer" size={10} />
+                    Стикер
+                  </span>
+                )}
+                <span className="text-[11px] font-semibold leading-tight">
+                  {o.shelfName ? `полка № ${o.shelfName}` : 'без полки'}
+                </span>
+                {o.createdAt && (
+                  <span className="whitespace-nowrap text-[11px] leading-tight text-muted-foreground">
+                    {formatDateTime(o.createdAt)}
+                  </span>
+                )}
+                <ShopBadge name={o.shopName} color={o.shopColor} />
+                {!!o.alsoOnShelves?.length && (
+                  <span className="text-[11px] leading-tight text-muted-foreground">
+                    Ещё {o.alsoOnShelves.reduce((sum, x) => sum + x.count, 0)} шт:{' '}
+                    {o.alsoOnShelves.map((x) => `${x.shelfName} (${x.count})`).join(', ')}
+                  </span>
+                )}
+              </div>
+
+              <div className="flex min-w-0 flex-col items-center px-2 text-center">
+                <p className="break-words text-base font-extrabold leading-tight" title={o.product || ''}>
+                  {o.material || shortProductName(o)}
+                </p>
+                {size && <span className="text-sm font-semibold">{size}</span>}
+              </div>
+
+              <div className="flex shrink-0 flex-col items-end justify-self-end text-right leading-tight">
+                <div className="mb-1 flex items-center gap-1">
+                  <Badge variant="secondary" className="font-normal">
+                    {(o.marketplace || '—').toUpperCase()}
+                  </Badge>
+                  {o.orderType && (
+                    <Badge
+                      className={
+                        o.orderType === 'FBS'
+                          ? 'bg-sky-100 font-semibold text-sky-800 hover:bg-sky-100'
+                          : 'bg-violet-100 font-semibold text-violet-800 hover:bg-violet-100'
+                      }
+                    >
+                      {o.orderType}
                     </Badge>
-                    {o.orderType && (
-                      <Badge
-                        className={
-                          o.orderType === 'FBS'
-                            ? 'bg-sky-100 font-semibold text-sky-800 hover:bg-sky-100'
-                            : 'bg-violet-100 font-semibold text-violet-800 hover:bg-violet-100'
-                        }
-                      >
-                        {o.orderType}
-                      </Badge>
-                    )}
-                  </div>
-                  {o.cluster && (
-                    <div className="mt-0.5 text-xs text-muted-foreground">{o.cluster}</div>
                   )}
-                </TableCell>
-                <TableCell>
-                  <div>{o.shelfName || '—'}</div>
-                  {/* Запасной вариант: такие же вещи, свободно лежащие на складе.
-                      Если по своей полке вещи не оказалось (переложили, забрали и
-                      не отметили, ошиблись при инвентаризации), кладовщик сразу
-                      видит, есть ли замена и с какой полки её взять — вместо того
-                      чтобы отправлять заказ в цех шиться заново. */}
-                  {!!o.alsoOnShelves?.length && (
-                    <div className="mt-1 text-xs text-muted-foreground">
-                      Ещё {o.alsoOnShelves.reduce((sum, x) => sum + x.count, 0)} шт:{' '}
-                      {o.alsoOnShelves.map((x) => `${x.shelfName} (${x.count})`).join(', ')}
-                    </div>
-                  )}
-                </TableCell>
-                {/* Кнопки «Не нашёл» здесь больше нет: она дублировала действие
-                    из карточки товара. Решение «вещи нет» платное — заказ едет
-                    шиться заново, ткань и работа цеха тратятся второй раз, — и
-                    принимать его мимоходом из строки списка не стоит. Теперь оно
-                    в карточке, в меню «Действия с товаром», рядом с отправкой
-                    в пошив: кладовщик открывает вещь и выбирает, что с ней. */}
-                <TableCell className="whitespace-nowrap">{formatDate(o.createdAt)}</TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
+                </div>
+                {o.cluster && (
+                  <span className="text-[11px] text-muted-foreground">{o.cluster}</span>
+                )}
+                {o.storageBarcode && (
+                  <span className="font-mono-tech text-sm font-bold">{o.storageBarcode}</span>
+                )}
+                {o.orderNumber && (
+                  <span className="font-mono-tech text-xs text-muted-foreground">{o.orderNumber}</span>
+                )}
+              </div>
+
+              {o.shippingLabeledAt && (
+                <p className="col-span-full text-xs font-medium text-amber-900">
+                  {o.status === 'awaiting_supply'
+                    ? 'Стикер наклеен — отсканируйте в короб'
+                    : 'Стикер наклеен — отправьте на поставку'}
+                </p>
+              )}
+            </div>
+          );
+        })}
       </div>
     </>
   );

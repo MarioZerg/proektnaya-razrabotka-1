@@ -24,6 +24,8 @@ COUNTING_ROLES = STOREKEEPER_ROLES + ('admin',)
 # Вещи, которые ОБЯЗАНЫ лежать на полке и потому участвуют в пересчёте.
 # Всё остальное (уехало в поставку, списано, у покупателя) физически на складе
 # отсутствует — требовать его скан значило бы плодить ложные недостачи.
+# Без полки вещь ещё не разложена: она в «Разложить по полкам», а не в пересчёте.
+# Иначе «числится на полках» расходится со списком «На хранении».
 COUNTABLE_STATUS = 'in_stock'
 
 
@@ -98,7 +100,7 @@ def build_report(cur, stocktake_id):
         "FROM goods_warehouse gw "
         "LEFT JOIN orders o ON o.id = gw.order_id "
         "LEFT JOIN shelves sh ON sh.id = gw.shelf_id "
-        "WHERE gw.status = %s "
+        "WHERE gw.status = %s AND gw.shelf_id IS NOT NULL "
         "  AND NOT EXISTS (SELECT 1 FROM stocktake_scans s "
         "                  WHERE s.stocktake_id = %s AND s.goods_warehouse_id = gw.id) "
         "ORDER BY sh.name NULLS LAST, gw.storage_barcode",
@@ -118,9 +120,12 @@ def build_report(cur, stocktake_id):
         for r in cur.fetchall()
     ]
 
-    # Сколько всего вещей должно лежать на полках — база для процента пересчёта.
+    # Сколько вещей уже разложено по полкам. Без полки в это число не входят:
+    # их ещё не уложили, и требовать с них скан нельзя.
     cur.execute(
-        "SELECT COUNT(*) FROM goods_warehouse WHERE status = %s", (COUNTABLE_STATUS,)
+        "SELECT COUNT(*) FROM goods_warehouse gw "
+        "WHERE gw.status = %s AND gw.shelf_id IS NOT NULL",
+        (COUNTABLE_STATUS,),
     )
     expected = int(cur.fetchone()[0] or 0)
 
@@ -447,7 +452,7 @@ def handler(event: dict, context) -> dict:
                 "  lost_reason = %s, lost_at = now(), "
                 "  dispose_reason = %s, disposed_at = now(), disposed_by = %s, "
                 "  shelf_id = NULL, reserved_order_id = NULL, matched_at = NULL "
-                "WHERE gw.status = %s "
+                "WHERE gw.status = %s AND gw.shelf_id IS NOT NULL "
                 "  AND NOT EXISTS (SELECT 1 FROM stocktake_scans s "
                 "                  WHERE s.stocktake_id = %s AND s.goods_warehouse_id = gw.id) "
                 "RETURNING gw.id",

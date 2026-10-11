@@ -71,6 +71,8 @@ export interface GoodsWarehouseItem {
   lostReason?: string | null;
   lostAt?: string | null;
   receiveReason: ReceiveReason;
+  /** Кто завёл вещь на склад вручную. Есть только у приёмки администратора. */
+  receivedByName?: string | null;
   /** Новый заказ маркетплейса, который закрывается этой вещью с полки (автоподбор). */
   reservedOrderId?: number | null;
   reservedOrderNumber?: string | null;
@@ -242,6 +244,7 @@ export const adminReceiveGoods = (
   quantity = 1,
   actorId?: number,
   actorName?: string,
+  shopId?: number,
 ) =>
   postAction({
     action: 'admin_receive',
@@ -250,7 +253,8 @@ export const adminReceiveGoods = (
     quantity,
     actorId,
     actorName,
-  }) as Promise<ReceivedGood & { created: ReceivedGood[]; count: number }>;
+    shopId,
+  }) as Promise<ReceivedGood & { created: ReceivedGood[]; product?: string; count: number }>;
 
 /**
  * Найти товар справочника по отсканированному FBO-стикеру.
@@ -265,6 +269,7 @@ export const findItemByCode = (code: string) =>
     material: string | null;
     width: number | null;
     height: number | null;
+    shopId?: number | null;
   }>;
 
 /** Кладовщик сканирует стикер хранения вещи, отменённой клиентом.
@@ -571,6 +576,10 @@ export interface InspectionItem {
   packedAt?: string | null;
   /** Номер отправления клиента, который от вещи отказался. */
   clientOrderNumber?: string | null;
+  /** Отправление, с которым вещь вернулась в последний раз. */
+  latestClientOrder?: string | null;
+  /** Номера прошлых возвратов, если свежего отправления уже нет. */
+  previousOrderNumbers?: string | null;
   /**
    * Откуда вещь взялась:
    * 'return' — приехала от покупателя с ПВЗ;

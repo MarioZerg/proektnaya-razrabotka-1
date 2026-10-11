@@ -8,6 +8,7 @@ import ShopBadge from '@/components/crm/ShopBadge';
 import SupplyLink from '@/components/crm/goodsWarehouse/SupplyLink';
 import { zoneDotClass, zoneLabels } from '@/lib/workZone';
 import { shortProductName } from '@/lib/shortProductName';
+import { formatDateTime } from '@/lib/dateUtils';
 import type { GoodsWarehouseItem } from '@/lib/goodsWarehouseApi';
 import { Checkbox } from '@/components/ui/checkbox';
 import { printStorageSticker } from '@/lib/printStorageSticker';
@@ -201,6 +202,9 @@ const GoodsWarehouseTableRow = ({
                   </div>
                 </TableCell>
                 <TableCell>{i.shelfName || '—'}</TableCell>
+                <TableCell className="whitespace-nowrap text-sm">
+                  {i.receivedAt ? formatDateTime(i.receivedAt) : '—'}
+                </TableCell>
                 {/* Удаление доступно только администратору: для вещей на хранении и на
                     разборе с производства. Во втором случае это ошибочные приёмки и вещи,
                     которых по факту нет, — без удаления они висят вечно и кладовщик каждый

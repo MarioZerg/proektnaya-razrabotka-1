@@ -94,6 +94,19 @@ const EmployeeProfileSection = ({
         />
       </div>
 
+      <div className="space-y-1.5">
+        <Label>Дата выхода на работу</Label>
+        <Input
+          type="date"
+          className="h-11 sm:h-10"
+          value={cardForm.hiredAt}
+          onChange={(e) => setCardForm((f) => f && { ...f, hiredAt: e.target.value })}
+        />
+        <p className="text-xs text-muted-foreground">
+          Через полгода откроется отпуск: дальше каждые полгода один раз на 14 дней
+        </p>
+      </div>
+
       <p className="text-xs text-muted-foreground">
         Создан: {formatDateTime(cardEmployee.createdAt)} · Изменён:{' '}
         {formatDateTime(cardEmployee.updatedAt)}

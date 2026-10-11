@@ -71,4 +71,6 @@ export interface CardFormState {
   maxUserId: string;
   /** Швея допущена к работе на оверлоке — видит вкладку «Оверлок» на конвейере. */
   canOverlock: boolean;
+  /** Дата выхода на работу, ГГГГ-ММ-ДД. */
+  hiredAt: string;
 }

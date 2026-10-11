@@ -2,32 +2,11 @@ import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table';
 import Icon from '@/components/ui/icon';
 import { shortProductName } from '@/lib/shortProductName';
 import MarketplaceBadge from '@/components/crm/MarketplaceBadge';
 import type { InspectionItem } from '@/lib/goodsWarehouseApi';
-
-const formatDate = (value: string | null) => {
-  if (!value) return '—';
-  const d = new Date(value);
-  if (Number.isNaN(d.getTime())) return '—';
-  // Московское время — единое для всей системы, независимо от часов устройства.
-  return d.toLocaleString('ru-RU', {
-    day: '2-digit',
-    month: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    timeZone: 'Europe/Moscow',
-  });
-};
+import { formatDateTime } from '@/lib/dateUtils';
 
 interface ReturnsInspectionListProps {
   title?: string;
@@ -131,103 +110,120 @@ const ReturnsInspectionList = ({
           привезённая с пункта выдачи
         </p>
       ) : (
-        <div className="overflow-x-auto rounded-lg border border-border">
-          <Table>
-            <TableHeader>
-              <TableRow className="bg-primary hover:bg-primary">
-                {/* Галочка «выбрать все» стоит на ТЁМНОЙ шапке, а рамка у неё по
-                    умолчанию тоже тёмная — на этом фоне её попросту не было видно,
-                    и админ отмечал полсотни вещей по одной. Перекрашиваем в светлый
-                    цвет шапки. */}
-                <TableHead className="w-10">
+        <div className="flex flex-col gap-2">
+          {visible.map((i) => {
+            const size = i.width && i.height ? `${i.width}×${i.height}` : '';
+            const when = i.inspectedAt || i.takenAt || i.receivedAt;
+            const who = i.inspectedByName || i.takenByName;
+            const fromWorkshop = i.receiveReason === 'cancelled_labeled';
+            const repeat = !fromWorkshop && !i.historyLost && (i.returnCount || 0) > 1;
+            const fresh = (i.latestClientOrder || '').trim();
+            const oldTail = (i.previousOrderNumbers || '').trim();
+            const linked = (i.clientOrderNumber || '').trim();
+            const clientNo =
+              fresh ||
+              oldTail ||
+              (repeat && linked && linked !== (i.orderNumber || '') ? linked : '');
+            const clientIsOld = !fresh && Boolean(oldTail);
+            return (
+              <div
+                key={i.id}
+                className={`relative flex min-w-0 items-start gap-2 overflow-hidden rounded-md border border-border bg-card py-2 pl-3 pr-3 ${
+                  fromWorkshop ? 'bg-sky-50/70' : i.historyLost ? 'bg-amber-50/70' : ''
+                }`}
+              >
+                <span
+                  className={`absolute inset-y-0 left-0 w-1 ${
+                    fromWorkshop ? 'bg-sky-500' : (i.returnCount || 0) >= 3 ? 'bg-destructive' : 'bg-amber-500'
+                  }`}
+                />
+                <div className="pt-1" onClick={(e) => e.stopPropagation()}>
                   <Checkbox
-                    checked={selected.length === visible.length && visible.length > 0}
-                    onCheckedChange={onToggleAll}
-                    title={
-                      selected.length === visible.length && visible.length > 0
-                        ? 'Снять выделение со всех'
-                        : `Выбрать все (${visible.length})`
-                    }
-                    className="border-primary-foreground data-[state=checked]:border-primary-foreground data-[state=checked]:bg-primary-foreground data-[state=checked]:text-primary"
+                    checked={selected.includes(i.id)}
+                    onCheckedChange={() => onToggle(i.id)}
+                    aria-label={`Отметить ${i.storageBarcode}`}
+                    className="h-4 w-4 shrink-0"
                   />
-                </TableHead>
-                <TableHead className="text-primary-foreground">Товар</TableHead>
-                <TableHead className="text-primary-foreground">Ткань</TableHead>
-                <TableHead className="text-primary-foreground">Размер</TableHead>
-                <TableHead className="text-primary-foreground">Кто осмотрел</TableHead>
-                <TableHead className="text-primary-foreground">Дата</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {visible.map((i) => (
-                <TableRow key={i.id} className="hover:bg-muted/60">
-                  <TableCell onClick={(e) => e.stopPropagation()}>
-                    <Checkbox
-                      checked={selected.includes(i.id)}
-                      onCheckedChange={() => onToggle(i.id)}
-                    />
-                  </TableCell>
-                  <TableCell
-                    className="cursor-pointer"
-                    onClick={() => navigate(`/crm/inventory/goods/${i.id}`)}
+                </div>
+                <div className="grid min-w-0 flex-1 grid-cols-1 items-center gap-x-3 gap-y-1 sm:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)]">
+
+                <div className="flex min-w-0 flex-col items-start gap-0.5">
+                  {fromWorkshop && (
+                    <span className="rounded-br-md bg-sky-600 px-1.5 py-0.5 text-[10px] font-bold leading-none text-white">
+                      С цеха
+                    </span>
+                  )}
+                  {i.historyLost && (
+                    <span className="rounded-br-md bg-amber-500 px-1.5 py-0.5 text-[10px] font-bold leading-none text-white">
+                      Вручную
+                    </span>
+                  )}
+                  {when && (
+                    <span className="whitespace-nowrap text-[11px] leading-tight text-muted-foreground">
+                      {formatDateTime(when)}
+                    </span>
+                  )}
+                  {who && <span className="text-[11px] leading-tight">{who}</span>}
+                  <MarketplaceBadge marketplace={i.marketplace} />
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => navigate(`/crm/inventory/goods/${i.id}`)}
+                  className="flex min-w-0 flex-col items-center px-2 text-center"
+                >
+                  <p className="break-words text-base font-extrabold leading-tight" title={i.product || ''}>
+                    {i.material || shortProductName(i)}
+                  </p>
+                  {size && <span className="text-sm font-semibold">{size}</span>}
+                </button>
+
+                <div className="flex flex-col items-end justify-self-end text-right leading-tight">
+                  <span className="font-mono-tech text-sm font-bold">{i.storageBarcode}</span>
+                  {repeat && clientNo && (
+                    <span className="font-mono-tech text-xs font-semibold leading-tight">
+                      {clientIsOld ? `было ${clientNo}` : clientNo}
+                    </span>
+                  )}
+                  {i.orderNumber && i.orderNumber !== clientNo && (
+                    <button
+                      type="button"
+                      onClick={() => navigate(`/crm/inventory/goods/${i.id}`)}
+                      className="font-mono-tech text-xs text-muted-foreground underline-offset-2 hover:underline"
+                    >
+                      {i.orderNumber}
+                    </button>
+                  )}
+                </div>
+
+                {fromWorkshop && (
+                  <p className="col-span-full pl-3 text-xs font-medium text-sky-700">
+                    Отмена после стикеровки в цехе — сразу на полку
+                  </p>
+                )}
+                {!fromWorkshop && i.historyLost && (
+                  <p className="col-span-full pl-3 text-xs font-medium text-amber-700">
+                    История потеряна · добавлен вручную
+                  </p>
+                )}
+                {!fromWorkshop && !i.historyLost && (i.returnCount || 0) > 1 && (
+                  <p
+                    className={`col-span-full pl-3 text-xs font-medium ${
+                      (i.returnCount || 0) >= 3 ? 'text-destructive' : 'text-amber-700'
+                    }`}
                   >
-                    <div className="font-medium" title={i.product || ''}>
-                      {shortProductName(i)}
-                    </div>
-                    {/* От какой площадки товар: WB и Яндекс возвращают вещь
-                        целиком, OZON — поштучно, и разбирают их по-разному.
-                        По номеру заказа площадку не отличить. */}
-                    <div className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
-                      <MarketplaceBadge marketplace={i.marketplace} />
-                      <span>
-                        {i.orderNumber || '—'} · {i.storageBarcode}
-                      </span>
-                    </div>
-                    {/* Сколько раз вещь уже возвращали — главное для решения
-                        «осмотреть или сразу на полку». Покупатели не возвращают
-                        исправный товар снова и снова: со второго возврата
-                        подсвечиваем, с третьего — красным. */}
-                    {/* ОТМЕНА ПОСЛЕ СТИКЕРОВКИ — не возврат от покупателя.
-                        Вещь сшили, упаковали и заклеили ярлыком маркетплейса, и
-                        уже после этого заказ отменили. К покупателю она не
-                        уезжала, осматривать её незачем: сразу на полку со
-                        стикером хранения. */}
-                    {i.receiveReason === 'cancelled_labeled' && (
-                      <div className="text-xs font-medium text-sky-700">
-                        Отмена после стикеровки в цехе — сразу на полку
-                      </div>
-                    )}
-                    {i.historyLost ? (
-                      <div className="text-xs font-medium text-amber-600">
-                        История потеряна · добавлен вручную
-                      </div>
-                    ) : (i.returnCount || 0) > 1 ? (
-                      <div
-                        className={`text-xs font-medium ${
-                          (i.returnCount || 0) >= 3 ? 'text-destructive' : 'text-amber-600'
-                        }`}
-                      >
-                        Возвращали {i.returnCount} раза — осмотрите
-                      </div>
-                    ) : null}
-                    {(i.disposeReason || i.lostReason) && (
-                      <div className="text-xs text-destructive">
-                        {i.disposeReason || i.lostReason}
-                      </div>
-                    )}
-                  </TableCell>
-                  <TableCell>{i.material || '—'}</TableCell>
-                  <TableCell>
-                    {i.width && i.height ? `${i.width}×${i.height}` : '—'}
-                  </TableCell>
-                  <TableCell>{i.inspectedByName || i.takenByName || '—'}</TableCell>
-                  <TableCell className="whitespace-nowrap text-sm text-muted-foreground">
-                    {formatDate(i.inspectedAt || i.takenAt || i.receivedAt)}
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
+                    Возвращали {i.returnCount} раза — осмотрите
+                  </p>
+                )}
+                {(i.disposeReason || i.lostReason) && (
+                  <p className="col-span-full text-xs text-destructive">
+                    {i.disposeReason || i.lostReason}
+                  </p>
+                )}
+                </div>
+              </div>
+            );
+          })}
         </div>
       )}
     </div>

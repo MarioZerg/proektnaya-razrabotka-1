@@ -10,6 +10,7 @@ import boto3
 import psycopg2
 
 from authz import AuthError, auth_error_response, require_admin, require_auth
+import vacations as vacation_mod
 from max_avatars import sync_max_avatars
 from onec_flush import enqueue_onec_entity, flush_onec_outbox
 
@@ -174,6 +175,15 @@ def handler(event: dict, context) -> dict:
         conn = psycopg2.connect(dsn)
         try:
             cur = conn.cursor()
+            vacation_mod.ensure_schema(cur)
+            if str(params.get('vacations') or '') == '1':
+                payload = vacation_mod.board(cur)
+                conn.commit()
+                return {
+                    'statusCode': 200,
+                    'headers': headers,
+                    'body': json.dumps(payload, ensure_ascii=False),
+                }
             if str(params.get('self') or '') == '1':
                 me = require_auth(cur, event)
                 cur.execute(
@@ -221,7 +231,7 @@ def handler(event: dict, context) -> dict:
                 # Допуск к оверлоку: швея умеет обмётывать край и разбирает эту
                 # очередь. Отдельной должности не заводим — человек работает и на
                 # оверлоке, и на прямострочке, не переключая роль в середине смены.
-                "can_overlock "
+                "can_overlock, hired_at "
                 "FROM users ORDER BY id DESC"
             )
             rows = cur.fetchall()
@@ -280,6 +290,7 @@ def handler(event: dict, context) -> dict:
                     # Швея допущена к работе на оверлоке: видит вкладку «Оверлок»
                     # на конвейере и может брать оттуда заказы.
                     'canOverlock': bool(r[33]),
+                    'hiredAt': r[34].isoformat() if r[34] else None,
                     'roles': roles_by_user.get(r[0], []),
                 }
                 for r in rows
@@ -299,6 +310,46 @@ def handler(event: dict, context) -> dict:
         conn = psycopg2.connect(dsn)
         try:
             cur = conn.cursor()
+            if action in ('vacation_book', 'vacation_cancel'):
+                vacation_mod.ensure_schema(cur)
+                is_admin = False
+                actor_id = body_data.get('userId')
+                try:
+                    me = require_auth(cur, event)
+                    actor_id = me['id']
+                    is_admin = me.get('role') == 'admin'
+                except AuthError:
+                    pass
+                if action == 'vacation_book':
+                    target = body_data.get('userId') or actor_id
+                    if not target:
+                        return {
+                            'statusCode': 400, 'headers': headers,
+                            'body': json.dumps({'error': 'Укажите сотрудника'}, ensure_ascii=False),
+                        }
+                    if not is_admin and str(target) != str(actor_id):
+                        return {
+                            'statusCode': 403, 'headers': headers,
+                            'body': json.dumps({'error': 'Бронировать можно только свой отпуск'}, ensure_ascii=False),
+                        }
+                    err = vacation_mod.book(cur, target, body_data.get('dateFrom'), body_data.get('dateTo'))
+                    if err:
+                        conn.rollback()
+                        return {
+                            'statusCode': 409, 'headers': headers,
+                            'body': json.dumps({'error': err}, ensure_ascii=False),
+                        }
+                    conn.commit()
+                    return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True})}
+                err = vacation_mod.cancel(cur, body_data.get('id'), actor_id, is_admin)
+                if err:
+                    conn.rollback()
+                    return {
+                        'statusCode': 409, 'headers': headers,
+                        'body': json.dumps({'error': err}, ensure_ascii=False),
+                    }
+                conn.commit()
+                return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True})}
 
             # Своё фото может поставить любой вошедший. Чужие поля и роли
             # по-прежнему только у администратора — это действие идёт раньше
@@ -441,6 +492,7 @@ def handler(event: dict, context) -> dict:
                 return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'id': new_id, 'login': login})}
 
             if action == 'update':
+                vacation_mod.ensure_schema(cur)
                 user_id = body_data.get('id')
                 if not user_id:
                     return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите id'})}
@@ -521,6 +573,12 @@ def handler(event: dict, context) -> dict:
                     pwd_hash = hash_password(body_data['password'], salt)
                     fields.append(f"password_hash = '{pwd_hash}'")
                     fields.append(f"password_salt = '{salt}'")
+                if 'hiredAt' in body_data:
+                    hired = (body_data.get('hiredAt') or '').strip()
+                    if hired and re.fullmatch(r'\d{4}-\d{2}-\d{2}', hired):
+                        fields.append(f"hired_at = '{hired}'")
+                    else:
+                        fields.append('hired_at = NULL')
                 if body_data.get('avatarBase64'):
                     avatar_url = upload_avatar(body_data['avatarBase64'])
                     fields.append(f"avatar_url = '{avatar_url}'")

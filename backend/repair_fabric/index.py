@@ -290,15 +290,21 @@ def suitable_for_order(cur, event):
 
 
 def lookup_item(cur, event):
-    """Кладовщик сканирует стикер.
+    """Кладовщик сканирует стикер брака с перепаковки (RS).
 
-    RS-… с перепаковки — кусок ещё не в цехе, его надо принять.
-    GW-… брака — вещь из утилизации, её можно завести в куски.
+    Стикер хранения GW сюда не подходит: по нему вещь ищут на полке,
+    а не принимают в куски. Иначе годную вещь можно завести в перешив
+    тем же кодом, что наклеен на пакет.
     """
     q = event.get('queryStringParameters') or {}
     barcode = (q.get('barcode') or '').strip()
     if not barcode:
         return _resp(400, {'error': 'Отсканируйте стикер вещи'})
+    if barcode.upper().startswith('GW-'):
+        return _resp(400, {
+            'error': 'Стикер хранения GW в куски не принимается. '
+                     'Отсканируйте стикер брака с перепаковки',
+        })
 
     cur.execute(
         "SELECT p.id, p.status, p.barcode, p.material, p.width, p.height, "
@@ -817,6 +823,11 @@ def accept_piece(cur, conn, event, body):
     barcode = (body.get('barcode') or '').strip()
     if not barcode:
         return _resp(400, {'error': 'Отсканируйте стикер куска'})
+    if barcode.upper().startswith('GW-'):
+        return _resp(400, {
+            'error': 'Стикер хранения GW в куски не принимается. '
+                     'Отсканируйте стикер брака с перепаковки',
+        })
 
     user = current_user(cur, event)
     actor_id = user['id'] if user else body.get('userId')
