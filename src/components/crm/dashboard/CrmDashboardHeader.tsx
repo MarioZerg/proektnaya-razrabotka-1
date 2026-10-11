@@ -1,5 +1,4 @@
 import AdminNotifications from '@/components/crm/dashboard/AdminNotifications';
-import ConveyorIssueSwitch from '@/components/crm/dashboard/ConveyorIssueSwitch';
 import VarikiPurchasesCard from '@/components/crm/variki/VarikiPurchasesCard';
 import MyShiftCard from '@/components/crm/dashboard/MyShiftCard';
 import AwardCard from '@/components/crm/dashboard/AwardCard';
@@ -18,9 +17,6 @@ interface CrmDashboardHeaderProps {
   shiftsError?: string | null;
   onRetryShifts?: () => void;
   isAdmin?: boolean;
-  conveyorIssueEnabled?: boolean;
-  conveyorSaving?: boolean;
-  onToggleConveyor?: (enabled: boolean) => void;
 }
 
 /**
@@ -41,9 +37,6 @@ const CrmDashboardHeader = ({
   shiftsError,
   onRetryShifts,
   isAdmin = false,
-  conveyorIssueEnabled = true,
-  conveyorSaving = false,
-  onToggleConveyor,
 }: CrmDashboardHeaderProps) => (
   <>
     <div>
@@ -79,15 +72,7 @@ const CrmDashboardHeader = ({
 
     {/* Решения склада, которые стоят денег, — сразу перед виджетами: админ видит их
         первыми, ещё до сводки по цеху. */}
-    {isAdmin && onToggleConveyor && (
-      <ConveyorIssueSwitch
-        enabled={conveyorIssueEnabled}
-        saving={conveyorSaving}
-        onToggle={onToggleConveyor}
-      />
-    )}
-
-    {userRole === 'admin' && <AdminNotifications />}
+    {isAdmin && <AdminNotifications />}
     {/* Упаковщице на телефоне сразу видно, чью пачку разбирать первой:
         швея, которая скинула на стикеровку раньше всех. */}
     {isPacker && <PackerStickerQueueCard />}

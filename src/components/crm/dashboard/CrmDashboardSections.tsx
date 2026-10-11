@@ -2,12 +2,11 @@ import DashboardWidgetsGrid from '@/components/crm/dashboard/DashboardWidgetsGri
 import WorkingTodayCard from '@/components/crm/dashboard/WorkingTodayCard';
 import ShiftManagementCard from '@/components/crm/dashboard/ShiftManagementCard';
 import ShiftCalendarCard from '@/components/crm/dashboard/ShiftCalendarCard';
-import AdminPeoplePanel from '@/components/crm/dashboard/AdminPeoplePanel';
-import ShortagePenaltyCard from '@/components/crm/dashboard/ShortagePenaltyCard';
 import FboShipmentsCard from '@/components/crm/dashboard/FboShipmentsCard';
 import StalledShipmentsCard from '@/components/crm/dashboard/StalledShipmentsCard';
 import LiveFloorCard from '@/components/crm/dashboard/liveFloor/LiveFloorCard';
 import LiveFloorBoundary from '@/components/crm/dashboard/liveFloor/LiveFloorBoundary';
+import ShortagePenaltyCard from '@/components/crm/dashboard/ShortagePenaltyCard';
 import { type DashboardWidgetData } from '@/components/crm/dashboard/dashboardShared';
 import {
   type EmployeeShiftStatus,
@@ -17,7 +16,6 @@ import { type ShiftListItem } from '@/lib/shiftsApi';
 import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
 
 interface CrmDashboardSectionsProps {
-  userId?: number;
   isAdmin: boolean;
   canSeeLiveFloor?: boolean;
   canSeeWorkingToday: boolean;
@@ -47,7 +45,6 @@ interface CrmDashboardSectionsProps {
  * Вынесено из страницы 1:1 — тот же порядок блоков и те же условия показа.
  */
 const CrmDashboardSections = ({
-  userId,
   isAdmin,
   canSeeLiveFloor = false,
   canSeeWorkingToday,
@@ -94,10 +91,6 @@ const CrmDashboardSections = ({
     )}
 
     {canSeeWorkingToday && <WorkingTodayCard />}
-
-    {/* Люди и результат: эффективность и лототрон. Выработку/премию за метраж
-        сняли с главной — программа закончилась 30.09.2026. Только администратору. */}
-    {isAdmin && <AdminPeoplePanel actorId={userId} />}
 
     {/* Недостача в закрытых рулонах: администратор решает, удерживать ли деньги
         с сотрудников или списать на поставщика. Карточка сама скрывается, когда

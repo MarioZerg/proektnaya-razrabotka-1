@@ -246,6 +246,21 @@ export const fetchOrders = async (
   return data.orders || [];
 };
 
+export interface SewerPackedDay {
+  date: string;
+  total: number;
+  fbs: number;
+  sewers: { id: number; name: string; count: number; fbs: number }[];
+}
+
+/** Сдача швей после стикеровки. null — на сервере ещё нет этого ответа. */
+export const fetchSewerPackedDays = async (): Promise<SewerPackedDay[] | null> => {
+  const res = await fetch(`${ORDERS_URL}?action=sewer_packed`);
+  if (!res.ok) return null;
+  const data = await res.json();
+  return Array.isArray(data.days) ? data.days : null;
+};
+
 /**
  * ПОИСК ЗАКАЗА ПО НОМЕРУ — МИМО ЛИМИТОВ СПИСКА.
  *

@@ -3,7 +3,8 @@ import { format } from 'date-fns';
 import { useAuth } from '@/context/AuthContext';
 import { useToast } from '@/hooks/use-toast';
 import { fetchDashboardSummary, type DashboardSummary } from '@/lib/dashboardSummaryApi';
-import { setConveyorIssue } from '@/lib/ordersApi';
+import { fetchPickingOrders } from '@/lib/goodsWarehouseApi';
+import { fetchOrders, isOrderCancelled, type Order } from '@/lib/ordersApi';
 import { updateEmployee } from '@/lib/usersApi';
 import {
   fetchEmployeeShifts,
@@ -57,6 +58,10 @@ export const useCrmDashboardData = () => {
   // весь склад, все рулоны — и панель считала плитки сама, перебирая тысячи
   // записей в браузере. Теперь считает база, а сюда приходит десяток чисел.
   const [summary, setSummary] = useState<DashboardSummary | null>(null);
+  const [orderSchemes, setOrderSchemes] = useState<{
+    conveyor: { fbs: number; fbo: number; other: number };
+    picking: { fbs: number; fbo: number; other: number };
+  } | null>(null);
 
   const [shiftsLoading, setShiftsLoading] = useState(true);
   const [shiftsError, setShiftsError] = useState<string | null>(null);
@@ -66,7 +71,6 @@ export const useCrmDashboardData = () => {
 
   const [selectedDate, setSelectedDate] = useState<Date | undefined>(new Date());
   const [calendarDays, setCalendarDays] = useState<ShiftCalendarDay[]>([]);
-  const [conveyorSaving, setConveyorSaving] = useState(false);
 
   // Цифры для плиток: ОДИН запрос вместо пяти.
   //
@@ -95,6 +99,38 @@ export const useCrmDashboardData = () => {
 
   useEffect(() => {
     loadSummary();
+    const scheme = (type?: string | null) => {
+      const name = (type || '').toUpperCase();
+      if (name === 'FBS') return 'fbs' as const;
+      if (name === 'FBO') return 'fbo' as const;
+      return 'other' as const;
+    };
+    const tally = (types: Array<string | null | undefined>) => {
+      const counts = { fbs: 0, fbo: 0, other: 0 };
+      types.forEach((type) => {
+        counts[scheme(type)] += 1;
+      });
+      return counts;
+    };
+    Promise.all([fetchPickingOrders(), fetchOrders()])
+      .then(([picking, orders]) => {
+        const pickingTypes: string[] = [];
+        const seen = new Set<string>();
+        picking.forEach((row) => {
+          if (!row.orderNumber || seen.has(row.orderNumber)) return;
+          seen.add(row.orderNumber);
+          pickingTypes.push(row.orderType || '');
+        });
+        const fresh = orders.filter(
+          (order: Order) =>
+            order.sewingStatus === 'Новый' && order.source === 'api' && !isOrderCancelled(order),
+        );
+        setOrderSchemes({
+          picking: tally(pickingTypes),
+          conveyor: tally(fresh.map((order) => order.orderType)),
+        });
+      })
+      .catch(() => setOrderSchemes(null));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.role, user?.id]);
 
@@ -233,28 +269,6 @@ export const useCrmDashboardData = () => {
     }
   };
 
-  const handleToggleConveyor = async (enabled: boolean) => {
-    setConveyorSaving(true);
-    try {
-      await setConveyorIssue(enabled);
-      setSummary((prev) => (prev ? { ...prev, conveyorIssueEnabled: enabled } : prev));
-      toast({
-        title: enabled ? 'Выдача заказов включена' : 'Конвейер выключен',
-        description: enabled
-          ? 'Закройщики и швеи снова могут брать заказы'
-          : 'Новые заказы с конвейера сейчас не выдают',
-      });
-    } catch (e) {
-      toast({
-        title: 'Не удалось переключить конвейер',
-        description: e instanceof Error ? e.message : undefined,
-        variant: 'destructive',
-      });
-    } finally {
-      setConveyorSaving(false);
-    }
-  };
-
   const widgets: DashboardWidgetData[] = useMemo(
     () =>
       buildDashboardWidgets({
@@ -263,8 +277,9 @@ export const useCrmDashboardData = () => {
         isSewer,
         canSeeWarehouseWidgets,
         summary,
+        orderSchemes,
       }),
-    [isCleaner, isCutter, isSewer, canSeeWarehouseWidgets, summary]
+    [isCleaner, isCutter, isSewer, canSeeWarehouseWidgets, summary, orderSchemes]
   );
 
   return {
@@ -294,9 +309,6 @@ export const useCrmDashboardData = () => {
     handleToggleShift,
     handleSwitchShift,
     handleToggleFree,
-    conveyorIssueEnabled: summary?.conveyorIssueEnabled !== false,
-    conveyorSaving,
-    handleToggleConveyor,
   };
 };
 

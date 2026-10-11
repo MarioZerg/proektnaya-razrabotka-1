@@ -7,6 +7,11 @@ interface BuildWidgetsArgs {
   isSewer: boolean;
   canSeeWarehouseWidgets: boolean;
   summary: DashboardSummary | null;
+  /** Заказы на конвейере и в подборе, уже разложенные по FBS и FBO. */
+  orderSchemes?: {
+    conveyor: { fbs: number; fbo: number; other: number };
+    picking: { fbs: number; fbo: number; other: number };
+  } | null;
 }
 
 /**
@@ -22,6 +27,7 @@ export const buildDashboardWidgets = ({
   isSewer,
   canSeeWarehouseWidgets,
   summary,
+  orderSchemes = null,
 }: BuildWidgetsArgs): DashboardWidgetData[] => {
   if (isCleaner) return [];
   if (!summary) return [];
@@ -30,7 +36,74 @@ export const buildDashboardWidgets = ({
   // здесь: швея и закройщик видят ТОЛЬКО свою работу (сервер получил роль и id
   // и отфильтровал), «Новые задания» и «Раскроено» — общая очередь на всех.
   const list: DashboardWidgetData[] = [
-    { label: 'Новые задания на пошив', shortLabel: 'Новые задания', value: summary.newOrders, icon: 'ListPlus', tone: 'default', path: '/crm/marketplace/sewing-items', stage: 'production', hint: 'Заказы приняты и ждут, когда их возьмут в работу' },
+    {
+      label: 'Новые задания на пошив',
+      shortLabel: 'Новые задания',
+      icon: 'ListPlus',
+      tone: 'default',
+      path: '/crm/marketplace/sewing-items',
+      stage: 'production',
+      spotlight: true,
+      hint: 'Конвейер — ещё шьём. Подбор — уже с полки. Строки — FBS и FBO',
+      parts: undefined,
+      matrix: (() => {
+        const fromServer =
+          summary.newConveyorFbs != null &&
+          summary.newConveyorFbo != null &&
+          summary.newPickingFbs != null &&
+          summary.newPickingFbo != null;
+        const conveyor = fromServer
+          ? {
+              fbs: summary.newConveyorFbs!,
+              fbo: summary.newConveyorFbo!,
+              other: Math.max(
+                0,
+                (summary.newOnConveyor ?? summary.newOrders) -
+                  summary.newConveyorFbs! -
+                  summary.newConveyorFbo!,
+              ),
+            }
+          : orderSchemes?.conveyor;
+        const picking = fromServer
+          ? {
+              fbs: summary.newPickingFbs!,
+              fbo: summary.newPickingFbo!,
+              other: Math.max(
+                0,
+                (summary.newOnPicking ?? 0) - summary.newPickingFbs! - summary.newPickingFbo!,
+              ),
+            }
+          : orderSchemes?.picking;
+        if (!conveyor || !picking) return undefined;
+        const line = (label: string, left: number, right: number) => ({
+          label,
+          values: [left, right, left + right],
+        });
+        const rows = [
+          line('FBS', conveyor.fbs, picking.fbs),
+          line('FBO', conveyor.fbo, picking.fbo),
+        ];
+        if (conveyor.other + picking.other > 0) {
+          rows.push(line('другие', conveyor.other, picking.other));
+        }
+        const conveyorSum = conveyor.fbs + conveyor.fbo + conveyor.other;
+        const pickingSum = picking.fbs + picking.fbo + picking.other;
+        rows.push(line('всего', conveyorSum, pickingSum));
+        return { columns: ['конвейер', 'подбор', 'всего'], rows };
+      })(),
+      value: (() => {
+        const fromServer =
+          summary.newConveyorFbs != null &&
+          summary.newPickingFbs != null &&
+          summary.newOnConveyor != null &&
+          summary.newOnPicking != null;
+        if (fromServer) return (summary.newOnConveyor ?? 0) + (summary.newOnPicking ?? 0);
+        if (!orderSchemes) return summary.newOrders;
+        const c = orderSchemes.conveyor;
+        const p = orderSchemes.picking;
+        return c.fbs + c.fbo + c.other + p.fbs + p.fbo + p.other;
+      })(),
+    },
     // Швее и закройщику подписываем «У меня», чтобы цифра не читалась как объём
     // всего цеха: у них в этих виджетах теперь только собственные заказы.
     {
@@ -48,11 +121,6 @@ export const buildDashboardWidgets = ({
     ...(isSewer
       ? []
       : [{ label: isCutter ? 'У меня в закрое' : 'Товары в закрое', value: summary.inCutting, icon: 'Scissors', tone: 'default' as const, path: '/crm/marketplace/sewing-items', stage: 'production' as const, hint: isCutter ? 'Ткань, которую вы кроите прямо сейчас' : 'Ткань в работе у закройщиков' }]),
-    // ?type=FBS — страница откроется сразу с фильтром по FBS, иначе показывала все заказы
-    // Срочные FBS — это работа цеха, а не отдельная тревога: их шьют в общем
-    // потоке, просто в первую очередь. Поэтому плитка стоит в производстве,
-    // первой в цепочке, и остаётся красной — приоритет никуда не делся.
-    { label: 'Срочные заказы (FBS)', shortLabel: 'Срочные FBS', value: summary.urgentFbs, icon: 'Zap', tone: 'urgent', path: '/crm/marketplace/sewing-items?type=FBS', stage: 'production', hint: 'Отгрузка сегодня — делать в первую очередь' },
     { label: 'Не отгруженные поставки в цех', shortLabel: 'Не отгружено в цех', value: summary.notShippedToWorkshop, icon: 'TruckElectric', tone: 'warning', path: '/crm/shipments/to-workshop', stage: 'warehouse', hint: 'Материал собран, но со склада ещё не уехал' },
     { label: 'Не принятые поставки в цехе', shortLabel: 'Не принято в цехе', value: summary.notReceivedInWorkshop, icon: 'PackageX', tone: 'warning', path: '/crm/shipments/to-workshop', stage: 'warehouse', hint: 'Привезли в цех, но приёмку никто не подтвердил' },
     { label: isSewer || isCutter ? 'Мои на стикеровке' : 'Товары на стикеровке', shortLabel: isSewer || isCutter ? undefined : 'На стикеровке', value: summary.inStickering, icon: 'Tag', tone: 'default', path: '/crm/marketplace/sewing-items', stage: 'production', hint: 'Сшито и ждёт наклейки стикера маркетплейса' },
@@ -169,7 +237,7 @@ export const buildDashboardWidgets = ({
 
   if (isCutter) {
     // Закройщику показываем только то, что относится к его работе: что предстоит
-    // раскроить, что уже в закрое и раскроено, срочные заказы и поставки материала
+    // раскроить, что уже в закрое и раскроено, и поставки материала
     // в цех. Остальные виджеты (пошив, стикеровка) — не его зона ответственности.
     // Сравниваем по СУТИ, а не по точному названию: у закройщика плитка
     // подписана «У меня в закрое», и список точных названий её отсеивал —
@@ -177,7 +245,6 @@ export const buildDashboardWidgets = ({
     const cutterWidgets = [
       'Новые задания',
       'в закрое',
-      'Срочные заказы',
       'Не отгруженные поставки в цех',
       'Не принятые поставки в цехе',
       'Раскроено',

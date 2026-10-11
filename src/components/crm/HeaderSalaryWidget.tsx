@@ -1,12 +1,16 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import Icon from '@/components/ui/icon';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { useAuth } from '@/context/AuthContext';
 import { fetchMySalary } from '@/lib/salaryApi';
 import { fetchMyVariki } from '@/lib/varikiApi';
 import { formatMoney } from '@/components/crm/dashboard/dashboardShared';
-import SalarySalute from '@/components/crm/SalarySalute';
-import { playSalaryOpenSound } from '@/lib/salarySound';
 
 const PRODUCTION_ROLES = ['sewer', 'cutter', 'packer', 'packer_returns'];
 
@@ -20,14 +24,10 @@ const dayWord = (n: number) => {
   return 'дней';
 };
 
-/** Компактный виджет зарплаты к выплате для правого угла шапки CRM.
- * У бухгалтера не показывается: ему нужен учёт, не цеховой баланс.
- * Производственным ролям дополнительно показываются «Варики» — внутренняя валюта
- * для покупки подарков в магазине вариков.
- *
- * Приглашение «Пора в лототрон!» убрано: варики больше не про игру, а про магазин.
- * Надпись сбивала с толку — сотрудник искал лототрон вместо того, чтобы копить на
- * подарок. Вместо неё виджет ведёт прямо в магазин. */
+/** Компактный виджет зарплаты в правом углу шапки.
+ * У бухгалтера не показывается.
+ * Варики не стоят второй плашкой: на узкой шапке они наезжали на соседний виджет.
+ * Они открываются меню под балансом и ведут в Тайм-кофе. */
 const HeaderSalaryWidget = () => {
   const { user } = useAuth();
   const [salary, setSalary] = useState<number | null>(null);
@@ -38,7 +38,6 @@ const HeaderSalaryWidget = () => {
   // Новичкам баланс закрыт первые две недели после регистрации — считает сервер.
   const [locked, setLocked] = useState(false);
   const [daysLeft, setDaysLeft] = useState(0);
-  const [salute, setSalute] = useState(false);
 
   const showVariki = !!user && PRODUCTION_ROLES.includes(user.role);
 
@@ -91,24 +90,55 @@ const HeaderSalaryWidget = () => {
             </div>
           </div>
         </div>
+      ) : showVariki ? (
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <button
+              type="button"
+              className="relative flex min-w-0 items-center gap-1.5 overflow-hidden rounded-lg border border-border bg-card px-2 py-1.5 text-left transition hover:bg-muted/50 sm:gap-2 sm:px-3"
+              title="Зарплата и варики"
+            >
+              <Icon name="Wallet" size={16} className="shrink-0 text-emerald-600" />
+              <div className="min-w-0 leading-tight">
+                <div className="truncate text-[10px] uppercase tracking-wide text-muted-foreground">
+                  <span className="sm:hidden">Зарплата</span>
+                  <span className="hidden sm:inline">Зарплата к выплате</span>
+                </div>
+                {loading ? (
+                  <Icon name="Loader2" size={14} className="animate-spin text-muted-foreground" />
+                ) : (
+                  <div className="truncate text-xs font-bold sm:text-sm">
+                    {salaryError && salary == null ? '—' : `${formatMoney(salary || 0)}\u00a0₽`}
+                  </div>
+                )}
+              </div>
+              <Icon name="ChevronDown" size={14} className="shrink-0 text-muted-foreground" />
+            </button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="w-56">
+            <DropdownMenuItem asChild>
+              <Link to="/crm/variki/shop" className="flex cursor-pointer items-center gap-2">
+                <Icon name="Coins" size={16} className="shrink-0 text-amber-500" />
+                <span className="min-w-0 flex-1">
+                  <span className="block text-[10px] uppercase tracking-wide text-muted-foreground">
+                    Варики
+                  </span>
+                  <span className="block font-bold">
+                    {varikiError && variki == null ? '—' : `${variki ?? 0}\u00a0шт`}
+                  </span>
+                </span>
+                <span className="text-xs text-muted-foreground">Тайм-кофе</span>
+              </Link>
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
       ) : (
-        <div className="relative min-w-0">
-        <button
-          type="button"
-          onClick={() => {
-            if (salary == null || salaryError || salute) return;
-            playSalaryOpenSound();
-            setSalute(true);
-          }}
-          className="relative flex min-w-0 items-center gap-1.5 overflow-hidden rounded-lg border border-border bg-card px-2 py-1.5 text-left transition hover:bg-muted/50 sm:gap-2 sm:px-3"
-          title="Показать, как набежала сумма"
+        <div
+          className="relative flex min-w-0 items-center gap-1.5 overflow-hidden rounded-lg border border-border bg-card px-2 py-1.5 sm:gap-2 sm:px-3"
+          title="Зарплата к выплате"
         >
-          {/* Изредка переливающийся блик по виджету */}
-          <div className="pointer-events-none absolute inset-0 -skew-x-12 animate-shimmer bg-gradient-to-r from-transparent via-emerald-400/25 to-transparent" />
           <Icon name="Wallet" size={16} className="shrink-0 text-emerald-600" />
           <div className="min-w-0 leading-tight">
-            {/* На узком экране подпись короче: «Зарплата к выплате» переносилась
-                на две строки и раздувала виджет. */}
             <div className="truncate text-[10px] uppercase tracking-wide text-muted-foreground">
               <span className="sm:hidden">Зарплата</span>
               <span className="hidden sm:inline">Зарплата к выплате</span>
@@ -116,38 +146,12 @@ const HeaderSalaryWidget = () => {
             {loading ? (
               <Icon name="Loader2" size={14} className="animate-spin text-muted-foreground" />
             ) : (
-              /* whitespace-nowrap + неразрывный пробел: без них «12 345,67 ₽»
-                 ломалось по пробелу и знак рубля уезжал на вторую строку. */
               <div className="truncate text-xs font-bold sm:text-sm">
                 {salaryError && salary == null ? '—' : `${formatMoney(salary || 0)}\u00a0₽`}
               </div>
             )}
           </div>
-        </button>
-        {salute && salary != null && (
-          <SalarySalute amount={salary} onDone={() => setSalute(false)} />
-        )}
         </div>
-      )}
-
-      {showVariki && (
-        // Клик ведёт в магазин: варики нужны именно для покупки подарков, и это
-        // самый короткий путь от «вижу баланс» до «трачу его».
-        <Link
-          to="/crm/variki/shop"
-          className="flex min-w-0 items-center gap-1.5 rounded-lg border border-border bg-card px-2 py-1.5 transition hover:bg-muted/60 sm:gap-2 sm:px-3"
-          title="Варики — на подарки в Тайм-кофе"
-        >
-          <Icon name="Coins" size={16} className="shrink-0 text-amber-500" />
-          <div className="min-w-0 leading-tight">
-            <div className="truncate text-[10px] uppercase tracking-wide text-muted-foreground">
-              Варики
-            </div>
-            <div className="truncate text-xs font-bold sm:text-sm">
-              {varikiError && variki == null ? '—' : `${variki ?? 0}\u00a0шт`}
-            </div>
-          </div>
-        </Link>
       )}
     </div>
   );

@@ -9,6 +9,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { FormSection } from '@/components/ui/form-section';
+import ConveyorIssueSwitch from '@/components/crm/dashboard/ConveyorIssueSwitch';
 import type { WorkshopDetail } from '@/lib/workshopsApi';
 import {
   workshopSettingsConfig,
@@ -165,6 +166,8 @@ const WorkshopSettingsSection = ({
         Пустое поле берёт общее значение. Заполните — будет действовать только здесь.
       </p>
     </div>
+
+    <ConveyorIssueSwitch />
 
     {SETTING_GROUPS.map((group) => (
       <FormSection key={group.title} title={group.title}>

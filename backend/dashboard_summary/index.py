@@ -136,6 +136,27 @@ def handler(event: dict, context) -> dict:
             # заказы, реально пришедшие с площадок: ручной импорт сюда попадать
             # не должен, иначе цифра расходится с кабинетом маркетплейса.
             f"COUNT(*) FILTER (WHERE sewing_status = 'Новый' AND source = 'api' AND {NOT_CANCELLED}) AS new_orders, "
+            # На конвейере остаются только «Новый»: их ещё разбирает цех.
+            # Ушедшие на подбор получают статус «Со склада» и из этой цифры выпадают,
+            # хотя кладовщик их ещё не собрал.
+            f"COUNT(*) FILTER (WHERE sewing_status = 'Новый' AND source = 'api' AND {NOT_CANCELLED}) AS new_on_conveyor, "
+            f"COUNT(*) FILTER (WHERE sewing_status = 'Новый' AND source = 'api' AND order_type = 'FBS' AND {NOT_CANCELLED}) AS new_conveyor_fbs, "
+            f"COUNT(*) FILTER (WHERE sewing_status = 'Новый' AND source = 'api' AND order_type = 'FBO' AND {NOT_CANCELLED}) AS new_conveyor_fbo, "
+            f"COUNT(*) FILTER (WHERE sewing_status = 'Со склада' AND source = 'api' AND {NOT_CANCELLED} "
+            "  AND EXISTS (SELECT 1 FROM goods_warehouse gw "
+            "    WHERE gw.reserved_order_id = orders.id "
+            "      AND gw.status IN ('picking', 'awaiting_supply') "
+            "      AND gw.shipped_at IS NULL)) AS new_on_picking, "
+            f"COUNT(*) FILTER (WHERE sewing_status = 'Со склада' AND source = 'api' AND order_type = 'FBS' AND {NOT_CANCELLED} "
+            "  AND EXISTS (SELECT 1 FROM goods_warehouse gw "
+            "    WHERE gw.reserved_order_id = orders.id "
+            "      AND gw.status IN ('picking', 'awaiting_supply') "
+            "      AND gw.shipped_at IS NULL)) AS new_picking_fbs, "
+            f"COUNT(*) FILTER (WHERE sewing_status = 'Со склада' AND source = 'api' AND order_type = 'FBO' AND {NOT_CANCELLED} "
+            "  AND EXISTS (SELECT 1 FROM goods_warehouse gw "
+            "    WHERE gw.reserved_order_id = orders.id "
+            "      AND gw.status IN ('picking', 'awaiting_supply') "
+            "      AND gw.shipped_at IS NULL)) AS new_picking_fbo, "
             f"COUNT(*) FILTER (WHERE sewing_status = 'В работе' AND {NOT_CANCELLED}{mine_sewing}) AS in_sewing, "
             f"COUNT(*) FILTER (WHERE sewing_status = 'На раскрое' AND {NOT_CANCELLED}{mine_cutting}) AS in_cutting, "
             f"COUNT(*) FILTER (WHERE sewing_status = 'Стикеровка' AND {NOT_CANCELLED}{mine_stick}) AS in_stickering, "
@@ -180,6 +201,8 @@ def handler(event: dict, context) -> dict:
             "orders_part.new_orders", "orders_part.in_sewing", "orders_part.in_cutting",
             "orders_part.in_stickering", "orders_part.cut", "orders_part.urgent_fbs",
             "ship_part.not_shipped", "ship_part.not_received", "dup_part.duplicates",
+            "orders_part.new_on_conveyor", "orders_part.new_conveyor_fbs", "orders_part.new_conveyor_fbo",
+            "orders_part.new_on_picking", "orders_part.new_picking_fbs", "orders_part.new_picking_fbo",
         ]
         from_parts = ["orders_part", "ship_part", "dup_part"]
 
@@ -264,13 +287,19 @@ def handler(event: dict, context) -> dict:
             'notShippedToWorkshop': row[6],
             'notReceivedInWorkshop': row[7],
             'duplicateOrders': int(row[8] or 0),
+            'newOnConveyor': int(row[9] or 0),
+            'newConveyorFbs': int(row[10] or 0),
+            'newConveyorFbo': int(row[11] or 0),
+            'newOnPicking': int(row[12] or 0),
+            'newPickingFbs': int(row[13] or 0),
+            'newPickingFbo': int(row[14] or 0),
         }
 
         if warehouse:
-            result['lowStockRolls'] = row[9]
-            result['awaitingShelf'] = row[10]
-            result['awaitingShipLabel'] = row[11]
-            result['returnsPickedUp'] = row[12]
+            result['lowStockRolls'] = row[15]
+            result['awaitingShelf'] = row[16]
+            result['awaitingShipLabel'] = row[17]
+            result['returnsPickedUp'] = row[18]
 
         cur.execute(
             "SELECT value FROM system_settings WHERE key = 'conveyor_issue_enabled'"

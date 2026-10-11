@@ -13,6 +13,14 @@ const URL = (func2url as Record<string, string>)['dashboard_summary'];
  */
 export interface DashboardSummary {
   newOrders: number;
+  /** Из новых: ещё на конвейере, цех их разбирает. */
+  newOnConveyor?: number;
+  newConveyorFbs?: number;
+  newConveyorFbo?: number;
+  /** Из новых: вещь уже закреплена и висит в подборе на складе. */
+  newOnPicking?: number;
+  newPickingFbs?: number;
+  newPickingFbo?: number;
   inSewing: number;
   inCutting: number;
   inStickering: number;

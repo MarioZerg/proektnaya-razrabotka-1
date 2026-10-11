@@ -173,6 +173,10 @@ export default {
 						boxShadow: '0 0 0 4px hsl(var(--destructive) / 0.12)'
 					}
 				},
+				'tile-ring': {
+					'0%': { transform: 'translate(-50%, -50%) rotate(0deg)' },
+					'100%': { transform: 'translate(-50%, -50%) rotate(360deg)' }
+				},
 				// Приглашение раскрыть свёрнутое приветствие МЕГАБУХ: пузырь чуть всплывает.
 				'megabuh-bob': {
 					'0%, 100%': { transform: 'translateY(0)' },
@@ -248,6 +252,7 @@ export default {
 				// Пульсация заметно быстрее перелива — разница читается сразу,
 				// даже боковым зрением, без сравнивания плиток между собой.
 				'tile-alert': 'tile-alert 1.4s ease-in-out infinite',
+				'tile-ring': 'tile-ring 2.8s linear infinite',
 				'megabuh-bob': 'megabuh-bob 2.4s ease-in-out infinite',
 				'megabuh-flip': 'megabuh-flip 10s ease-in-out infinite',
 				'flow-dot': 'flow-dot 2.6s linear infinite',

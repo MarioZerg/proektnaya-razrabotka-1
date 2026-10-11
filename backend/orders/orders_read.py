@@ -557,6 +557,54 @@ def _handle_live_floor(cur, conn, headers: dict) -> dict:
     }
 
 
+def _sewer_packed(cur, headers: dict) -> dict:
+    """Сколько вещей каждой швеи прошло стикеровку, по дням.
+
+    Считаем прямо по packed_at, без лимита списка заказов. В выборку входят
+    только швеи: упаковщица ставит отметку, но штука относится к той, кто сшила.
+    """
+    cur.execute(
+        "SELECT (o.packed_at AT TIME ZONE 'Europe/Moscow')::date AS day, "
+        "o.sewer_user_id, u.full_name, COUNT(*)::int, "
+        "COUNT(*) FILTER (WHERE o.order_type = 'FBS')::int "
+        "FROM orders o "
+        "JOIN users u ON u.id = o.sewer_user_id "
+        "WHERE o.packed_at >= (NOW() AT TIME ZONE 'Europe/Moscow')::date - INTERVAL '21 days' "
+        "  AND o.sewer_user_id IS NOT NULL "
+        "  AND COALESCE(o.status, '') <> 'Отменён' "
+        "  AND (u.role = 'sewer' OR EXISTS ("
+        "        SELECT 1 FROM user_roles ur "
+        "        WHERE ur.user_id = u.id AND ur.role = 'sewer' AND ur.is_approved = true"
+        "      )) "
+        "GROUP BY 1, 2, 3 "
+        "ORDER BY 1, 3"
+    )
+    by_day: dict = {}
+    for day, user_id, name, count, fbs in cur.fetchall():
+        key = day.isoformat()
+        bucket = by_day.setdefault(key, {'date': key, 'sewers': []})
+        bucket['sewers'].append({
+            'id': user_id,
+            'name': name,
+            'count': count,
+            'fbs': fbs,
+        })
+    days = []
+    for key in sorted(by_day):
+        bucket = by_day[key]
+        days.append({
+            'date': key,
+            'total': sum(row['count'] for row in bucket['sewers']),
+            'fbs': sum(row['fbs'] for row in bucket['sewers']),
+            'sewers': bucket['sewers'],
+        })
+    return {
+        'statusCode': 200,
+        'headers': headers,
+        'body': json.dumps({'days': days}, ensure_ascii=False),
+    }
+
+
 def handle_get(event: dict, headers: dict, dsn: str) -> dict:
     """Читающая часть конвейера: что показать цеху и менеджеру."""
     params = event.get('queryStringParameters') or {}
@@ -576,6 +624,14 @@ def handle_get(event: dict, headers: dict, dsn: str) -> dict:
     conn = psycopg2.connect(dsn)
     try:
         cur = conn.cursor()
+
+        # Выработка швей после стикеровки — отдельным коротким ответом.
+        # Общий список заказов отдаёт только свежую тысячу закрытых по номеру,
+        # и вещь, которую завели давно, а упаковали сегодня, в него не входит.
+        # Смена упаковщицы при этом больше 200 штук, а окно мощности видело
+        # лишь хвост списка.
+        if (params.get('action') or '') == 'sewer_packed':
+            return _sewer_packed(cur, headers)
 
         # Поиск отвечает раньше всего остального: он не зависит ни от смены, ни
         # от роли — это просто выборка по номеру.
