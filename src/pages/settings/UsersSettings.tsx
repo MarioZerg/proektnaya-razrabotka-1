@@ -59,6 +59,7 @@ const UsersSettings = () => {
     setCardForm,
     cardSaving,
     cardFileRef,
+    hiredAtRef,
     roleActionLoading,
     openCard,
     closeCard,
@@ -145,6 +146,7 @@ const UsersSettings = () => {
         onClose={closeCard}
         onSave={handleCardSave}
         cardFileRef={cardFileRef}
+        hiredAtRef={hiredAtRef}
         onApproveRole={handleApproveRole}
         onAddRole={handleAddRole}
         onRemoveRole={handleRemoveRole}

@@ -1,5 +1,6 @@
 import { useRef, useState } from 'react';
 import { useToast } from '@/hooks/use-toast';
+import { useAuth } from '@/context/AuthContext';
 import {
   fetchEmployees,
   updateEmployee,
@@ -29,11 +30,13 @@ interface UseEmployeeCardArgs {
  */
 export const useEmployeeCard = ({ setEmployees, load }: UseEmployeeCardArgs) => {
   const { toast } = useToast();
+  const { user } = useAuth();
   const [cardEmployee, setCardEmployee] = useState<Employee | null>(null);
   const [cardForm, setCardForm] = useState<CardFormState | null>(null);
   const [cardSaving, setCardSaving] = useState(false);
   const [roleActionLoading, setRoleActionLoading] = useState(false);
   const cardFileRef = useRef<HTMLInputElement>(null);
+  const hiredAtRef = useRef<HTMLInputElement>(null);
 
   const openCard = (emp: Employee) => {
     setCardEmployee(emp);
@@ -61,9 +64,20 @@ export const useEmployeeCard = ({ setEmployees, load }: UseEmployeeCardArgs) => 
 
   const handleCardSave = async () => {
     if (!cardEmployee || !cardForm) return;
+    if (user?.isDemo) {
+      toast({
+        title: 'Демо-режим карточку не записывает',
+        description: 'Войдите своим аккаунтом администратора — тогда дата выхода останется.',
+        variant: 'destructive',
+      });
+      return;
+    }
+    // Поле даты может показать выбранный день раньше, чем React запомнит его.
+    // Берём значение из самого поля, иначе на сервер уходит пусто и дата пропадает.
+    const hiredAt = (hiredAtRef.current?.value || cardForm.hiredAt || '').slice(0, 10);
     setCardSaving(true);
     try {
-      await updateEmployee(cardEmployee.id, {
+      const saved = await updateEmployee(cardEmployee.id, {
         fullName: cardForm.fullName.trim(),
         role: cardForm.role,
         workshop: cardForm.workshop || '',
@@ -72,15 +86,34 @@ export const useEmployeeCard = ({ setEmployees, load }: UseEmployeeCardArgs) => 
         workSchedule: cardForm.workSchedule || '',
         lateToleranceMinutes: Number(cardForm.lateToleranceMinutes) || 0,
         canOverlock: cardForm.canOverlock,
-        hiredAt: cardForm.hiredAt || null,
+        hiredAt: hiredAt || null,
         workHours: cardForm.workHours.trim() ? Number(cardForm.workHours) : null,
         maxUserId: cardForm.maxUserId.trim() || null,
         ...(cardForm.newPassword.trim() ? { password: cardForm.newPassword.trim() } : {}),
         ...(cardForm.avatarBase64 ? { avatarBase64: cardForm.avatarBase64 } : {}),
       });
+      const list = await fetchEmployees();
+      setEmployees(list);
+      const fresh = list.find((e) => e.id === cardEmployee.id);
+      const stored = (fresh?.hiredAt || '').slice(0, 10);
+      const echoed = typeof saved?.hiredAt === 'string' ? saved.hiredAt.slice(0, 10) : stored;
+      if (hiredAt && stored !== hiredAt && echoed !== hiredAt) {
+        setCardForm((f) => f && { ...f, hiredAt });
+        toast({
+          title: 'Дата выхода не записалась',
+          description: 'Карточка сохранилась без даты. Опубликуйте функцию сотрудников и сохраните ещё раз.',
+          variant: 'destructive',
+        });
+        return;
+      }
       closeCard();
       load();
-      toast({ title: 'Изменения сохранены' });
+      toast({
+        title: 'Изменения сохранены',
+        description: hiredAt
+          ? `Дата выхода: ${hiredAt.split('-').reverse().join('.')}`
+          : undefined,
+      });
     } catch (err) {
       toast({
         title: 'Не удалось сохранить',
@@ -186,6 +219,7 @@ export const useEmployeeCard = ({ setEmployees, load }: UseEmployeeCardArgs) => 
     setCardForm,
     cardSaving,
     cardFileRef,
+    hiredAtRef,
     roleActionLoading,
     openCard,
     closeCard,

@@ -5,24 +5,18 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { useAuth } from '@/context/AuthContext';
 import { fetchMySalary } from '@/lib/salaryApi';
+import { fetchVacationBoard } from '@/lib/usersApi';
 import { fetchMyVariki } from '@/lib/varikiApi';
+import { dayWord, vacationMenuText } from '@/lib/vacationStatus';
 import { formatMoney } from '@/components/crm/dashboard/dashboardShared';
 
 const PRODUCTION_ROLES = ['sewer', 'cutter', 'packer', 'packer_returns'];
-
-/** «1 день», «3 дня», «7 дней» — чтобы подпись читалась по-русски. */
-const dayWord = (n: number) => {
-  const last = n % 10;
-  const twoLast = n % 100;
-  if (twoLast >= 11 && twoLast <= 14) return 'дней';
-  if (last === 1) return 'день';
-  if (last >= 2 && last <= 4) return 'дня';
-  return 'дней';
-};
 
 /** Компактный виджет зарплаты в правом углу шапки.
  * У бухгалтера не показывается.
@@ -35,6 +29,7 @@ const HeaderSalaryWidget = () => {
   const [loading, setLoading] = useState(true);
   const [variki, setVariki] = useState<number | null>(null);
   const [varikiError, setVarikiError] = useState(false);
+  const [vacationText, setVacationText] = useState<string | null>(null);
   // Новичкам баланс закрыт первые две недели после регистрации — считает сервер.
   const [locked, setLocked] = useState(false);
   const [daysLeft, setDaysLeft] = useState(0);
@@ -68,6 +63,18 @@ const HeaderSalaryWidget = () => {
       .catch(() => setVarikiError(true));
   }, [showVariki, user?.id]);
 
+  // Отпуск читаем в момент открытия меню, без таймера: дни считаются от даты
+  // выхода в профиле, а идущий отпуск показывается датами с и по.
+  const loadVacation = () => {
+    if (!user?.id) return;
+    fetchVacationBoard()
+      .then((board) => {
+        const me = board.people.find((person) => person.id === user.id);
+        setVacationText(me ? vacationMenuText(me, board.today) : null);
+      })
+      .catch(() => setVacationText(null));
+  };
+
   return (
     // min-w-0 + гибкая ширина: при большом балансе виджеты ужимаются, а не
     // растягивают шапку — иначе на телефоне появлялась прокрутка всей страницы.
@@ -91,7 +98,7 @@ const HeaderSalaryWidget = () => {
           </div>
         </div>
       ) : showVariki ? (
-        <DropdownMenu>
+        <DropdownMenu onOpenChange={(open) => { if (open) loadVacation(); }}>
           <DropdownMenuTrigger asChild>
             <button
               type="button"
@@ -115,7 +122,7 @@ const HeaderSalaryWidget = () => {
               <Icon name="ChevronDown" size={14} className="shrink-0 text-muted-foreground" />
             </button>
           </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="w-56">
+          <DropdownMenuContent align="end" className="w-64">
             <DropdownMenuItem asChild>
               <Link to="/crm/variki/shop" className="flex cursor-pointer items-center gap-2">
                 <Icon name="Coins" size={16} className="shrink-0 text-amber-500" />
@@ -130,6 +137,22 @@ const HeaderSalaryWidget = () => {
                 <span className="text-xs text-muted-foreground">Тайм-кофе</span>
               </Link>
             </DropdownMenuItem>
+            {vacationText && (
+              <>
+                <DropdownMenuSeparator />
+                <DropdownMenuLabel className="font-normal">
+                  <span className="flex items-start gap-2">
+                    <Icon name="Calendar" size={16} className="mt-0.5 shrink-0 text-teal-600" />
+                    <span className="min-w-0">
+                      <span className="block text-[10px] uppercase tracking-wide text-muted-foreground">
+                        Отпуск
+                      </span>
+                      <span className="block text-sm font-semibold">{vacationText}</span>
+                    </span>
+                  </span>
+                </DropdownMenuLabel>
+              </>
+            )}
           </DropdownMenuContent>
         </DropdownMenu>
       ) : (

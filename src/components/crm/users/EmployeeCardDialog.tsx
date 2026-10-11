@@ -3,7 +3,6 @@ import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { FormSection } from '@/components/ui/form-section';
 import Icon from '@/components/ui/icon';
-import VacationSection from '@/components/crm/users/VacationSection';
 import { roleLabels, type Role } from '@/lib/roles';
 import type { Employee } from '@/lib/usersApi';
 import type { CardFormState } from '@/components/crm/users/usersShared';
@@ -13,9 +12,6 @@ import EmployeeRolesSection from '@/components/crm/users/employeeCard/EmployeeRo
 import EmployeeScheduleSection from '@/components/crm/users/employeeCard/EmployeeScheduleSection';
 import EmployeeAccessSection from '@/components/crm/users/employeeCard/EmployeeAccessSection';
 
-const VACATION_ROLES = ['sewer', 'cutter', 'packer', 'packer_returns', 'storekeeper', 'senior_storekeeper', 'cleaner'];
-
-
 interface EmployeeCardDialogProps {
   cardEmployee: Employee | null;
   cardForm: CardFormState | null;
@@ -24,6 +20,7 @@ interface EmployeeCardDialogProps {
   onClose: () => void;
   onSave: () => void;
   cardFileRef: RefObject<HTMLInputElement>;
+  hiredAtRef: RefObject<HTMLInputElement>;
   onApproveRole: (role: Role) => void;
   onAddRole: (role: Role) => void;
   onRemoveRole: (role: Role) => void;
@@ -42,6 +39,7 @@ const EmployeeCardDialog = ({
   onClose,
   onSave,
   cardFileRef,
+  hiredAtRef,
   onApproveRole,
   onAddRole,
   onRemoveRole,
@@ -76,6 +74,7 @@ const EmployeeCardDialog = ({
                 cardForm={cardForm}
                 setCardForm={setCardForm}
                 cardFileRef={cardFileRef}
+                hiredAtRef={hiredAtRef}
               />
 
               <EmployeeRolesSection
@@ -114,15 +113,11 @@ const EmployeeCardDialog = ({
                 </FormSection>
               )}
 
-              {VACATION_ROLES.includes(cardForm.role) && (
-                <FormSection title="Отпуск">
-                  <VacationSection userId={cardEmployee.id} role={cardForm.role} />
-                </FormSection>
-              )}
             </div>
 
             <div className="relative z-20 shrink-0 border-t border-border bg-background px-4 py-3">
               <Button
+                type="button"
                 onClick={onSave}
                 disabled={cardSaving}
                 className="h-11 w-full bg-emerald-600 text-white hover:bg-emerald-700 sm:h-10"

@@ -77,7 +77,9 @@ export interface Employee {
 }
 
 export const fetchEmployees = async (): Promise<Employee[]> => {
-  const res = await fetch(USERS_URL);
+  // После сохранения даты выхода список нельзя брать из кэша браузера:
+  // иначе карточка снова открывается пустой, хотя дата уже в базе.
+  const res = await fetch(USERS_URL, { cache: 'no-store' });
   const data = await res.json();
   return data.users || [];
 };
@@ -134,7 +136,11 @@ export const updateEmployee = (
     canOverlock: boolean;
     hiredAt: string | null;
   }>
-) => postAction({ action: 'update', id, ...fields });
+) =>
+  postAction({ action: 'update', id, ...fields }) as Promise<{
+    success: true;
+    hiredAt?: string | null;
+  }>;
 
 export const deleteEmployee = (id: number) => postAction({ action: 'delete', id });
 
@@ -237,7 +243,7 @@ export interface VacationBoard {
 }
 
 export const fetchVacationBoard = async (): Promise<VacationBoard> => {
-  const res = await fetch(`${USERS_URL}?vacations=1`);
+  const res = await fetch(`${USERS_URL}?vacations=1`, { cache: 'no-store' });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.error || 'Не удалось загрузить отпуска');
   return {

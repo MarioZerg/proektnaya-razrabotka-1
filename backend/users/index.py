@@ -1,4 +1,5 @@
 import base64
+import datetime
 import hashlib
 import json
 import os
@@ -25,6 +26,32 @@ KEEP_WORKSHOP_NAME = 'Цех №1'
 def public_workshop(name):
     """Второй цех закрыт: в списках и карточках показываем первый."""
     return KEEP_WORKSHOP_NAME if name in CLOSED_WORKSHOP_NAMES else name
+
+
+def parse_hired_at(value):
+    """Дата выхода на работу.
+
+    Пустая строка — стереть дату. Непустая, но не дата — None, чтобы не затирать
+    уже сохранённую: иначе карточка отвечает «сохранено», а календарь даты не видит.
+    """
+    if value is None:
+        return ''
+    text = str(value).strip()
+    if not text or text.lower() == 'null':
+        return ''
+    if 'T' in text:
+        text = text.split('T', 1)[0]
+    dotted = re.fullmatch(r'(\d{2})\.(\d{2})\.(\d{4})', text)
+    if dotted:
+        text = f'{dotted.group(3)}-{dotted.group(2)}-{dotted.group(1)}'
+    text = text[:10]
+    if not re.fullmatch(r'\d{4}-\d{2}-\d{2}', text):
+        return None
+    try:
+        datetime.date.fromisoformat(text)
+    except ValueError:
+        return None
+    return text
 
 
 # График по умолчанию для каждой должности. Цех работает сменами 2/2 по 12 часов,
@@ -571,8 +598,17 @@ def handler(event: dict, context) -> dict:
                     fields.append(f"password_hash = '{pwd_hash}'")
                     fields.append(f"password_salt = '{salt}'")
                 if 'hiredAt' in body_data:
-                    hired = (body_data.get('hiredAt') or '').strip()
-                    if hired and re.fullmatch(r'\d{4}-\d{2}-\d{2}', hired):
+                    hired = parse_hired_at(body_data.get('hiredAt'))
+                    if hired is None:
+                        return {
+                            'statusCode': 400,
+                            'headers': headers,
+                            'body': json.dumps(
+                                {'error': 'Укажите дату выхода на работу'},
+                                ensure_ascii=False,
+                            ),
+                        }
+                    if hired:
                         fields.append(f"hired_at = '{hired}'")
                     else:
                         fields.append('hired_at = NULL')
@@ -585,11 +621,20 @@ def handler(event: dict, context) -> dict:
                 if not fields:
                     return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Нет полей для обновления'})}
 
-                cur.execute(f"UPDATE users SET {', '.join(fields)} WHERE id = {int(user_id)}")
+                cur.execute(
+                    f"UPDATE users SET {', '.join(fields)} WHERE id = {int(user_id)} "
+                    "RETURNING hired_at"
+                )
+                saved = cur.fetchone()
                 enqueue_onec_entity(cur, 'employee', user_id)
                 flush_onec_outbox(cur)
                 conn.commit()
-                return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True})}
+                saved_hired = saved[0].isoformat() if saved and saved[0] else None
+                return {
+                    'statusCode': 200,
+                    'headers': headers,
+                    'body': json.dumps({'success': True, 'hiredAt': saved_hired}),
+                }
 
             if action == 'delete':
                 # Удаление сотрудника.

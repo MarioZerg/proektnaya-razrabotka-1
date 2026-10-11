@@ -20,6 +20,7 @@ interface EmployeeProfileSectionProps {
   cardForm: CardFormState;
   setCardForm: Dispatch<SetStateAction<CardFormState | null>>;
   cardFileRef: RefObject<HTMLInputElement>;
+  hiredAtRef: RefObject<HTMLInputElement>;
 }
 
 /** Профиль сотрудника: аватар, готовность документов, логин, имя и даты. */
@@ -28,6 +29,7 @@ const EmployeeProfileSection = ({
   cardForm,
   setCardForm,
   cardFileRef,
+  hiredAtRef,
 }: EmployeeProfileSectionProps) => {
   const { toast } = useToast();
 
@@ -97,10 +99,12 @@ const EmployeeProfileSection = ({
       <div className="space-y-1.5">
         <Label>Дата выхода на работу</Label>
         <Input
+          ref={hiredAtRef}
           type="date"
           className="h-11 sm:h-10"
           value={cardForm.hiredAt}
           onChange={(e) => setCardForm((f) => f && { ...f, hiredAt: e.target.value })}
+          onBlur={(e) => setCardForm((f) => f && { ...f, hiredAt: e.target.value })}
         />
         <p className="text-xs text-muted-foreground">
           Через полгода откроется отпуск: дальше каждые полгода один раз на 14 дней
