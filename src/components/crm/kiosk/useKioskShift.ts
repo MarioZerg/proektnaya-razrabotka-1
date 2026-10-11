@@ -87,7 +87,7 @@ export const useKioskShift = ({
         false,
         chosenRole ?? null
       );
-      playShiftOpenSound();
+      playShiftOpenSound(user.name);
       setShift({
         isOpen: true,
         openedAt: res.openedAt,
@@ -196,7 +196,7 @@ export const useKioskShift = ({
         role: res.role,
       });
       setScreen('menu');
-      playShiftOpenSound();
+      playShiftOpenSound(user.name);
       toast({ title: 'Должность переключена', description: 'Работа в прежней должности закрыта' });
     } catch (e) {
       playScanErrorSound();

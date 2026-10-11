@@ -121,8 +121,55 @@ export const playCancelSound = () => {
 
 // Открытие и закрытие смены на терминале цеха звучат по-разному: сотрудник понимает
 // на слух, что именно произошло, не вчитываясь в экран планшета.
+//
+// Открытие называется по имени: «Айгул, смена открыта». Общий mp3 остаётся запасом,
+// если у планшета нет русского голоса или браузер не дал говорить.
 
-export const playShiftOpenSound = () => {
+const shiftOpenPhrase = (name: string) => `${name}, смена открыта`;
+
+const russianVoice = (voices: SpeechSynthesisVoice[]) =>
+  voices.find((voice) => voice.lang.toLowerCase().startsWith('ru')) || null;
+
+const speakShiftOpen = (name: string) => {
+  const synth = window.speechSynthesis;
+  if (!synth) return false;
+  const utter = (voices: SpeechSynthesisVoice[]) => {
+    const voice = russianVoice(voices);
+    const phrase = new SpeechSynthesisUtterance(shiftOpenPhrase(name));
+    phrase.lang = 'ru-RU';
+    if (voice) phrase.voice = voice;
+    phrase.rate = 0.95;
+    phrase.onerror = () => play('/sounds/shift-open.mp3', () => beep(880, 0.16, 'sine'));
+    synth.cancel();
+    synth.resume();
+    synth.speak(phrase);
+  };
+  const voices = synth.getVoices();
+  if (voices.length) {
+    utter(voices);
+    return true;
+  }
+  let started = false;
+  const once = (list: SpeechSynthesisVoice[]) => {
+    if (started) return;
+    started = true;
+    utter(list);
+  };
+  const timer = window.setTimeout(() => once(synth.getVoices()), 300);
+  synth.addEventListener(
+    'voiceschanged',
+    () => {
+      window.clearTimeout(timer);
+      once(synth.getVoices());
+    },
+    { once: true },
+  );
+  return true;
+};
+
+export const playShiftOpenSound = (name?: string) => {
+  const spoken = (name || '').replace(/\s+/g, ' ').trim();
+  if (spoken && speakShiftOpen(spoken)) return;
   play('/sounds/shift-open.mp3', () => beep(880, 0.16, 'sine'));
 };
 
