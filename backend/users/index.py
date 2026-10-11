@@ -175,7 +175,6 @@ def handler(event: dict, context) -> dict:
         conn = psycopg2.connect(dsn)
         try:
             cur = conn.cursor()
-            vacation_mod.ensure_schema(cur)
             if str(params.get('vacations') or '') == '1':
                 payload = vacation_mod.board(cur)
                 conn.commit()
@@ -311,7 +310,6 @@ def handler(event: dict, context) -> dict:
         try:
             cur = conn.cursor()
             if action in ('vacation_book', 'vacation_cancel'):
-                vacation_mod.ensure_schema(cur)
                 is_admin = False
                 actor_id = body_data.get('userId')
                 try:
@@ -492,7 +490,6 @@ def handler(event: dict, context) -> dict:
                 return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'id': new_id, 'login': login})}
 
             if action == 'update':
-                vacation_mod.ensure_schema(cur)
                 user_id = body_data.get('id')
                 if not user_id:
                     return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите id'})}

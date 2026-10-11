@@ -13,17 +13,12 @@ PERIOD_DAYS = 14
 
 
 def ensure_schema(cur):
-    cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS hired_at date")
-    cur.execute(
-        "CREATE TABLE IF NOT EXISTS employee_vacations ("
-        "  id SERIAL PRIMARY KEY,"
-        "  user_id INTEGER NOT NULL REFERENCES users(id),"
-        "  date_from DATE NOT NULL,"
-        "  date_to DATE NOT NULL,"
-        "  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),"
-        "  CHECK (date_to >= date_from)"
-        ")"
-    )
+    """Схема (users.hired_at, employee_vacations) создана миграцией V0711.
+
+    Здесь ничего не выполняем: DDL на каждом запросе списка сотрудников
+    брал блокировку таблицы users и тратил время функции впустую.
+    """
+    return None
 
 
 def _add_months(day, months):
