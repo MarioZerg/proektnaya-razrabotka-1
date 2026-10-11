@@ -564,12 +564,12 @@ def _sewer_packed(cur, headers: dict) -> dict:
     только швеи: упаковщица ставит отметку, но штука относится к той, кто сшила.
     """
     cur.execute(
-        "SELECT (o.packed_at AT TIME ZONE 'Europe/Moscow')::date AS day, "
+        "SELECT (o.packed_at + interval '3 hours')::date AS day, "
         "o.sewer_user_id, u.full_name, COUNT(*)::int, "
         "COUNT(*) FILTER (WHERE o.order_type = 'FBS')::int "
         "FROM orders o "
         "JOIN users u ON u.id = o.sewer_user_id "
-        "WHERE o.packed_at >= (NOW() AT TIME ZONE 'Europe/Moscow')::date - INTERVAL '21 days' "
+        f"WHERE o.packed_at >= {_MSK_TODAY_START} - interval '20 days' "
         "  AND o.sewer_user_id IS NOT NULL "
         "  AND COALESCE(o.status, '') <> 'Отменён' "
         "  AND (u.role = 'sewer' OR EXISTS ("

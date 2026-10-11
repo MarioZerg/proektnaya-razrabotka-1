@@ -9,8 +9,6 @@ import {
 import { Input } from '@/components/ui/input';
 import Icon from '@/components/ui/icon';
 import { fetchSewerPackedDays, type SewerPackedDay } from '@/lib/ordersApi';
-import { fetchLogEvents, type LogStage } from '@/lib/logsApi';
-import { fetchEmployees, type Employee } from '@/lib/usersApi';
 
 const MSK = 'Europe/Moscow';
 /** Сколько последних рабочих дней берём, пока человек сам не попросит всю историю. */
@@ -33,9 +31,6 @@ interface DayRow {
   bySewer: Map<number, number>;
 }
 
-const isSewer = (employee: Employee) =>
-  employee.role === 'sewer' || employee.roles?.some((entry) => entry.role === 'sewer');
-
 const rowsFromDays = (days: SewerPackedDay[]) => {
   const names = new Map<number, string>();
   const rows: DayRow[] = days.map((day) => {
@@ -55,64 +50,20 @@ const rowsFromDays = (days: SewerPackedDay[]) => {
   return { rows, names };
 };
 
-/** Журнал читает packed_at и sewn_at из заказов целиком, без лимита списка. */
-const pullStage = async (stage: LogStage, dateFrom: string, dateTo: string) => {
-  const limit = 500;
-  const first = await fetchLogEvents({ stage, dateFrom, dateTo, limit, offset: 0 });
-  const total = first.total || first.items.length;
-  const pages = Math.min(40, Math.ceil(total / limit));
-  const rest: typeof first.items[] = [];
-  for (let start = 1; start < pages; start += 6) {
-    const chunk = await Promise.all(
-      Array.from({ length: Math.min(6, pages - start) }, (_, index) =>
-        fetchLogEvents({ stage, dateFrom, dateTo, limit, offset: (start + index) * limit }),
-      ),
-    );
-    rest.push(...chunk.map((page) => page.items));
-  }
-  return [first.items, ...rest].flat();
-};
+/**
+ * Сдача швей кэшируется на вкладку: повторное открытие окна не ходит на сервер.
+ * Через 10 минут ответ считается устаревшим и берётся заново.
+ */
+const CACHE_MS = 10 * 60 * 1000;
+let packedCache: { at: number; days: SewerPackedDay[] } | null = null;
 
-const loadPackedFromLogs = async (allowed: Set<number> | null) => {
-  const end = todayKey();
-  const packFrom = addDays(end, -13);
-  const sewFrom = addDays(end, -44);
-  const [packed, sewn] = await Promise.all([
-    pullStage('stickering', packFrom, end),
-    pullStage('sewing', sewFrom, end),
-  ]);
-  const sewerByOrder = new Map<number, { id: number; name: string }>();
-  sewn.forEach((event) => {
-    if (event.action !== 'send_to_stickering' || event.entityId == null || event.userId == null) return;
-    if (allowed && !allowed.has(event.userId)) return;
-    sewerByOrder.set(event.entityId, { id: event.userId, name: event.who });
-  });
-  const byDay = new Map<string, { fbs: number; bySewer: Map<number, number> }>();
-  const names = new Map<number, string>();
-  packed.forEach((event) => {
-    if (event.action !== 'close_order' || event.entityId == null || !event.at) return;
-    const sewer = sewerByOrder.get(event.entityId);
-    if (!sewer) return;
-    const key = dayKey(event.at);
-    const bucket = byDay.get(key) || { fbs: 0, bySewer: new Map<number, number>() };
-    bucket.bySewer.set(sewer.id, (bucket.bySewer.get(sewer.id) || 0) + 1);
-    byDay.set(key, bucket);
-    names.set(sewer.id, sewer.name);
-  });
-  const rows: DayRow[] = [...byDay.entries()]
-    .sort(([a], [b]) => a.localeCompare(b))
-    .map(([key, bucket]) => ({
-      key,
-      label: formatDay(key),
-      total: [...bucket.bySewer.values()].reduce((sum, count) => sum + count, 0),
-      fbs: bucket.fbs,
-      bySewer: bucket.bySewer,
-    }));
-  return { rows, names };
+const loadPackedDays = async () => {
+  if (packedCache && Date.now() - packedCache.at < CACHE_MS) return packedCache.days;
+  const days = await fetchSewerPackedDays();
+  if (!days) throw new Error('Сервер не отдал сдачу швей. Попробуйте позже.');
+  packedCache = { at: Date.now(), days };
+  return days;
 };
-
-const dayKey = (iso: string) =>
-  new Date(iso).toLocaleDateString('en-CA', { timeZone: MSK });
 
 const todayKey = () => new Date().toLocaleDateString('en-CA', { timeZone: MSK });
 
@@ -324,25 +275,12 @@ const ProductionCapacityDialog = ({
   useEffect(() => {
     if (!open || rows) return;
     let cancelled = false;
-    Promise.all([
-      fetchSewerPackedDays().catch(() => null),
-      fetchEmployees().catch(() => null as Employee[] | null),
-    ])
-      .then(async ([days, employees]) => {
+    loadPackedDays()
+      .then((days) => {
         if (cancelled) return;
         setError(null);
-        const roster = (employees || []).filter(isSewer);
-        const allowed = roster.length ? new Set(roster.map((employee) => employee.id)) : null;
-        const built = days ? rowsFromDays(days) : await loadPackedFromLogs(allowed);
-        if (cancelled) return;
-        setSewerNames((current) => {
-          const next = new Map(current);
-          roster.forEach((employee) => next.set(employee.id, employee.fullName));
-          built.names.forEach((name, id) => {
-            if (!next.has(id)) next.set(id, name);
-          });
-          return next;
-        });
+        const built = rowsFromDays(days);
+        setSewerNames(built.names);
         setRows(built.rows);
       })
       .catch((reason) => {
