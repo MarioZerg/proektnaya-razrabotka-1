@@ -57,6 +57,33 @@ interface PersonOnShift {
   cutter: boolean;
 }
 
+/** Журнал работы и поставки обновляем реже списка смен. */
+const WORK_REFRESH_MS = 5 * 60 * 1000;
+
+interface WorkCache {
+  at: number;
+  day: string;
+  withSupplies: boolean;
+  sewn: LogEvent[];
+  cut: LogEvent[];
+  packed: LogEvent[];
+  supplies: Supply[];
+}
+
+/** Аватарки берём один раз на вкладку: справочник сотрудников тяжёлый и меняется редко. */
+let avatarsPromise: Promise<Map<number, string | null | undefined>> | null = null;
+const loadAvatars = () => {
+  if (!avatarsPromise) {
+    avatarsPromise = fetchEmployees()
+      .then((employees) => new Map(employees.map((employee) => [employee.id, employee.avatarUrl])))
+      .catch(() => {
+        avatarsPromise = null;
+        return new Map<number, string | null | undefined>();
+      });
+  }
+  return avatarsPromise;
+};
+
 const moscowDay = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Europe/Moscow' });
 
 const dutyOf = (person: EmployeeShiftStatus) => person.sessionRole || person.role;
@@ -301,9 +328,11 @@ const ShiftAvatarRail = ({ hostRef }: { hostRef: RefObject<HTMLDivElement | null
   const [people, setPeople] = useState<PersonOnShift[]>([]);
   const [counts, setCounts] = useState<Map<number, ShiftWork> | null>(null);
 
-  const load = useCallback(() => {
-    Promise.all([fetchEmployeeShifts(), fetchEmployees().catch(() => [])]).then(async ([shifts, employees]) => {
-      const avatars = new Map(employees.map((employee) => [employee.id, employee.avatarUrl]));
+  const work = useRef<WorkCache | null>(null);
+
+  const load = useCallback(async () => {
+    try {
+      const [shifts, avatars] = await Promise.all([fetchEmployeeShifts(), loadAvatars()]);
       const open = shifts
         .filter((shift) => shift.isOpen && shift.openedAt)
         .map((shift) => {
@@ -323,22 +352,45 @@ const ShiftAvatarRail = ({ hostRef }: { hostRef: RefObject<HTMLDivElement | null
         setCounts(new Map());
         return;
       }
+      // Журнал и поставки тяжелее списка смен, поэтому берём их раз в несколько
+      // минут, а не на каждом тике. Новая смена, новый день или кладовщик,
+      // которому ещё не грузили поставки, — повод взять сразу.
       const needsSupplies = open.some((person) => isStorekeeperRole(person.role as Role));
-      const [sewn, cut, packed, assembling, shipping, finished] = await Promise.all([
-        pullToday('sewing').catch(() => [] as LogEvent[]),
-        pullToday('cutting').catch(() => [] as LogEvent[]),
-        pullToday('stickering').catch(() => [] as LogEvent[]),
-        needsSupplies ? fetchSupplies({ status: 'На сборке' }).catch(() => [] as Supply[]) : Promise.resolve([] as Supply[]),
-        needsSupplies ? fetchSupplies({ status: 'Отгрузка' }).catch(() => [] as Supply[]) : Promise.resolve([] as Supply[]),
-        needsSupplies
-          ? fetchSupplies({ status: 'Выполнена', dateFrom: moscowDay() }).catch(() => [] as Supply[])
-          : Promise.resolve([] as Supply[]),
-      ]);
-      const supplies = [...assembling, ...shipping, ...finished];
-      setCounts(new Map(open.map((person) => [person.id, workFor(person, sewn, cut, packed, supplies)])));
-    }).catch(() => {
+      const cached = work.current;
+      const stale =
+        !cached ||
+        cached.day !== moscowDay() ||
+        Date.now() - cached.at >= WORK_REFRESH_MS ||
+        (needsSupplies && !cached.withSupplies) ||
+        open.some((person) => new Date(person.openedAt).getTime() > cached.at);
+      let fresh = cached;
+      if (stale) {
+        const [sewn, cut, packed, assembling, shipping, finished] = await Promise.all([
+          pullToday('sewing').catch(() => [] as LogEvent[]),
+          pullToday('cutting').catch(() => [] as LogEvent[]),
+          pullToday('stickering').catch(() => [] as LogEvent[]),
+          needsSupplies ? fetchSupplies({ status: 'На сборке' }).catch(() => [] as Supply[]) : Promise.resolve([] as Supply[]),
+          needsSupplies ? fetchSupplies({ status: 'Отгрузка' }).catch(() => [] as Supply[]) : Promise.resolve([] as Supply[]),
+          needsSupplies
+            ? fetchSupplies({ status: 'Выполнена', dateFrom: moscowDay() }).catch(() => [] as Supply[])
+            : Promise.resolve([] as Supply[]),
+        ]);
+        fresh = {
+          at: Date.now(),
+          day: moscowDay(),
+          withSupplies: needsSupplies,
+          sewn,
+          cut,
+          packed,
+          supplies: [...assembling, ...shipping, ...finished],
+        };
+        work.current = fresh;
+      }
+      const data = fresh as WorkCache;
+      setCounts(new Map(open.map((person) => [person.id, workFor(person, data.sewn, data.cut, data.packed, data.supplies)])));
+    } catch {
       setPeople([]);
-    });
+    }
   }, []);
 
   usePolling(load, 60000);
