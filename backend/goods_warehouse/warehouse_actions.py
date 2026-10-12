@@ -179,16 +179,21 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
             # Вещи уже на полке — вдруг их ждёт незапущенный заказ. Подбор делаем после
             # того, как заведена вся партия: иначе первая же вещь ушла бы в резерв,
             # а остальные считались бы отдельно и матчинг сработал бы вразнобой.
+            # Сначала фиксируем всю партию: вещи и GW уже на складе, что бы ни
+            # случилось дальше с подбором. SAVEPOINT база проекта не поддерживает
+            # («object not found») — на нём функция падала после записи вещи, и
+            # кладовщик видел «нет ответа», хотя товар уже лежал на полке.
+            conn.commit()
+
             if status_val == 'in_stock':
                 for row in created:
                     # Подбор не должен срывать приём. Вещь уже заведена на полку:
                     # если заказ под неё не нашёлся, она остаётся на хранении.
-                    cur.execute("SAVEPOINT admin_receive_match")
                     try:
                         try_match_orders_from_stock(cur, gw_id=row['id'])
-                        cur.execute("RELEASE SAVEPOINT admin_receive_match")
+                        conn.commit()
                     except Exception:
-                        cur.execute("ROLLBACK TO SAVEPOINT admin_receive_match")
+                        conn.rollback()
 
                 # Часть вещей подбор мог тут же забрать под ожидающие заказы — они
                 # уже «На сборке», а не «На хранении». Возвращаем РЕАЛЬНЫЙ статус

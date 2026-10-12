@@ -238,7 +238,7 @@ export interface ReceivedGood {
 /** Ручная приёмка партии: quantity штук одного товара заводятся одним запросом.
  * actorId/actorName — кто принял: в истории вещи должно стоять имя реального человека,
  * а не обезличенное «админ». */
-export const adminReceiveGoods = (
+export const adminReceiveGoods = async (
   marketplaceItemId: number,
   shelfId?: number,
   quantity = 1,
@@ -255,23 +255,16 @@ export const adminReceiveGoods = (
     actorName,
     shopId,
   });
-  // Повторяем ТОЛЬКО ответ 503 «база занята»: сервер гарантирует, что в этом
-  // случае ничего не записано, и второй GW не появится. Обрыв связи не
-  // повторяем — там приём мог пройти.
-  for (let attempt = 0; ; attempt++) {
-    const res = await fetch(GOODS_WAREHOUSE_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body,
-    });
-    const data = await res.json();
-    if (res.ok) return data;
-    if (res.status === 503 && data.retryable && attempt < 3) {
-      await new Promise((r) => setTimeout(r, 800 * (attempt + 1)));
-      continue;
-    }
-    throw new Error(data.error || 'Ошибка запроса');
-  }
+  // Приём сам НЕ повторяем: база записывает вещи сразу, и при сбое на середине
+  // часть GW уже может лежать на полке. Повтор завёл бы вторые экземпляры.
+  const res = await fetch(GOODS_WAREHOUSE_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body,
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Ошибка запроса');
+  return data;
 };
 
 /**

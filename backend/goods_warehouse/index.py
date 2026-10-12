@@ -133,8 +133,9 @@ def handler(event: dict, context) -> dict:
             'statusCode': 503,
             'headers': headers,
             'body': json.dumps(
-                {'error': 'База занята, ничего не сохранено. Повторите через пару секунд',
-                 'retryable': True},
+                {'error': 'База занята. Обновите склад и проверьте, что уже записано, '
+                          'прежде чем повторять',
+                 'retryable': method == 'GET'},
                 ensure_ascii=False,
             ),
         }
