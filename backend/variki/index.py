@@ -221,7 +221,33 @@ def handler(event: dict, context) -> dict:
                 station = (row[0] if row and row[0] else '') or ''
                 if station not in RADIO_STATION_IDS:
                     station = ''
-                return _resp(200, {'stationId': station})
+                # Последний сотрудник цеха закрыл смену — радио само замолкает.
+                # Кладовщик и администратор смену цеха не держат.
+                if station:
+                    cur.execute(
+                        "SELECT 1 FROM shift_sessions s "
+                        "JOIN users u ON u.id = s.user_id "
+                        "WHERE s.closed_at IS NULL "
+                        "AND COALESCE(s.role, u.role) IN %s LIMIT 1",
+                        (PRODUCTION_ROLES,),
+                    )
+                    if not cur.fetchone():
+                        cur.execute(
+                            "UPDATE system_settings SET value = '', updated_at = now() "
+                            "WHERE key = 'tv_radio_station' AND COALESCE(value, '') <> ''"
+                        )
+                        conn.commit()
+                        station = ''
+                payload = {'stationId': station}
+                user_id = params.get('userId')
+                if str(user_id or '').isdigit():
+                    cur.execute(
+                        "SELECT 1 FROM shift_sessions "
+                        "WHERE user_id = %s AND closed_at IS NULL LIMIT 1",
+                        (int(user_id),),
+                    )
+                    payload['shiftOpen'] = cur.fetchone() is not None
+                return _resp(200, payload)
 
             if params.get('download'):
                 # Отдаём сам PDF со своего домена. Право на файл проверяем здесь:
@@ -514,6 +540,12 @@ def handler(event: dict, context) -> dict:
                 cur.execute("SELECT id FROM users WHERE id = %s", (int(user_id),))
                 if not cur.fetchone():
                     return _resp(403, {'error': 'Пользователь не найден'})
+                cur.execute(
+                    "SELECT 1 FROM shift_sessions WHERE user_id = %s AND closed_at IS NULL LIMIT 1",
+                    (int(user_id),),
+                )
+                if not cur.fetchone():
+                    return _resp(403, {'error': 'Включить волну можно только с открытой сменой'})
                 cur.execute(
                     "INSERT INTO system_settings (key, value, updated_at) "
                     "VALUES ('tv_radio_station', %s, now()) "

@@ -3,25 +3,29 @@ import { useAuth } from '@/context/AuthContext';
 import { useToast } from '@/hooks/use-toast';
 import Icon from '@/components/ui/icon';
 import { RADIO_STATIONS, radioById } from '@/lib/radioStations';
-import { fetchTvRadio, setTvRadio } from '@/lib/varikiApi';
+import { fetchTvRadioForUser, setTvRadio } from '@/lib/varikiApi';
 import RadioLogo from '@/components/crm/variki/radio/RadioLogo';
 
 /**
- * Волны для телевизора цеха. Выбор любого сотрудника включает эту станцию
- * в колонках телевизора. Склад здесь ни при чём.
+ * Волны для телевизора цеха. Включить станцию может только сотрудник
+ * с открытой сменой. Склад здесь ни при чём.
  */
 const RadioTab = () => {
   const { user } = useAuth();
   const { toast } = useToast();
   const [stationId, setStationId] = useState('');
+  const [shiftOpen, setShiftOpen] = useState(true);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
+    if (!user?.id) return;
     let stop = false;
-    fetchTvRadio()
-      .then((id) => {
-        if (!stop) setStationId(id);
+    fetchTvRadioForUser(user.id)
+      .then((data) => {
+        if (stop) return;
+        setStationId(data.stationId);
+        setShiftOpen(data.shiftOpen);
       })
       .catch(() => {
         if (!stop) {
@@ -34,7 +38,7 @@ const RadioTab = () => {
     return () => {
       stop = true;
     };
-  }, []);
+  }, [user?.id]);
 
   const choose = async (next: string) => {
     if (!user?.id || saving) return;
@@ -58,15 +62,18 @@ const RadioTab = () => {
   };
 
   const current = radioById(stationId);
+  const locked = !loading && !shiftOpen;
 
   return (
     <div className="space-y-4">
       <p className="text-sm text-muted-foreground">
-        Волна включается на телевизоре цеха, звук идёт из его колонок. Переключить может любой сотрудник.
+        {locked
+          ? 'Включить волну можно только с открытой сменой. Сначала откройте смену, потом вернитесь сюда.'
+          : 'Волна включается на телевизоре цеха, звук идёт из его колонок. Переключить может сотрудник с открытой сменой.'}
       </p>
       <button
         type="button"
-        disabled={loading || saving}
+        disabled={loading || saving || locked}
         onClick={() => choose('')}
         className={`flex w-full items-center gap-3 rounded-xl border px-4 py-3 text-left ${
           !current ? 'border-primary bg-primary/5' : 'border-border bg-card'
@@ -87,7 +94,7 @@ const RadioTab = () => {
             <button
               key={station.id}
               type="button"
-              disabled={loading || saving}
+              disabled={loading || saving || locked}
               onClick={() => choose(station.id)}
               className={`flex min-w-0 items-center gap-3 rounded-xl border px-3 py-3 text-left transition ${
                 on ? 'border-primary bg-primary/5 shadow-sm' : 'border-border bg-card hover:bg-muted/40'

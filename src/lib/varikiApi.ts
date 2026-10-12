@@ -502,6 +502,20 @@ export const deleteCertificate = (certificateId: number, actorId?: number) =>
     actorId,
   }) as Promise<{ deleted: boolean; fileName: string }>;
 
+/** Волна цеха и открыта ли смена у этого сотрудника. Телевизору смена не нужна. */
+export const fetchTvRadioForUser = async (
+  userId: number,
+): Promise<{ stationId: string; shiftOpen: boolean }> => {
+  const res = await fetch(`${VARIKI_URL}?radio=1&userId=${userId}`);
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Не удалось узнать волну');
+  return {
+    stationId: typeof data.stationId === 'string' ? data.stationId : '',
+    // Старая функция Поехали поле не присылает: тогда кнопки не запираем.
+    shiftOpen: data.shiftOpen !== false,
+  };
+};
+
 /** Какая волна сейчас включена на телевизоре цеха. Пустая строка — радио молчит. */
 export const fetchTvRadio = async (signal?: AbortSignal): Promise<string> => {
   // Телевизор обрывает запрос через 5 секунд: вместе с ним обрываются и

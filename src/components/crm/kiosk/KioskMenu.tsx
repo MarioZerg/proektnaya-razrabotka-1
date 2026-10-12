@@ -1,4 +1,6 @@
-import Icon from '@/components/ui/icon';
+import { useState } from 'react';
+import LiveCountBoard from '@/components/crm/LiveCountBoard';
+import SceneImage from '@/components/crm/SceneImage';
 import { isStorekeeperRole, type Role } from '@/lib/roles';
 
 export type KioskScreen =
@@ -33,66 +35,71 @@ interface KioskMenuProps {
   returnsPackerOnShift?: string | null;
 }
 
-const tiles: Array<{ screen: KioskScreen; label: string; icon: string; className: string }> = [
+const tiles: Array<{
+  screen: KioskScreen;
+  label: string;
+  hint: string;
+  scene: string;
+}> = [
   {
     screen: 'shift',
     label: 'Открытие / Закрытие смены',
-    icon: 'Clock',
-    className: 'bg-blue-500 hover:bg-blue-600 text-white',
+    hint: 'Пришёл — открой. Уходишь — закрой',
+    scene: 'kiosk4-shift',
   },
   {
     screen: 'orders',
     label: 'Печать заказов',
-    icon: 'Printer',
-    className: 'bg-emerald-500 hover:bg-emerald-600 text-white',
+    hint: 'Стикер на сшитую вещь',
+    scene: 'kiosk4-orders',
   },
   {
     screen: 'cutterSheet',
     label: 'Печать закройщиков',
-    icon: 'Scissors',
-    className: 'bg-indigo-600 hover:bg-indigo-700 text-white',
+    hint: 'Лист с бирками к стеку',
+    scene: 'kiosk4-cutter-sheet',
   },
   {
     screen: 'reviews',
     label: 'Отзывы',
-    icon: 'Star',
-    className: 'bg-orange-500 hover:bg-orange-600 text-white',
+    hint: 'Что написали покупатели',
+    scene: 'kiosk4-reviews',
   },
   {
     screen: 'rolls',
     label: 'Работа с рулонами',
-    icon: 'Scroll',
-    className: 'bg-amber-400 hover:bg-amber-500 text-black',
+    hint: 'Ткань на стеллаже',
+    scene: 'kiosk4-rolls',
   },
   {
     screen: 'unlabeled',
     label: 'Товар без стикера',
-    icon: 'PackageSearch',
-    className: 'bg-rose-500 hover:bg-rose-600 text-white',
+    hint: 'Найти вещь без бирки',
+    scene: 'kiosk4-unlabeled',
   },
   {
     screen: 'defect',
     label: 'Брак из рулона',
-    icon: 'PackageX',
-    className: 'bg-red-600 hover:bg-red-700 text-white',
+    hint: 'Испорченный кусок ткани',
+    scene: 'kiosk4-defect',
   },
   {
     screen: 'repack',
     label: 'Перепаковка',
-    icon: 'PackageOpen',
-    className: 'bg-violet-500 hover:bg-violet-600 text-white',
+    hint: 'Годная вещь, мятая упаковка',
+    scene: 'kiosk4-repack',
   },
   {
     screen: 'flyer',
     label: 'Стикер на листовку',
-    icon: 'Tag',
-    className: 'bg-cyan-600 hover:bg-cyan-700 text-white',
+    hint: 'Наклейка состава на вкладыш',
+    scene: 'kiosk4-flyer',
   },
   {
     screen: 'vacation',
     label: 'Отпуск',
-    icon: 'Calendar',
-    className: 'bg-teal-600 hover:bg-teal-700 text-white',
+    hint: 'Даты, когда вас не будет',
+    scene: 'kiosk4-vacation',
   },
 ];
 
@@ -152,33 +159,59 @@ const KioskMenu = ({
 
   const visibleTiles = tiles.filter((t) => !hidden.includes(t.screen));
 
-  // Плитки подстраиваются под ширину планшета сами: на узком экране идут в один
-  // столбец, на широком — в два-три. Раньше число колонок было жёстко привязано к
-  // брейкпоинтам, и на планшете в альбомной ориентации плитки получались узкими
-  // полосками, а подпись переносилась по слогам.
-  //
-  // Нажатие подсвечиваем уменьшением (active:scale): в перчатке не всегда понятно,
-  // сработало касание или нет, и сотрудник жал плитку по несколько раз.
   return (
-    <div className="grid gap-4 [grid-template-columns:repeat(auto-fit,minmax(15rem,1fr))]">
+    <div className="grid grid-cols-3 gap-2">
       {visibleTiles.map((t) => (
-        <button
+        <KioskTile
           key={t.screen}
+          label={t.label}
+          hint={t.hint}
+          scene={t.scene}
+          count={t.screen === 'repack' && repackCount > 0 ? repackCount : null}
           onClick={() => onSelect(t.screen)}
-          className={`relative flex min-h-[10rem] flex-col items-center justify-center gap-3 rounded-xl p-6 text-center transition active:scale-95 ${t.className}`}
-        >
-          {/* Счётчик работы прямо на плитке. Показываем только когда есть что делать:
-              нулевой бейдж на каждой плитке превращается в шум. */}
-          {t.screen === 'repack' && repackCount > 0 && (
-            <span className="absolute right-3 top-3 min-w-[2.75rem] rounded-full bg-white px-3 py-1 text-3xl font-bold text-violet-700 shadow">
-              {repackCount}
-            </span>
-          )}
-          <Icon name={t.icon} size={64} />
-          <span className="text-3xl font-bold leading-tight">{t.label}</span>
-        </button>
+        />
       ))}
     </div>
+  );
+};
+
+/** Плитка терминала в том же виде, что станция склада товара: сцена, название, табло. */
+const KioskTile = ({
+  label,
+  hint,
+  scene,
+  count,
+  onClick,
+}: {
+  label: string;
+  hint: string;
+  scene: string;
+  count: number | null;
+  onClick: () => void;
+}) => {
+  const [pressed, setPressed] = useState(false);
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      onPointerDown={() => setPressed(true)}
+      onPointerUp={() => setPressed(false)}
+      onPointerLeave={() => setPressed(false)}
+      className={`group flex w-full min-w-0 flex-col overflow-hidden rounded-2xl border bg-[#f7f4ee] text-left shadow-sm transition duration-200 hover:-translate-y-1 hover:shadow-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring active:translate-y-0 motion-reduce:transition-none motion-reduce:hover:translate-y-0 ${
+        pressed ? 'scale-[0.98]' : ''
+      } ${count != null ? 'border-violet-200' : 'border-border'}`}
+    >
+      <div className="relative h-24 w-full shrink-0 overflow-hidden bg-[#f4efe6] sm:h-28">
+        <SceneImage name={scene} sizes="33vw" />
+      </div>
+      <div className="flex min-w-0 flex-1 items-center gap-2 px-2.5 py-2.5">
+        <div className="min-w-0 flex-1">
+          <p className="text-sm font-bold leading-tight sm:text-base">{label}</p>
+          <p className="mt-0.5 text-xs leading-tight text-muted-foreground">{hint}</p>
+        </div>
+        {count != null && <LiveCountBoard value={count} tone="violet" />}
+      </div>
+    </button>
   );
 };
 
