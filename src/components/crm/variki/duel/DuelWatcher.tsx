@@ -1,3 +1,4 @@
+import { withNightSlowdown } from '@/lib/workingHours';
 import { useEffect, useRef, useState } from 'react';
 import { playDuelStart, playDuelWin } from '@/lib/gameSounds';
 import { Button } from '@/components/ui/button';
@@ -91,7 +92,9 @@ const DuelWatcher = ({ userId }: DuelWatcherProps) => {
         .catch(() => undefined);
     };
     tick();
-    const timer = window.setInterval(tick, liveRef.current ? 2500 : 20000);
+    // Ожидание вызова — раз в 45 секунд (ночью реже): наблюдатель открыт у каждой
+    // швеи на любой странице, и частый опрос множился на весь цех.
+    const timer = window.setInterval(tick, liveRef.current ? 2500 : withNightSlowdown(45000));
     return () => {
       stop = true;
       window.clearInterval(timer);

@@ -11,7 +11,9 @@ import {
   type StageKey,
 } from '@/components/crm/dashboard/liveFloor/liveFloorShared';
 
-const POLL_MS = 12000;
+// 20 секунд, а не 12: снимок цеха — самый тяжёлый запрос системы, а экран-ТВ
+// висит сутками. Работа в цехе идёт минутами, разницу в 8 секунд никто не видит.
+const POLL_MS = 20000;
 // Свёрнутый блок показывает только сводку — дёргать сервер каждые 12 секунд незачем.
 const POLL_COLLAPSED_MS = 60000;
 const HOUR_MS = 60 * 60 * 1000;

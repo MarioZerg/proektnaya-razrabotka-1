@@ -1,3 +1,4 @@
+import { withNightSlowdown } from '@/lib/workingHours';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import Icon from '@/components/ui/icon';
 import { buildLiveFloorView, useLiveFloorData } from '@/components/crm/dashboard/liveFloor/useLiveFloorData';
@@ -121,7 +122,9 @@ const LiderTv = () => {
         .catch(() => undefined);
     };
     tick();
-    const timer = window.setInterval(tick, duelActive ? 3000 : 10000);
+    // Пока дуэли нет — раз в 30 секунд (ночью в десять раз реже): ТВ висит сутками,
+    // и опрос раз в 10 секунд давал почти 9 тысяч вызовов в день впустую.
+    const timer = window.setInterval(tick, duelActive ? 3000 : withNightSlowdown(30000));
     return () => {
       stop = true;
       window.clearInterval(timer);

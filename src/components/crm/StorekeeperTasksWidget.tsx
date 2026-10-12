@@ -103,7 +103,7 @@ const StorekeeperTasksWidget = ({ topOffset }: { topOffset: number }) => {
     // не нагружает систему.
     const timer = window.setInterval(() => {
       if (document.visibilityState === 'visible') load();
-    }, 30000);
+    }, 60000);
     // Вернулся на вкладку — сразу освежаем: за время отсутствия он мог сделать
     // работу на терминале склада.
     const onFocus = () => load();

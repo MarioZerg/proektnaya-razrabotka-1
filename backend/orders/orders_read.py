@@ -364,6 +364,9 @@ def _maybe_sync_shift_avatars(cur, conn, people: list, max_pairs: list) -> None:
         pass
 
 
+_LIVE_FLOOR_CACHE: dict = {}
+
+
 def _handle_live_floor(cur, conn, headers: dict) -> dict:
     """ЖИВОЙ ЦЕХ для администратора: кто на смене, что у кого в руках, что только что сдвинулось.
 
@@ -655,7 +658,20 @@ def handle_get(event: dict, headers: dict, dsn: str) -> dict:
             }
 
         if params.get('liveFloor'):
-            return _handle_live_floor(cur, conn, headers)
+            # ОБЩИЙ СНИМОК ЦЕХА НА 10 СЕКУНД.
+            #
+            # Его одновременно опрашивают телевизор в цехе, главная у админов и
+            # очередь стикеровки у упаковщиц. Каждый вызов собирал снимок заново —
+            # полтора десятка запросов к базе, — и в пик база отвечала «rate limit
+            # exceeded». Тёплая копия функции отдаёт свежий снимок из памяти.
+            cached = _LIVE_FLOOR_CACHE.get('resp')
+            if cached and time.monotonic() - _LIVE_FLOOR_CACHE.get('at', 0) < 10:
+                return {**cached, 'headers': headers}
+            resp = _handle_live_floor(cur, conn, headers)
+            if resp.get('statusCode') == 200:
+                _LIVE_FLOOR_CACHE['resp'] = resp
+                _LIVE_FLOOR_CACHE['at'] = time.monotonic()
+            return resp
 
         # Сколько ещё шить каждую вещь, взятую швеёй в работу.
         #
