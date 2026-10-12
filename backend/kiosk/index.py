@@ -2,9 +2,48 @@ import json
 import os
 import re
 import secrets
+import urllib.request
 from datetime import datetime, timedelta, date
 
 import psycopg2
+
+
+def resolve_ozon_barcode(cur, barcode):
+    """Штрихкод с ярлыка OZON FBS → номер отправления (через API OZON)."""
+    barcode = (barcode or '').strip()
+    if barcode[:2].lower() == 'шш':
+        barcode = 'ii' + barcode[2:]
+    if re.fullmatch(r'(?i)ii\d{6,}', barcode):
+        barcode = 'ii' + barcode[2:]
+    elif not barcode.isdigit() or len(barcode) < 12:
+        return None
+    cur.execute(
+        "SELECT is_enabled, credentials FROM marketplace_integrations "
+        "WHERE marketplace_code = 'ozon' ORDER BY is_enabled DESC, "
+        "(credentials::text <> '{}') DESC, shop_id LIMIT 1"
+    )
+    row = cur.fetchone()
+    if not row or not row[0] or not row[1]:
+        return None
+    creds = row[1] if isinstance(row[1], dict) else json.loads(row[1])
+    client_id = (creds.get('clientId') or creds.get('client_id') or '').strip()
+    api_key = (creds.get('apiKey') or creds.get('api_key') or '').strip()
+    if not client_id or not api_key:
+        return None
+    req = urllib.request.Request(
+        'https://api-seller.ozon.ru/v2/posting/fbs/get-by-barcode',
+        method='POST',
+        data=json.dumps({'barcode': str(barcode)}).encode('utf-8'),
+    )
+    req.add_header('Client-Id', client_id)
+    req.add_header('Api-Key', api_key)
+    req.add_header('Content-Type', 'application/json')
+    try:
+        with urllib.request.urlopen(req, timeout=3) as r:
+            data = json.loads(r.read().decode('utf-8') or '{}')
+        return ((data.get('result') or {}).get('posting_number')) or None
+    except Exception:
+        return None
 
 CLOSED_WORKSHOP_NAMES = ('Цех №2', 'Тестовый цех (QA)')
 KEEP_WORKSHOP_NAME = 'Цех №1'
@@ -1989,6 +2028,31 @@ def handler(event: dict, context) -> dict:
                     "LIMIT 1"
                 )
                 sc = cur.fetchone()
+                if not sc:
+                    # На ярлыке OZON FBS крупно напечатан штрихкод OZON (длинное число
+                    # или ii…), а не номер отправления. В базе его нет — спрашиваем
+                    # номер отправления у OZON и ищем вещь уже по нему.
+                    resolved = resolve_ozon_barcode(cur, scan_code)
+                    if resolved:
+                        res_esc = resolved.replace("'", "''")
+                        code_match += (
+                            f"   OR o.ozon_posting_number = '{res_esc}' "
+                            f"   OR o.order_number = '{res_esc}' "
+                            f"   OR mr.posting_number = '{res_esc}' "
+                        )
+                        cur.execute(
+                            "SELECT gw.id, gw.status, gw.storage_barcode, o.order_number, o.product, "
+                            "o.material, o.width, o.height, mr.return_reason, mr.marketplace, "
+                            "gw.repack_workshop_id, w.name "
+                            "FROM goods_warehouse gw "
+                            "LEFT JOIN orders o ON o.id = gw.order_id "
+                            "LEFT JOIN marketplace_returns mr ON mr.goods_warehouse_id = gw.id "
+                            "LEFT JOIN workshops w ON w.id = gw.repack_workshop_id "
+                            "WHERE gw.status = 'repacking' AND " + repack_since_gw
+                            + " AND (" + code_match + ") "
+                            "LIMIT 1"
+                        )
+                        sc = cur.fetchone()
                 if not sc:
                     # Старая карточка всё ещё числится «на перепаковке», но в очередь
                     # этого месяца не входит: её завели руками до 01.09.2026.

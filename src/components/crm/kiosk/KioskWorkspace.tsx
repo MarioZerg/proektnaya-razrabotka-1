@@ -108,7 +108,9 @@ const KioskWorkspace = ({
     <div className="kiosk-root min-h-screen bg-background">
       {/* Автовыход из профиля при бездействии: предупреждение через минуту, отсчёт 30 сек.
           В режиме проверки таймер не нужен — админ может спокойно изучать экраны. */}
-      {!isPreview && <KioskIdleTimer onTimeout={onLogout} />}
+      {!isPreview && (shift?.role || user.role) !== 'packer_returns' && (
+        <KioskIdleTimer onTimeout={onLogout} />
+      )}
 
       <KioskWorkspaceAlerts
         lateInfo={lateInfo}
