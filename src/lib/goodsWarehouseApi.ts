@@ -245,8 +245,8 @@ export const adminReceiveGoods = (
   actorId?: number,
   actorName?: string,
   shopId?: number,
-) =>
-  postAction({
+): Promise<ReceivedGood & { created: ReceivedGood[]; product?: string; count: number }> => {
+  const body = JSON.stringify({
     action: 'admin_receive',
     marketplaceItemId,
     shelfId,
@@ -254,7 +254,25 @@ export const adminReceiveGoods = (
     actorId,
     actorName,
     shopId,
-  }) as Promise<ReceivedGood & { created: ReceivedGood[]; product?: string; count: number }>;
+  });
+  // Повторяем ТОЛЬКО ответ 503 «база занята»: сервер гарантирует, что в этом
+  // случае ничего не записано, и второй GW не появится. Обрыв связи не
+  // повторяем — там приём мог пройти.
+  for (let attempt = 0; ; attempt++) {
+    const res = await fetch(GOODS_WAREHOUSE_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body,
+    });
+    const data = await res.json();
+    if (res.ok) return data;
+    if (res.status === 503 && data.retryable && attempt < 3) {
+      await new Promise((r) => setTimeout(r, 800 * (attempt + 1)));
+      continue;
+    }
+    throw new Error(data.error || 'Ошибка запроса');
+  }
+};
 
 /**
  * Найти товар справочника по отсканированному FBO-стикеру.

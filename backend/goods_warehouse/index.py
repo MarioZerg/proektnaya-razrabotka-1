@@ -15,6 +15,8 @@
 import json
 import os
 
+import psycopg2
+
 from warehouse_read import handle_get
 from warehouse_actions import handle_post
 
@@ -115,10 +117,26 @@ def handler(event: dict, context) -> dict:
     headers = {'Access-Control-Allow-Origin': '*', 'Content-Type': 'application/json'}
     dsn = os.environ['DATABASE_URL']
 
-    if method == 'GET':
-        return handle_get(event, headers, dsn)
+    # База иногда отвечает «rate limit exceeded» — слишком много запросов разом
+    # (например, админ открыл панель, и она грузит десяток списков параллельно).
+    # Раньше функция падала без ответа, браузер видел обрыв без CORS и писал
+    # «Failed to fetch» / «сервер не отвечает». Транзакция при этом откатывается,
+    # ничего не записано — поэтому честно отвечаем 503, и экран может повторить.
+    try:
+        if method == 'GET':
+            return handle_get(event, headers, dsn)
 
-    if method == 'POST':
-        return handle_post(event, headers, dsn)
+        if method == 'POST':
+            return handle_post(event, headers, dsn)
+    except psycopg2.OperationalError:
+        return {
+            'statusCode': 503,
+            'headers': headers,
+            'body': json.dumps(
+                {'error': 'База занята, ничего не сохранено. Повторите через пару секунд',
+                 'retryable': True},
+                ensure_ascii=False,
+            ),
+        }
 
     return {'statusCode': 405, 'headers': headers, 'body': json.dumps({'error': 'Method not allowed'})}
