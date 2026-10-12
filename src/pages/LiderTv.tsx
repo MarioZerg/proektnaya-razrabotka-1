@@ -10,6 +10,7 @@ import LiderTvBubbles from '@/components/lider/LiderTvBubbles';
 import LiveFloorBoundary from '@/components/crm/dashboard/liveFloor/LiveFloorBoundary';
 import LiderTvDuel from '@/components/lider/LiderTvDuel';
 import LiderTvRadio from '@/components/lider/LiderTvRadio';
+import { useTvRadio } from '@/components/lider/useTvRadio';
 import { fetchTvDuel, type TvDuel } from '@/lib/varikiApi';
 import { playDuelStart, playDuelWin } from '@/lib/gameSounds';
 import { useTvCanvas } from '@/components/lider/useTvCanvas';
@@ -112,6 +113,9 @@ const LiderTv = () => {
   } = useLiveFloorData(true);
 
   const duelActive = Boolean(duel);
+  // Радио живёт выше экрана цеха: нет связи с цехом или идёт загрузка — музыка
+  // всё равно играет и не начинается заново при каждой перерисовке.
+  const radio = useTvRadio();
 
   useEffect(() => {
     let stop = false;
@@ -322,7 +326,9 @@ const LiderTv = () => {
                     )}
                   </div>
                 </TvFit>
-                <LiderTvFeed events={view.events} names={data.names} freshKeys={freshKeys} />
+                <div className={`h-full min-h-0 ${radio ? 'pb-[92px]' : ''}`}>
+                  <LiderTvFeed events={view.events} names={data.names} freshKeys={freshKeys} />
+                </div>
               </div>
             </div>
             <div
@@ -334,9 +340,9 @@ const LiderTv = () => {
                 <LiderTvBubbles active={screen === 'bubbles'} people={view.people} today={data.today || {}} />
               </LiveFloorBoundary>
             </div>
-            <LiderTvRadio />
           </div>
         )}
+        <LiderTvRadio station={radio} />
         {duel && <LiderTvDuel duel={duel} />}
       </div>
     </div>

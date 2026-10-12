@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import LiveCountBoard, { type CountTone } from '@/components/crm/LiveCountBoard';
+import SceneImage from '@/components/crm/SceneImage';
 
 type SceneKind = 'receive' | 'shelves' | 'van' | 'returns' | 'stocktake' | 'picking';
 
@@ -16,12 +17,12 @@ export interface WarehouseStation {
 }
 
 const SCENE_SRC: Record<SceneKind, string> = {
-  receive: '/warehouse-stations/station-receive-shutter.jpg',
-  shelves: '/warehouse-stations/station-shelves-coat.jpg',
-  van: '/warehouse-stations/station-van-hug-wide.jpg',
-  returns: '/warehouse-stations/station-returns-one.jpg',
-  stocktake: '/warehouse-stations/station-stocktake-coat.jpg',
-  picking: '/warehouse-stations/station-picking-wall-dash.jpg',
+  receive: 'station-receive-shutter',
+  shelves: 'station-shelves-coat',
+  van: 'station-van-hug-wide',
+  returns: 'station-returns-one',
+  stocktake: 'station-stocktake-coat',
+  picking: 'station-picking-wall-dash',
 };
 
 /** На узкой картинке кадр широкий: держим в кадре людей, а не пустой край. */
@@ -62,11 +63,7 @@ const StationCard = ({ station }: { station: WarehouseStation }) => {
       } ${station.loading ? 'cursor-wait' : 'cursor-pointer'}`}
     >
       <div className="relative h-40 w-full overflow-hidden bg-[#f4efe6] sm:aspect-video sm:h-auto">
-        <img
-          src={SCENE_SRC[station.scene]}
-          alt=""
-          className={`absolute inset-0 h-full w-full object-cover transition duration-300 group-hover:scale-105 motion-reduce:transition-none motion-reduce:group-hover:scale-100 ${SCENE_POS[station.scene]}`}
-        />
+        <SceneImage name={SCENE_SRC[station.scene]} className={SCENE_POS[station.scene]} />
       </div>
       <div className="flex min-w-0 flex-1 items-center gap-3 px-3 py-3 sm:items-start">
         <div className="min-w-0 flex-1">

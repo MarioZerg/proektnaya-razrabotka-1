@@ -22,21 +22,62 @@
       "name": "Debit without admin fails",
       "method": "POST",
       "path": "/",
-      "body": { "action": "debit", "userId": 1, "amount": 10 },
+      "body": {
+        "action": "debit",
+        "userId": 1,
+        "amount": 10
+      },
       "expectedStatus": 403
     },
     {
       "name": "Credit without admin fails",
       "method": "POST",
       "path": "/",
-      "body": { "action": "credit", "userId": 1, "amount": 10 },
+      "body": {
+        "action": "credit",
+        "userId": 1,
+        "amount": 10
+      },
       "expectedStatus": 403
     },
     {
       "name": "Unknown action fails",
       "method": "POST",
       "path": "/",
-      "body": { "action": "nope" },
+      "body": {
+        "action": "nope"
+      },
+      "expectedStatus": 400
+    },
+    {
+      "name": "Radio station current",
+      "method": "GET",
+      "path": "/?radio=1",
+      "expectedStatus": 200,
+      "expectedBody": {
+        "stationId": "string"
+      },
+      "bodyMatcher": "partial"
+    },
+    {
+      "name": "Radio unknown station rejected",
+      "method": "POST",
+      "path": "/",
+      "body": {
+        "action": "set_radio",
+        "userId": 1,
+        "stationId": "not-a-radio"
+      },
+      "expectedStatus": 400
+    },
+    {
+      "name": "Radio without user rejected",
+      "method": "POST",
+      "path": "/",
+      "body": {
+        "action": "set_radio",
+        "stationId": ""
+      },
       "expectedStatus": 400
     }
   ]

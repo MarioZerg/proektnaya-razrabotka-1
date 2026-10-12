@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import Icon from '@/components/ui/icon';
 import LiveCountBoard from '@/components/crm/LiveCountBoard';
+import SceneImage from '@/components/crm/SceneImage';
 import type { Supply, SupplyType } from '@/lib/marketplaceSuppliesApi';
 
 /**
@@ -26,7 +27,7 @@ const GROUPS: Group[] = [
     type: 'FBS',
     title: 'FBS',
     subtitle: 'Со своего склада — вещь едет клиенту',
-    image: '/warehouse-stations/supply-fbs-white-fabric.jpg',
+    image: 'supply-fbs-white-fabric',
     position: 'object-left',
     tone: 'cyan',
   },
@@ -34,7 +35,7 @@ const GROUPS: Group[] = [
     type: 'FBO',
     title: 'FBO',
     subtitle: 'Коробами на склад маркетплейса для хранения и дальнейшей продажи',
-    image: '/warehouse-stations/supply-fbo-warehouse.jpg',
+    image: 'supply-fbo-warehouse',
     position: 'object-center',
     tone: 'violet',
   },
@@ -112,10 +113,10 @@ const SupplySchemeCard = ({
       }`}
     >
       <div className="relative h-40 w-full overflow-hidden bg-[#f4efe6] sm:aspect-video sm:h-auto">
-        <img
-          src={group.image}
-          alt=""
-          className={`absolute inset-0 h-full w-full object-cover transition duration-300 group-hover:scale-105 motion-reduce:transition-none motion-reduce:group-hover:scale-100 ${group.position}`}
+        <SceneImage
+          name={group.image}
+          sizes="(min-width: 640px) 50vw, 100vw"
+          className={group.position}
         />
       </div>
       <div className="flex min-w-0 flex-1 flex-col gap-2 px-3 py-3">

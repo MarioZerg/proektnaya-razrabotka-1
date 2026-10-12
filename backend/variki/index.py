@@ -5,7 +5,6 @@ import random
 import uuid
 from datetime import date
 
-import boto3
 import psycopg2
 
 from duel import handle_duel_get, handle_duel_post
@@ -122,14 +121,22 @@ def _is_admin(cur, actor_id) -> bool:
     return bool(row and row[0] == 'admin')
 
 
-def _upload_pdf(binary: bytes, prefix: str) -> str:
-    """Кладём PDF в облако и отдаём постоянную ссылку."""
-    s3 = boto3.client(
+def _s3():
+    """Клиент хранилища. Библиотеку грузим только когда нужен файл: телевизор
+    спрашивает волну раз в 8 секунд, и холодный старт без неё короче."""
+    import boto3
+
+    return boto3.client(
         's3',
         endpoint_url='https://bucket.poehali.dev',
         aws_access_key_id=os.environ['AWS_ACCESS_KEY_ID'],
         aws_secret_access_key=os.environ['AWS_SECRET_ACCESS_KEY'],
     )
+
+
+def _upload_pdf(binary: bytes, prefix: str) -> str:
+    """Кладём PDF в облако и отдаём постоянную ссылку."""
+    s3 = _s3()
     key = f'{prefix}/{uuid.uuid4().hex}.pdf'
     s3.put_object(Bucket='files', Key=key, Body=binary, ContentType='application/pdf')
     # Возвращаем КЛЮЧ файла, а не публичную ссылку на хранилище: сертификат —
@@ -141,12 +148,7 @@ def _upload_pdf(binary: bytes, prefix: str) -> str:
 
 def _read_pdf(key: str) -> bytes:
     """Забираем PDF из хранилища по ключу, чтобы отдать его через наш домен."""
-    s3 = boto3.client(
-        's3',
-        endpoint_url='https://bucket.poehali.dev',
-        aws_access_key_id=os.environ['AWS_ACCESS_KEY_ID'],
-        aws_secret_access_key=os.environ['AWS_SECRET_ACCESS_KEY'],
-    )
+    s3 = _s3()
     return s3.get_object(Bucket='files', Key=key)['Body'].read()
 
 
@@ -874,12 +876,7 @@ def handler(event: dict, context) -> dict:
                 # ответит ошибкой, в магазине уже не останется несуществующего
                 # сертификата, который нельзя выдать.
                 try:
-                    boto3.client(
-                        's3',
-                        endpoint_url='https://bucket.poehali.dev',
-                        aws_access_key_id=os.environ['AWS_ACCESS_KEY_ID'],
-                        aws_secret_access_key=os.environ['AWS_SECRET_ACCESS_KEY'],
-                    ).delete_object(Bucket='files', Key=_storage_key(row[0]))
+                    _s3().delete_object(Bucket='files', Key=_storage_key(row[0]))
                 except Exception:
                     pass
 

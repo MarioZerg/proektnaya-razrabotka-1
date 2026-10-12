@@ -3,7 +3,6 @@ import json
 import os
 import uuid
 
-import boto3
 import psycopg2
 
 # Снимок полки — пометка «контейнер стоит здесь», не архив. Браузер уже
@@ -42,6 +41,10 @@ def _decode_jpeg(data_url):
 
 def _store_photo(binary):
     """Кладёт снимок в хранилище и возвращает адрес для карточки товара."""
+    # Хранилище нужно только при загрузке снимка. Список полок без него
+    # стартует быстрее: функция не тянет тяжёлую библиотеку на каждый холодный старт.
+    import boto3
+
     s3 = boto3.client(
         's3',
         endpoint_url='https://bucket.poehali.dev',
@@ -93,11 +96,16 @@ def handler(event: dict, context) -> dict:
         conn = psycopg2.connect(dsn)
         try:
             cur = conn.cursor()
+            # Остаток по полкам — одним проходом по складу, а не отдельным
+            # подсчётом на каждую полку. Индекс по полкам для товара на
+            # хранении — в миграции V0713.
             cur.execute(
-                "SELECT s.id, s.name, s.created_at, "
-                "(SELECT COUNT(*) FROM goods_warehouse gw WHERE gw.shelf_id = s.id AND gw.status = 'in_stock'), "
-                "s.photo_url "
-                "FROM shelves s ORDER BY s.name"
+                "SELECT s.id, s.name, s.created_at, COALESCE(c.cnt, 0), s.photo_url "
+                "FROM shelves s "
+                "LEFT JOIN (SELECT shelf_id, COUNT(*) AS cnt FROM goods_warehouse "
+                "WHERE status = 'in_stock' AND shelf_id IS NOT NULL GROUP BY shelf_id) c "
+                "ON c.shelf_id = s.id "
+                "ORDER BY s.name"
             )
             shelves = [
                 {

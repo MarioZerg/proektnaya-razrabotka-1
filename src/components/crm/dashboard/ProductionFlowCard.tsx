@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import Icon from '@/components/ui/icon';
 import LiveCountBoard from '@/components/crm/LiveCountBoard';
+import SceneImage from '@/components/crm/SceneImage';
 import type { DashboardWidgetData } from '@/components/crm/dashboard/dashboardShared';
 
 /**
@@ -11,11 +12,11 @@ import type { DashboardWidgetData } from '@/components/crm/dashboard/dashboardSh
  */
 
 const SCENES: { match: string; src: string }[] = [
-  { match: 'Новые задания', src: '/warehouse-stations/prod-new-jobs.jpg' },
-  { match: 'Раскроено', src: '/warehouse-stations/prod-cut-ready.jpg' },
-  { match: 'закрое', src: '/warehouse-stations/prod-cutting.jpg' },
-  { match: 'пошиве', src: '/warehouse-stations/prod-sewing.jpg' },
-  { match: 'стикеровк', src: '/warehouse-stations/prod-sticker.jpg' },
+  { match: 'Новые задания', src: 'prod-new-jobs' },
+  { match: 'Раскроено', src: 'prod-cut-ready' },
+  { match: 'закрое', src: 'prod-cutting' },
+  { match: 'пошиве', src: 'prod-sewing' },
+  { match: 'стикеровк', src: 'prod-sticker' },
 ];
 
 const sceneOf = (label: string) => SCENES.find((s) => label.includes(s.match))?.src;
@@ -71,11 +72,7 @@ const ProductionFlowCard = ({
 
   const picture = src && (
     <div className="prod-flow-photo relative shrink-0 overflow-hidden bg-[#f4efe6]">
-      <img
-        src={src}
-        alt=""
-        className="absolute inset-0 h-full w-full object-cover transition duration-300 group-hover:scale-105 motion-reduce:transition-none motion-reduce:group-hover:scale-100"
-      />
+      <SceneImage name={src} sizes="(min-width: 1024px) 25vw, (min-width: 640px) 50vw, 100vw" />
     </div>
   );
 

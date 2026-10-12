@@ -226,7 +226,7 @@ const DashboardWidgetsGrid = ({ widgets, loading }: DashboardWidgetsGridProps) =
                       {w.parts.map((part) => (
                         <div key={part.label} className="min-w-0">
                           <div className="text-sm font-bold tabular-nums leading-none">{part.value}</div>
-                          <div className="mt-0.5 truncate text-[10px] text-muted-foreground">{part.label}</div>
+                          <div className="mt-0.5 break-words text-[10px] leading-tight text-muted-foreground">{part.label}</div>
                         </div>
                       ))}
                     </div>

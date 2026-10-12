@@ -503,8 +503,10 @@ export const deleteCertificate = (certificateId: number, actorId?: number) =>
   }) as Promise<{ deleted: boolean; fileName: string }>;
 
 /** Какая волна сейчас включена на телевизоре цеха. Пустая строка — радио молчит. */
-export const fetchTvRadio = async (): Promise<string> => {
-  const res = await fetch(`${VARIKI_URL}?radio=1`);
+export const fetchTvRadio = async (signal?: AbortSignal): Promise<string> => {
+  // Телевизор обрывает запрос через 5 секунд: вместе с ним обрываются и
+  // повторы при перегрузке. Через 8 секунд он всё равно спросит снова.
+  const res = await fetch(`${VARIKI_URL}?radio=1`, { signal });
   const data = await res.json();
   if (!res.ok) throw new Error(data.error || 'Не удалось узнать волну');
   return typeof data.stationId === 'string' ? data.stationId : '';
