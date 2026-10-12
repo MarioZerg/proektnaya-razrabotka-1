@@ -193,18 +193,27 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                         try_match_orders_from_stock(cur, gw_id=row['id'])
                         conn.commit()
                     except Exception:
-                        conn.rollback()
+                        try:
+                            conn.rollback()
+                        except Exception:
+                            pass
 
                 # Часть вещей подбор мог тут же забрать под ожидающие заказы — они
                 # уже «На сборке», а не «На хранении». Возвращаем РЕАЛЬНЫЙ статус
                 # каждой вещи: иначе принявший видит «принято 12», открывает склад
                 # с фильтром «На хранении», находит там 8 и считает, что приёмка
                 # сработала наполовину.
+                # Вещи уже записаны. Если база сейчас перегружена и не отдаёт
+                # статусы — не падаем: иначе кладовщик видит «База занята», хотя
+                # GW уже на полке, и принимает вещь второй раз.
                 ids_csv = ','.join(str(int(r['id'])) for r in created)
-                cur.execute(
-                    f"SELECT id, status FROM goods_warehouse WHERE id IN ({ids_csv})"
-                )
-                real_status = {int(r[0]): r[1] for r in cur.fetchall()}
+                try:
+                    cur.execute(
+                        f"SELECT id, status FROM goods_warehouse WHERE id IN ({ids_csv})"
+                    )
+                    real_status = {int(r[0]): r[1] for r in cur.fetchall()}
+                except Exception:
+                    real_status = {}
                 for row in created:
                     row['status'] = real_status.get(row['id'], row['status'])
 
