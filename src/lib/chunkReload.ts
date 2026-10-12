@@ -26,12 +26,15 @@ const isChunkError = (message: string): boolean => {
     // скачался. Такие файлы лежат в /assets/ и меняют имена при каждом обновлении —
     // значит, у сотрудника открыта устаревшая версия страницы.
     (text.includes('failed to fetch') && text.includes('/assets/')) ||
-    (text.includes('unexpected token') && text.includes('<'))
+    (text.includes('unexpected token') && text.includes('<')) ||
+    // Раздел не догрузился, и вместо его кода пришла пустота — тот же случай
+    // устаревшей версии, только в другой обёртке.
+    text.includes("reading 'default'")
   );
 };
 
 /** Один раз перезагружает страницу, чтобы забрать свежую версию приложения. */
-const reloadOnce = (): boolean => {
+export const reloadOnce = (): boolean => {
   if (sessionStorage.getItem(RELOAD_FLAG)) return false;
   sessionStorage.setItem(RELOAD_FLAG, '1');
 
@@ -73,8 +76,13 @@ export const setupChunkReload = () => {
   // Vite сообщает о неудачной подгрузке части приложения отдельным событием. Без него
   // ошибка всплывала в интерфейс английским текстом («Failed to fetch dynamically
   // imported module») — сотрудник в цехе не понимал, что делать.
-  window.addEventListener('vite:preloadError', (event) => {
-    event.preventDefault();
+  //
+  // ОШИБКУ НЕ ГЛУШИМ (без preventDefault). Заглушённая, она превращала
+  // недогруженный раздел в «пустоту»: страница получала undefined вместо кода и
+  // падала с «Cannot read properties of undefined (reading 'default')» — у швей,
+  // кладовщиков и админов раз в несколько часов, после каждой выкладки. Теперь
+  // ошибка доходит до экрана «Вышла новая версия», а страница сама перезагружается.
+  window.addEventListener('vite:preloadError', () => {
     reloadOnce();
   });
 };

@@ -1,5 +1,5 @@
 import { Component, type ErrorInfo, type ReactNode } from 'react';
-import { isChunkLoadError } from '@/lib/chunkReload';
+import { isChunkLoadError, reloadOnce } from '@/lib/chunkReload';
 import { reportError } from '@/lib/errorReporter';
 
 interface Props {
@@ -26,6 +26,9 @@ class AppErrorBoundary extends Component<Props, State> {
 
   componentDidCatch(error: Error, info: ErrorInfo) {
     console.error('Сбой приложения:', error, info.componentStack);
+    // Недогруженный раздел после выкладки — одна тихая перезагрузка вместо
+    // экрана ошибки. Флаг в reloadOnce не даст странице моргать по кругу.
+    if (isChunkLoadError(error.message || '') && reloadOnce()) return;
     // Падение компонента обычные перехватчики браузера не видят, поэтому
     // записываем его отсюда — иначе самый заметный для человека сбой (белый
     // экран вместо раздела) не попал бы в журнал вообще.
