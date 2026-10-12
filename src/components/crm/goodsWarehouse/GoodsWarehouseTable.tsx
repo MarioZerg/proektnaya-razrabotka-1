@@ -4,6 +4,7 @@ import GoodsWarehouseCards from '@/components/crm/goodsWarehouse/GoodsWarehouseC
 import GoodsWarehouseTableDialogs from '@/components/crm/goodsWarehouse/GoodsWarehouseTableDialogs';
 import { useGoodsWarehouseTableActions } from '@/components/crm/goodsWarehouse/useGoodsWarehouseTableActions';
 import type { GoodsWarehouseItem } from '@/lib/goodsWarehouseApi';
+import type { Shelf } from '@/lib/shelvesApi';
 
 interface GoodsWarehouseTableProps {
   loading: boolean;
@@ -27,6 +28,7 @@ interface GoodsWarehouseTableProps {
   onTogglePick?: (id: number) => void;
   onToggleAllPicked?: () => void;
   allPicked?: boolean;
+  shelves?: Shelf[];
 }
 
 const GoodsWarehouseTable = ({
@@ -40,6 +42,7 @@ const GoodsWarehouseTable = ({
   pickMode = false,
   pickedIds = [],
   onTogglePick,
+  shelves = [],
 }: GoodsWarehouseTableProps) => {
   const a = useGoodsWarehouseTableActions({ items, onMarkLost, onDelete });
 
@@ -74,6 +77,7 @@ const GoodsWarehouseTable = ({
           onToggleSelect={a.toggleOne}
           isAdmin={isAdmin}
           onRequestDelete={a.setDeleteId}
+          shelves={shelves}
         />
       </div>
 

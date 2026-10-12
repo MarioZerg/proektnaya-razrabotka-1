@@ -132,15 +132,15 @@ const ShiftCalendarCard = ({ selectedDate, onSelectDate, days }: ShiftCalendarCa
 
         {/* Итоги месяца прямо в шапке: цифры, ради которых раньше приходилось
             перебирать дни по одному. */}
-        <div className="grid grid-cols-3 gap-2 text-center">
+        <div className="flex flex-wrap gap-2 text-center">
           {[
             { label: 'рабочих дней', value: workedDays },
             { label: 'в среднем в день', value: avgPerDay },
             { label: 'опозданий', value: totalLate },
           ].map((s) => (
-            <div key={s.label} className="rounded-md bg-muted/50 px-2 py-1.5">
+            <div key={s.label} className="min-w-[6.5rem] flex-1 rounded-md bg-muted/50 px-2 py-1.5">
               <p className="text-base font-bold leading-none tabular-nums">{s.value}</p>
-              <p className="mt-0.5 text-[10px] leading-tight text-muted-foreground">{s.label}</p>
+              <p className="mt-0.5 break-words text-[10px] leading-tight text-muted-foreground">{s.label}</p>
             </div>
           ))}
         </div>

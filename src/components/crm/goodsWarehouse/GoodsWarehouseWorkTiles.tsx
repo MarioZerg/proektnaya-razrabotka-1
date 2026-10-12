@@ -1,5 +1,7 @@
 import { useNavigate } from 'react-router-dom';
-import WorkTile from '@/components/crm/goodsWarehouse/WorkTile';
+import WarehouseLiveStations, {
+  type WarehouseStation,
+} from '@/components/crm/goodsWarehouse/WarehouseLiveStations';
 
 interface GoodsWarehouseWorkTilesProps {
   /** Отказы клиентов из цеха: вещь со стикером, но без полки. */
@@ -25,10 +27,11 @@ interface GoodsWarehouseWorkTilesProps {
 }
 
 /**
- * Работа на сейчас — плитки с числами и легенда цветов.
+ * Работа на сейчас — живые станции с цифрами.
  *
- * Кладовщик видит, сколько вещей ждёт на каждом шаге, и нажимает ту, где есть работа:
- * пустые остаются серыми и в глаза не лезут.
+ * Кладовщик видит, сколько вещей ждёт на каждом шаге, и нажимает ту, где есть работа.
+ * Станция при наведении приподнимается и сдвигается: так видно, что это кнопка,
+ * а не картинка. На телефоне станции стоят блоками друг под другом.
  */
 const GoodsWarehouseWorkTiles = ({
   pendingShelfCount,
@@ -46,14 +49,64 @@ const GoodsWarehouseWorkTiles = ({
 }: GoodsWarehouseWorkTilesProps) => {
   const navigate = useNavigate();
 
+  const stations: WarehouseStation[] = [
+    {
+      title: 'Принять осмотренные из цеха',
+      hint: 'Упаковщица уже посмотрела — можно забирать',
+      count: inspectedReady,
+      loading: queuesLoading,
+      tone: 'violet',
+      scene: 'receive',
+      onClick: onPlaceInspected,
+    },
+    {
+      title: 'Разложить по полкам',
+      hint: 'Отказы из цеха и вещи, которые уже на складе, но без полки',
+      count: pendingShelfCount,
+      loading: queuesLoading,
+      tone: 'violet',
+      scene: 'shelves',
+      onClick: onPlace,
+    },
+    {
+      title: 'Привёз с пункта выдачи',
+      count: null,
+      tone: 'violet',
+      scene: 'van',
+      onClick: onPickup,
+    },
+    {
+      title: 'Разобрать возвраты',
+      hint: 'Решить: в цех на осмотр или на полку',
+      count: pendingReturnsCount,
+      loading: queuesLoading,
+      tone: 'violet',
+      scene: 'returns',
+      onClick: () => navigate('/crm/inventory/returns-inspection?stage=fromMarketplace'),
+    },
+    {
+      title: stocktakeActive ? 'Продолжить инвентаризацию' : 'Инвентаризация',
+      hint: stocktakeActive ? 'Пересчёт уже идёт' : 'Сверить полки с системой',
+      count: stocktakeActive ? stocktakeLeft : null,
+      tone: 'violet',
+      scene: 'stocktake',
+      onClick: () => navigate('/crm/inventory/stocktakes'),
+    },
+    {
+      title: 'Товар к подбору',
+      hint:
+        pickingFbo + pickingFbs > 0
+          ? `FBS: ${pickingFbs} · FBO: ${pickingFbo}`
+          : 'Собрать с полок и наклеить стикеры',
+      count: pickingPending,
+      tone: 'cyan',
+      scene: 'picking',
+      onClick: () => navigate('/crm/inventory/goods-picking'),
+    },
+  ];
+
   return (
     <>
-      {/* Плитка «Собрать с полок» убрана: то же самое делается на странице «Товар
-          к подбору» — там список вещей с полками и сканер, который сразу печатает
-          стикер. Два входа в одну работу только заставляли кладовщика выбирать,
-          каким из них пользоваться. */}
-      {/* items-end: у плитки возвратов сверху надстроен шаг «Привёз с ПВЗ», и без
-          выравнивания по низу три плитки стояли бы на разной высоте. */}
       {/* Легенда цветов: без неё маркеры пришлось бы объяснять устно каждому новому
           сотруднику. Одна строка снимает все вопросы. */}
       <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
@@ -71,67 +124,7 @@ const GoodsWarehouseWorkTiles = ({
         </span>
       </div>
 
-      <div className="grid items-end gap-3 sm:grid-cols-2 lg:grid-cols-3">
-        {/* Приём осмотренных из цеха — шаг ПЕРЕД раскладкой: кладовщик сначала
-            забирает у упаковщицы осмотренные возвраты, и только потом разносит
-            вещи по полкам. Стрелка показывает этот порядок — раньше это были две
-            отдельные плитки, и связь между ними была неочевидна. */}
-        <WorkTile
-          icon="Boxes"
-          title="Разложить по полкам"
-          hint="Отказы из цеха и вещи, которые уже на складе, но без полки"
-          count={pendingShelfCount}
-          loading={queuesLoading}
-          zone="both"
-          onClick={onPlace}
-          stepLabel="Принять осмотренные из цеха"
-          stepIcon="Warehouse"
-          stepCount={inspectedReady}
-          onStep={onPlaceInspected}
-        />
-        {/* Возвраты от покупателей — два шага подряд, поэтому они связаны стрелкой:
-            сначала кладовщик отмечает, что привёз с пункта выдачи, и вещи встают на
-            склад; потом разбирает их — в цех на осмотр или на полку. Автоматически
-            раскладывать нельзя: среди возвратов бывают мятые и с дефектом. */}
-        <WorkTile
-          icon="Undo2"
-          title="Разобрать возвраты"
-          hint="Решить: в цех на осмотр или на полку"
-          count={pendingReturnsCount}
-          loading={queuesLoading}
-          zone="both"
-          onClick={() =>
-            navigate('/crm/inventory/returns-inspection?stage=fromMarketplace')
-          }
-          stepLabel="Привёз с пункта выдачи"
-          stepIcon="Truck"
-          onStep={onPickup}
-        />
-        {/* Инвентаризация — шаг НАД подбором: пересчёт наводит порядок на полках,
-            после него подбор идёт по верным адресам. Живёт здесь, а не в меню:
-            это работа у стеллажей, с той же страницы. */}
-        <WorkTile
-          icon="Truck"
-          title="Товар к подбору"
-          // Разбивка прямо в подсказке: FBS собирают поштучно с ярлыком на каждую
-          // вещь, FBO складывают коробкой на склад площадки. Кладовщик по этим двум
-          // числам решает, с чего начать день, не открывая страницу.
-          hint={
-            pickingFbo + pickingFbs > 0
-              ? `FBS: ${pickingFbs} · FBO: ${pickingFbo}`
-              : 'Собрать с полок и наклеить стикеры'
-          }
-          count={pickingPending}
-          zone="warehouse"
-          onClick={() => navigate('/crm/inventory/goods-picking')}
-          stepLabel={
-            stocktakeActive ? 'Продолжить инвентаризацию' : 'Инвентаризация'
-          }
-          stepIcon="ClipboardCheck"
-          stepCount={stocktakeActive ? stocktakeLeft : 0}
-          onStep={() => navigate('/crm/inventory/stocktakes')}
-        />
-      </div>
+      <WarehouseLiveStations stations={stations} />
     </>
   );
 };

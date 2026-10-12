@@ -9,6 +9,7 @@ import LiderTvFeed from '@/components/lider/LiderTvFeed';
 import LiderTvBubbles from '@/components/lider/LiderTvBubbles';
 import LiveFloorBoundary from '@/components/crm/dashboard/liveFloor/LiveFloorBoundary';
 import LiderTvDuel from '@/components/lider/LiderTvDuel';
+import LiderTvRadio from '@/components/lider/LiderTvRadio';
 import { fetchTvDuel, type TvDuel } from '@/lib/varikiApi';
 import { playDuelStart, playDuelWin } from '@/lib/gameSounds';
 import { useTvCanvas } from '@/components/lider/useTvCanvas';
@@ -333,6 +334,7 @@ const LiderTv = () => {
                 <LiderTvBubbles active={screen === 'bubbles'} people={view.people} today={data.today || {}} />
               </LiveFloorBoundary>
             </div>
+            <LiderTvRadio />
           </div>
         )}
         {duel && <LiderTvDuel duel={duel} />}

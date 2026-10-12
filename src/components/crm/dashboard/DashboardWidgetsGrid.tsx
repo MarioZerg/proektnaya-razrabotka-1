@@ -4,6 +4,7 @@ import { Card } from '@/components/ui/card';
 import Icon from '@/components/ui/icon';
 import { useAuth } from '@/context/AuthContext';
 import ProductionCapacityDialog from '@/components/crm/dashboard/ProductionCapacityDialog';
+import ProductionFlowCard from '@/components/crm/dashboard/ProductionFlowCard';
 import { WidgetRunRing } from '@/components/crm/dashboard/ShiftAvatarRail';
 import {
   STAGE_ORDER,
@@ -111,7 +112,17 @@ const DashboardWidgetsGrid = ({ widgets, loading }: DashboardWidgetsGridProps) =
   return (
     <div className="space-y-5">
       {groups.map((group) => (
-        <div key={group.key} className="space-y-2.5">
+        <div
+          key={group.key}
+          id={
+            group.key === 'production'
+              ? 'dashboard-stage-production'
+              : group.key === 'warehouse'
+                ? 'dashboard-stage-warehouse'
+                : undefined
+          }
+          className="space-y-2.5"
+        >
           {/* Заголовок этапа: видно, на каком участке пути находится показатель.
               Раньше плитки шли сплошной лентой, и «Не принятые поставки» стояли
               между пошивом и стикеровкой — нужную приходилось искать глазами. */}
@@ -133,8 +144,25 @@ const DashboardWidgetsGrid = ({ widgets, loading }: DashboardWidgetsGridProps) =
             <span className="h-px flex-1 bg-border" />
           </div>
 
-          <div className="grid grid-cols-2 gap-2 md:grid-cols-2 md:gap-3 lg:grid-cols-3 xl:grid-cols-4">
+          <div
+            className={
+              group.key === 'production'
+                ? 'grid grid-cols-1 gap-3 lg:grid-cols-2 2xl:grid-cols-3'
+                : 'grid grid-cols-2 gap-2 md:grid-cols-2 md:gap-3 lg:grid-cols-3 2xl:grid-cols-4'
+            }
+          >
             {group.items.map((w) => {
+            if (group.key === 'production') {
+              return (
+                <ProductionFlowCard
+                  key={w.label}
+                  widget={w}
+                  loading={loading}
+                  onOpen={() => navigate(w.path)}
+                  onCapacity={w.spotlight && canPlan ? () => setCapacityOpen(true) : undefined}
+                />
+              );
+            }
             const motion = tileMotion(w, loading);
             return (
               <div
@@ -204,7 +232,7 @@ const DashboardWidgetsGrid = ({ widgets, loading }: DashboardWidgetsGridProps) =
                     </div>
                   )}
                   {!w.spotlight && (
-                    <p className="mt-1.5 line-clamp-2 break-words text-xs font-semibold leading-tight">
+                    <p className="mt-1.5 break-words text-xs font-semibold leading-tight">
                       {w.shortLabel || w.label}
                     </p>
                   )}
@@ -249,9 +277,9 @@ const DashboardWidgetsGrid = ({ widgets, loading }: DashboardWidgetsGridProps) =
 
                   {!w.spotlight && (
                   <div className="relative min-w-0 space-y-1">
-                    <p className="line-clamp-2 text-sm font-semibold leading-snug">{w.label}</p>
+                    <p className="break-words text-sm font-semibold leading-snug">{w.label}</p>
                     {w.hint && (
-                      <p className="line-clamp-2 text-xs leading-snug text-muted-foreground">
+                      <p className="break-words text-xs leading-snug text-muted-foreground">
                         {w.hint}
                       </p>
                     )}

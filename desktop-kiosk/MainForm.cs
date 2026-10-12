@@ -103,7 +103,7 @@ namespace YarplanLider
             try
             {
                 var opts = new CoreWebView2EnvironmentOptions();
-                opts.AdditionalBrowserArguments = "--disk-cache-size=1";
+                opts.AdditionalBrowserArguments = "--disk-cache-size=1 --autoplay-policy=no-user-gesture-required";
                 var env = await CoreWebView2Environment.CreateAsync(null, KioskConfig.UserDataFolder(), opts);
                 await _web.EnsureCoreWebView2Async(env);
             }

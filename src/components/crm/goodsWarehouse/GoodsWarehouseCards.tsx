@@ -1,3 +1,4 @@
+import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Badge } from '@/components/ui/badge';
 import Icon from '@/components/ui/icon';
@@ -6,6 +7,8 @@ import { shortProductName } from '@/lib/shortProductName';
 import ShopBadge from '@/components/crm/ShopBadge';
 import SupplyLink from '@/components/crm/goodsWarehouse/SupplyLink';
 import type { GoodsWarehouseItem } from '@/lib/goodsWarehouseApi';
+import type { Shelf } from '@/lib/shelvesApi';
+import ShelfPhotoDialog from '@/components/crm/goodsWarehouse/ShelfPhotoDialog';
 import { useAuth } from '@/context/AuthContext';
 import { printStorageSticker } from '@/lib/printStorageSticker';
 import { printIndividualSticker } from '@/lib/printIndividualSticker';
@@ -33,6 +36,8 @@ interface GoodsWarehouseCardsProps {
   onToggleSelect?: (id: number) => void;
   isAdmin?: boolean;
   onRequestDelete?: (id: number) => void;
+  /** Справочник полок, уже загруженный со страницы. Снимок берём отсюда, без отдельного запроса на карточку. */
+  shelves?: Shelf[];
 }
 
 /** Мобильный вид склада готового товара — карточки вместо широкой таблицы,
@@ -42,6 +47,7 @@ const GoodsWarehouseCards = ({
   onMarkLost,
   isAdmin = false,
   onRequestDelete,
+  shelves = [],
 }: GoodsWarehouseCardsProps) => {
   const { user } = useAuth();
   // Печать наклеек из списка — только старшему кладовщику: см. пояснение в таблице.
@@ -56,6 +62,17 @@ const GoodsWarehouseCards = ({
   const canPrintShelfSticker = (item: GoodsWarehouseItem) =>
     canPrintStickers || item.status === 'in_stock' || item.status === 'shipped';
 
+  // Адрес снимка по id полки. Список полок приходит один раз со страницы —
+  // на каждую карточку за ним не ходим, картинку качаем только по клику.
+  const photoByShelf = useMemo(() => {
+    const map = new Map<number, string>();
+    for (const shelf of shelves) {
+      if (shelf.photoUrl) map.set(shelf.id, shelf.photoUrl);
+    }
+    return map;
+  }, [shelves]);
+  const [photo, setPhoto] = useState<{ name: string; url: string } | null>(null);
+
   return (
     <div className="flex flex-col gap-2">
       {items.map((i) => {
@@ -64,6 +81,8 @@ const GoodsWarehouseCards = ({
         const size = i.width && i.height ? `${i.width}×${i.height}` : '';
         const whNumber = i.orderNumber?.startsWith('WH-') ? i.orderNumber : null;
         const orderNumber = i.reservedOrderNumber || (whNumber ? null : i.orderNumber);
+        const shelfPhoto =
+          i.status === 'in_stock' && i.shelfId != null ? photoByShelf.get(i.shelfId) : undefined;
         return (
           <div
             key={i.id}
@@ -86,6 +105,20 @@ const GoodsWarehouseCards = ({
                 <span className="text-[11px] font-semibold leading-tight">
                   полка № {i.shelfName}
                 </span>
+              )}
+              {shelfPhoto && (
+                <button
+                  type="button"
+                  className="text-[11px] font-medium text-primary underline-offset-2 hover:underline"
+                  onClick={() =>
+                    setPhoto({
+                      name: i.shelfName || '',
+                      url: shelfPhoto,
+                    })
+                  }
+                >
+                  Посмотреть полку
+                </button>
               )}
               {i.receivedAt && (
                 <span className="whitespace-nowrap text-[11px] leading-tight text-muted-foreground">
@@ -184,6 +217,11 @@ const GoodsWarehouseCards = ({
           </div>
         );
       })}
+      <ShelfPhotoDialog
+        shelfName={photo?.name ?? null}
+        photoUrl={photo?.url ?? null}
+        onClose={() => setPhoto(null)}
+      />
     </div>
   );
 };

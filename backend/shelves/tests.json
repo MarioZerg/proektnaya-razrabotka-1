@@ -18,6 +18,13 @@
       "path": "/",
       "body": { "action": "create", "name": "A-01" },
       "expectedStatus": 403
+    },
+    {
+      "name": "Set shelf photo without storekeeper fails",
+      "method": "POST",
+      "path": "/",
+      "body": { "action": "set_photo", "id": 1, "photo": "data:image/jpeg;base64,YQ==" },
+      "expectedStatus": 403
     }
   ]
 }

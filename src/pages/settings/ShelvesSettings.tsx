@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import CrmLayout from '@/components/crm/CrmLayout';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -13,8 +13,21 @@ import {
 import Icon from '@/components/ui/icon';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/context/AuthContext';
-import { fetchShelves, createShelf, deleteShelf, renameShelf, type Shelf } from '@/lib/shelvesApi';
+import {
+  fetchShelves,
+  createShelf,
+  deleteShelf,
+  renameShelf,
+  compressShelfPhoto,
+  setShelfPhoto,
+  clearShelfPhoto,
+  type Shelf,
+} from '@/lib/shelvesApi';
 import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
+import ShelfPhotoDialog from '@/components/crm/goodsWarehouse/ShelfPhotoDialog';
+
+const canUploadShelfPhoto = (role?: string) =>
+  role === 'admin' || role === 'storekeeper' || role === 'senior_storekeeper';
 
 const ShelvesSettings = () => {
   const { toast } = useToast();
@@ -29,6 +42,11 @@ const ShelvesSettings = () => {
   // таблицы: отдельное окно ради одного поля только мешает.
   const [editId, setEditId] = useState<number | null>(null);
   const [editName, setEditName] = useState('');
+  const [view, setView] = useState<Shelf | null>(null);
+  const [uploadingId, setUploadingId] = useState<number | null>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
+  const uploadShelfId = useRef<number | null>(null);
+  const canUpload = canUploadShelfPhoto(user?.role);
 
   const load = () => {
     setLoading(true);
@@ -77,6 +95,45 @@ const ShelvesSettings = () => {
     }
   };
 
+  const pickPhoto = (id: number) => {
+    uploadShelfId.current = id;
+    if (fileRef.current) fileRef.current.value = '';
+    fileRef.current?.click();
+  };
+
+  const handlePhoto = async (file: File | undefined) => {
+    const id = uploadShelfId.current;
+    if (!file || id === null) return;
+    setUploadingId(id);
+    try {
+      const photo = await compressShelfPhoto(file);
+      const photoUrl = await setShelfPhoto(id, photo, user?.id);
+      setShelves((list) => list.map((s) => (s.id === id ? { ...s, photoUrl } : s)));
+    } catch (e) {
+      toast({
+        title: 'Не удалось сохранить фото',
+        description: e instanceof Error ? e.message : undefined,
+        variant: 'destructive',
+      });
+    } finally {
+      setUploadingId(null);
+    }
+  };
+
+  const handleClearPhoto = async (id: number) => {
+    try {
+      await clearShelfPhoto(id, user?.id);
+      setShelves((list) => list.map((s) => (s.id === id ? { ...s, photoUrl: null } : s)));
+      if (view?.id === id) setView(null);
+    } catch (e) {
+      toast({
+        title: 'Не удалось убрать фото',
+        description: e instanceof Error ? e.message : undefined,
+        variant: 'destructive',
+      });
+    }
+  };
+
   const handleDelete = async (id: number) => {
     try {
       await deleteShelf(id, user?.id);
@@ -94,9 +151,19 @@ const ShelvesSettings = () => {
           <p className="mt-1 text-sm text-muted-foreground">
             Полку при укладке система выбирает сама: однотипный товар кладёт вместе,
             ходовой — на ближние полки. На одной полке не больше 50 вещей, дальше
-            занимается следующая свободная
+            занимается следующая свободная. Фото показывает, где стоит контейнер:
+            его ставит кладовщик, и только после этого на карточке товара появляется
+            кнопка «Посмотреть полку»
           </p>
         </div>
+
+        <input
+          ref={fileRef}
+          type="file"
+          accept="image/*"
+          className="hidden"
+          onChange={(e) => handlePhoto(e.target.files?.[0])}
+        />
 
         {isAdmin && (
           <div className="flex gap-2">
@@ -164,6 +231,43 @@ const ShelvesSettings = () => {
                     </TableCell>
                     <TableCell>{s.itemsCount}</TableCell>
                     <TableCell>
+                      <div className="flex flex-wrap justify-end gap-2">
+                        {s.photoUrl && (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => setView(s)}
+                          >
+                            <Icon name="Eye" size={14} className="mr-1" />
+                            Фото
+                          </Button>
+                        )}
+                        {canUpload && (
+                          <>
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              disabled={uploadingId === s.id}
+                              onClick={() => pickPhoto(s.id)}
+                            >
+                              <Icon
+                                name={uploadingId === s.id ? 'Loader2' : 'Camera'}
+                                size={14}
+                                className={`mr-1 ${uploadingId === s.id ? 'animate-spin' : ''}`}
+                              />
+                              {s.photoUrl ? 'Заменить' : 'Добавить фото'}
+                            </Button>
+                            {s.photoUrl && (
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => handleClearPhoto(s.id)}
+                              >
+                                Убрать
+                              </Button>
+                            )}
+                          </>
+                        )}
                       {isAdmin && (
                         <div className="flex justify-end gap-2">
                           {editId === s.id ? (
@@ -198,6 +302,7 @@ const ShelvesSettings = () => {
                           </Button>
                         </div>
                       )}
+                      </div>
                     </TableCell>
                   </TableRow>
                 ))}
@@ -205,6 +310,12 @@ const ShelvesSettings = () => {
             </Table>
           </div>
         )}
+
+        <ShelfPhotoDialog
+          shelfName={view?.name ?? null}
+          photoUrl={view?.photoUrl ?? null}
+          onClose={() => setView(null)}
+        />
       </div>
     </CrmLayout>
   );

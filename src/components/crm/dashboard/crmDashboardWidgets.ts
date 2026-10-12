@@ -44,7 +44,7 @@ export const buildDashboardWidgets = ({
       path: '/crm/marketplace/sewing-items',
       stage: 'production',
       spotlight: true,
-      hint: 'Конвейер — ещё шьём. Подбор — уже с полки. Строки — FBS и FBO',
+      hint: 'Заказы приняты и ждут, когда их возьмут в работу',
       parts: undefined,
       matrix: (() => {
         const fromServer =

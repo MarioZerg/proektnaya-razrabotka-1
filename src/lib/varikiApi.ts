@@ -501,3 +501,17 @@ export const deleteCertificate = (certificateId: number, actorId?: number) =>
     certificateId,
     actorId,
   }) as Promise<{ deleted: boolean; fileName: string }>;
+
+/** Какая волна сейчас включена на телевизоре цеха. Пустая строка — радио молчит. */
+export const fetchTvRadio = async (): Promise<string> => {
+  const res = await fetch(`${VARIKI_URL}?radio=1`);
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Не удалось узнать волну');
+  return typeof data.stationId === 'string' ? data.stationId : '';
+};
+
+/** Включает волну на телевизоре. Пустой id выключает звук. */
+export const setTvRadio = async (userId: number, stationId: string): Promise<string> => {
+  const data = await postAction({ action: 'set_radio', userId, stationId });
+  return typeof data.stationId === 'string' ? data.stationId : '';
+};

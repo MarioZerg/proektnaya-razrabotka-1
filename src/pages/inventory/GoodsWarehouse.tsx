@@ -166,6 +166,7 @@ const GoodsWarehouse = () => {
           onTogglePick={s.togglePick}
           onToggleAllPicked={s.toggleAllPicked}
           allPicked={s.allPicked}
+          shelves={s.shelves}
         />
         <TablePager page={s.page} totalPages={s.totalPages} total={s.total} setPage={s.setPage} />
         </div>

@@ -136,6 +136,68 @@ html {
   }
 }
 
+/* Карточка движения производства. Раскладка смотрит на ширину самой плитки,
+   а не на окно: сайдбар съедает место, и на «среднем» экране колонка уже,
+   чем фиксированная картинка. Пока плитка узкая — сцена сверху, текст снизу.
+   Когда плитка шире 32rem, сцена встаёт слева и не выдавливает подпись. */
+.prod-flow {
+  container-type: inline-size;
+  container-name: prodflow;
+}
+.prod-flow-photo {
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  max-height: 11.5rem;
+}
+@container prodflow (min-width: 26rem) {
+  .prod-flow-photo {
+    max-height: 16rem;
+  }
+}
+/* Шапка главной. Две кнопки стоят столбиком, пока полоса узкая
+   (на телефоне и когда сайдбар съел ширину). В ряд они встают только
+   когда обе подписи помещаются в одну строку. */
+.dash-head {
+  container-type: inline-size;
+  container-name: dashhead;
+}
+.dash-head-row {
+  display: flex;
+  flex-direction: column;
+}
+.dash-head-rule {
+  height: 0.25rem;
+  width: 100%;
+  flex-shrink: 0;
+  background-image: linear-gradient(to right, #a78bfa, #f0abfc, #fbbf24);
+}
+@container dashhead (min-width: 32rem) {
+  .dash-head-row {
+    flex-direction: row;
+    align-items: stretch;
+  }
+  .dash-head-rule {
+    height: auto;
+    width: 0.25rem;
+    background-image: linear-gradient(to bottom, #a78bfa, #f0abfc, #fbbf24);
+  }
+}
+
+@container prodflow (min-width: 32rem) {
+  .prod-flow-split {
+    flex-direction: row;
+  }
+  .prod-flow-split .prod-flow-photo {
+    width: 40%;
+    max-width: 20rem;
+    min-width: 9rem;
+    max-height: none;
+    aspect-ratio: auto;
+    align-self: stretch;
+    min-height: 11rem;
+  }
+}
+
 /* БОКОВОЕ МЕНЮ.
  *
  * Пункты меню жёстко ограничены по высоте (h-8) в базовом компоненте, поэтому от

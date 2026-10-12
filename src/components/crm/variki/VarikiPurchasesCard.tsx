@@ -155,9 +155,9 @@ const VarikiPurchasesCard = () => {
         {items.map((p) => (
           <div
             key={p.id}
-            className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-violet-300 bg-violet-50 p-3"
+            className="flex flex-col gap-3 rounded-lg border border-violet-300 bg-violet-50 p-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between"
           >
-            <div className="min-w-0">
+            <div className="min-w-0 break-words">
               <p className="font-medium">
                 {p.userName || `Сотрудник #${p.userId}`} — {p.title}
               </p>
@@ -177,7 +177,7 @@ const VarikiPurchasesCard = () => {
 
               {/* Куда звонить для брони — прямо здесь, чтобы не искать подарок. */}
               {p.visitDate && (p.orgAddress || p.orgPhone) && (
-                <p className="mt-0.5 text-xs text-muted-foreground">
+                <p className="mt-0.5 break-words text-xs text-muted-foreground">
                   {[p.orgAddress, p.orgPhone].filter(Boolean).join(' · ')}
                 </p>
               )}
@@ -189,10 +189,11 @@ const VarikiPurchasesCard = () => {
               </p>
             </div>
 
-            <div className="flex shrink-0 flex-wrap items-center gap-2">
-              <Badge variant="secondary">Ждёт купон</Badge>
+            <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:flex-wrap sm:items-center">
+              <Badge variant="secondary" className="w-fit">Ждёт купон</Badge>
               <Button
                 size="sm"
+                className="w-full sm:w-auto"
                 disabled={busyId === p.id}
                 onClick={() => pickFile(p.id)}
               >
@@ -206,6 +207,7 @@ const VarikiPurchasesCard = () => {
               <Button
                 size="sm"
                 variant="outline"
+                className="w-full sm:w-auto"
                 disabled={busyId === p.id}
                 onClick={() => handleCancel(p)}
               >

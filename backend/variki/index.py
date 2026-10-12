@@ -28,6 +28,14 @@ CORS_HEADERS = {
 
 PRODUCTION_ROLES = ('sewer', 'cutter', 'packer', 'packer_returns')
 
+# Волны телевизора цеха. Список совпадает с src/lib/radioStations.ts.
+RADIO_STATION_IDS = {
+    'europaplus', 'dorozhnoe', 'rusradio', 'retro', 'avtoradio', 'record',
+    'dfm', 'hitfm', 'montecarlo', 'nashe', 'chanson', 'energy', 'love',
+    'humor', 'relax', 'mayak', 'vestifm', 'business', 'radio7', 'novoe',
+    'jazz', 'kids',
+}
+
 # Шляпы кейс бокса. Ключи совпадают с фронтом bubbleHats.tsx.
 BUBBLE_HATS = (
     ('cowboy', 'Ковбойская шляпа'),
@@ -202,6 +210,16 @@ def handler(event: dict, context) -> dict:
 
         if method == 'GET':
             params = event.get('queryStringParameters') or {}
+
+            if params.get('radio') == '1':
+                cur.execute(
+                    "SELECT value FROM system_settings WHERE key = 'tv_radio_station'"
+                )
+                row = cur.fetchone()
+                station = (row[0] if row and row[0] else '') or ''
+                if station not in RADIO_STATION_IDS:
+                    station = ''
+                return _resp(200, {'stationId': station})
 
             if params.get('download'):
                 # Отдаём сам PDF со своего домена. Право на файл проверяем здесь:
@@ -483,6 +501,25 @@ def handler(event: dict, context) -> dict:
                 else:
                     conn.commit()
                 return _resp(shaft_post[0], shaft_post[1])
+
+            if action == 'set_radio':
+                user_id = body_data.get('userId')
+                station_id = (body_data.get('stationId') or '').strip()
+                if not str(user_id or '').isdigit():
+                    return _resp(400, {'error': 'Не указан пользователь'})
+                if station_id and station_id not in RADIO_STATION_IDS:
+                    return _resp(400, {'error': 'Такой волны нет'})
+                cur.execute("SELECT id FROM users WHERE id = %s", (int(user_id),))
+                if not cur.fetchone():
+                    return _resp(403, {'error': 'Пользователь не найден'})
+                cur.execute(
+                    "INSERT INTO system_settings (key, value, updated_at) "
+                    "VALUES ('tv_radio_station', %s, now()) "
+                    "ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()",
+                    (station_id,),
+                )
+                conn.commit()
+                return _resp(200, {'stationId': station_id})
 
             if action in ('duel_challenge', 'duel_answer', 'duel_pick'):
                 duel_post = handle_duel_post(cur, action, body_data)

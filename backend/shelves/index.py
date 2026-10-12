@@ -1,16 +1,69 @@
+import base64
 import json
 import os
+import uuid
 
+import boto3
 import psycopg2
+
+# Снимок полки — пометка «контейнер стоит здесь», не архив. Браузер уже
+# сжимает кадр, а сервер не принимает то, что всё равно не влезет в вызов.
+PHOTO_MAX_BYTES = 1_200_000
+PHOTO_ROLES = ('admin', 'storekeeper', 'senior_storekeeper')
+
+
+def _role(cur, actor_id):
+    if not actor_id:
+        return None
+    cur.execute("SELECT role FROM users WHERE id = %s", (int(actor_id),))
+    row = cur.fetchone()
+    return row[0] if row else None
+
+
+def _decode_jpeg(data_url):
+    """Проверяет снимок и возвращает (байты, текст ошибки)."""
+    if not isinstance(data_url, str) or not data_url.startswith('data:image/jpeg'):
+        return None, 'Это не фото — выберите снимок полки'
+    _, _, data = data_url.partition(',')
+    if not data:
+        return None, 'Пустое фото'
+    # Размер по длине base64, без декодирования: большой мусор не должен
+    # сначала занять память, а потом получить отказ.
+    if len(data) * 3 // 4 > PHOTO_MAX_BYTES:
+        return None, 'Фото слишком большое — снимите ещё раз'
+    try:
+        binary = base64.b64decode(data, validate=True)
+    except (ValueError, TypeError):
+        return None, 'Файл повреждён — попробуйте другое фото'
+    if not binary:
+        return None, 'Пустое фото'
+    return binary, None
+
+
+def _store_photo(binary):
+    """Кладёт снимок в хранилище и возвращает адрес для карточки товара."""
+    s3 = boto3.client(
+        's3',
+        endpoint_url='https://bucket.poehali.dev',
+        aws_access_key_id=os.environ['AWS_ACCESS_KEY_ID'],
+        aws_secret_access_key=os.environ['AWS_SECRET_ACCESS_KEY'],
+    )
+    key = f'shelves/{uuid.uuid4().hex}.jpg'
+    s3.put_object(Bucket='files', Key=key, Body=binary, ContentType='image/jpeg')
+    project = os.environ['AWS_ACCESS_KEY_ID']
+    return f'https://cdn.poehali.dev/projects/{project}/bucket/{key}'
 
 
 def handler(event: dict, context) -> dict:
     """Справочник полок на складе готового товара.
 
-    GET  /                  - список полок
+    GET  /                  - список полок (у полки со снимком есть photoUrl)
     POST /  { action: 'create', name }
     POST /  { action: 'delete', id }
         - запрещено, если на полке есть товар
+    POST /  { action: 'set_photo', id, photo, actorId }
+        - снимок, где стоит контейнер. Картинка в хранилище, в базе только адрес
+    POST /  { action: 'clear_photo', id, actorId }
 
     Args:
         event: dict с httpMethod, body
@@ -42,11 +95,20 @@ def handler(event: dict, context) -> dict:
             cur = conn.cursor()
             cur.execute(
                 "SELECT s.id, s.name, s.created_at, "
-                "(SELECT COUNT(*) FROM goods_warehouse gw WHERE gw.shelf_id = s.id AND gw.status = 'in_stock') "
+                "(SELECT COUNT(*) FROM goods_warehouse gw WHERE gw.shelf_id = s.id AND gw.status = 'in_stock'), "
+                "s.photo_url "
                 "FROM shelves s ORDER BY s.name"
             )
             shelves = [
-                {'id': r[0], 'name': r[1], 'createdAt': r[2].isoformat() + 'Z', 'itemsCount': r[3]}
+                {
+                    'id': r[0],
+                    'name': r[1],
+                    'createdAt': r[2].isoformat() + 'Z',
+                    'itemsCount': r[3],
+                    # Пустой адрес не шлём: у большинства полок снимка нет,
+                    # а список и так запрашивают вместе со складом.
+                    **({'photoUrl': r[4]} if r[4] else {}),
+                }
                 for r in cur.fetchall()
             ]
         finally:
@@ -119,6 +181,42 @@ def handler(event: dict, context) -> dict:
                 cur.execute(f"DELETE FROM shelves WHERE id = {int(item_id)}")
                 conn.commit()
                 return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True})}
+
+            # Снимок полки ставит кладовщик: он стоит у стеллажа. Админ тоже
+            # может. Остальным ролям это не нужно — они товар не раскладывают.
+            if action in ('set_photo', 'clear_photo'):
+                if _role(cur, body_data.get('actorId')) not in PHOTO_ROLES:
+                    return {
+                        'statusCode': 403,
+                        'headers': headers,
+                        'body': json.dumps({'error': 'Фото полки ставит кладовщик'}),
+                    }
+                item_id = body_data.get('id')
+                if not item_id:
+                    return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите полку'})}
+                cur.execute("SELECT id FROM shelves WHERE id = %s", (int(item_id),))
+                if not cur.fetchone():
+                    return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': 'Полка не найдена'})}
+
+                if action == 'clear_photo':
+                    cur.execute("UPDATE shelves SET photo_url = NULL WHERE id = %s", (int(item_id),))
+                    conn.commit()
+                    return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True})}
+
+                binary, photo_error = _decode_jpeg(body_data.get('photo'))
+                if photo_error:
+                    return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': photo_error})}
+                photo_url = _store_photo(binary)
+                cur.execute(
+                    "UPDATE shelves SET photo_url = %s WHERE id = %s",
+                    (photo_url, int(item_id)),
+                )
+                conn.commit()
+                return {
+                    'statusCode': 200,
+                    'headers': headers,
+                    'body': json.dumps({'success': True, 'photoUrl': photo_url}),
+                }
 
             return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Неизвестное действие'})}
         finally:
