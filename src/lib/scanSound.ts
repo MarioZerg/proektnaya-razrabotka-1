@@ -122,55 +122,63 @@ export const playCancelSound = () => {
 // Открытие и закрытие смены на терминале цеха звучат по-разному: сотрудник понимает
 // на слух, что именно произошло, не вчитываясь в экран планшета.
 //
-// Открытие называется по имени: «Айгул, смена открыта». Общий mp3 остаётся запасом,
-// если у планшета нет русского голоса или браузер не дал говорить.
+// Открытие называется по имени: «Айгул, смена открыта». Список голосов браузер
+// отдаёт не сразу, и пока русского голоса нет, речь молча «успевает» — тогда
+// играет прежняя запись, а не тишина.
 
 const shiftOpenPhrase = (name: string) => `${name}, смена открыта`;
 
+const playShiftOpenFile = () => {
+  play('/sounds/shift-open.mp3', () => beep(880, 0.16, 'sine'));
+};
+
 const russianVoice = (voices: SpeechSynthesisVoice[]) =>
-  voices.find((voice) => voice.lang.toLowerCase().startsWith('ru')) || null;
+  voices.find((voice) => voice.lang.toLowerCase().startsWith('ru') && voice.localService) ||
+  voices.find((voice) => voice.lang.toLowerCase().startsWith('ru')) ||
+  null;
+
+let cachedRussianVoice: SpeechSynthesisVoice | null = null;
+
+const rememberRussianVoice = () => {
+  const synth = window.speechSynthesis;
+  if (!synth) return;
+  cachedRussianVoice = russianVoice(synth.getVoices());
+};
+
+if (typeof window !== 'undefined' && window.speechSynthesis) {
+  rememberRussianVoice();
+  window.speechSynthesis.addEventListener('voiceschanged', rememberRussianVoice);
+}
 
 const speakShiftOpen = (name: string) => {
   const synth = window.speechSynthesis;
   if (!synth) return false;
-  const utter = (voices: SpeechSynthesisVoice[]) => {
-    const voice = russianVoice(voices);
-    const phrase = new SpeechSynthesisUtterance(shiftOpenPhrase(name));
-    phrase.lang = 'ru-RU';
-    if (voice) phrase.voice = voice;
-    phrase.rate = 0.95;
-    phrase.onerror = () => play('/sounds/shift-open.mp3', () => beep(880, 0.16, 'sine'));
-    synth.cancel();
+  rememberRussianVoice();
+  const voice = cachedRussianVoice;
+  if (!voice) return false;
+  const phrase = new SpeechSynthesisUtterance(shiftOpenPhrase(name));
+  phrase.lang = 'ru-RU';
+  phrase.voice = voice;
+  phrase.rate = 0.95;
+  phrase.onerror = () => playShiftOpenFile();
+  // cancel() в том же тике, что и speak(), в Chrome глушит фразу целиком.
+  if (!synth.speaking && !synth.pending) {
     synth.resume();
     synth.speak(phrase);
-  };
-  const voices = synth.getVoices();
-  if (voices.length) {
-    utter(voices);
     return true;
   }
-  let started = false;
-  const once = (list: SpeechSynthesisVoice[]) => {
-    if (started) return;
-    started = true;
-    utter(list);
-  };
-  const timer = window.setTimeout(() => once(synth.getVoices()), 300);
-  synth.addEventListener(
-    'voiceschanged',
-    () => {
-      window.clearTimeout(timer);
-      once(synth.getVoices());
-    },
-    { once: true },
-  );
+  synth.cancel();
+  window.setTimeout(() => {
+    synth.resume();
+    synth.speak(phrase);
+  }, 60);
   return true;
 };
 
 export const playShiftOpenSound = (name?: string) => {
   const spoken = (name || '').replace(/\s+/g, ' ').trim();
   if (spoken && speakShiftOpen(spoken)) return;
-  play('/sounds/shift-open.mp3', () => beep(880, 0.16, 'sine'));
+  playShiftOpenFile();
 };
 
 export const playShiftCloseSound = () => {

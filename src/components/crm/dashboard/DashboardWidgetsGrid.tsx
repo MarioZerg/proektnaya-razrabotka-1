@@ -1,10 +1,10 @@
-import { useRef, useState } from 'react';
+import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Card } from '@/components/ui/card';
 import Icon from '@/components/ui/icon';
 import { useAuth } from '@/context/AuthContext';
 import ProductionCapacityDialog from '@/components/crm/dashboard/ProductionCapacityDialog';
-import ShiftAvatarRail, { WidgetRunRing } from '@/components/crm/dashboard/ShiftAvatarRail';
+import { WidgetRunRing } from '@/components/crm/dashboard/ShiftAvatarRail';
 import {
   STAGE_ORDER,
   productionOrder,
@@ -90,7 +90,6 @@ const tileMotion = (w: DashboardWidgetData, loading: boolean) => {
 const DashboardWidgetsGrid = ({ widgets, loading }: DashboardWidgetsGridProps) => {
   const navigate = useNavigate();
   const { user } = useAuth();
-  const spotlightRef = useRef<HTMLDivElement>(null);
   const [capacityOpen, setCapacityOpen] = useState(false);
   const canPlan = user?.role === 'admin' || user?.role === 'manager';
   const spotlight = widgets.find((widget) => widget.spotlight);
@@ -140,11 +139,9 @@ const DashboardWidgetsGrid = ({ widgets, loading }: DashboardWidgetsGridProps) =
             return (
               <div
                 key={w.label}
-                ref={w.spotlight ? spotlightRef : undefined}
                 className={`relative min-w-0 ${w.spotlight ? 'col-span-full rounded-xl p-[2px]' : 'h-full'}`}
               >
                 {w.spotlight && <WidgetRunRing />}
-                {w.spotlight && <ShiftAvatarRail hostRef={spotlightRef} />}
               <Card
                 onClick={w.spotlight ? undefined : () => navigate(w.path)}
                 className={`group relative min-w-0 overflow-hidden border p-2.5 transition-all hover:shadow-md md:p-4 ${
