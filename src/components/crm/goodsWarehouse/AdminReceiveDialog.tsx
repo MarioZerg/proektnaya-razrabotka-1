@@ -207,7 +207,10 @@ const AdminReceiveDialog = ({ open, onOpenChange, shelves, onDone }: AdminReceiv
             });
           });
         } catch (e) {
-          const text = e instanceof Error ? e.message : 'Не удалось добавить';
+          const raw = e instanceof Error ? e.message : '';
+          const text = raw === 'Failed to fetch'
+            ? 'Нет ответа от сервера. Приём этой позиции не завершился — проверьте склад и повторите'
+            : (raw || 'Не удалось добавить');
           errors.push(`${group.hit.name}: ${text}`);
         }
       }

@@ -181,7 +181,12 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
             # а остальные считались бы отдельно и матчинг сработал бы вразнобой.
             if status_val == 'in_stock':
                 for row in created:
-                    try_match_orders_from_stock(cur, gw_id=row['id'])
+                    # Подбор не должен срывать приём. Вещь уже заведена на полку:
+                    # если заказ под неё не нашёлся, она остаётся на хранении.
+                    try:
+                        try_match_orders_from_stock(cur, gw_id=row['id'])
+                    except Exception:
+                        pass
 
                 # Часть вещей подбор мог тут же забрать под ожидающие заказы — они
                 # уже «На сборке», а не «На хранении». Возвращаем РЕАЛЬНЫЙ статус

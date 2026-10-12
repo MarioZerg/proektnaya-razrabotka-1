@@ -1,5 +1,8 @@
+import { useState } from 'react';
+import Icon from '@/components/ui/icon';
 import { formatQuantity } from '@/lib/formatQuantity';
 import { getStockLevel, stockCellClass } from '@/lib/stockLevels';
+import WorkshopMaterialRolls from '@/components/crm/workshopMaterials/WorkshopMaterialRolls';
 import type {
   WorkshopMaterialColumn,
   WorkshopMaterialRow,
@@ -29,7 +32,10 @@ const WorkshopMaterialsCards = ({
   showTotal,
   isActiveColumn,
   totalFor,
-}: WorkshopMaterialsCardsProps) => (
+}: WorkshopMaterialsCardsProps) => {
+  const [openId, setOpenId] = useState<number | null>(null);
+
+  return (
   <div className="space-y-4">
     {types.map((type) => (
       <div key={type.id} className="min-w-0 overflow-hidden rounded-md border border-border">
@@ -43,9 +49,22 @@ const WorkshopMaterialsCards = ({
             const cells = visibleColumns.length + (showTotal ? 1 : 0);
             return (
               <div key={m.materialId} className="px-3 py-2.5">
-                <div className="min-w-0 break-words text-sm font-medium leading-snug">
-                  {m.materialName}
-                </div>
+                <button
+                  type="button"
+                  onClick={() => setOpenId((id) => (id === m.materialId ? null : m.materialId))}
+                  className="flex w-full min-w-0 items-center gap-1.5 text-left"
+                >
+                  <Icon
+                    name="ChevronRight"
+                    size={14}
+                    className={`shrink-0 text-muted-foreground transition-transform ${
+                      openId === m.materialId ? 'rotate-90' : ''
+                    }`}
+                  />
+                  <span className="min-w-0 break-words text-sm font-medium leading-snug">
+                    {m.materialName}
+                  </span>
+                </button>
                 <div
                   className={`mt-2 grid gap-1.5 ${
                     cells <= 1
@@ -104,6 +123,14 @@ const WorkshopMaterialsCards = ({
                     </div>
                   )}
                 </div>
+                {openId === m.materialId && (
+                  <WorkshopMaterialRolls
+                    material={m}
+                    typeName={type.name}
+                    columns={visibleColumns}
+                    showWorkshopName={showWorkshopName}
+                  />
+                )}
               </div>
             );
           })}
@@ -111,6 +138,7 @@ const WorkshopMaterialsCards = ({
       </div>
     ))}
   </div>
-);
+  );
+};
 
 export default WorkshopMaterialsCards;

@@ -641,9 +641,14 @@ def try_match_orders_from_stock(cur, gw_id=None):
             # различает вещи именно по ним, а не по коду справочника: код заполнен не у
             # всех вещей, и раньше такой товар автоподбор не видел вовсе.
             f"AND product IN ({names_csv}) "
-            "ORDER BY (order_type = 'FBS') DESC, created_at ASC, id ASC "
-            "FOR UPDATE SKIP LOCKED"
-        )
+        "ORDER BY (order_type = 'FBS') DESC, created_at ASC, id ASC "
+        "FOR UPDATE SKIP LOCKED"
+        # Одна только что принятая вещь закрывает один заказ. Без предела
+        # запрос блокирует все ожидающие заказы этого размера — у ходового
+        # «Шифон 300x240» их сотни, функция не успевает ответить, и браузер
+        # кладовщика показывает «Failed to fetch», хотя вещь уже почти принята.
+        + (" LIMIT 1" if gw_id else "")
+    )
         for order_id, order_product in cur.fetchall():
             pool = by_product.get(order_product)
             if not pool:
