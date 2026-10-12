@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/context/AuthContext';
 import { isStorekeeperRole } from '@/lib/roles';
@@ -136,12 +136,14 @@ export const useGoodsWarehouseState = () => {
 
   const loadQueues = () => {
     setQueuesError(null);
-    Promise.all([
-      fetchGoodsWarehouse({ status: 'awaiting_shelf' }),
-      fetchGoodsWarehouse({ status: 'mp_return' }),
-      fetchGoodsWarehouse({ status: 'in_stock', noShelf: true }),
-    ])
-      .then(([shelf, returns, stock]) => {
+    // Одна выборка вместо трёх: после каждого действия кладовщика страница
+    // слала пачку запросов разом, и база отвечала «занята» — в том числе
+    // ручному приёму, который шёл в ту же секунду.
+    fetchGoodsWarehouse({ queues: true })
+      .then((all) => {
+        const shelf = all.filter((i) => i.status === 'awaiting_shelf');
+        const returns = all.filter((i) => i.status === 'mp_return');
+        const stock = all.filter((i) => i.status === 'in_stock');
         // FRONTEND-ONLY: в очередь «разложить» берём только вещи со стикером хранения.
         // POEHALI уже отдаёт storageLabeledAt, отдельного фильтра в функции нет —
         // не заводить action «pending_labeled», это отбор на клиенте.
@@ -159,18 +161,27 @@ export const useGoodsWarehouseState = () => {
       });
   };
 
-  const load = () => {
-    setLoading(true);
-    // Товар попадает на склад только по сканированию стикера хранения — вручную выбрать
-    // заказ и «положить» его на полку нельзя, поэтому список заказов здесь больше не нужен.
-    // Полки грузим отдельно от товара: если связь моргнула и справочник не дошёл,
-    // склад всё равно покажется. Раньше один сбой оставлял страницу пустой.
+  // Справочник полок почти не меняется — грузим при входе на страницу, а не
+  // после каждого действия. Пустой — пробуем ещё раз при следующей загрузке.
+  const shelvesLoaded = useRef(false);
+  const loadShelves = () => {
+    if (shelvesLoaded.current) return;
     fetchShelves()
-      .then(setShelves)
+      .then((list) => {
+        shelvesLoaded.current = true;
+        setShelves(list);
+      })
       .catch(() => {
         // FRONTEND-ONLY: справочник полок не критичен для списка вещей.
-        // Пустой select хуже, чем пропажа всей таблицы — таблицу не трогаем.
       });
+  };
+
+  /** Таймер отложенной перезагрузки: несколько действий подряд — одна перезагрузка. */
+  const reloadTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const load = () => {
+    setLoading(true);
+    loadShelves();
     // Очереди на плитках перечитываем вместе с таблицей: кладовщик разложил вещь —
     // счётчик должен упасть сразу, не дожидаясь перезахода на страницу.
     loadQueues();
@@ -209,6 +220,27 @@ export const useGoodsWarehouseState = () => {
       })
       .finally(() => setLoading(false));
   };
+
+  // Перезагрузка ПОСЛЕ ДЕЙСТВИЯ — с паузой и одной пачкой.
+  //
+  // Окна склада (приём, укладка, перенос) по завершении зовут перезагрузку.
+  // Раньше она стартовала в ту же миллисекунду, пока база ещё дописывала
+  // приём, и несколько действий подряд давали несколько пачек запросов.
+  // Теперь ждём полторы секунды: подряд идущие действия сливаются в одну.
+  const reloadAfterAction = () => {
+    if (reloadTimer.current) clearTimeout(reloadTimer.current);
+    reloadTimer.current = setTimeout(() => {
+      reloadTimer.current = null;
+      load();
+    }, 1500);
+  };
+
+  useEffect(
+    () => () => {
+      if (reloadTimer.current) clearTimeout(reloadTimer.current);
+    },
+    [],
+  );
 
   // Перезагружаем список при смене статуса и при поиске. Поиск ждёт паузы в
   // наборе: иначе каждая буква уходила бы в базу отдельным запросом.
@@ -458,7 +490,7 @@ export const useGoodsWarehouseState = () => {
     try {
       await returnGoodsToWorkshop(id, user?.id, user?.name);
       toast({ title: 'Товар возвращён в цех' });
-      load();
+      reloadAfterAction();
     } catch (e) {
       toast({ title: 'Ошибка', description: e instanceof Error ? e.message : undefined, variant: 'destructive' });
     }
@@ -468,7 +500,7 @@ export const useGoodsWarehouseState = () => {
     try {
       await markGoodsLost(id, reason);
       toast({ title: 'Товар отмечен утерянным' });
-      load();
+      reloadAfterAction();
     } catch (e) {
       toast({ title: 'Ошибка', description: e instanceof Error ? e.message : undefined, variant: 'destructive' });
     }
@@ -480,7 +512,7 @@ export const useGoodsWarehouseState = () => {
     try {
       await deleteGoods(id, user?.id, user?.name);
       toast({ title: 'Товар удалён со склада' });
-      load();
+      reloadAfterAction();
     } catch (e) {
       toast({
         title: 'Не удалось удалить',
@@ -527,6 +559,7 @@ export const useGoodsWarehouseState = () => {
     stocktakeActive,
     loadStocktake,
     load,
+    reloadAfterAction,
     loadQueues,
     loadInspectedReady,
     uncheckedReturns,

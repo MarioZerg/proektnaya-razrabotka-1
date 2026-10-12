@@ -1445,6 +1445,22 @@ def handle_get(event: dict, headers: dict, dsn: str) -> dict:
             return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'item': item})}
 
         conditions = []
+        # ВСЕ ТРИ ОЧЕРЕДИ ПЛИТОК — ОДНИМ ЗАПРОСОМ.
+        #
+        # Плитки склада («забрать из цеха», «разобрать возвраты», «без полки»)
+        # раньше грузились тремя отдельными вызовами — и так после КАЖДОГО
+        # действия кладовщика. Вместе со списком и полками это пачка запросов
+        # в одну секунду, база отвечала «rate limit exceeded», и ручной приём
+        # ловил «База занята». Теперь одна выборка, разбор по статусу — в браузере.
+        if params.get('queues'):
+            conditions.append(
+                "(gw.status = 'awaiting_shelf' "
+                " OR (gw.status = 'mp_return' AND gw.received_at >= "
+                "     (now() + interval '3 hours')::date - interval '1 day') "
+                " OR (gw.status = 'in_stock' AND gw.shelf_id IS NULL))"
+            )
+            status = None
+            search = ''
         if status:
             # Можно перечислить несколько статусов через запятую:
             # ?status=picking,awaiting_supply.

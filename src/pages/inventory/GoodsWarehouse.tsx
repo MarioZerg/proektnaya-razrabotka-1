@@ -86,7 +86,7 @@ const GoodsWarehouse = () => {
           setAdminReceiveOpen={s.setAdminReceiveOpen}
           reprintOpen={s.reprintOpen}
           setReprintOpen={s.setReprintOpen}
-          load={s.load}
+          load={s.reloadAfterAction}
           loadInspectedReady={s.loadInspectedReady}
         />
         )}

@@ -177,6 +177,8 @@ export interface GoodsWarehouseFilters {
   noShelf?: boolean;
   /** Поиск по стикеру, номеру заказа, названию и материалу — идёт в базу. */
   search?: string;
+  /** Три очереди плиток одним запросом: awaiting_shelf, свежие mp_return, in_stock без полки. */
+  queues?: boolean;
 }
 
 export const fetchGoodsWarehouse = async (
@@ -191,6 +193,7 @@ export const fetchGoodsWarehouse = async (
   if (f.shelfId) params.set('shelf_id', String(f.shelfId));
   if (f.noShelf) params.set('no_shelf', '1');
   if (f.search) params.set('search', f.search);
+  if (f.queues) params.set('queues', '1');
   const qs = params.toString();
   const res = await fetch(qs ? `${GOODS_WAREHOUSE_URL}?${qs}` : GOODS_WAREHOUSE_URL);
   const data = await res.json();
