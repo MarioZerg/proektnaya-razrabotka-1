@@ -115,7 +115,7 @@ const LiderTv = () => {
   const duelActive = Boolean(duel);
   // Радио живёт выше экрана цеха: нет связи с цехом или идёт загрузка — музыка
   // всё равно играет и не начинается заново при каждой перерисовке.
-  const radio = useTvRadio();
+  const { station: radio, blocked: radioBlocked } = useTvRadio();
 
   useEffect(() => {
     let stop = false;
@@ -342,7 +342,7 @@ const LiderTv = () => {
             </div>
           </div>
         )}
-        <LiderTvRadio station={radio} />
+        <LiderTvRadio station={radio} blocked={radioBlocked} />
         {duel && <LiderTvDuel duel={duel} />}
       </div>
     </div>

@@ -30,7 +30,7 @@ PRODUCTION_ROLES = ('sewer', 'cutter', 'packer', 'packer_returns')
 # Волны телевизора цеха. Список совпадает с src/lib/radioStations.ts.
 RADIO_STATION_IDS = {
     'europaplus', 'dorozhnoe', 'rusradio', 'retro', 'avtoradio', 'record',
-    'dfm', 'hitfm', 'montecarlo', 'nashe', 'chanson', 'energy', 'love',
+    'dfm', 'hitfm', 'montecarlo', 'nashe', 'chanson', 'energy',
     'humor', 'relax', 'mayak', 'vestifm', 'business', 'radio7', 'novoe',
     'jazz', 'kids',
 }

@@ -19,23 +19,30 @@ const RADIO_TIMEOUT_MS = 5000;
  * цех работает дальше. Пока один опрос не вернулся, второй не уходит, чтобы
  * зависшие запросы не копились и не занимали очередь живого цеха.
  */
-export const useTvRadio = (): RadioStation | null => {
+export const useTvRadio = (): { station: RadioStation | null; blocked: boolean } => {
   const [stationId, setStationId] = useState('');
+  // Браузер не дал включить звук без нажатия: так бывает в старой программе
+  // телевизора, где автозапуск звука ещё не разрешён.
+  const [blocked, setBlocked] = useState(false);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const playingId = useRef('');
+  // Номер опроса: каждый ответ заново проверяет, что поток играет.
+  const [tick, setTick] = useState(0);
 
   useEffect(() => {
     let stop = false;
     let busy = false;
 
-    const tick = () => {
+    const poll = () => {
       if (busy) return;
       busy = true;
       const controller = new AbortController();
       const abort = window.setTimeout(() => controller.abort(), RADIO_TIMEOUT_MS);
       fetchTvRadio(controller.signal)
         .then((id) => {
-          if (!stop) setStationId(id);
+          if (stop) return;
+          setStationId(id);
+          setTick((n) => n + 1);
         })
         .catch(() => undefined)
         .finally(() => {
@@ -43,8 +50,8 @@ export const useTvRadio = (): RadioStation | null => {
           busy = false;
         });
     };
-    tick();
-    const timer = window.setInterval(tick, RADIO_POLL_MS);
+    poll();
+    const timer = window.setInterval(poll, RADIO_POLL_MS);
     return () => {
       stop = true;
       window.clearInterval(timer);
@@ -59,18 +66,45 @@ export const useTvRadio = (): RadioStation | null => {
     if (!station) {
       if (!playingId.current) return;
       playingId.current = '';
+      setBlocked(false);
       audio.pause();
       audio.removeAttribute('src');
       audio.load();
       return;
     }
-    if (playingId.current === station.id) return;
+    if (playingId.current === station.id && !audio.paused) return;
     playingId.current = station.id;
-    audio.src = station.stream;
-    void audio.play().catch(() => {
-      playingId.current = '';
-    });
-  }, [station]);
+    // Поток сменился или прежний оборвался с ошибкой — подключаем заново.
+    if (audio.error || audio.src !== station.stream) audio.src = station.stream;
+    audio
+      .play()
+      .then(() => setBlocked(false))
+      .catch((e: unknown) => {
+        if ((e as Error)?.name === 'NotAllowedError') setBlocked(true);
+      });
+    // Каждый опрос заново проверяет звук: если поток встал, он запускается
+    // снова, а играющий поток условие выше не трогает.
+  }, [station, tick]);
+
+  // Звук запрещён до первого нажатия — любое касание экрана, клик или
+  // клавиша включают его. Дальше браузер помнит разрешение до перезапуска.
+  useEffect(() => {
+    if (!blocked) return;
+    const unlock = () => {
+      const audio = audioRef.current;
+      if (!audio || !audio.src) return;
+      audio
+        .play()
+        .then(() => setBlocked(false))
+        .catch(() => undefined);
+    };
+    window.addEventListener('pointerdown', unlock);
+    window.addEventListener('keydown', unlock);
+    return () => {
+      window.removeEventListener('pointerdown', unlock);
+      window.removeEventListener('keydown', unlock);
+    };
+  }, [blocked]);
 
   // Поток оборвался (интернет моргнул) — через несколько секунд подключаемся заново.
   useEffect(() => {
@@ -108,7 +142,7 @@ export const useTvRadio = (): RadioStation | null => {
     [],
   );
 
-  return station;
+  return { station, blocked };
 };
 
 export default useTvRadio;
