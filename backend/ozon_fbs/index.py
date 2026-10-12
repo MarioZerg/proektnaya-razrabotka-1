@@ -7,6 +7,8 @@ import urllib.error
 from datetime import datetime, timedelta, timezone
 
 import psycopg2
+import random as _random_mod
+import time as _time_mod
 
 # OZON Seller API. Тестового контура у OZON нет — ключ боевой, поэтому функция работает
 # ТОЛЬКО НА ЧТЕНИЕ: тянет новые FBS-заказы и читает статусы отправлений, но НЕ двигает
@@ -2222,7 +2224,7 @@ def get_posting_label(cur, client_id, api_key, order_number, debug=None):
     return f'OZON не отдал этикетку: {ozon_error_text(status, data)}', None
 
 
-def handler(event: dict, context) -> dict:
+def _handler_impl(event: dict, context) -> dict:
     """Интеграция с OZON FBS (Seller API) — РЕЖИМ ТОЛЬКО ЧТЕНИЕ.
 
     Тянет новые FBS-заказы OZON на конвейер производства и читает статусы отправлений.
@@ -2396,3 +2398,64 @@ def handler(event: dict, context) -> dict:
             return _resp(200, {'orderNumber': order_number, 'pdfBase64': pdf_b64})
     finally:
         conn.close()
+
+
+# ПЛАНИРОВЩИК НЕ ДОЛЖЕН ВЫКЛЮЧАТЬ ЗАДАНИЕ ИЗ-ЗА МИНУТНОЙ ПЕРЕГРУЗКИ БАЗЫ.
+#
+# В пик (начало смены, все открывают систему разом) база отвечает «rate limit
+# exceeded». Задание падало с ошибкой 502, и после нескольких таких ответов подряд
+# cron-job.org отключал его у себя — заказы переставали приходить на полдня.
+#
+# Теперь вызов планировщика при перегрузке сам повторяется через паузу. Это
+# безопасно: загрузка заказов и проверка статусов не создают дублей (существующие
+# заказы пропускаются). Повторяем, только если попытка упала быстро: у функции
+# предел 5 секунд, и долгий повтор кончился бы обрывом по таймауту. Если база так
+# и не ответила — отдаём планировщику 200 с пометкой «отложено»: следующий запуск по
+# расписанию всё доберёт, а страница «Планировщик» честно покажет опоздание.
+#
+# Вызовы из интерфейса не трогаем: там действия бывают неповторяемыми (поставки,
+# стикеры), и повтор мог бы провести операцию дважды.
+_CRON_RETRY_BUDGET_S = 1.2
+
+
+def _is_db_busy(err: Exception) -> bool:
+    text = str(err).lower()
+    return 'rate limit' in text or 'too many connections' in text
+
+
+def _is_cron_call(event: dict) -> bool:
+    params = event.get('queryStringParameters') or {}
+    if params.get('cronSecret'):
+        return True
+    try:
+        body = json.loads(event.get('body') or '{}')
+    except Exception:
+        return False
+    return isinstance(body, dict) and bool(body.get('cronSecret'))
+
+
+def handler(event: dict, context) -> dict:
+    """Точка входа: вызов планировщика переживает перегрузку базы повтором."""
+    if not _is_cron_call(event):
+        return _handler_impl(event, context)
+    started = _time_mod.monotonic()
+    attempt = 0
+    while True:
+        try:
+            return _handler_impl(event, context)
+        except psycopg2.Error as err:
+            if not _is_db_busy(err):
+                raise
+            attempt += 1
+            if _time_mod.monotonic() - started > _CRON_RETRY_BUDGET_S or attempt > 2:
+                print(f'[cron] база перегружена, запуск отложен до следующего: {err}')
+                return {
+                    'statusCode': 200,
+                    'headers': CORS_HEADERS,
+                    'body': json.dumps(
+                        {'deferred': True, 'reason': 'База перегружена, повтор при следующем запуске'},
+                        ensure_ascii=False,
+                    ),
+                }
+            print(f'[cron] база перегружена, повтор #{attempt}')
+            _time_mod.sleep(0.6 * attempt + _random_mod.random() * 0.4)
