@@ -183,10 +183,12 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                 for row in created:
                     # Подбор не должен срывать приём. Вещь уже заведена на полку:
                     # если заказ под неё не нашёлся, она остаётся на хранении.
+                    cur.execute("SAVEPOINT admin_receive_match")
                     try:
                         try_match_orders_from_stock(cur, gw_id=row['id'])
+                        cur.execute("RELEASE SAVEPOINT admin_receive_match")
                     except Exception:
-                        pass
+                        cur.execute("ROLLBACK TO SAVEPOINT admin_receive_match")
 
                 # Часть вещей подбор мог тут же забрать под ожидающие заказы — они
                 # уже «На сборке», а не «На хранении». Возвращаем РЕАЛЬНЫЙ статус
