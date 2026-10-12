@@ -109,7 +109,7 @@ const EMPTY_COUNTS: LiveCounts = {
   doneToday: 0,
 };
 
-export const fetchLiveFloor = async (): Promise<LiveFloorData> => {
+const fetchLiveFloorRaw = async (): Promise<LiveFloorData> => {
   let res: Response;
   try {
     res = await fetch(`${ORDERS_URL}?liveFloor=1`);
@@ -145,4 +145,29 @@ export const fetchLiveFloor = async (): Promise<LiveFloorData> => {
     names: data.names || {},
     race: data.race || null,
   };
+};
+
+/**
+ * Общий снимок цеха на всю вкладку.
+ *
+ * На главной его опрашивают две карточки сразу — «Живой цех» (каждые 12 с) и
+ * очередь стикеровки (каждые 20 с). Раньше каждая слала свой запрос, и база
+ * получала двойную нагрузку от одного экрана. Теперь запрос в полёте общий, а
+ * ответ живёт 8 секунд: вторая карточка берёт уже пришедший снимок.
+ */
+let liveCache: { at: number; data: LiveFloorData } | null = null;
+let liveInFlight: Promise<LiveFloorData> | null = null;
+
+export const fetchLiveFloor = (): Promise<LiveFloorData> => {
+  if (liveCache && Date.now() - liveCache.at < 8000) return Promise.resolve(liveCache.data);
+  if (liveInFlight) return liveInFlight;
+  liveInFlight = fetchLiveFloorRaw()
+    .then((data) => {
+      liveCache = { at: Date.now(), data };
+      return data;
+    })
+    .finally(() => {
+      liveInFlight = null;
+    });
+  return liveInFlight;
 };

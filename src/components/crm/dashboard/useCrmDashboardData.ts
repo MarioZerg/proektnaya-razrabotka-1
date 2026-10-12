@@ -3,8 +3,6 @@ import { format } from 'date-fns';
 import { useAuth } from '@/context/AuthContext';
 import { useToast } from '@/hooks/use-toast';
 import { fetchDashboardSummary, type DashboardSummary } from '@/lib/dashboardSummaryApi';
-import { fetchPickingOrders } from '@/lib/goodsWarehouseApi';
-import { fetchOrders, isOrderCancelled, type Order } from '@/lib/ordersApi';
 import { updateEmployee } from '@/lib/usersApi';
 import {
   fetchEmployeeShifts,
@@ -58,10 +56,7 @@ export const useCrmDashboardData = () => {
   // весь склад, все рулоны — и панель считала плитки сама, перебирая тысячи
   // записей в браузере. Теперь считает база, а сюда приходит десяток чисел.
   const [summary, setSummary] = useState<DashboardSummary | null>(null);
-  const [orderSchemes, setOrderSchemes] = useState<{
-    conveyor: { fbs: number; fbo: number; other: number };
-    picking: { fbs: number; fbo: number; other: number };
-  } | null>(null);
+  const orderSchemes = null;
 
   const [shiftsLoading, setShiftsLoading] = useState(true);
   const [shiftsError, setShiftsError] = useState<string | null>(null);
@@ -97,40 +92,12 @@ export const useCrmDashboardData = () => {
       .finally(() => setDataLoading(false));
   };
 
+  // Разбивку FBS/FBO для «Новых заданий» сводка уже считает сама
+  // (newConveyorFbs/Fbo, newPickingFbs/Fbo). Раньше главная дополнительно тянула
+  // ВСЕ заказы и весь подбор, чтобы пересчитать то же в браузере — два самых
+  // тяжёлых запроса в залпе при входе, из-за которого база отвечала «занята».
   useEffect(() => {
     loadSummary();
-    const scheme = (type?: string | null) => {
-      const name = (type || '').toUpperCase();
-      if (name === 'FBS') return 'fbs' as const;
-      if (name === 'FBO') return 'fbo' as const;
-      return 'other' as const;
-    };
-    const tally = (types: Array<string | null | undefined>) => {
-      const counts = { fbs: 0, fbo: 0, other: 0 };
-      types.forEach((type) => {
-        counts[scheme(type)] += 1;
-      });
-      return counts;
-    };
-    Promise.all([fetchPickingOrders(), fetchOrders()])
-      .then(([picking, orders]) => {
-        const pickingTypes: string[] = [];
-        const seen = new Set<string>();
-        picking.forEach((row) => {
-          if (!row.orderNumber || seen.has(row.orderNumber)) return;
-          seen.add(row.orderNumber);
-          pickingTypes.push(row.orderType || '');
-        });
-        const fresh = orders.filter(
-          (order: Order) =>
-            order.sewingStatus === 'Новый' && order.source === 'api' && !isOrderCancelled(order),
-        );
-        setOrderSchemes({
-          picking: tally(pickingTypes),
-          conveyor: tally(fresh.map((order) => order.orderType)),
-        });
-      })
-      .catch(() => setOrderSchemes(null));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.role, user?.id]);
 
