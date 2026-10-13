@@ -1,4 +1,7 @@
+import { Fragment, useState } from 'react';
 import { Badge } from '@/components/ui/badge';
+import Icon from '@/components/ui/icon';
+import MaterialSupplies from '@/components/crm/warehouseMaterials/MaterialSupplies';
 import type { Material } from '@/lib/materialsApi';
 import {
   formatRolls,
@@ -15,7 +18,9 @@ interface WarehouseMaterialsCardsProps {
  * Телефон: те же три колонки, что в таблице склада, только сеткой на ширину экрана.
  * Таблица с min-w-max здесь уезжала вбок, и остаток приходилось искать прокруткой.
  */
-const WarehouseMaterialsCards = ({ materials }: WarehouseMaterialsCardsProps) => (
+const WarehouseMaterialsCards = ({ materials }: WarehouseMaterialsCardsProps) => {
+  const [openId, setOpenId] = useState<number | null>(null);
+  return (
   <div>
     <div className="grid grid-cols-[minmax(0,1.3fr)_minmax(0,0.9fr)_minmax(0,1fr)] bg-primary text-[11px] text-primary-foreground">
       <div className="px-3 py-2">Материал</div>
@@ -25,13 +30,20 @@ const WarehouseMaterialsCards = ({ materials }: WarehouseMaterialsCardsProps) =>
     <div className="divide-y divide-border">
       {materials.map((item) => {
         const status = warehouseStatus(item);
+        const open = openId === item.id;
         return (
-          <div
-            key={item.id}
-            className="grid grid-cols-[minmax(0,1.3fr)_minmax(0,0.9fr)_minmax(0,1fr)] items-start"
+          <Fragment key={item.id}>
+          <button
+            type="button"
+            onClick={() => setOpenId(open ? null : item.id)}
+            className="grid w-full grid-cols-[minmax(0,1.3fr)_minmax(0,0.9fr)_minmax(0,1fr)] items-start text-left hover:bg-muted/40"
           >
-            <div className="min-w-0 break-words px-3 py-2.5 text-sm font-medium leading-snug">
-              {item.name}
+            <div className="flex min-w-0 items-start gap-1.5 break-words px-3 py-2.5 text-sm font-medium leading-snug">
+              <Icon name={open ? 'ChevronDown' : 'ChevronRight'} size={16} className="mt-0.5 shrink-0 text-muted-foreground" />
+              <span className="min-w-0">
+                {item.name}
+                <span className="block text-[11px] font-normal text-muted-foreground">Поставки</span>
+              </span>
             </div>
             <div className="px-2 py-2.5 text-right">
               <div className={`text-sm tabular-nums leading-none ${stockQtyClass[status.kind]}`}>
@@ -49,11 +61,14 @@ const WarehouseMaterialsCards = ({ materials }: WarehouseMaterialsCardsProps) =>
                 {status.label}
               </Badge>
             </div>
-          </div>
+          </button>
+          {open && <MaterialSupplies materialId={item.id} unit={item.unit} />}
+          </Fragment>
         );
       })}
     </div>
   </div>
-);
+  );
+};
 
 export default WarehouseMaterialsCards;

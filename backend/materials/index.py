@@ -94,6 +94,85 @@ def handler(event: dict, context) -> dict:
             ),
         }
 
+    # Поставки материала: из каких приёмок от поставщика пришли рулоны и что с
+    # каждым рулоном сейчас (на складе / в цехе / израсходован). Поставки, где все
+    # рулоны этого материала уже закрыты, не отдаём — смотреть в них нечего.
+    # Старые рулоны, заведённые до учёта поставок, группируем по поставщику.
+    if method == 'GET' and params.get('view') == 'supplies':
+        material_id = int(params.get('material_id') or 0)
+        conn = psycopg2.connect(dsn)
+        try:
+            cur = conn.cursor()
+            cur.execute(
+                "SELECT r.id, r.barcode, r.status, r.initial_quantity, r.remaining_quantity, "
+                "       r.created_at, r.completed_at, r.removed_at, r.shift_number, w.name, "
+                "       s.id, COALESCE(s.completed_at, s.created_at), sp.id, sp.name "
+                "FROM rolls r "
+                "LEFT JOIN shipments s ON s.id = r.shipment_id "
+                "LEFT JOIN suppliers sp ON sp.id = COALESCE(s.supplier_id, r.supplier_id) "
+                "LEFT JOIN workshops w ON w.id = r.workshop_id "
+                "WHERE r.material_id = %s "
+                "ORDER BY r.barcode",
+                (material_id,),
+            )
+            groups: dict = {}
+            for (rid, barcode, status, initial, remaining, created, completed, removed,
+                 shift, ws_name, sh_id, sh_date, sp_id, sp_name) in cur.fetchall():
+                if removed:
+                    state = 'removed'
+                elif status == 'in_storage' and float(remaining or 0) > 0:
+                    state = 'storage'
+                elif status == 'in_workshop' and float(remaining or 0) > 0:
+                    state = 'workshop'
+                else:
+                    state = 'done'
+                key = f's{sh_id}' if sh_id else f"p{sp_id or 0}-{created.date().isoformat() if created else ''}"
+                g = groups.setdefault(key, {
+                    'key': key,
+                    'shipmentId': sh_id,
+                    'date': sh_date.isoformat() if sh_date else None,
+                    'supplierName': sp_name or 'Поставщик не указан',
+                    'firstAt': created,
+                    'rolls': [],
+                })
+                if created and (g['firstAt'] is None or created < g['firstAt']):
+                    g['firstAt'] = created
+                g['rolls'].append({
+                    'id': rid,
+                    'barcode': barcode,
+                    'state': state,
+                    'initial': float(initial or 0),
+                    'remaining': float(remaining or 0) if state in ('storage', 'workshop') else 0.0,
+                    'place': (f"{ws_name or 'Цех'} · смена {shift}" if shift else (ws_name or 'Цех'))
+                    if state == 'workshop' else None,
+                    'closedAt': (removed or completed).isoformat() if state in ('done', 'removed') and (removed or completed) else None,
+                })
+        finally:
+            conn.close()
+
+        result = []
+        for g in groups.values():
+            live = [x for x in g['rolls'] if x['state'] in ('storage', 'workshop')]
+            if not live:
+                continue
+            g['rolls'].sort(key=lambda x: ({'storage': 0, 'workshop': 1, 'done': 2, 'removed': 3}[x['state']], x['barcode'] or ''))
+            first = g.pop('firstAt')
+            if not g['date'] and first:
+                g['date'] = first.isoformat()
+            g['total'] = len(g['rolls'])
+            g['inStorage'] = sum(1 for x in live if x['state'] == 'storage')
+            g['inWorkshop'] = sum(1 for x in live if x['state'] == 'workshop')
+            g['done'] = g['total'] - len(live)
+            g['remaining'] = round(sum(x['remaining'] for x in live), 3)
+            g['received'] = round(sum(x['initial'] for x in g['rolls']), 3)
+            result.append(g)
+        result.sort(key=lambda g: g['date'] or '', reverse=True)
+        return {
+            'statusCode': 200,
+            'headers': headers,
+            'body': json.dumps({'supplies': result}, ensure_ascii=False),
+        }
+
     if method == 'GET':
         conn = psycopg2.connect(dsn)
         try:

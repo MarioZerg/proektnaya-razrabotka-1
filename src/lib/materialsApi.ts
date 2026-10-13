@@ -80,6 +80,39 @@ export const fetchMaterialsData = async (): Promise<MaterialsData> => {
   };
 };
 
+export interface SupplyRoll {
+  id: number;
+  barcode: string;
+  /** storage — на складе, workshop — в цехе, done — израсходован, removed — убран. */
+  state: 'storage' | 'workshop' | 'done' | 'removed';
+  initial: number;
+  remaining: number;
+  place: string | null;
+  closedAt: string | null;
+}
+
+export interface MaterialSupply {
+  key: string;
+  shipmentId: number | null;
+  date: string | null;
+  supplierName: string;
+  total: number;
+  inStorage: number;
+  inWorkshop: number;
+  done: number;
+  remaining: number;
+  received: number;
+  rolls: SupplyRoll[];
+}
+
+/** Поставки материала, где ещё есть живые рулоны. Полностью израсходованные не приходят. */
+export const fetchMaterialSupplies = async (materialId: number): Promise<MaterialSupply[]> => {
+  const res = await fetch(`${MATERIALS_URL}?view=supplies&material_id=${materialId}`);
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || data.errorMessage) throw new Error(data.errorMessage || 'Не удалось загрузить поставки');
+  return data.supplies || [];
+};
+
 /** Одна строка справочника упаковки: для такой ткани и такой ширины — такой пакет. */
 export interface PackagingRow {
   fabric: string;
