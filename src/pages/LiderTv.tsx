@@ -1,5 +1,5 @@
 import { withNightSlowdown } from '@/lib/workingHours';
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import Icon from '@/components/ui/icon';
 import { buildLiveFloorView, useLiveFloorData } from '@/components/crm/dashboard/liveFloor/useLiveFloorData';
 import { useTicker } from '@/components/crm/dashboard/liveFloor/liveFloorShared';
@@ -11,6 +11,7 @@ import LiveFloorBoundary from '@/components/crm/dashboard/liveFloor/LiveFloorBou
 import LiderTvDuel from '@/components/lider/LiderTvDuel';
 import LiderTvRadio from '@/components/lider/LiderTvRadio';
 import { useTvRadio } from '@/components/lider/useTvRadio';
+import { useSlowScroll } from '@/components/lider/useSlowScroll';
 import { fetchTvDuel, type TvDuel } from '@/lib/varikiApi';
 import { playDuelStart, playDuelWin } from '@/lib/gameSounds';
 import { useTvCanvas } from '@/components/lider/useTvCanvas';
@@ -33,67 +34,12 @@ const MoscowClock = () => {
  * Экран «Живой цех» на телевизор: кадр цеха чередуется с пузырями выработки.
  */
 const BUBBLES_HOLD_MS = 32000;
-/** Кадр цеха стоит на месте: всё уже в одном экране, листать вниз не нужно. */
 const FLOOR_HOLD_MS = 24000;
-
-/** Сжимает блок в оставшуюся высоту кадра. Вниз ничего не уезжает. */
-const TvFit = ({ children, watch }: { children: ReactNode; watch: string }) => {
-  const hostRef = useRef<HTMLDivElement>(null);
-  const bodyRef = useRef<HTMLDivElement>(null);
-  const [zoom, setZoom] = useState(1);
-
-  useLayoutEffect(() => {
-    const host = hostRef.current;
-    const body = bodyRef.current;
-    if (!host || !body) return;
-    const fit = () => {
-      const available = Math.max(0, host.clientHeight - 8);
-      if (available <= 0) return;
-      body.style.transform = 'none';
-      body.style.width = '100%';
-      let height = body.scrollHeight;
-      let next = height > 0 ? Math.min(1, available / height) : 1;
-      if (next < 0.999) {
-        body.style.width = `${100 / next}%`;
-        height = body.scrollHeight;
-        if (height > 0) next = Math.min(1, available / height);
-      }
-      const rounded = Math.round(next * 1000) / 1000;
-      // Сразу ставим масштаб обратно. Если оставить transform: none, повторный
-      // замер решит, что значение не изменилось, и нижние карточки останутся за кадром.
-      body.style.transform = `scale(${rounded})`;
-      body.style.transformOrigin = 'top left';
-      body.style.width = rounded < 0.999 ? `${100 / rounded}%` : '100%';
-      setZoom((prev) => (Math.abs(prev - rounded) < 0.01 ? prev : rounded));
-    };
-    fit();
-    const observer = new ResizeObserver(fit);
-    observer.observe(host);
-    return () => observer.disconnect();
-  }, [watch]);
-
-  return (
-    <div className="relative h-full min-h-0">
-      {/* Абсолютный кадр не растёт вместе с карточками: иначе шкала
-          считает, что места хватает, и нижние сотрудники уезжают за 1080. */}
-      <div ref={hostRef} className="absolute inset-0 overflow-hidden">
-        <div
-          ref={bodyRef}
-          style={{
-            transform: `scale(${zoom})`,
-            transformOrigin: 'top left',
-            width: zoom < 0.999 ? `${100 / zoom}%` : '100%',
-          }}
-        >
-          {children}
-        </div>
-      </div>
-    </div>
-  );
-};
 
 const LiderTv = () => {
   const { scale, left, top, frameW, frameH } = useTvCanvas();
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const panRef = useRef<HTMLDivElement>(null);
   useTvBuildWatch();
   const [duel, setDuel] = useState<TvDuel | null>(null);
   const playedDuel = useRef(new Set<string>());
@@ -153,6 +99,8 @@ const LiderTv = () => {
 
   const view = useMemo(() => buildLiveFloorView(data, 'all', clockOffset), [data, clockOffset]);
   const floorReady = Boolean(view);
+
+  useSlowScroll(scrollRef, panRef, floorReady && screen === 'floor', 28);
 
   useEffect(() => {
     if (screen !== 'floor' || !floorReady) return;
@@ -294,10 +242,8 @@ const LiderTv = () => {
                 />
               </div>
               <div className="grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)_400px] grid-rows-[minmax(0,1fr)] gap-3 overflow-hidden">
-                <TvFit
-                  watch={`${view.people.length}:${view.orders.length}:${view.stickeringQueue.length}:${view.events.length}`}
-                >
-                  <div className="flex flex-col gap-2">
+                <div ref={scrollRef} data-tv-scroll="1" className="h-full min-h-0 overflow-hidden">
+                  <div ref={panRef} data-tv-pan="1" className="flex flex-col gap-2">
                     <LiderTvPeople
                       people={view.people}
                       orders={view.orders}
@@ -325,7 +271,7 @@ const LiderTv = () => {
                       </section>
                     )}
                   </div>
-                </TvFit>
+                </div>
                 <div className={`h-full min-h-0 ${radio ? 'pb-[92px]' : ''}`}>
                   <LiderTvFeed events={view.events} names={data.names} freshKeys={freshKeys} />
                 </div>

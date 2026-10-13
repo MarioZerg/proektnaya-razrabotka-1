@@ -9,7 +9,10 @@ import { useEffect, useRef, type RefObject } from 'react';
  *
  * Высоту окна берём у кадра телевизора (data-tv-floor / data-tv-body), а не
  * у сетки: высокие карточки закройщиков раздувают родителя, max становится 0
- * и лента «стоит», после чего экран уходит на гонку.
+ * и лента «стоит».
+ *
+ * Позиция и направление живут в ref: при уходе на пузыри лента замирает,
+ * при возврате едет дальше с того же места, а не с нуля.
  */
 const panViewportPx = (view: HTMLElement): number => {
   const floor = view.closest('[data-tv-floor]') as HTMLElement | null;
@@ -38,10 +41,8 @@ export const useSlowScroll = (
   contentRef: RefObject<HTMLElement>,
   enabled: boolean,
   pxPerSec = 32,
-  onReachedBottom?: () => void,
 ) => {
-  const cbRef = useRef(onReachedBottom);
-  cbRef.current = onReachedBottom;
+  const posRef = useRef({ y: 0, dir: 1 as 1 | -1, pauseLeft: 0 });
 
   useEffect(() => {
     const mark = (ok: boolean) => {
@@ -49,24 +50,18 @@ export const useSlowScroll = (
     };
     if (!enabled) {
       mark(false);
-      const content = contentRef.current;
-      if (content) content.style.transform = '';
       return;
     }
 
-    let dir = 1;
-    let y = 0;
     let last = 0;
-    let pauseUntil = 0;
     let raf = 0;
     let watchdog = 0;
-    let announced = false;
     let stopped = false;
-    let travelled = 0;
+    const pos = posRef.current;
 
-    const apply = (content: HTMLElement, pos: number) => {
+    const apply = (content: HTMLElement, nextY: number) => {
       content.style.willChange = 'transform';
-      content.style.transform = 'translate3d(0,' + -pos + 'px,0)';
+      content.style.transform = 'translate3d(0,' + -nextY + 'px,0)';
       mark(true);
     };
 
@@ -88,29 +83,31 @@ export const useSlowScroll = (
       const dt = Math.min(100, Math.max(0, t - last));
       last = t;
       const contentH = Math.max(content.offsetHeight, content.scrollHeight);
-      const max = contentH - view.clientHeight;
-      if (view.clientHeight < 16 || max <= 8) return;
-      if (t < pauseUntil) return;
-      const step = (dir * pxPerSec * dt) / 1000;
-      y += step;
-      travelled += Math.abs(step);
-      if (y >= max - 0.5) {
-        y = max;
-        if (dir === 1) {
-          dir = -1;
-          pauseUntil = t + 1800;
-          if (!announced && travelled > 24) {
-            announced = true;
-            cbRef.current?.();
-          }
-        }
-      } else if (y <= 0.5 && dir === -1) {
-        y = 0;
-        dir = 1;
-        announced = false;
-        pauseUntil = t + 1600;
+      const max = Math.max(0, contentH - view.clientHeight);
+      if (view.clientHeight < 16 || max <= 8) {
+        pos.y = 0;
+        apply(content, 0);
+        return;
       }
-      apply(content, Math.round(y));
+      if (pos.y > max) pos.y = max;
+      if (pos.pauseLeft > 0) {
+        pos.pauseLeft = Math.max(0, pos.pauseLeft - dt);
+        apply(content, Math.round(pos.y));
+        return;
+      }
+      pos.y += (pos.dir * pxPerSec * dt) / 1000;
+      if (pos.y >= max - 0.5) {
+        pos.y = max;
+        if (pos.dir === 1) {
+          pos.dir = -1;
+          pos.pauseLeft = 1800;
+        }
+      } else if (pos.y <= 0.5 && pos.dir === -1) {
+        pos.y = 0;
+        pos.dir = 1;
+        pos.pauseLeft = 1600;
+      }
+      apply(content, Math.round(pos.y));
     };
 
     const loop = (t: number) => {

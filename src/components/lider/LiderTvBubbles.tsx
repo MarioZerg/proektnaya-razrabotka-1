@@ -40,10 +40,6 @@ interface Body {
   zone: number;
   /** Насколько шляпа торчит над кружком. Без шляпы — 0. */
   crown: number;
-  /** 0 — круг, больше — сплюснут по оси удара. */
-  squash: number;
-  /** Угол оси удара: вдоль неё кружок сжимается. */
-  squashAngle: number;
 }
 
 const radiusFor = (work: number, maxWork: number) => {
@@ -143,8 +139,6 @@ const LiderTvBubbles = ({ active, people, today }: LiderTvBubblesProps) => {
         wait: old?.wait ?? rand(1.6, 4.8),
         zone,
         crown,
-        squash: old?.squash ?? 0,
-        squashAngle: old?.squashAngle ?? 0,
       };
     });
   }, [people, today, maxWork]);
@@ -247,16 +241,6 @@ const LiderTvBubbles = ({ active, people, today }: LiderTvBubblesProps) => {
               a.vy -= (jImp / a.mass) * ny;
               b.vx += (jImp / b.mass) * nx;
               b.vy += (jImp / b.mass) * ny;
-              const dent = Math.min(0.46, -rv / 260);
-              const angle = Math.atan2(ny, nx);
-              if (dent > a.squash) {
-                a.squash = dent;
-                a.squashAngle = angle;
-              }
-              if (dent > b.squash) {
-                b.squash = dent;
-                b.squashAngle = angle;
-              }
             }
           }
         }
@@ -268,29 +252,21 @@ const LiderTvBubbles = ({ active, people, today }: LiderTvBubblesProps) => {
         let bounced = false;
         if (a.x < a.r + padX) {
           a.x = a.r + padX;
-          a.squash = Math.max(a.squash, Math.min(0.34, Math.abs(a.vx) / 340));
-          a.squashAngle = 0;
           a.vx = Math.abs(a.vx) * 0.85;
           bounced = true;
         }
         if (a.x > w - a.r - padX) {
           a.x = w - a.r - padX;
-          a.squash = Math.max(a.squash, Math.min(0.34, Math.abs(a.vx) / 340));
-          a.squashAngle = 0;
           a.vx = -Math.abs(a.vx) * 0.85;
           bounced = true;
         }
         if (a.y < a.r + padTop) {
           a.y = a.r + padTop;
-          a.squash = Math.max(a.squash, Math.min(0.34, Math.abs(a.vy) / 340));
-          a.squashAngle = Math.PI / 2;
           a.vy = Math.abs(a.vy) * 0.85;
           bounced = true;
         }
         if (a.y > h - a.r - 36) {
           a.y = h - a.r - 36;
-          a.squash = Math.max(a.squash, Math.min(0.34, Math.abs(a.vy) / 340));
-          a.squashAngle = Math.PI / 2;
           a.vy = -Math.abs(a.vy) * 0.85;
           bounced = true;
         }
@@ -306,17 +282,8 @@ const LiderTvBubbles = ({ active, people, today }: LiderTvBubblesProps) => {
           a.vx = (a.vx / spd) * 220;
           a.vy = (a.vy / spd) * 220;
         }
-        a.squash += (0 - a.squash) * Math.min(1, dt * 5.5);
         const el = nodeRef.current.get(a.id);
         if (el) el.style.transform = `translate3d(${a.x - a.r}px, ${a.y - a.r}px, 0)`;
-        const face = el?.querySelector('[data-bubble-face]') as HTMLElement | null;
-        if (face) {
-          const dent = a.squash;
-          const sx = (1 - dent).toFixed(3);
-          const sy = (1 + dent * 0.62).toFixed(3);
-          const angle = a.squashAngle.toFixed(3);
-          face.style.transform = `rotate(${angle}rad) scale(${sx}, ${sy}) rotate(${-angle}rad)`;
-        }
       }
       raf = requestAnimationFrame(tick);
     };
@@ -349,7 +316,7 @@ const LiderTvBubbles = ({ active, people, today }: LiderTvBubblesProps) => {
               className="absolute left-0 top-0 overflow-visible will-change-transform"
               style={{ width: r * 2, zIndex: 10 + Math.round(r) }}
             >
-              <div data-bubble-face className="relative overflow-visible" style={{ width: r * 2, height: r * 2 }}>
+              <div className="relative overflow-visible" style={{ width: r * 2, height: r * 2 }}>
               {p.bubbleHat ? (
                 <div
                   className="pointer-events-none absolute left-1/2 z-20"
