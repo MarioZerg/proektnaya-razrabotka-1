@@ -1,7 +1,6 @@
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import Icon from '@/components/ui/icon';
-import type { RepackItem } from '@/lib/kioskApi';
 
 interface RepackDialogsProps {
   isAdmin: boolean;
@@ -10,10 +9,6 @@ interface RepackDialogsProps {
   waiting: number;
   processing: boolean;
   onClearQueue: () => void;
-  bagAsk: boolean;
-  setBagAsk: (value: boolean) => void;
-  item: RepackItem | null;
-  onFinish: (outcome: 'repacked' | 'utilized', newBag?: boolean) => void;
 }
 
 const RepackDialogs = ({
@@ -23,10 +18,6 @@ const RepackDialogs = ({
   waiting,
   processing,
   onClearQueue,
-  bagAsk,
-  setBagAsk,
-  item,
-  onFinish,
 }: RepackDialogsProps) => (
   <>
     <Dialog open={isAdmin && clearAsk} onOpenChange={(v) => !v && setClearAsk(false)}>
@@ -65,49 +56,6 @@ const RepackDialogs = ({
       </DialogContent>
     </Dialog>
 
-    <Dialog open={bagAsk && !!item} onOpenChange={(v) => !v && setBagAsk(false)}>
-      <DialogContent
-        className="kiosk-root sm:max-w-lg"
-        confirmClose={false}
-        onCloseAutoFocus={(e) => e.preventDefault()}
-      >
-        <DialogHeader>
-          <DialogTitle className="text-2xl">Вы взяли новый пакет?</DialogTitle>
-        </DialogHeader>
-
-        {item && (
-          <div className="space-y-4">
-            <p className="text-lg text-muted-foreground">
-              {item.material && item.width
-                ? `${item.material} ${item.width}×${item.height}`
-                : item.product || 'Товар'}
-            </p>
-
-            <div className="grid grid-cols-2 gap-3">
-              <Button
-                size="lg"
-                className="h-24 bg-emerald-600 text-xl text-white hover:bg-emerald-700"
-                onClick={() => onFinish('repacked', true)}
-                disabled={processing}
-              >
-                <Icon name="PackagePlus" size={28} className="mr-2" />
-                Да, новый
-              </Button>
-              <Button
-                size="lg"
-                variant="outline"
-                className="h-24 text-xl"
-                onClick={() => onFinish('repacked', false)}
-                disabled={processing}
-              >
-                <Icon name="Package" size={28} className="mr-2" />
-                Нет, прежний
-              </Button>
-            </div>
-          </div>
-        )}
-      </DialogContent>
-    </Dialog>
   </>
 );
 

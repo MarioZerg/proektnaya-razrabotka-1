@@ -11,11 +11,17 @@ interface RepackItemCardProps {
   onUtilize: () => void;
   onRepair: () => void;
   onWrongItem: () => void;
+  bagAsk: boolean;
+  onBagAnswer: (newBag: boolean) => void;
+  onBagCancel: () => void;
 }
 
 const RepackItemCard = ({
   item,
   processing,
+  bagAsk,
+  onBagAnswer,
+  onBagCancel,
   onRepack,
   onUtilize,
   onRepair,
@@ -52,6 +58,42 @@ const RepackItemCard = ({
 
           Кнопки одного размера и в один ряд: у каждой вещи ровно один
           исход, и выбор должен читаться с одного взгляда. */}
+      {bagAsk ? (
+        <div className="space-y-3 rounded-xl border-2 border-emerald-400 bg-emerald-50 p-4">
+          <p className="text-center text-2xl font-bold text-emerald-900">
+            Вы взяли новый пакет?
+          </p>
+          <div className="grid grid-cols-2 gap-3">
+            <Button
+              size="lg"
+              className="h-24 bg-emerald-600 text-xl text-white hover:bg-emerald-700"
+              onClick={() => onBagAnswer(true)}
+              disabled={processing}
+            >
+              <Icon name="PackagePlus" size={28} className="mr-2" />
+              Да, новый
+            </Button>
+            <Button
+              size="lg"
+              variant="outline"
+              className="h-24 bg-white text-xl"
+              onClick={() => onBagAnswer(false)}
+              disabled={processing}
+            >
+              <Icon name="Package" size={28} className="mr-2" />
+              Нет, прежний
+            </Button>
+          </div>
+          <Button
+            variant="ghost"
+            className="h-12 w-full text-base"
+            onClick={onBagCancel}
+            disabled={processing}
+          >
+            Назад
+          </Button>
+        </div>
+      ) : (
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
         <Button
           size="lg"
@@ -93,16 +135,18 @@ const RepackItemCard = ({
           </div>
         </Button>
       </div>
+      )}
 
-      {/* Ошиблась вещью — можно вернуть экран к сканеру, ничего не закрывая. */}
-      <Button
-        variant="ghost"
-        className="h-12 w-full text-base"
-        onClick={onWrongItem}
-        disabled={processing}
-      >
-        Это не та вещь — отсканировать другую
-      </Button>
+      {!bagAsk && (
+        <Button
+          variant="ghost"
+          className="h-12 w-full text-base"
+          onClick={onWrongItem}
+          disabled={processing}
+        >
+          Это не та вещь — отсканировать другую
+        </Button>
+      )}
     </CardContent>
   </Card>
 );

@@ -74,7 +74,7 @@ const KioskRepackScreen = ({
   const [clearAsk, setClearAsk] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  const anyDialog = bagAsk || repairOpen || clearAsk;
+  const anyDialog = repairOpen || clearAsk;
 
   const focusInput = () => {
     if (anyDialog || item) return;
@@ -284,10 +284,6 @@ const KioskRepackScreen = ({
         waiting={waiting}
         processing={processing}
         onClearQueue={handleClearQueue}
-        bagAsk={bagAsk}
-        setBagAsk={setBagAsk}
-        item={item}
-        onFinish={handleFinish}
       />
 
       {!item ? (
@@ -305,7 +301,11 @@ const KioskRepackScreen = ({
           onRepack={() => setBagAsk(true)}
           onUtilize={() => handleFinish('utilized')}
           onRepair={() => setRepairOpen(true)}
+          bagAsk={bagAsk}
+          onBagAnswer={(newBag) => handleFinish('repacked', newBag)}
+          onBagCancel={() => setBagAsk(false)}
           onWrongItem={() => {
+            setBagAsk(false);
             setItem(null);
             setNote('');
             focusInput();
