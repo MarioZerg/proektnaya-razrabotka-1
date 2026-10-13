@@ -6,6 +6,7 @@ import { Input } from '@/components/ui/input';
 import Icon from '@/components/ui/icon';
 import { cn } from '@/lib/utils';
 import { useScannerAutoSubmit } from '@/hooks/useScannerAutoSubmit';
+import { playScanErrorSound, playScanSound, primeScanSounds } from '@/lib/scanSound';
 import {
   cancelRollAudit,
   finishRollAudit,
@@ -64,6 +65,8 @@ const RollAuditScanner = ({ open, onOpenChange, onFinished }: RollAuditScannerPr
 
   useEffect(() => {
     if (!open) return;
+    // Открытие окна — действие пользователя: браузер разрешает звук, греем его заранее.
+    primeScanSounds();
     setError(null);
     setFlash(null);
     setConfirmFinish(false);
@@ -113,13 +116,16 @@ const RollAuditScanner = ({ open, onOpenChange, onFinished }: RollAuditScannerPr
     if (!v) return;
     const roll = expected.get(v);
     if (!roll) {
+      playScanErrorSound();
       setFlash({ text: `${v} — не числится на складе, не засчитан`, ok: false });
       return;
     }
     if (foundSet.has(v)) {
+      playScanErrorSound();
       setFlash({ text: `${v} уже отсканирован`, ok: true });
       return;
     }
+    playScanSound();
     setFound((f) => [v, ...f]);
     pending.current.add(v);
     setPendingCount(pending.current.size);
