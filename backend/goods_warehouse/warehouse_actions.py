@@ -5,6 +5,7 @@
 """
 
 import json
+import re
 
 import psycopg2
 
@@ -1224,11 +1225,16 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
         if action == 'scan_inspected_to_shelf':
             # Кладовщик выбрал полку и сканирует стикер хранения осмотренной вещи —
             # вещь сразу встаёт на эту полку. Стикер уже наклеен упаковщицей.
-            code = str(body_data.get('barcode') or '').strip()
+            code = str(body_data.get('barcode') or '').strip().upper()
             shelf_id = body_data.get('shelfId')
             if not code:
                 return {'statusCode': 400, 'headers': headers,
                         'body': json.dumps({'error': 'Отсканируйте стикер'}, ensure_ascii=False)}
+            if not re.fullmatch(r'GW-\d+', code):
+                return {'statusCode': 400, 'headers': headers,
+                        'body': json.dumps({'error': f'{code} — не стикер хранения GW. '
+                                                     f'Сканируйте только стикер GW с осмотренной вещи'},
+                                           ensure_ascii=False)}
             if not shelf_id:
                 return {'statusCode': 400, 'headers': headers,
                         'body': json.dumps({'error': 'Выберите полку'}, ensure_ascii=False)}
@@ -1253,7 +1259,8 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                         'body': json.dumps({'error': f'{code} уже лежит на полке'}, ensure_ascii=False)}
             if gstatus not in ('inspected', 'taken'):
                 return {'statusCode': 409, 'headers': headers,
-                        'body': json.dumps({'error': f'{code} не из «Осмотрено» — на полку не принимается'},
+                        'body': json.dumps({'error': f'{code} не ожидает укладки после осмотра — '
+                                                     f'этот сканер его не принимает'},
                                            ensure_ascii=False)}
             cur.execute(
                 "UPDATE goods_warehouse SET status = 'in_stock', shelf_id = %s, received_at = now(), "

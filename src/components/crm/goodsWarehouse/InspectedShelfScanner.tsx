@@ -64,10 +64,16 @@ const InspectedShelfScanner = ({ shelves, onPlaced }: InspectedShelfScannerProps
   }, [shelfId]);
 
   const handleScan = async () => {
-    const code = barcode.trim();
+    const code = barcode.trim().toUpperCase();
     if (!code || busy) return;
     setBarcode('');
     setError(null);
+    if (!/^GW-\d+$/.test(code)) {
+      playScanErrorSound();
+      setError(`${code} — не стикер хранения GW. Сканируйте только стикер GW с осмотренной вещи`);
+      focusInput();
+      return;
+    }
     if (!shelfId) {
       playScanErrorSound();
       setError('Сначала выберите полку');

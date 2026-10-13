@@ -235,6 +235,17 @@
         "shelfId": 1
       },
       "expectedStatus": 400
+    },
+    {
+      "name": "Scan inspected rejects non-GW sticker",
+      "method": "POST",
+      "path": "/",
+      "body": {
+        "action": "scan_inspected_to_shelf",
+        "shelfId": 1,
+        "barcode": "OZN123"
+      },
+      "expectedStatus": 400
     }
   ]
 }
