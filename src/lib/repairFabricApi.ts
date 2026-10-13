@@ -93,9 +93,18 @@ export interface SuitablePiecesResult {
 }
 
 const request = async (url: string, init?: RequestInit) => {
-  const res = await fetch(url, init);
-  const data = await res.json();
-  if (!res.ok) throw new Error(data.error || 'Ошибка склада перешива');
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 12000);
+  let res: Response;
+  try {
+    res = await fetch(url, { ...init, signal: ctrl.signal });
+  } catch {
+    throw new Error('Нет связи с сервером');
+  } finally {
+    clearTimeout(timer);
+  }
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || (res.status >= 500 ? 'База занята' : 'Ошибка склада перешива'));
   return data;
 };
 
@@ -197,14 +206,17 @@ export const lookupRepairItem = (barcode: string) =>
 export const acceptRepairPiece = (
   barcode: string,
   actor?: { id?: number | null; name?: string | null },
+  retry = false,
 ) =>
   post({
     action: 'accept',
     barcode,
     userId: actor?.id,
     userName: actor?.name,
+    retry,
   }) as Promise<{
     success: boolean;
+    alreadyAccepted?: boolean;
     barcode: string;
     material: string | null;
     width: number | null;

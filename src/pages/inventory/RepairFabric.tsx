@@ -12,7 +12,7 @@ import {
   type RepairPiece,
   type RepairPieceStatus,
 } from '@/lib/repairFabricApi';
-import StorekeeperSendToRepairDialog from '@/components/crm/goodsWarehouse/StorekeeperSendToRepairDialog';
+import RepairPieceBatchScanner from '@/components/crm/repairFabric/RepairPieceBatchScanner';
 import RepairFabricFilters from '@/components/crm/repairFabric/RepairFabricFilters';
 import RepairPieceCards from '@/components/crm/repairFabric/RepairPieceCards';
 import RepairPieceTable from '@/components/crm/repairFabric/RepairPieceTable';
@@ -167,12 +167,17 @@ const RepairFabric = () => {
             </p>
           </div>
           {canAddPiece && (
-            <Button className="bg-violet-600 hover:bg-violet-700" onClick={() => setAddOpen(true)}>
-              <Icon name="Plus" size={16} className="mr-2" />
-              Добавить кусок
+            <Button
+              className="bg-violet-600 hover:bg-violet-700"
+              onClick={() => setAddOpen((v) => !v)}
+            >
+              <Icon name={addOpen ? 'X' : 'ScanLine'} size={16} className="mr-2" />
+              {addOpen ? 'Закрыть сканер' : 'Добавить куски сканером'}
             </Button>
           )}
         </div>
+
+        {canAddPiece && addOpen && <RepairPieceBatchScanner onAccepted={load} />}
 
         {listError && (
           <WarehouseFetchError
@@ -238,11 +243,6 @@ const RepairFabric = () => {
           </>
         )}
       </div>
-      <StorekeeperSendToRepairDialog
-        open={addOpen}
-        onOpenChange={setAddOpen}
-        onSent={load}
-      />
     </CrmLayout>
   );
 };

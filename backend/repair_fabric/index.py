@@ -826,8 +826,13 @@ def accept_piece(cur, conn, event, body):
     if barcode.upper().startswith('GW-'):
         return _resp(400, {
             'error': 'Стикер хранения GW в куски не принимается. '
-                     'Отсканируйте стикер брака с перепаковки',
+                     'Отсканируйте стикер на перешив RS',
         })
+    if not barcode.upper().startswith('RS-'):
+        return _resp(400, {
+            'error': f'{barcode} — не стикер на перешив. Сканируйте только стикер RS',
+        })
+    is_retry = bool(body.get('retry'))
 
     user = current_user(cur, event)
     actor_id = user['id'] if user else body.get('userId')
@@ -842,7 +847,7 @@ def accept_piece(cur, conn, event, body):
 
     cur.execute(
         "SELECT id, material, width, height, reason_label, status "
-        "FROM repair_fabric_pieces WHERE upper(barcode) = upper(%s)",
+        "FROM repair_fabric_pieces WHERE upper(barcode) = upper(%s) FOR UPDATE",
         (barcode,),
     )
     row = cur.fetchone()
@@ -850,7 +855,19 @@ def accept_piece(cur, conn, event, body):
         return _resp(404, {'error': 'Кусок с таким стикером не найден'})
     piece_id, material, width, height, reason_label, status = row
     if status == 'available':
-        return _resp(409, {'error': 'Этот кусок уже в цехе'})
+        if is_retry:
+            # Повтор после обрыва связи: первый запрос уже положил кусок в цех.
+            return _resp(200, {
+                'success': True,
+                'pieceId': piece_id,
+                'barcode': barcode,
+                'material': material,
+                'width': width,
+                'height': height,
+                'reasonLabel': reason_label,
+                'alreadyAccepted': True,
+            })
+        return _resp(409, {'error': f'{barcode} уже в цехе — повторно не принимается'})
     if status != 'incoming':
         return _resp(409, {'error': 'Этот кусок уже забрали или списали'})
 
@@ -858,9 +875,12 @@ def accept_piece(cur, conn, event, body):
     cur.execute(
         "UPDATE repair_fabric_pieces SET status = 'available', "
         "  comment = CONCAT_WS('. ', comment, %s) "
-        "WHERE id = %s",
+        "WHERE id = %s AND status = 'incoming'",
         (f'В цех принял {who}', int(piece_id)),
     )
+    if cur.rowcount == 0:
+        conn.rollback()
+        return _resp(409, {'error': f'{barcode} уже в цехе — повторно не принимается'})
     log_action(
         cur, actor_id, actor_name, 'repair_piece_accept', piece_id,
         f'Кладовщик принял в цех {barcode}: {material} {width}x{height}',
@@ -917,9 +937,19 @@ def handler(event: dict, context) -> dict:
     if method == 'OPTIONS':
         return {'statusCode': 200, 'headers': CORS_HEADERS, 'body': ''}
 
-    conn = psycopg2.connect(os.environ['DATABASE_URL'])
+    try:
+        return _route(event, method)
+    except psycopg2.OperationalError:
+        # Строку держит параллельный запрос или база не ответила вовремя.
+        # Транзакция откатилась, ничего не записано — сканер повторит сам.
+        return _resp(503, {'error': 'База занята, повторите скан', 'retryable': True})
+
+
+def _route(event, method):
+    conn = psycopg2.connect(os.environ['DATABASE_URL'], connect_timeout=3)
     try:
         cur = conn.cursor()
+        cur.execute("SET lock_timeout = '2s'")
 
         if method == 'GET':
             q = event.get('queryStringParameters') or {}
