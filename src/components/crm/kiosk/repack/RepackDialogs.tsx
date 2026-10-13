@@ -66,7 +66,11 @@ const RepackDialogs = ({
     </Dialog>
 
     <Dialog open={bagAsk && !!item} onOpenChange={(v) => !v && setBagAsk(false)}>
-      <DialogContent className="kiosk-root sm:max-w-lg" confirmClose={false}>
+      <DialogContent
+        className="kiosk-root sm:max-w-lg"
+        confirmClose={false}
+        onCloseAutoFocus={(e) => e.preventDefault()}
+      >
         <DialogHeader>
           <DialogTitle className="text-2xl">Вы взяли новый пакет?</DialogTitle>
         </DialogHeader>

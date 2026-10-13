@@ -93,6 +93,15 @@ const KioskRepackScreen = ({
   };
 
   useEffect(() => {
+    if (item || anyDialog || scanning) return;
+    const t = setTimeout(() => {
+      if (document.body.style.pointerEvents === 'none') document.body.style.pointerEvents = '';
+      inputRef.current?.focus();
+    }, 350);
+    return () => clearTimeout(t);
+  }, [item, anyDialog, scanning]);
+
+  useEffect(() => {
     // Греем звук заранее: первый скан должен прозвучать сразу.
     primeScanSounds();
     loadCount();
