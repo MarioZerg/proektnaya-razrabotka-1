@@ -1255,8 +1255,23 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                         'body': json.dumps({'error': f'Стикер {code} не найден'}, ensure_ascii=False)}
             gid, gstatus = row[0], row[1]
             if gstatus == 'in_stock':
+                cur.execute("SELECT shelf_id FROM goods_warehouse WHERE id = %s", (gid,))
+                cur_shelf = cur.fetchone()[0]
+                if cur_shelf and int(cur_shelf) == int(shelf_id):
+                    # Повтор после обрыва связи: вещь уже легла именно на эту полку.
+                    return {'statusCode': 200, 'headers': headers, 'body': json.dumps({
+                        'id': gid,
+                        'storageBarcode': code,
+                        'orderNumber': row[2],
+                        'product': row[3],
+                        'material': row[4],
+                        'width': row[5],
+                        'height': row[6],
+                        'shelfName': shelf_row[0],
+                        'alreadyPlaced': True,
+                    }, ensure_ascii=False)}
                 return {'statusCode': 409, 'headers': headers,
-                        'body': json.dumps({'error': f'{code} уже лежит на полке'}, ensure_ascii=False)}
+                        'body': json.dumps({'error': f'{code} уже лежит на другой полке'}, ensure_ascii=False)}
             if gstatus not in ('inspected', 'taken'):
                 return {'statusCode': 409, 'headers': headers,
                         'body': json.dumps({'error': f'{code} не ожидает укладки после осмотра — '

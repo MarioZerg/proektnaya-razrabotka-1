@@ -81,7 +81,20 @@ const InspectedShelfScanner = ({ shelves, onPlaced }: InspectedShelfScannerProps
     }
     setBusy(true);
     try {
-      const res = await scanInspectedToShelf(code, Number(shelfId), user?.id, user?.name);
+      const send = () => scanInspectedToShelf(code, Number(shelfId), user?.id, user?.name);
+      let res: Awaited<ReturnType<typeof send>> | undefined;
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        try {
+          res = await send();
+          break;
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : '';
+          const transient = /База занята|Failed to fetch|NetworkError|Load failed/i.test(msg);
+          if (!transient || attempt === 2) throw err;
+          await new Promise((r) => setTimeout(r, 600 * (attempt + 1)));
+        }
+      }
+      if (!res) throw new Error('Не удалось положить на полку');
       playScanSound();
       const title =
         res.material && res.width && res.height
