@@ -10,19 +10,6 @@ export interface RollAudit {
   expected: number;
   found: number;
   missing: number;
-  extra: number;
-}
-
-export interface RollAuditScan {
-  barcode: string;
-  rollId: number | null;
-  /** ok — числится на складе; extra — по учёту не на складе; unknown — стикера нет в системе. */
-  result: 'ok' | 'extra' | 'unknown';
-  rollStatus: string | null;
-  material: string | null;
-  remaining: number | null;
-  by: string | null;
-  at: string | null;
 }
 
 export interface RollAuditMissing {
@@ -36,9 +23,16 @@ export interface RollAuditMissing {
 
 export interface RollAuditDetail {
   audit: RollAudit;
-  scans: RollAuditScan[];
+  /** Стикеры, засчитанные в сверку. */
+  found: string[];
   missing: RollAuditMissing[];
-  last?: { barcode: string; result: RollAuditScan['result']; duplicate: boolean; material: string | null; rollStatus: string | null };
+}
+
+/** Старт сверки: весь список «числится на складе» приходит один раз, дальше всё в браузере. */
+export interface RollAuditSession {
+  audit: RollAudit;
+  expected: RollAuditMissing[];
+  found: string[];
 }
 
 const parse = async <T>(res: Response): Promise<T> => {
@@ -60,7 +54,8 @@ export const fetchRollAudits = () =>
 export const fetchRollAudit = (id: number) =>
   fetch(`${ROLL_AUDITS_URL}?id=${id}`).then((r) => parse<RollAuditDetail>(r));
 
-export const startRollAudit = () => post<RollAuditDetail>({ action: 'start' });
-export const scanRollAudit = (id: number, barcode: string) => post<RollAuditDetail>({ action: 'scan', id, barcode });
-export const finishRollAudit = (id: number) => post<RollAuditDetail>({ action: 'finish', id });
+export const startRollAudit = () => post<RollAuditSession>({ action: 'start' });
+export const saveRollAuditScans = (id: number, barcodes: string[]) =>
+  post<{ saved: string[] }>({ action: 'scan', id, barcodes });
+export const finishRollAudit = (id: number) => post<{ success: boolean }>({ action: 'finish', id });
 export const cancelRollAudit = (id: number) => post<{ success: boolean }>({ action: 'cancel', id });

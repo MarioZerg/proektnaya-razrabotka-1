@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
@@ -8,10 +8,10 @@ import { cn } from '@/lib/utils';
 import {
   cancelRollAudit,
   finishRollAudit,
-  scanRollAudit,
+  saveRollAuditScans,
   startRollAudit,
-  type RollAuditDetail,
-  type RollAuditScan,
+  type RollAudit,
+  type RollAuditMissing,
 } from '@/lib/rollAuditsApi';
 
 interface RollAuditScannerProps {
@@ -20,68 +20,104 @@ interface RollAuditScannerProps {
   onFinished: () => void;
 }
 
-const qty = (n: number | null) => (n == null ? '' : (Math.round(n * 100) / 100).toLocaleString('ru-RU'));
+/** Сканы копятся и уходят на сервер пачкой раз в несколько секунд — не по запросу на каждый стикер. */
+const FLUSH_MS = 3000;
 
-const SCAN_STYLE: Record<RollAuditScan['result'], { label: string; className: string }> = {
-  ok: { label: 'Числится', className: 'border-emerald-300 bg-emerald-50' },
-  extra: { label: 'Не на складе по учёту', className: 'border-amber-300 bg-amber-50' },
-  unknown: { label: 'Нет в системе', className: 'border-red-300 bg-red-50' },
-};
+const qty = (n: number) => (Math.round(n * 100) / 100).toLocaleString('ru-RU');
 
-const lastText = (l: NonNullable<RollAuditDetail['last']>) => {
-  if (l.duplicate) return { text: `${l.barcode} уже отсканирован`, className: 'bg-muted text-foreground' };
-  if (l.result === 'ok') return { text: `${l.barcode} · ${l.material} — найден`, className: 'bg-emerald-600 text-white' };
-  if (l.result === 'extra')
-    return { text: `${l.barcode} · ${l.material} — по учёту ${l.rollStatus}`, className: 'bg-amber-500 text-white' };
-  return { text: `${l.barcode} — такого стикера нет в системе`, className: 'bg-red-600 text-white' };
-};
+type Flash = { text: string; ok: boolean } | null;
 
 /**
- * Сверка склада материалов. Слева — что отсканировано, справа — что ещё должно
- * найтись. Ничего не меняет в рулонах, только собирает информацию.
+ * Сверка склада материалов. Список «что числится на складе» приходит один раз при
+ * старте, каждый скан проверяется прямо в браузере мгновенно. Принимаются только
+ * стикеры рулонов, которые числятся на складе, — всё остальное отклоняется и никуда
+ * не записывается. Сверка ничего не меняет в рулонах.
  */
 const RollAuditScanner = ({ open, onOpenChange, onFinished }: RollAuditScannerProps) => {
-  const [data, setData] = useState<RollAuditDetail | null>(null);
+  const [audit, setAudit] = useState<RollAudit | null>(null);
+  const [expected, setExpected] = useState<Map<string, RollAuditMissing>>(new Map());
+  const [found, setFound] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [code, setCode] = useState('');
+  const [flash, setFlash] = useState<Flash>(null);
   const [busy, setBusy] = useState(false);
   const [confirmFinish, setConfirmFinish] = useState(false);
   const [filter, setFilter] = useState('');
+  const [pendingCount, setPendingCount] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
+  const pending = useRef<Set<string>>(new Set());
+  const auditId = audit?.id;
+
+  const flush = useCallback(async () => {
+    if (!auditId || pending.current.size === 0) return true;
+    const batch = [...pending.current];
+    try {
+      await saveRollAuditScans(auditId, batch);
+      batch.forEach((b) => pending.current.delete(b));
+      setPendingCount(pending.current.size);
+      return true;
+    } catch {
+      return false;
+    }
+  }, [auditId]);
 
   useEffect(() => {
     if (!open) return;
     setError(null);
+    setFlash(null);
     setConfirmFinish(false);
+    setAudit(null);
     startRollAudit()
-      .then(setData)
+      .then((s) => {
+        setAudit(s.audit);
+        setExpected(new Map(s.expected.map((e) => [e.barcode.toUpperCase(), e])));
+        setFound(s.found.map((b) => b.toUpperCase()));
+      })
       .catch((e) => setError(e instanceof Error ? e.message : 'Ошибка'));
   }, [open]);
 
   useEffect(() => {
-    if (open && data && !busy) inputRef.current?.focus();
-  }, [open, data, busy]);
+    if (!open || !auditId) return;
+    const t = setInterval(flush, FLUSH_MS);
+    return () => clearInterval(t);
+  }, [open, auditId, flush]);
 
-  const scan = async () => {
-    const v = code.trim();
-    if (!v || !data) return;
+  useEffect(() => {
+    if (open && audit) inputRef.current?.focus();
+  }, [open, audit, flash]);
+
+  const foundSet = useMemo(() => new Set(found), [found]);
+
+  const scan = () => {
+    const v = code.trim().toUpperCase();
     setCode('');
-    setBusy(true);
-    try {
-      setData(await scanRollAudit(data.audit.id, v));
-      setError(null);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Ошибка');
-    } finally {
-      setBusy(false);
+    if (!v) return;
+    const roll = expected.get(v);
+    if (!roll) {
+      setFlash({ text: `${v} — не числится на складе, не засчитан`, ok: false });
+      return;
     }
+    if (foundSet.has(v)) {
+      setFlash({ text: `${v} уже отсканирован`, ok: true });
+      return;
+    }
+    setFound((f) => [v, ...f]);
+    pending.current.add(v);
+    setPendingCount(pending.current.size);
+    setFlash({ text: `${v} · ${roll.material} — найден`, ok: true });
+  };
+
+  const close = async (v: boolean) => {
+    if (!v) await flush();
+    onOpenChange(v);
   };
 
   const finish = async () => {
-    if (!data) return;
+    if (!auditId) return;
     setBusy(true);
     try {
-      await finishRollAudit(data.audit.id);
+      if (!(await flush())) throw new Error('Не удалось сохранить последние сканы, проверьте связь');
+      await finishRollAudit(auditId);
       onFinished();
       onOpenChange(false);
     } catch (e) {
@@ -92,10 +128,11 @@ const RollAuditScanner = ({ open, onOpenChange, onFinished }: RollAuditScannerPr
   };
 
   const cancel = async () => {
-    if (!data) return;
+    if (!auditId) return;
     setBusy(true);
     try {
-      await cancelRollAudit(data.audit.id);
+      pending.current.clear();
+      await cancelRollAudit(auditId);
       onOpenChange(false);
     } finally {
       setBusy(false);
@@ -104,31 +141,32 @@ const RollAuditScanner = ({ open, onOpenChange, onFinished }: RollAuditScannerPr
 
   const missing = useMemo(() => {
     const f = filter.trim().toLowerCase();
-    const list = data?.missing || [];
+    const list = [...expected.values()].filter((e) => !foundSet.has(e.barcode.toUpperCase()));
     return f ? list.filter((m) => m.barcode.toLowerCase().includes(f) || m.material.toLowerCase().includes(f)) : list;
-  }, [data, filter]);
+  }, [expected, foundSet, filter]);
 
-  const a = data?.audit;
-  const last = data?.last ? lastText(data.last) : null;
+  const missingTotal = expected.size - found.length;
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={close}>
       <DialogContent className="flex max-h-[95vh] max-w-5xl flex-col gap-3 overflow-hidden p-4 sm:p-6">
         <DialogHeader>
-          <DialogTitle>Сверка склада материалов{a ? ` №${a.id}` : ''}</DialogTitle>
+          <DialogTitle>Сверка склада материалов{audit ? ` №${audit.id}` : ''}</DialogTitle>
           <p className="text-sm text-muted-foreground">
-            Пройдите по складу и отсканируйте стикер каждого рулона и пачки. Сверка ничего не удаляет и не меняет —
-            только показывает, чего не хватает.
+            Сканируйте стикеры склада. Засчитываются только рулоны и пачки, которые числятся на складе. Сверка ничего не
+            удаляет и не меняет.
           </p>
         </DialogHeader>
 
         {error && <div className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</div>}
 
-        {!data ? (
-          <div className="flex items-center gap-2 py-8 text-sm text-muted-foreground">
-            <Icon name="Loader2" size={16} className="animate-spin" />
-            Готовлю сверку...
-          </div>
+        {!audit ? (
+          !error && (
+            <div className="flex items-center gap-2 py-8 text-sm text-muted-foreground">
+              <Icon name="Loader2" size={16} className="animate-spin" />
+              Готовлю сверку...
+            </div>
+          )
         ) : (
           <>
             <form
@@ -142,60 +180,72 @@ const RollAuditScanner = ({ open, onOpenChange, onFinished }: RollAuditScannerPr
                 ref={inputRef}
                 value={code}
                 onChange={(e) => setCode(e.target.value)}
-                placeholder="Отсканируйте стикер рулона"
+                placeholder="Отсканируйте стикер склада"
                 className="h-12 font-mono text-lg"
                 autoFocus
+                autoComplete="off"
               />
-              <Button type="submit" className="h-12" disabled={busy || !code.trim()}>
+              <Button type="submit" className="h-12" disabled={!code.trim()}>
                 <Icon name="ScanLine" size={18} />
               </Button>
             </form>
 
-            {last && <div className={cn('rounded-md px-3 py-2 text-sm font-semibold', last.className)}>{last.text}</div>}
+            {flash && (
+              <div
+                className={cn(
+                  'rounded-md px-3 py-2 text-sm font-semibold text-white',
+                  flash.ok ? 'bg-emerald-600' : 'bg-red-600',
+                )}
+              >
+                {flash.text}
+              </div>
+            )}
 
-            <div className="grid grid-cols-3 gap-2 text-center text-sm">
+            <div className="grid grid-cols-2 gap-2 text-center text-sm">
               <div className="rounded-md border border-border p-2">
-                <div className="text-2xl font-bold text-emerald-600">{a!.found}</div>
-                <div className="text-xs text-muted-foreground">найдено из {a!.expected}</div>
+                <div className="text-2xl font-bold text-emerald-600">{found.length}</div>
+                <div className="text-xs text-muted-foreground">найдено из {expected.size}</div>
               </div>
               <div className="rounded-md border border-border p-2">
-                <div className="text-2xl font-bold text-red-600">{a!.missing}</div>
+                <div className="text-2xl font-bold text-red-600">{missingTotal}</div>
                 <div className="text-xs text-muted-foreground">ещё не найдено</div>
-              </div>
-              <div className="rounded-md border border-border p-2">
-                <div className="text-2xl font-bold text-amber-600">{a!.extra}</div>
-                <div className="text-xs text-muted-foreground">лишние / не по учёту</div>
               </div>
             </div>
 
             <div className="grid min-h-0 flex-1 grid-cols-1 gap-3 md:grid-cols-2">
               <div className="flex min-h-0 flex-col rounded-md border border-border">
-                <div className="border-b border-border bg-muted/50 px-3 py-2 text-sm font-semibold">
-                  Отсканировано · {data.scans.length}
+                <div className="flex justify-between border-b border-border bg-muted/50 px-3 py-2 text-sm font-semibold">
+                  <span>Отсканировано · {found.length}</span>
+                  {pendingCount > 0 && (
+                    <span className="text-xs font-normal text-muted-foreground">сохраняю {pendingCount}...</span>
+                  )}
                 </div>
                 <div className="min-h-[160px] flex-1 divide-y divide-border overflow-y-auto">
-                  {data.scans.length === 0 && (
+                  {found.length === 0 && (
                     <div className="px-3 py-6 text-center text-sm text-muted-foreground">Пока ничего не отсканировано</div>
                   )}
-                  {data.scans.map((s) => (
-                    <div key={s.barcode} className={cn('border-l-4 px-3 py-1.5 text-sm', SCAN_STYLE[s.result].className)}>
-                      <div className="flex justify-between gap-2">
-                        <span className="font-mono font-semibold">{s.barcode}</span>
-                        <span className="text-xs">{SCAN_STYLE[s.result].label}</span>
+                  {found.map((b) => {
+                    const r = expected.get(b);
+                    return (
+                      <div key={b} className="flex justify-between gap-2 border-l-4 border-emerald-400 px-3 py-1.5 text-sm">
+                        <div className="min-w-0">
+                          <div className="font-mono font-semibold">{b}</div>
+                          <div className="truncate text-xs text-muted-foreground">{r?.material}</div>
+                        </div>
+                        {r && (
+                          <div className="shrink-0 text-xs tabular-nums">
+                            {qty(r.remaining)} {r.unit}
+                          </div>
+                        )}
                       </div>
-                      <div className="text-xs text-muted-foreground">
-                        {s.material || '—'}
-                        {s.remaining != null ? ` · ${qty(s.remaining)}` : ''}
-                        {s.result === 'extra' && s.rollStatus ? ` · по учёту ${s.rollStatus}` : ''}
-                      </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </div>
 
               <div className="flex min-h-0 flex-col rounded-md border border-border">
                 <div className="flex items-center justify-between gap-2 border-b border-border bg-muted/50 px-3 py-1.5">
-                  <span className="text-sm font-semibold">Ещё должно быть · {data.missing.length}</span>
+                  <span className="text-sm font-semibold">Ещё должно быть · {missingTotal}</span>
                   <Input
                     value={filter}
                     onChange={(e) => setFilter(e.target.value)}
@@ -206,7 +256,7 @@ const RollAuditScanner = ({ open, onOpenChange, onFinished }: RollAuditScannerPr
                 <div className="min-h-[160px] flex-1 divide-y divide-border overflow-y-auto">
                   {missing.length === 0 && (
                     <div className="px-3 py-6 text-center text-sm text-emerald-700">
-                      {data.missing.length === 0 ? 'Всё, что числится, найдено' : 'Ничего не подошло'}
+                      {missingTotal === 0 ? 'Всё, что числится, найдено' : 'Ничего не подошло'}
                     </div>
                   )}
                   {missing.map((m) => (
@@ -241,7 +291,7 @@ const RollAuditScanner = ({ open, onOpenChange, onFinished }: RollAuditScannerPr
                       Продолжить сканировать
                     </Button>
                     <Button onClick={finish} disabled={busy}>
-                      Да, завершить ({a!.missing} не найдено)
+                      Да, завершить ({missingTotal} не найдено)
                     </Button>
                   </>
                 ) : (

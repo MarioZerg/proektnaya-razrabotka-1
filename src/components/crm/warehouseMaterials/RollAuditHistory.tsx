@@ -30,8 +30,6 @@ const AuditDetailDialog = ({ id, onClose }: { id: number | null; onClose: () => 
     if (id) fetchRollAudit(id).then(setD).catch((e) => setError(e instanceof Error ? e.message : 'Ошибка'));
   }, [id]);
 
-  const extras = d?.scans.filter((s) => s.result !== 'ok') || [];
-
   return (
     <Dialog open={!!id} onOpenChange={(v) => !v && onClose()}>
       <DialogContent className="max-h-[90vh] max-w-3xl overflow-y-auto">
@@ -51,7 +49,7 @@ const AuditDetailDialog = ({ id, onClose }: { id: number | null; onClose: () => 
               {d.audit.status === 'in_progress' ? 'Идёт сейчас' : `Завершена ${dt(d.audit.finishedAt)}`} · начал{' '}
               {d.audit.startedByName || '—'} {dt(d.audit.startedAt)}
             </div>
-            <div className="grid grid-cols-3 gap-2 text-center">
+            <div className="grid grid-cols-2 gap-2 text-center">
               <div className="rounded-md border p-2">
                 <div className="text-xl font-bold text-emerald-600">{d.audit.found}</div>
                 <div className="text-xs text-muted-foreground">найдено из {d.audit.expected}</div>
@@ -59,10 +57,6 @@ const AuditDetailDialog = ({ id, onClose }: { id: number | null; onClose: () => 
               <div className="rounded-md border p-2">
                 <div className="text-xl font-bold text-red-600">{d.audit.missing}</div>
                 <div className="text-xs text-muted-foreground">не найдено</div>
-              </div>
-              <div className="rounded-md border p-2">
-                <div className="text-xl font-bold text-amber-600">{d.audit.extra}</div>
-                <div className="text-xs text-muted-foreground">лишние</div>
               </div>
             </div>
 
@@ -88,26 +82,6 @@ const AuditDetailDialog = ({ id, onClose }: { id: number | null; onClose: () => 
               </div>
             </div>
 
-            {extras.length > 0 && (
-              <div>
-                <div className="mb-1 text-sm font-semibold text-amber-700">
-                  Нашлись, но по учёту не на складе · {extras.length}
-                </div>
-                <div className="divide-y divide-border rounded-md border">
-                  {extras.map((s) => (
-                    <div key={s.barcode} className="flex justify-between gap-2 px-3 py-1.5 text-sm">
-                      <span>
-                        <span className="font-mono font-semibold">{s.barcode}</span>
-                        <span className="ml-2 text-muted-foreground">{s.material || 'нет в системе'}</span>
-                      </span>
-                      <span className="text-xs text-muted-foreground">
-                        {s.result === 'unknown' ? 'стикера нет в системе' : `по учёту ${s.rollStatus}`}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
           </div>
         )}
       </DialogContent>
@@ -156,7 +130,6 @@ const RollAuditHistory = ({ refreshKey }: { refreshKey: number }) => {
                 <span className={cn(a.missing > 0 ? 'font-semibold text-red-700' : 'text-muted-foreground')}>
                   нет {a.missing}
                 </span>
-                {a.extra > 0 && <span className="text-amber-700">лишних {a.extra}</span>}
               </div>
               <div className="text-xs text-muted-foreground">{a.finishedByName || a.startedByName}</div>
             </DropdownMenuItem>
