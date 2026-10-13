@@ -20,6 +20,8 @@ interface ReturnsInspectionListProps {
   onSearchChange: (value: string) => void;
   onToggle: (id: number) => void;
   onToggleAll: () => void;
+  /** Без выбора строк — список только для просмотра (кладовщик на «Осмотрено»). */
+  selectable?: boolean;
 }
 
 /** Список вещей текущего этапа: поиск по стикеру + таблица с выбором строк. */
@@ -34,6 +36,7 @@ const ReturnsInspectionList = ({
   onSearchChange,
   onToggle,
   onToggleAll,
+  selectable = true,
 }: ReturnsInspectionListProps) => {
   const navigate = useNavigate();
 
@@ -73,7 +76,7 @@ const ReturnsInspectionList = ({
       {/* Явная кнопка выбора всех: галочка в шапке маленькая и на тёмном фоне
           терялась, поэтому полсотни вещей отмечали по одной. Здесь же видно,
           сколько строк сейчас в списке. */}
-      {!loading && visible.length > 0 && (
+      {selectable && !loading && visible.length > 0 && (
         <div className="flex items-center gap-2">
           <Button size="sm" variant="outline" onClick={onToggleAll}>
             <Icon
@@ -137,14 +140,16 @@ const ReturnsInspectionList = ({
                     fromWorkshop ? 'bg-sky-500' : (i.returnCount || 0) >= 3 ? 'bg-destructive' : 'bg-amber-500'
                   }`}
                 />
-                <div className="pt-1" onClick={(e) => e.stopPropagation()}>
-                  <Checkbox
-                    checked={selected.includes(i.id)}
-                    onCheckedChange={() => onToggle(i.id)}
-                    aria-label={`Отметить ${i.storageBarcode}`}
-                    className="h-4 w-4 shrink-0"
-                  />
-                </div>
+                {selectable && (
+                  <div className="pt-1" onClick={(e) => e.stopPropagation()}>
+                    <Checkbox
+                      checked={selected.includes(i.id)}
+                      onCheckedChange={() => onToggle(i.id)}
+                      aria-label={`Отметить ${i.storageBarcode}`}
+                      className="h-4 w-4 shrink-0"
+                    />
+                  </div>
+                )}
                 <div className="grid min-w-0 flex-1 grid-cols-1 items-center gap-x-3 gap-y-1 sm:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)]">
 
                 <div className="flex min-w-0 flex-col items-start gap-0.5">

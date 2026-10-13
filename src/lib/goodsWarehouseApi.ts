@@ -689,6 +689,24 @@ export const toShelfFromInspection = (
     items: PlacedFromInspection[];
   }>;
 
+/** Кладовщик выбрал полку и сканирует стикер осмотренной вещи — вещь встаёт на полку. */
+export const scanInspectedToShelf = (
+  barcode: string,
+  shelfId: number,
+  actorId?: number,
+  actorName?: string,
+) =>
+  postAction({ action: 'scan_inspected_to_shelf', barcode, shelfId, actorId, actorName }) as Promise<{
+    id: number;
+    storageBarcode: string;
+    orderNumber: string | null;
+    product: string | null;
+    material: string | null;
+    width: number | null;
+    height: number | null;
+    shelfName: string;
+  }>;
+
 /** Одна пачка раскладки: полка и стикеры вещей, которые кладут именно на неё. */
 export interface ShelfBatch {
   shelfId: number;

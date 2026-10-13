@@ -7,6 +7,7 @@ import ReturnsInspectionStages from '@/components/crm/goodsWarehouse/ReturnsInsp
 import ReturnsInspectionActions from '@/components/crm/goodsWarehouse/ReturnsInspectionActions';
 import ReturnsInspectionList from '@/components/crm/goodsWarehouse/ReturnsInspectionList';
 import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
+import InspectedShelfScanner from '@/components/crm/goodsWarehouse/InspectedShelfScanner';
 import { useReturnsInspection } from '@/components/crm/goodsWarehouse/useReturnsInspection';
 
 /**
@@ -108,6 +109,10 @@ const ReturnsInspection = () => {
           cancelledLabeledCount={cancelledLabeledCount}
         />
 
+        {stage === 'inspected' && (
+          <InspectedShelfScanner shelves={shelves} onPlaced={() => load(stage)} />
+        )}
+
         {stage === 'atPackers' && !isAdmin && (
           <p className="text-sm text-muted-foreground">
             Вещи в цехе у упаковщицы. Брак отмечает она на терминале — со склада
@@ -133,6 +138,7 @@ const ReturnsInspection = () => {
           onSearchChange={setSearch}
           onToggle={toggle}
           onToggleAll={toggleAll}
+          selectable={stage !== 'inspected' || isAdmin}
         />
 
       </div>

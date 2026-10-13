@@ -141,7 +141,7 @@ const ReturnsInspectionActions = ({
           здесь нужно ровно одно — положить на полку. Можно по одной вещи (один
           стикер) или отметить сразу несколько: тогда печатается лента стикеров,
           и рулонный принтер режет её сам. */}
-      {stage === 'inspected' && (
+      {stage === 'inspected' && isAdmin && (
         <>
           <Select value={shelfId} onValueChange={onShelfIdChange}>
             <SelectTrigger className="h-9 w-44">

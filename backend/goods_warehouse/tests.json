@@ -39,7 +39,9 @@
       "path": "/",
       "body": {
         "action": "export_stock",
-        "ids": [999999]
+        "ids": [
+          999999
+        ]
       },
       "expectedStatus": 200
     },
@@ -221,6 +223,16 @@
       "path": "/",
       "body": {
         "action": "release_stuck_cancelled"
+      },
+      "expectedStatus": 400
+    },
+    {
+      "name": "Scan inspected to shelf without barcode fails",
+      "method": "POST",
+      "path": "/",
+      "body": {
+        "action": "scan_inspected_to_shelf",
+        "shelfId": 1
       },
       "expectedStatus": 400
     }

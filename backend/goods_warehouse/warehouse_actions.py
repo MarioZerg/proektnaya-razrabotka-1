@@ -1221,6 +1221,67 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
             conn.commit()
             return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True, 'moved': moved})}
 
+        if action == 'scan_inspected_to_shelf':
+            # Кладовщик выбрал полку и сканирует стикер хранения осмотренной вещи —
+            # вещь сразу встаёт на эту полку. Стикер уже наклеен упаковщицей.
+            code = str(body_data.get('barcode') or '').strip()
+            shelf_id = body_data.get('shelfId')
+            if not code:
+                return {'statusCode': 400, 'headers': headers,
+                        'body': json.dumps({'error': 'Отсканируйте стикер'}, ensure_ascii=False)}
+            if not shelf_id:
+                return {'statusCode': 400, 'headers': headers,
+                        'body': json.dumps({'error': 'Выберите полку'}, ensure_ascii=False)}
+            cur.execute("SELECT name FROM shelves WHERE id = %s", (int(shelf_id),))
+            shelf_row = cur.fetchone()
+            if not shelf_row:
+                return {'statusCode': 404, 'headers': headers,
+                        'body': json.dumps({'error': 'Полка не найдена'}, ensure_ascii=False)}
+            cur.execute(
+                "SELECT gw.id, gw.status, o.order_number, o.product, o.material, o.width, o.height "
+                "FROM goods_warehouse gw LEFT JOIN orders o ON o.id = gw.order_id "
+                "WHERE gw.storage_barcode = %s",
+                (code,),
+            )
+            row = cur.fetchone()
+            if not row:
+                return {'statusCode': 404, 'headers': headers,
+                        'body': json.dumps({'error': f'Стикер {code} не найден'}, ensure_ascii=False)}
+            gid, gstatus = row[0], row[1]
+            if gstatus == 'in_stock':
+                return {'statusCode': 409, 'headers': headers,
+                        'body': json.dumps({'error': f'{code} уже лежит на полке'}, ensure_ascii=False)}
+            if gstatus not in ('inspected', 'taken'):
+                return {'statusCode': 409, 'headers': headers,
+                        'body': json.dumps({'error': f'{code} не из «Осмотрено» — на полку не принимается'},
+                                           ensure_ascii=False)}
+            cur.execute(
+                "UPDATE goods_warehouse SET status = 'in_stock', shelf_id = %s, received_at = now(), "
+                "taken_at = COALESCE(taken_at, now()), taken_by = COALESCE(taken_by, %s) WHERE id = %s",
+                (int(shelf_id), int(actor_id) if actor_id else None, gid),
+            )
+            try_match_orders_from_stock(cur, gw_id=gid)
+            cur.execute(
+                "UPDATE marketplace_returns SET status = 'processed', outcome = 'stored' "
+                "WHERE goods_warehouse_id = %s AND status = 'picked_up'",
+                (gid,),
+            )
+            log_action(
+                cur, actor_id, actor_name, 'to_shelf_from_inspection', 'goods_warehouse', gid,
+                f'Сканом положил {code} на полку «{shelf_row[0]}»',
+            )
+            conn.commit()
+            return {'statusCode': 200, 'headers': headers, 'body': json.dumps({
+                'id': gid,
+                'storageBarcode': code,
+                'orderNumber': row[2],
+                'product': row[3],
+                'material': row[4],
+                'width': row[5],
+                'height': row[6],
+                'shelfName': shelf_row[0],
+            }, ensure_ascii=False)}
+
         if action == 'to_shelf_from_inspection':
             # Вещь вернулась с маркетплейса в порядке — осматривать её в цехе незачем.
             #
@@ -1255,6 +1316,20 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                 }
 
             ids_csv = ','.join(str(int(i)) for i in ids)
+            if not is_admin(cur, actor_id):
+                cur.execute(
+                    f"SELECT COUNT(*) FROM goods_warehouse WHERE id IN ({ids_csv}) "
+                    f"AND status IN ('inspected', 'taken')"
+                )
+                if cur.fetchone()[0]:
+                    return {
+                        'statusCode': 403,
+                        'headers': headers,
+                        'body': json.dumps({
+                            'error': 'Осмотренные вещи принимаются на полку только сканером. '
+                                     'Вручную переместить может администратор'
+                        }, ensure_ascii=False),
+                    }
             # Сюда же приходят вещи с этапа «Осмотрено»: упаковщица закончила проверку
             # и наклеила стикер, кладовщику остаётся положить вещь на полку. Раньше
             # эти статусы здесь не принимались, и на «Осмотрено» кнопки укладки не
