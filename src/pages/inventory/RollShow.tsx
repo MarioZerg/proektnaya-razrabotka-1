@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import CrmLayout from '@/components/crm/CrmLayout';
 import { Button } from '@/components/ui/button';
 import Icon from '@/components/ui/icon';
@@ -27,6 +27,8 @@ const RollShow = () => {
   const canPrintSticker = isAdmin || isStorekeeperRole(user?.role);
   const rollId = Number(id);
   const navigate = useNavigate();
+  // Пришли со склада материалов (из поставки) — туда же и возвращаемся.
+  const backTo = (useLocation().state as { from?: string } | null)?.from;
   const [data, setData] = useState<RollDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -122,10 +124,11 @@ const RollShow = () => {
           <Button
             variant="ghost"
             size="sm"
-            onClick={() => navigate('/crm/inventory/rolls')}
+            onClick={() => (backTo ? navigate(-1) : navigate('/crm/inventory/rolls'))}
             className="mb-2 -ml-2"
           >
-            <Icon name="ChevronLeft" size={16} className="mr-1" />К рулонам
+            <Icon name="ChevronLeft" size={16} className="mr-1" />
+            {backTo ? 'К материалам на складе' : 'К рулонам'}
           </Button>
           <RollHeaderActions
             roll={roll}

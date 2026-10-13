@@ -19,7 +19,16 @@ interface WarehouseMaterialsCardsProps {
  * Таблица с min-w-max здесь уезжала вбок, и остаток приходилось искать прокруткой.
  */
 const WarehouseMaterialsCards = ({ materials }: WarehouseMaterialsCardsProps) => {
-  const [openId, setOpenId] = useState<number | null>(null);
+  // Помним раскрытый материал: после перехода в рулон и «Назад» список не схлопывается.
+  const [openId, setOpenIdState] = useState<number | null>(() => {
+    const v = Number(sessionStorage.getItem('wm-open-material'));
+    return v || null;
+  });
+  const setOpenId = (id: number | null) => {
+    setOpenIdState(id);
+    if (id) sessionStorage.setItem('wm-open-material', String(id));
+    else sessionStorage.removeItem('wm-open-material');
+  };
   return (
   <div>
     <div className="grid grid-cols-[minmax(0,1.3fr)_minmax(0,0.9fr)_minmax(0,1fr)] bg-primary text-[11px] text-primary-foreground">

@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import Icon from '@/components/ui/icon';
 import { cn } from '@/lib/utils';
 import { fetchMaterialSupplies, type MaterialSupply, type SupplyRoll } from '@/lib/materialsApi';
@@ -19,8 +20,16 @@ const STATE: Record<SupplyRoll['state'], { label: string; className: string }> =
   removed: { label: 'Убран', className: 'bg-muted text-muted-foreground' },
 };
 
-const SupplyRow = ({ supply, unit }: { supply: MaterialSupply; unit: string }) => {
-  const [open, setOpen] = useState(false);
+const SupplyRow = ({ supply, unit, materialId }: { supply: MaterialSupply; unit: string; materialId: number }) => {
+  const storeKey = `wm-open-supply-${materialId}-${supply.key}`;
+  const [open, setOpenState] = useState(() => sessionStorage.getItem(storeKey) === '1');
+  const setOpen = (fn: (v: boolean) => boolean) =>
+    setOpenState((v) => {
+      const next = fn(v);
+      if (next) sessionStorage.setItem(storeKey, '1');
+      else sessionStorage.removeItem(storeKey);
+      return next;
+    });
   const live = supply.inStorage + supply.inWorkshop;
   return (
     <div className="rounded-md border border-border bg-background">
@@ -52,15 +61,18 @@ const SupplyRow = ({ supply, unit }: { supply: MaterialSupply; unit: string }) =
       {open && (
         <div className="divide-y divide-border border-t border-border">
           {supply.rolls.map((r) => (
-            <div
+            <Link
               key={r.id}
+              to={`/crm/inventory/rolls/${r.id}`}
+              state={{ from: '/crm/inventory/warehouse-materials' }}
+              title="Открыть рулон: проверить и напечатать стикер"
               className={cn(
-                'grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2 px-3 py-1.5 text-xs',
+                'grid grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-2 px-3 py-1.5 text-xs hover:bg-muted/50',
                 (r.state === 'done' || r.state === 'removed') && 'opacity-60',
               )}
             >
               <div className="min-w-0">
-                <span className="font-mono text-sm font-semibold">{r.barcode}</span>
+                <span className="font-mono text-sm font-semibold text-primary underline-offset-2 hover:underline">{r.barcode}</span>
                 <span className={cn('ml-2 rounded px-1.5 py-0.5 text-[11px]', STATE[r.state].className)}>
                   {STATE[r.state].label}
                 </span>
@@ -77,7 +89,8 @@ const SupplyRow = ({ supply, unit }: { supply: MaterialSupply; unit: string }) =
                   <span className="text-muted-foreground">было {qty(r.initial)} {unit}</span>
                 )}
               </div>
-            </div>
+              <Icon name="ChevronRight" size={14} className="text-muted-foreground" />
+            </Link>
           ))}
         </div>
       )}
@@ -114,7 +127,7 @@ const MaterialSupplies = ({ materialId, unit }: MaterialSuppliesProps) => {
   return (
     <div className="space-y-2 bg-muted/30 px-3 py-3">
       {supplies.map((s) => (
-        <SupplyRow key={s.key} supply={s} unit={unit} />
+        <SupplyRow key={s.key} supply={s} unit={unit} materialId={materialId} />
       ))}
     </div>
   );
