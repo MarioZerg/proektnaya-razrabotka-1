@@ -1,7 +1,37 @@
 {
   "tests": [
-    {"name": "OPTIONS preflight", "method": "OPTIONS", "path": "/", "expectedStatus": 200},
-    {"name": "Список без входа отклоняется", "method": "GET", "path": "/", "expectedStatus": 401},
-    {"name": "Скан без входа отклоняется", "method": "POST", "path": "/", "body": {"action": "scan", "id": 1, "barcode": "1-000001"}, "expectedStatus": 401}
+    {
+      "name": "OPTIONS preflight",
+      "method": "OPTIONS",
+      "path": "/",
+      "expectedStatus": 200
+    },
+    {
+      "name": "Список без входа отклоняется",
+      "method": "GET",
+      "path": "/",
+      "expectedStatus": 401
+    },
+    {
+      "name": "Скан без входа отклоняется",
+      "method": "POST",
+      "path": "/",
+      "body": {
+        "action": "scan",
+        "id": 1,
+        "barcode": "1-000001"
+      },
+      "expectedStatus": 401
+    },
+    {
+      "name": "Удаление сверки без входа отклоняется",
+      "method": "POST",
+      "path": "/",
+      "body": {
+        "action": "delete",
+        "id": 1
+      },
+      "expectedStatus": 401
+    }
   ]
 }

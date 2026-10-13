@@ -12,7 +12,15 @@ import {
 } from '@/components/ui/dropdown-menu';
 import Icon from '@/components/ui/icon';
 import { cn } from '@/lib/utils';
-import { fetchRollAudit, fetchRollAudits, type RollAudit, type RollAuditDetail } from '@/lib/rollAuditsApi';
+import {
+  deleteRollAudit,
+  fetchRollAudit,
+  fetchRollAudits,
+  writeOffMissingRolls,
+  type RollAudit,
+  type RollAuditDetail,
+} from '@/lib/rollAuditsApi';
+import { useToast } from '@/hooks/use-toast';
 
 const dt = (iso: string | null) =>
   iso
@@ -20,15 +28,50 @@ const dt = (iso: string | null) =>
     : '—';
 const qty = (n: number | null) => (n == null ? '' : (Math.round(n * 100) / 100).toLocaleString('ru-RU'));
 
-const AuditDetailDialog = ({ id, onClose }: { id: number | null; onClose: () => void }) => {
+interface AuditDetailDialogProps {
+  id: number | null;
+  isAdmin: boolean;
+  onClose: () => void;
+  onChanged: () => void;
+}
+
+const AuditDetailDialog = ({ id, isAdmin, onClose, onChanged }: AuditDetailDialogProps) => {
+  const { toast } = useToast();
   const [d, setD] = useState<RollAuditDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [confirm, setConfirm] = useState<'writeoff' | 'delete' | null>(null);
 
   useEffect(() => {
     setD(null);
     setError(null);
+    setConfirm(null);
     if (id) fetchRollAudit(id).then(setD).catch((e) => setError(e instanceof Error ? e.message : 'Ошибка'));
   }, [id]);
+
+  const run = async (kind: 'writeoff' | 'delete') => {
+    if (!id) return;
+    setBusy(true);
+    try {
+      if (kind === 'writeoff') {
+        const r = await writeOffMissingRolls(id);
+        toast({ title: `Убрано из учёта рулонов: ${r.count}` });
+        setD(await fetchRollAudit(id));
+      } else {
+        await deleteRollAudit(id);
+        toast({ title: `Сверка №${id} удалена` });
+        onClose();
+      }
+      onChanged();
+      setConfirm(null);
+    } catch (e) {
+      toast({ title: 'Не получилось', description: e instanceof Error ? e.message : undefined, variant: 'destructive' });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const leftToWriteOff = d && d.audit.status === 'done' ? d.missing.length - d.audit.writtenOff : 0;
 
   return (
     <Dialog open={!!id} onOpenChange={(v) => !v && onClose()}>
@@ -60,6 +103,63 @@ const AuditDetailDialog = ({ id, onClose }: { id: number | null; onClose: () => 
               </div>
             </div>
 
+            {d.audit.writtenOff > 0 && (
+              <div className="rounded-md bg-muted px-3 py-2 text-sm">
+                Убрано из учёта: <b>{d.audit.writtenOff}</b> рулонов · {d.audit.writtenOffByName}{' '}
+                {dt(d.audit.writtenOffAt)}
+              </div>
+            )}
+
+            {isAdmin && (
+              <div className="flex flex-wrap gap-2 rounded-md border border-dashed p-3">
+                {confirm === null && (
+                  <>
+                    {d.audit.status === 'done' && leftToWriteOff > 0 && (
+                      <Button variant="destructive" size="sm" onClick={() => setConfirm('writeoff')} disabled={busy}>
+                        <Icon name="PackageX" size={16} className="mr-1.5" />
+                        Убрать не найденные из учёта ({leftToWriteOff})
+                      </Button>
+                    )}
+                    <Button variant="outline" size="sm" onClick={() => setConfirm('delete')} disabled={busy}>
+                      <Icon name="Trash2" size={16} className="mr-1.5" />
+                      Удалить сверку
+                    </Button>
+                  </>
+                )}
+                {confirm === 'writeoff' && (
+                  <div className="w-full space-y-2 text-sm">
+                    <p>
+                      Все не найденные рулоны, которые до сих пор числятся на складе, будут убраны из учёта: остаток
+                      обнулится, рулон получит пометку «не найден при сверке №{id}». Рулоны, которые после сверки выдали
+                      в цех, не затронутся. Отменить нельзя.
+                    </p>
+                    <div className="flex gap-2">
+                      <Button variant="destructive" size="sm" onClick={() => run('writeoff')} disabled={busy}>
+                        {busy && <Icon name="Loader2" size={14} className="mr-1.5 animate-spin" />}
+                        Да, убрать
+                      </Button>
+                      <Button variant="outline" size="sm" onClick={() => setConfirm(null)} disabled={busy}>
+                        Отмена
+                      </Button>
+                    </div>
+                  </div>
+                )}
+                {confirm === 'delete' && (
+                  <div className="w-full space-y-2 text-sm">
+                    <p>Сверка пропадёт из списка. Рулоны при этом не меняются.</p>
+                    <div className="flex gap-2">
+                      <Button variant="destructive" size="sm" onClick={() => run('delete')} disabled={busy}>
+                        Да, удалить сверку
+                      </Button>
+                      <Button variant="outline" size="sm" onClick={() => setConfirm(null)} disabled={busy}>
+                        Отмена
+                      </Button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
             <div>
               <div className="mb-1 text-sm font-semibold text-red-700">Не найдено на складе · {d.missing.length}</div>
               <div className="divide-y divide-border rounded-md border">
@@ -90,15 +190,16 @@ const AuditDetailDialog = ({ id, onClose }: { id: number | null; onClose: () => 
 };
 
 /** Выпадающий список пройденных сверок склада материалов. */
-const RollAuditHistory = ({ refreshKey }: { refreshKey: number }) => {
+const RollAuditHistory = ({ refreshKey, isAdmin }: { refreshKey: number; isAdmin: boolean }) => {
   const [audits, setAudits] = useState<RollAudit[] | null>(null);
   const [openId, setOpenId] = useState<number | null>(null);
+  const [localKey, setLocalKey] = useState(0);
 
   useEffect(() => {
     fetchRollAudits()
       .then(setAudits)
       .catch(() => setAudits([]));
-  }, [refreshKey]);
+  }, [refreshKey, localKey]);
 
   return (
     <>
@@ -130,13 +231,19 @@ const RollAuditHistory = ({ refreshKey }: { refreshKey: number }) => {
                 <span className={cn(a.missing > 0 ? 'font-semibold text-red-700' : 'text-muted-foreground')}>
                   нет {a.missing}
                 </span>
+                {a.writtenOff > 0 && <span className="text-muted-foreground">убрано {a.writtenOff}</span>}
               </div>
               <div className="text-xs text-muted-foreground">{a.finishedByName || a.startedByName}</div>
             </DropdownMenuItem>
           ))}
         </DropdownMenuContent>
       </DropdownMenu>
-      <AuditDetailDialog id={openId} onClose={() => setOpenId(null)} />
+      <AuditDetailDialog
+        id={openId}
+        isAdmin={isAdmin}
+        onClose={() => setOpenId(null)}
+        onChanged={() => setLocalKey((k) => k + 1)}
+      />
     </>
   );
 };

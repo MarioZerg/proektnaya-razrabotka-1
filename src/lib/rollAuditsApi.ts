@@ -10,6 +10,10 @@ export interface RollAudit {
   expected: number;
   found: number;
   missing: number;
+  /** Сколько не найденных рулонов админ уже убрал из учёта по этой сверке. */
+  writtenOff: number;
+  writtenOffAt: string | null;
+  writtenOffByName: string | null;
 }
 
 export interface RollAuditMissing {
@@ -59,3 +63,6 @@ export const saveRollAuditScans = (id: number, barcodes: string[]) =>
   post<{ saved: string[] }>({ action: 'scan', id, barcodes });
 export const finishRollAudit = (id: number) => post<{ success: boolean }>({ action: 'finish', id });
 export const cancelRollAudit = (id: number) => post<{ success: boolean }>({ action: 'cancel', id });
+export const deleteRollAudit = (id: number) => post<{ success: boolean }>({ action: 'delete', id });
+export const writeOffMissingRolls = (id: number) =>
+  post<{ success: boolean; count: number }>({ action: 'write_off_missing', id });

@@ -3,7 +3,7 @@ import os
 
 import psycopg2
 
-from authz import AuthError, auth_error_response, require_role
+from authz import AuthError, auth_error_response, require_admin, require_role
 
 HEADERS = {'Access-Control-Allow-Origin': '*', 'Content-Type': 'application/json'}
 
@@ -43,11 +43,14 @@ def _audit_row(r):
         'startedAt': r[3].isoformat() if r[3] else None,
         'finishedAt': r[4].isoformat() if r[4] else None,
         'finishedByName': r[5], 'expected': r[6], 'found': r[7], 'missing': r[8],
+        'writtenOff': r[9], 'writtenOffAt': r[10].isoformat() if r[10] else None,
+        'writtenOffByName': r[11],
     }
 
 
 AUDIT_COLS = ("id, status, started_by_name, started_at, finished_at, finished_by_name, "
-              "expected_count, found_count, missing_count")
+              "expected_count, found_count, missing_count, written_off_count, written_off_at, "
+              "written_off_by_name")
 
 
 def _get_audit(cur, audit_id):
@@ -92,10 +95,11 @@ def handler(event: dict, context) -> dict:
                     audit['found'], audit['missing'] = len(found), len(missing)
                     audit['expected'] = len(found) + len(missing)
                 else:
-                    missing = json.loads(row[9] or '[]')
+                    missing = json.loads(row[12] or '[]')
                 conn.commit()
                 return _resp(200, {'audit': audit, 'found': found, 'missing': missing})
-            cur.execute(f"SELECT {AUDIT_COLS} FROM roll_audits WHERE status <> 'cancelled' ORDER BY id DESC LIMIT 100")
+            cur.execute(f"SELECT {AUDIT_COLS} FROM roll_audits WHERE status <> 'cancelled' AND hidden_at IS NULL "
+                        "ORDER BY id DESC LIMIT 100")
             audits = [_audit_row(r) for r in cur.fetchall()]
             conn.commit()
             return _resp(200, {'audits': audits})
@@ -128,6 +132,63 @@ def handler(event: dict, context) -> dict:
         row = cur.fetchone()
         if not row:
             return _resp(404, {'error': 'Сверка не найдена'})
+
+        # Удалить сверку — только админ. Запись прячем, а не стираем: по ней
+        # могли списать рулоны, и в журнале должно остаться, на каком основании.
+        if action == 'delete':
+            admin = require_admin(cur, event)
+            cur.execute("UPDATE roll_audits SET hidden_at = now(), hidden_by_name = %s, "
+                        "status = CASE WHEN status = 'in_progress' THEN 'cancelled' ELSE status END "
+                        "WHERE id = %s", (admin['name'], audit_id))
+            cur.execute(
+                "INSERT INTO audit_log (category, user_id, user_name, action, entity_type, entity_id, description) "
+                "VALUES ('warehouse', %s, %s, 'roll_audit_delete', 'roll_audit', %s, %s)",
+                (admin['id'], admin['name'], audit_id, f"Удалил сверку склада материалов №{audit_id}"),
+            )
+            conn.commit()
+            return _resp(200, {'success': True})
+
+        # Убрать из учёта все рулоны, не найденные в сверке, — только админ.
+        # ОДНА команда на всю пачку: сотни рулонов уходят за доли секунды, в таймаут
+        # не упираемся. Трогаем только те, что ДО СИХ ПОР числятся на складе и не
+        # были отсканированы: рулон, который после сверки выдали в цех или нашли,
+        # не пострадает. Рулон не стирается — помечается «убран» с причиной.
+        if action == 'write_off_missing':
+            admin = require_admin(cur, event)
+            if row[0] != 'done':
+                return _resp(409, {'error': 'Сначала завершите сверку'})
+            cur.execute("SELECT missing_snapshot FROM roll_audits WHERE id = %s", (audit_id,))
+            snap = json.loads(cur.fetchone()[0] or '[]')
+            ids = [int(m['rollId']) for m in snap if m.get('rollId')]
+            if not ids:
+                return _resp(200, {'success': True, 'count': 0})
+            reason = f'Не найден при сверке склада №{audit_id}'
+            cur.execute(
+                "WITH upd AS ("
+                "  UPDATE rolls r SET remaining_quantity = 0, status = 'completed', completed_at = now(), "
+                "         closed_by_name = %s, removed_at = now(), removed_by = %s, removed_by_name = %s, "
+                "         removed_reason = %s "
+                "   WHERE r.id = ANY(%s) AND r.status = 'in_storage' AND r.removed_at IS NULL "
+                "     AND r.remaining_quantity > 0 "
+                "     AND NOT EXISTS (SELECT 1 FROM roll_audit_scans s WHERE s.audit_id = %s AND s.roll_id = r.id) "
+                "  RETURNING r.id, r.barcode"
+                "), log AS ("
+                "  INSERT INTO audit_log (category, user_id, user_name, action, entity_type, entity_id, description) "
+                "  SELECT 'warehouse', %s, %s, 'roll_audit_write_off', 'roll', upd.id, "
+                "         'Убран из учёта: ' || %s || '. Рулон ' || upd.barcode FROM upd RETURNING 1"
+                ") SELECT count(*) FROM upd",
+                (f'Сверка №{audit_id}: не найден', admin['id'], admin['name'], reason, ids, audit_id,
+                 admin['id'], admin['name'], reason),
+            )
+            n = cur.fetchone()[0]
+            cur.execute(
+                "UPDATE roll_audits SET written_off_count = written_off_count + %s, written_off_at = now(), "
+                "written_off_by_name = %s WHERE id = %s",
+                (n, admin['name'], audit_id),
+            )
+            conn.commit()
+            return _resp(200, {'success': True, 'count': n})
+
         if row[0] != 'in_progress':
             return _resp(409, {'error': 'Сверка уже завершена'})
 

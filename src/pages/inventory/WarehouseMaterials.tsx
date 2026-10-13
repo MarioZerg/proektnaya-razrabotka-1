@@ -130,7 +130,7 @@ const WarehouseMaterials = () => {
                 Сверка склада
               </Button>
             )}
-            <RollAuditHistory refreshKey={auditsKey} />
+            <RollAuditHistory refreshKey={auditsKey} isAdmin={user?.role === 'admin'} />
           </div>
         </div>
         {canAudit && (
