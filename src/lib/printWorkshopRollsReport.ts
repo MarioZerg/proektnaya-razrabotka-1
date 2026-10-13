@@ -34,7 +34,8 @@ const STUCK_HOURS = 7 * 24;
 
 const A4_WIDTH_PX = 794;
 const A4_HEIGHT_PX = 1123;
-const LINES_PER_PAGE = 30;
+/** Высота под содержимое листа: без полей и шапки. */
+const PAGE_BUDGET_PX = 960;
 
 const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
@@ -57,85 +58,135 @@ const shortName = (full: string) => {
   return initials ? `${last} ${initials}` : last;
 };
 
-const cuttersText = (v: string | null) =>
-  v ? v.split(',').map((n) => shortName(n)).join(', ') : '—';
+/** Не больше двух фамилий в ячейке: длинный список ломает строку на три этажа. */
+const cuttersText = (v: string | null) => {
+  if (!v) return '—';
+  const names = v.split(',').map((n) => shortName(n));
+  return names.length > 2 ? `${names.slice(0, 2).join(', ')} +${names.length - 2}` : names.join(', ');
+};
+
+type MatLine = {
+  kind: 'mat';
+  name: string;
+  unit: string;
+  total: number;
+  qty: number;
+  stuck: number;
+  fresh: number;
+  maxIdle: number | null;
+};
 
 type Line =
+  | { kind: 'alert'; stuck: number; unopened: number; total: number }
   | { kind: 'title'; text: string; sub?: string }
-  | { kind: 'group'; text: string; tone: 'red' | 'green' | 'grey' }
+  | { kind: 'group'; text: string; hint: string; tone: 'red' | 'green' }
   | { kind: 'rollHead' }
   | { kind: 'roll'; roll: ReportRoll; n: number }
   | { kind: 'matHead' }
-  | { kind: 'mat'; name: string; unit: string; total: number; qty: number; stuck: number; fresh: number; maxIdle: number | null }
+  | MatLine
   | { kind: 'empty'; text: string };
 
-const cell = (text: string, align = 'left', extra = '') =>
-  `<td style="text-align:${align};font-size:10.5px;padding:4px 5px;border-bottom:1px solid #ccc;${extra}">${text}</td>`;
+/** Примерная высота строки на листе — по ней режем на страницы. */
+const lineHeight = (l: Line) =>
+  ({ alert: 200, title: 64, group: 72, rollHead: 40, roll: 66, matHead: 40, mat: 52, empty: 44 })[l.kind];
+
+const COLS = 6;
+
+const td = (text: string, align = 'left', extra = '') =>
+  `<td style="text-align:${align};vertical-align:middle;font-size:15px;line-height:1.25;padding:7px 6px;border-bottom:1px solid #999;${extra}">${text}</td>`;
 
 const head = (cols: [string, string, string?][]) =>
   `<tr>${cols
     .map(
       ([t, w, a]) =>
-        `<td style="width:${w};text-align:${a || 'left'};font-size:10px;font-weight:700;padding:4px 5px;border-bottom:2px solid #000;">${t}</td>`,
+        `<td style="width:${w};text-align:${a || 'left'};font-size:13px;font-weight:700;text-transform:uppercase;padding:6px;border-bottom:3px solid #000;">${t}</td>`,
     )
     .join('')}</tr>`;
 
-const toneBg = { red: '#fde2e2', green: '#e3f5e8', grey: '#eee' };
+/** Простой крупной плашкой: красная — застрял, жёлтая — больше суток, белая — в работе. */
+const idleBadge = (hours: number | null) => {
+  const h = hours ?? 0;
+  const style =
+    h >= STUCK_HOURS
+      ? 'background:#b91c1c;color:#fff;'
+      : h >= 24
+        ? 'background:#fde68a;color:#000;'
+        : 'background:#fff;color:#000;border:1px solid #999;';
+  return `<span style="display:inline-block;min-width:96px;padding:5px 8px;border-radius:6px;font-size:17px;font-weight:800;${style}">${fmtIdle(hours)}</span>`;
+};
 
 const renderLine = (l: Line) => {
   switch (l.kind) {
+    case 'alert':
+      return `<tr><td colspan="${COLS}" style="padding:10px 0 6px;">
+        <div style="border:3px solid #b91c1c;border-radius:10px;padding:12px 16px;">
+          <div style="font-size:22px;font-weight:800;color:#b91c1c;">ОБРАТИТЕ ВНИМАНИЕ</div>
+          <div style="font-size:18px;margin-top:6px;line-height:1.4;">
+            <b>${l.stuck}</b> из ${l.total} рулонов лежат без дела <b>7 суток и больше</b> — они в красном списке.<br/>
+            Найдите каждый рулон по номеру. Кроите сначала из них или сдайте кладовщику.<br/>
+            Не открыто ни разу: <b>${l.unopened}</b> — помечены «НЕ ОТКРЫТ».
+          </div>
+        </div>
+      </td></tr>`;
     case 'title':
-      return `<tr><td colspan="8" style="padding:12px 0 4px;font-size:15px;font-weight:800;border-bottom:2px solid #000;">${esc(l.text)}${
-        l.sub ? `<span style="font-size:11px;font-weight:400;margin-left:8px;">${esc(l.sub)}</span>` : ''
+      return `<tr><td colspan="${COLS}" style="padding:16px 0 6px;font-size:22px;font-weight:800;border-bottom:3px solid #000;">${esc(l.text)}${
+        l.sub ? `<span style="font-size:15px;font-weight:400;margin-left:10px;">${esc(l.sub)}</span>` : ''
       }</td></tr>`;
-    case 'group':
-      return `<tr><td colspan="8" style="padding:5px;font-size:11.5px;font-weight:700;background:${toneBg[l.tone]};">${esc(l.text)}</td></tr>`;
+    case 'group': {
+      const bg = l.tone === 'red' ? 'background:#b91c1c;color:#fff;' : 'background:#dcfce7;color:#000;';
+      return `<tr><td colspan="${COLS}" style="padding:8px 10px;${bg}">
+        <div style="font-size:19px;font-weight:800;">${esc(l.text)}</div>
+        <div style="font-size:13px;margin-top:2px;">${esc(l.hint)}</div>
+      </td></tr>`;
+    }
     case 'rollHead':
       return head([
-        ['#', '4%', 'center'],
-        ['Рулон', '13%'],
-        ['Материал', '22%'],
-        ['Остаток', '14%', 'right'],
-        ['Открыт', '8%', 'center'],
-        ['Простой', '11%', 'center'],
-        ['Посл. расход', '10%', 'center'],
-        ['Кто кроил', '18%'],
+        ['№', '5%', 'center'],
+        ['Рулон', '17%'],
+        ['Материал', '25%'],
+        ['Остаток', '17%', 'right'],
+        ['Без дела', '17%', 'center'],
+        ['Кто кроил', '19%'],
       ]);
     case 'roll': {
       const r = l.roll;
-      const stuck = (r.idleHours ?? 0) >= STUCK_HOURS;
-      return `<tr>${cell(String(l.n), 'center')}${cell(esc(r.barcode), 'left', 'font-weight:700;font-family:monospace;')}${cell(
-        esc(r.materialName),
-      )}${cell(
-        r.opened
-          ? `${fmtQty(r.remainingQuantity)} / ${fmtQty(r.initialQuantity)} ${esc(r.unit)}`
-          : `${fmtQty(r.remainingQuantity)} ${esc(r.unit)}`,
-        'right',
-      )}${cell(r.pendingAcceptance ? 'в пути' : r.opened ? 'да' : 'нет', 'center', r.opened ? '' : 'font-weight:700;')}${cell(
-        fmtIdle(r.idleHours),
+      const qty = `<b style="font-size:17px;">${fmtQty(r.remainingQuantity)}</b> ${esc(r.unit)}${
+        r.opened ? `<div style="font-size:12px;color:#444;">из ${fmtQty(r.initialQuantity)}</div>` : ''
+      }`;
+      const state = r.pendingAcceptance
+        ? '<div style="font-size:12px;font-weight:800;color:#92400e;">В ПУТИ</div>'
+        : !r.opened
+          ? '<div style="font-size:12px;font-weight:800;">НЕ ОТКРЫТ</div>'
+          : '';
+      const last = r.lastUsedAt
+        ? `<div style="font-size:12px;color:#444;margin-top:3px;">резали ${fmtDate(new Date(r.lastUsedAt))}</div>`
+        : `<div style="font-size:12px;color:#444;margin-top:3px;">${r.opened ? 'резка не записана' : 'ещё не резали'}</div>`;
+      return `<tr>${td(String(l.n), 'center', 'font-size:13px;color:#444;')}${td(
+        `<span style="font-family:monospace;font-size:18px;font-weight:800;">${esc(r.barcode)}</span>${state}`,
+      )}${td(esc(r.materialName), 'left', 'font-weight:700;')}${td(qty, 'right')}${td(
+        idleBadge(r.idleHours) + last,
         'center',
-        stuck ? 'font-weight:700;color:#b91c1c;' : '',
-      )}${cell(r.lastUsedAt ? fmtDate(new Date(r.lastUsedAt)) : '—', 'center')}${cell(esc(cuttersText(r.cutters)))}</tr>`;
+      )}${td(esc(cuttersText(r.cutters)), 'left', 'font-size:14px;')}</tr>`;
     }
     case 'matHead':
       return head([
-        ['Материал', '34%'],
-        ['Рулонов', '10%', 'center'],
-        ['Остаток', '16%', 'right'],
-        ['Простой ≥7 сут', '14%', 'center'],
-        ['Менее 7 сут', '12%', 'center'],
-        ['Макс. простой', '14%', 'center'],
+        ['Материал', '36%'],
+        ['Рулонов', '12%', 'center'],
+        ['Остаток', '18%', 'right'],
+        ['Застряло 7+ сут', '17%', 'center'],
+        ['Дольше всех', '17%', 'center'],
       ]);
     case 'mat':
-      return `<tr>${cell(esc(l.name), 'left', 'font-weight:700;')}${cell(String(l.total), 'center')}${cell(
-        `${fmtQty(l.qty)} ${esc(l.unit)}`,
+      return `<tr>${td(esc(l.name), 'left', 'font-weight:700;')}${td(String(l.total), 'center')}${td(
+        `<b>${fmtQty(l.qty)}</b> ${esc(l.unit)}`,
         'right',
-      )}${cell(l.stuck ? String(l.stuck) : '—', 'center', l.stuck ? 'font-weight:700;color:#b91c1c;' : '')}${cell(
-        l.fresh ? String(l.fresh) : '—',
+      )}${td(
+        l.stuck ? String(l.stuck) : '—',
         'center',
-      )}${cell(fmtIdle(l.maxIdle), 'center')}</tr>`;
+        l.stuck ? 'font-size:18px;font-weight:800;color:#b91c1c;' : '',
+      )}${td(fmtIdle(l.maxIdle), 'center')}</tr>`;
     case 'empty':
-      return `<tr><td colspan="8" style="padding:5px;font-size:11px;color:#666;">${esc(l.text)}</td></tr>`;
+      return `<tr><td colspan="${COLS}" style="padding:8px;font-size:16px;color:#444;">${esc(l.text)}</td></tr>`;
   }
 };
 
@@ -151,30 +202,41 @@ const buildLines = (rolls: ReportRoll[], shifts: ReportShift[], showWorkshop: bo
     if (mine.length === 0) return;
     const stuck = mine.filter((r) => (r.idleHours ?? 0) >= STUCK_HOURS).sort(byIdleDesc);
     const fresh = mine.filter((r) => (r.idleHours ?? 0) < STUCK_HOURS).sort(byIdleDesc);
+    if (showWorkshop) lines.push({ kind: 'title', text: `${s.workshopName} · ${s.shiftLabel}` });
     lines.push({
-      kind: 'title',
-      text: `${showWorkshop ? `${s.workshopName} · ` : ''}${s.shiftLabel}`,
-      sub: `рулонов ${mine.length}, простой 7 суток и больше — ${stuck.length}`,
+      kind: 'alert',
+      stuck: stuck.length,
+      unopened: mine.filter((r) => !r.opened && !r.pendingAcceptance).length,
+      total: mine.length,
     });
     let n = 0;
-    lines.push({ kind: 'group', text: `Простой 7 суток и больше — ${stuck.length}`, tone: 'red' });
+    lines.push({
+      kind: 'group',
+      text: `ЗАСТРЯЛИ: без дела 7 суток и больше — ${stuck.length} рул.`,
+      hint: 'Сверху — кто лежит дольше всех',
+      tone: 'red',
+    });
     if (stuck.length) {
       lines.push({ kind: 'rollHead' });
       stuck.forEach((r) => lines.push({ kind: 'roll', roll: r, n: ++n }));
-    } else lines.push({ kind: 'empty', text: 'Нет' });
-    lines.push({ kind: 'group', text: `Простой менее 7 суток — ${fresh.length}`, tone: 'green' });
+    } else lines.push({ kind: 'empty', text: 'Таких рулонов нет' });
+    lines.push({
+      kind: 'group',
+      text: `В РАБОТЕ: без дела меньше 7 суток — ${fresh.length} рул.`,
+      hint: 'Жёлтая плашка — не трогали больше суток',
+      tone: 'green',
+    });
     if (fresh.length) {
       lines.push({ kind: 'rollHead' });
       fresh.forEach((r) => lines.push({ kind: 'roll', roll: r, n: ++n }));
-    } else lines.push({ kind: 'empty', text: 'Нет' });
+    } else lines.push({ kind: 'empty', text: 'Таких рулонов нет' });
   });
 
-  // Сводка по материалам: сколько рулонов застряло и сколько в работе.
-  const mats = new Map<number, Extract<Line, { kind: 'mat' }> & { type: string }>();
+  const mats = new Map<number, MatLine>();
   rolls.forEach((r) => {
     const m =
       mats.get(r.materialId) ||
-      { kind: 'mat' as const, name: r.materialName, unit: r.unit, type: r.typeName, total: 0, qty: 0, stuck: 0, fresh: 0, maxIdle: null };
+      { kind: 'mat' as const, name: r.materialName, unit: r.unit, total: 0, qty: 0, stuck: 0, fresh: 0, maxIdle: null };
     m.total += 1;
     m.qty += r.remainingQuantity;
     if ((r.idleHours ?? 0) >= STUCK_HOURS) m.stuck += 1;
@@ -184,54 +246,73 @@ const buildLines = (rolls: ReportRoll[], shifts: ReportShift[], showWorkshop: bo
   });
   const list = [...mats.values()];
   const freshList = list.filter((m) => m.fresh > 0).sort((a, b) => a.name.localeCompare(b.name, 'ru'));
-  const allList = list.sort((a, b) => b.stuck - a.stuck || a.name.localeCompare(b.name, 'ru'));
+  const allList = [...list].sort((a, b) => b.stuck - a.stuck || a.name.localeCompare(b.name, 'ru'));
 
-  lines.push({ kind: 'title', text: 'Список материалов', sub: `всего ${allList.length}, сверху — где больше застрявших рулонов` });
+  lines.push({ kind: 'title', text: 'Все материалы смены', sub: 'сверху — где больше застрявших' });
   lines.push({ kind: 'matHead' });
   allList.forEach((m) => lines.push(m));
 
-  lines.push({ kind: 'title', text: 'Материалы с рулонами в работе (простой менее 7 суток)', sub: `${freshList.length}` });
+  lines.push({ kind: 'title', text: 'Материалы в работе (меньше 7 суток)', sub: `${freshList.length} шт.` });
   if (freshList.length) {
     lines.push({ kind: 'matHead' });
     freshList.forEach((m) => lines.push(m));
-  } else lines.push({ kind: 'empty', text: 'Нет ни одного материала, с которым работали за последнюю неделю' });
+  } else lines.push({ kind: 'empty', text: 'За последнюю неделю ни с одним материалом не работали' });
 
   return lines;
 };
 
-/** Режем по страницам; заголовок таблицы повторяем, если страница началась с середины списка. */
+/** Режем по высоте листа; шапку таблицы повторяем на новом листе. */
 const paginate = (lines: Line[]) => {
   const pages: Line[][] = [];
   let cur: Line[] = [];
+  let used = 0;
   let lastHead: Line | null = null;
-  lines.forEach((l) => {
+  lines.forEach((l, i) => {
     if (l.kind === 'rollHead' || l.kind === 'matHead') lastHead = l;
-    if (l.kind === 'title' || l.kind === 'group' || l.kind === 'empty') {
-      if (l.kind === 'title') lastHead = null;
-    }
-    // Не оставляем заголовок раздела одиноко внизу листа.
-    const reserve = l.kind === 'title' || l.kind === 'group' ? 3 : 0;
-    if (cur.length + 1 + reserve > LINES_PER_PAGE) {
+    if (l.kind === 'title' || l.kind === 'group') lastHead = null;
+    // Заголовок раздела не оставляем одиноко внизу: с ним должны уйти хотя бы шапка и строка.
+    const next = lines[i + 1];
+    const keep = l.kind === 'title' || l.kind === 'group' || l.kind === 'rollHead' || l.kind === 'matHead'
+      ? (next ? lineHeight(next) : 0) + 60
+      : 0;
+    const h = lineHeight(l);
+    if (cur.length && used + h + keep > PAGE_BUDGET_PX) {
       pages.push(cur);
       cur = [];
-      if ((l.kind === 'roll' || l.kind === 'mat') && lastHead) cur.push(lastHead);
+      used = 0;
+      if ((l.kind === 'roll' || l.kind === 'mat') && lastHead) {
+        cur.push(lastHead);
+        used += lineHeight(lastHead);
+      }
     }
     cur.push(l);
+    used += h;
   });
   if (cur.length) pages.push(cur);
   return pages;
 };
 
+const ROLL_COLS = ['5%', '17%', '25%', '17%', '17%', '19%'];
+const MAT_COLS = ['36%', '12%', '18%', '17%', '17%'];
+
+/** Каждая строка — своя таблица (у рулонов и материалов разные колонки), поэтому ширины задаём явно. */
+const colgroup = (l: Line) => {
+  const cols = l.kind === 'roll' || l.kind === 'rollHead' ? ROLL_COLS : l.kind === 'mat' || l.kind === 'matHead' ? MAT_COLS : null;
+  return cols ? `<colgroup>${cols.map((w) => `<col style="width:${w}"/>`).join('')}</colgroup>` : '';
+};
+
 const pageHtml = (lines: Line[], title: string, pageNo: number, pages: number) =>
-  `<div style="width:${A4_WIDTH_PX}px;height:${A4_HEIGHT_PX}px;box-sizing:border-box;padding:24px;font-family:Arial,Helvetica,sans-serif;background:#fff;color:#000;">
-    <div style="display:flex;justify-content:space-between;align-items:flex-end;border-bottom:3px solid #000;padding-bottom:6px;">
+  `<div style="width:${A4_WIDTH_PX}px;height:${A4_HEIGHT_PX}px;box-sizing:border-box;padding:24px 26px;font-family:Arial,Helvetica,sans-serif;background:#fff;color:#000;">
+    <div style="display:flex;justify-content:space-between;align-items:flex-end;border-bottom:4px solid #000;padding-bottom:8px;">
       <div>
-        <div style="font-size:18px;font-weight:800;">ПРОСТОЙ РУЛОНОВ В ЦЕХЕ</div>
-        <div style="font-size:12px;margin-top:2px;">${esc(title)}</div>
+        <div style="font-size:26px;font-weight:800;">${esc(title)}</div>
+        <div style="font-size:15px;margin-top:2px;">Простой рулонов в цехе</div>
       </div>
-      <div style="font-size:11px;text-align:right;">${fmtDate(new Date())}<br/>лист ${pageNo} из ${pages}</div>
+      <div style="font-size:15px;text-align:right;font-weight:700;">${fmtDate(new Date())}<br/><span style="font-weight:400;">лист ${pageNo} из ${pages}</span></div>
     </div>
-    <table style="width:100%;border-collapse:collapse;">${lines.map(renderLine).join('')}</table>
+    ${lines
+      .map((l) => `<table style="width:100%;border-collapse:collapse;table-layout:fixed;">${colgroup(l)}${renderLine(l)}</table>`)
+      .join('')}
   </div>`;
 
 const renderPage = async (pdf: jsPDFType, html: string, first: boolean) => {
