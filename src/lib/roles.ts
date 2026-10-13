@@ -374,7 +374,13 @@ const managerNav: NavItem[] = [
   {
     label: 'Инвентаризация',
     icon: 'Boxes',
-    children: [{ label: 'Склад товара', path: '/crm/inventory/goods-warehouse' }],
+    children: [
+      { label: 'Склад товара', path: '/crm/inventory/goods-warehouse' },
+      // Остатки ткани, тесьмы и пакетов — менеджеру, чтобы знать, что можно
+      // продавать. Обе страницы только для просмотра, кнопок изменения на них нет.
+      { label: 'Материалы на складе', path: '/crm/inventory/warehouse-materials' },
+      { label: 'Материалы в цехе', path: '/crm/inventory/workshop-materials' },
+    ],
   },
   {
     label: 'Маркетплейсы',
