@@ -1222,6 +1222,19 @@ def normalize_scan(code):
     return ''.join(_RU_TO_EN.get(ch, ch) for ch in raw)
 
 
+def _wb_letters_to_number(code):
+    """Буквенный стикер WB (*C+pdPUIz) → его номер цифрами. Иначе None."""
+    import base64
+    raw = (code or '').strip().lstrip('*')
+    if not re.fullmatch(r'[A-Za-z0-9+/]{8}', raw) or raw.isdigit():
+        return None
+    try:
+        b = base64.b64decode(raw)
+    except Exception:
+        return None
+    return int.from_bytes(b[:5], 'big') if len(b) >= 5 else None
+
+
 def _pull_wb_item_return_for_scan(cur, code):
     """Возврат WB по стикеру с пакета возврата (11 цифр, например 61176619330).
 
@@ -1234,8 +1247,17 @@ def _pull_wb_item_return_for_scan(cur, code):
     Возвращает True, если заявка заведена.
     """
     raw = (code or '').strip().lstrip('*')
-    if not re.fullmatch(r'\d{6,15}', raw):
-        return False
+    # Сканер отдаёт стикер то цифрами (51176619330), то буквами (*C+pdPUIz) —
+    # это один и тот же код: буквы — base64 от первых 5 байт числа.
+    wanted = set()
+    if re.fullmatch(r'\d{6,15}', raw):
+        wanted.add(raw)
+    else:
+        num = _wb_letters_to_number(raw)
+        if num is None:
+            return False
+        wanted.add(str(num))
+        wanted.add(raw)
     shops = list_return_shops(cur) or [None]
     date_to = datetime.now(timezone.utc).date()
     date_from = date_to - timedelta(days=30)
@@ -1253,11 +1275,12 @@ def _pull_wb_item_return_for_scan(cur, code):
                     'GET', {'Authorization': api_key},
                 )
                 if status != 200 or not isinstance(data, dict):
+                    print(f'[wb item-returns] shop={sid} status={status} {str(data)[:300]}')
                     break
                 report = data.get('report') or []
                 hit = next(
                     (r for r in report
-                     if raw in (str(r.get('stickerId') or ''), str(r.get('shkId') or ''))),
+                     if wanted & {str(r.get('stickerId') or ''), str(r.get('shkId') or '')}),
                     None,
                 )
                 if hit:
@@ -1272,7 +1295,9 @@ def _pull_wb_item_return_for_scan(cur, code):
                         'mpStatus': hit.get('returnStatus'),
                         'reason': hit.get('returnReason') or hit.get('returnType'),
                         'createdAt': hit.get('orderDt'),
-                        'returnBarcode': str(hit.get('stickerId') or raw),
+                        # Храним РОВНО то, что пикнули: следующий скан того же
+                        # пакета найдёт заявку напрямую, без запроса к WB.
+                        'returnBarcode': (code or '').strip(),
                     }
                     save_return(cur, 'WB', rec, sid)
                     # Стикер с пакета дописываем и в уже существующую заявку.
@@ -2350,9 +2375,9 @@ def handler(event: dict, context) -> dict:
                         "mi.material, mi.width, mi.height "
                         "FROM marketplace_returns r "
                         "LEFT JOIN marketplace_items mi ON mi.id = r.marketplace_item_id "
-                        "WHERE r.marketplace = 'WB' AND r.return_barcode = %s "
+                        "WHERE r.marketplace = 'WB' AND r.return_barcode = ANY(%s) "
                         "ORDER BY r.id DESC LIMIT 1",
-                        (code.lstrip('*'),),
+                        (_scan_aliases(code),),
                     )
                     row = cur.fetchone()
                 if not row:
