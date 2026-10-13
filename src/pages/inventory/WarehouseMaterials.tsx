@@ -8,6 +8,10 @@ import { fetchMaterialsData, type Material, type MaterialType } from '@/lib/mate
 import { STOCK_LOW_LIMIT, STOCK_MEDIUM_LIMIT } from '@/lib/stockLevels';
 import WarehouseMaterialsTable from '@/components/crm/warehouseMaterials/WarehouseMaterialsTable';
 import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
+import RollAuditScanner from '@/components/crm/warehouseMaterials/RollAuditScanner';
+import RollAuditHistory from '@/components/crm/warehouseMaterials/RollAuditHistory';
+import { useAuth } from '@/context/AuthContext';
+import { isStorekeeperRole } from '@/lib/roles';
 import {
   groupByType,
   matchesStockFilter,
@@ -99,19 +103,46 @@ const WarehouseMaterials = () => {
     }
   }, [typesWithMaterials, typeFilter]);
 
+  const { user } = useAuth();
+  // Сканируют кладовщики и админ; менеджер только смотрит результаты сверок.
+  const canAudit = user?.role === 'admin' || isStorekeeperRole(user?.role);
+  const [auditOpen, setAuditOpen] = useState(false);
+  const [auditsKey, setAuditsKey] = useState(0);
+
   const filtered =
     stockFilter !== 'all' || typeFilter !== 'all' || search.trim().length > 0;
 
   return (
     <CrmLayout>
       <div className="min-w-0 space-y-4 overflow-x-hidden sm:space-y-6">
-        <div>
-          <h1 className="text-xl font-bold">Материалы на складе</h1>
-          <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
-            Что физически лежит на складе. Материал, выданный в цеха, сюда не входит —
-            его видно в «Стоимости остатков» на странице рулонов
-          </p>
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h1 className="text-xl font-bold">Материалы на складе</h1>
+            <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
+              Что физически лежит на складе. Материал, выданный в цеха, сюда не входит —
+              его видно в «Стоимости остатков» на странице рулонов
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {canAudit && (
+              <Button onClick={() => setAuditOpen(true)}>
+                <Icon name="ScanLine" size={16} className="mr-1.5" />
+                Сверка склада
+              </Button>
+            )}
+            <RollAuditHistory refreshKey={auditsKey} />
+          </div>
         </div>
+        {canAudit && (
+          <RollAuditScanner
+            open={auditOpen}
+            onOpenChange={(v) => {
+              setAuditOpen(v);
+              if (!v) setAuditsKey((k) => k + 1);
+            }}
+            onFinished={() => setAuditsKey((k) => k + 1)}
+          />
+        )}
 
         {listError && (
           <WarehouseFetchError
