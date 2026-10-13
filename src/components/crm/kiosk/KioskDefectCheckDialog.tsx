@@ -19,11 +19,11 @@ const KioskDefectCheckDialog = ({
 }: KioskDefectCheckDialogProps) => {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-6">
-      <div className="w-full max-w-lg space-y-4 rounded-lg bg-background p-6">
+      <div className="max-h-[92vh] w-full max-w-lg space-y-4 overflow-y-auto rounded-lg bg-background p-6">
         <div className="flex items-start gap-3">
           <Icon name="TriangleAlert" size={32} className="mt-0.5 shrink-0 text-amber-600" />
-          <div>
-            <p className="text-2xl font-bold">{defectCheck.question}</p>
+          <div className="min-w-0">
+            <p className="break-words text-2xl font-bold">{defectCheck.question}</p>
             <p className="mt-1 text-base text-muted-foreground">{defectCheck.hint}</p>
           </div>
         </div>
@@ -40,25 +40,25 @@ const KioskDefectCheckDialog = ({
             : 'За эту смену вы не оформили ни одного брака'}
         </div>
 
-        <div className="flex flex-col gap-2 sm:flex-row">
-          <Button
-            size="lg"
-            variant="outline"
-            className="h-16 flex-1 text-lg"
-            onClick={onGoToDefect}
-          >
-            <Icon name="PackageX" size={22} className="mr-2" />
-            Оформить брак
-          </Button>
+        <div className="grid gap-3">
           <Button
             size="lg"
             variant="destructive"
-            className="h-16 flex-1 text-lg"
+            className="h-auto min-h-16 w-full whitespace-normal py-3 text-lg leading-tight"
             onClick={onCloseShift}
             disabled={shiftSaving}
           >
-            <Icon name="LogOut" size={22} className="mr-2" />
-            Всё закрыто, завершить смену
+            <Icon name="LogOut" size={22} className="mr-2 shrink-0" />
+            Завершить смену
+          </Button>
+          <Button
+            size="lg"
+            variant="outline"
+            className="h-auto min-h-16 w-full whitespace-normal py-3 text-lg leading-tight"
+            onClick={onGoToDefect}
+          >
+            <Icon name="PackageX" size={22} className="mr-2 shrink-0" />
+            Оформить брак
           </Button>
         </div>
       </div>

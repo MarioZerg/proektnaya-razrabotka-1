@@ -210,17 +210,9 @@ def count_orders_in_work(cur, user_id, role, session_workshop_id=None):
     заказы». Завершить их она не может — их не видно. Условие ниже совпадает с тем,
     по которому очередь прячет заказ."""
     if role == 'packer_returns':
-        # Держит очередь перепаковки своего цеха: пока вещи ждут осмотра,
-        # уходить нельзя — иначе возвраты зависнут до следующей её смены.
-        if not session_workshop_id:
-            return 0
-        cur.execute(
-            "SELECT COUNT(*) FROM goods_warehouse "
-            "WHERE status = 'repacking' "
-            "AND (repack_workshop_id = %s OR repack_workshop_id IS NULL)",
-            (int(session_workshop_id),),
-        )
-        return int(cur.fetchone()[0])
+        # Перепаковка — общий поток возвратов, а не личная работа: упаковщица
+        # не привязана к штукам товара. Смену она закрывает по времени, как все.
+        return 0
     if role == 'packer':
         # Цех берём тот, в котором открыта смена: в гостевом режиме упаковщица может
         # работать не в своём штатном цехе, и держать её должна очередь того цеха,
