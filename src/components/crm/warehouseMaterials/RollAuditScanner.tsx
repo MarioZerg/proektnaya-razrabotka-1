@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import Icon from '@/components/ui/icon';
 import { cn } from '@/lib/utils';
+import { useScannerAutoSubmit } from '@/hooks/useScannerAutoSubmit';
 import {
   cancelRollAudit,
   finishRollAudit,
@@ -82,15 +83,33 @@ const RollAuditScanner = ({ open, onOpenChange, onFinished }: RollAuditScannerPr
     return () => clearInterval(t);
   }, [open, auditId, flush]);
 
+  // Фокус всегда в строке сканера: после открытия окна (оно появляется с анимацией,
+  // поэтому с задержкой), после каждого скана и если кладовщик ткнул мимо поля.
+  // Поиск в правой колонке фокус не забирает, пока им пользуются.
+  const focusScan = useCallback(() => {
+    setTimeout(() => {
+      const el = document.activeElement as HTMLElement | null;
+      if (el && el !== inputRef.current && el.dataset.keepFocus === '1') return;
+      inputRef.current?.focus();
+    }, 50);
+  }, []);
+
   useEffect(() => {
-    if (open && audit) inputRef.current?.focus();
-  }, [open, audit, flash]);
+    if (!open || !audit) return;
+    const t = setTimeout(() => inputRef.current?.focus(), 150);
+    return () => clearTimeout(t);
+  }, [open, audit]);
+
+  useEffect(() => {
+    if (open && audit) focusScan();
+  }, [open, audit, flash, focusScan]);
 
   const foundSet = useMemo(() => new Set(found), [found]);
 
   const scan = () => {
     const v = code.trim().toUpperCase();
     setCode('');
+    focusScan();
     if (!v) return;
     const roll = expected.get(v);
     if (!roll) {
@@ -139,6 +158,9 @@ const RollAuditScanner = ({ open, onOpenChange, onFinished }: RollAuditScannerPr
     }
   };
 
+  // Сканер не всегда присылает Enter — отправляем сами, когда пачка символов закончилась.
+  useScannerAutoSubmit(code, scan, open && !!audit);
+
   const missing = useMemo(() => {
     const f = filter.trim().toLowerCase();
     const list = [...expected.values()].filter((e) => !foundSet.has(e.barcode.toUpperCase()));
@@ -149,7 +171,13 @@ const RollAuditScanner = ({ open, onOpenChange, onFinished }: RollAuditScannerPr
 
   return (
     <Dialog open={open} onOpenChange={close}>
-      <DialogContent className="flex max-h-[95vh] max-w-5xl flex-col gap-3 overflow-hidden p-4 sm:p-6">
+      <DialogContent
+        className="flex max-h-[95vh] max-w-5xl flex-col gap-3 overflow-hidden p-4 sm:p-6"
+        onOpenAutoFocus={(e) => {
+          e.preventDefault();
+          inputRef.current?.focus();
+        }}
+      >
         <DialogHeader>
           <DialogTitle>Сверка склада материалов{audit ? ` №${audit.id}` : ''}</DialogTitle>
           <p className="text-sm text-muted-foreground">
@@ -184,6 +212,13 @@ const RollAuditScanner = ({ open, onOpenChange, onFinished }: RollAuditScannerPr
                 className="h-12 font-mono text-lg"
                 autoFocus
                 autoComplete="off"
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' || e.key === 'Tab') {
+                    e.preventDefault();
+                    scan();
+                  }
+                }}
+                onBlur={focusScan}
               />
               <Button type="submit" className="h-12" disabled={!code.trim()}>
                 <Icon name="ScanLine" size={18} />
@@ -251,6 +286,8 @@ const RollAuditScanner = ({ open, onOpenChange, onFinished }: RollAuditScannerPr
                     onChange={(e) => setFilter(e.target.value)}
                     placeholder="Поиск"
                     className="h-7 w-32 text-xs"
+                    data-keep-focus="1"
+                    onBlur={focusScan}
                   />
                 </div>
                 <div className="min-h-[160px] flex-1 divide-y divide-border overflow-y-auto">
