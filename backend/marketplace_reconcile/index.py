@@ -9,7 +9,10 @@ import psycopg2
 CORS = {
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Methods': 'GET, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type',
+    # X-Auth-Token приложение добавляет к КАЖДОМУ запросу. Без него в списке браузер
+    # блокировал ответ, и сверка всегда падала с «Failed to fetch».
+    'Access-Control-Allow-Headers': 'Content-Type, X-User-Id, X-Auth-Token, X-Session-Id',
+    'Access-Control-Max-Age': '86400',
     'Content-Type': 'application/json',
 }
 
