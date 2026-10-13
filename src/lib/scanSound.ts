@@ -184,3 +184,25 @@ export const playShiftOpenSound = (name?: string) => {
 export const playShiftCloseSound = () => {
   play('/sounds/shift-close.mp3', () => beep(440, 0.22, 'sine'));
 };
+/**
+ * Проговаривает фразу голосом Windows/браузера (русский голос), например название полки
+ * после успешного скана. Звучит после короткого сигнала скана, чтобы не перебить его.
+ * Новая фраза обрывает недоговоренную — кладовщик сканирует быстро, важна последняя.
+ */
+export const speakText = (text: string, delayMs = 250) => {
+  const synth = typeof window !== 'undefined' ? window.speechSynthesis : undefined;
+  const spoken = (text || '').replace(/[«»"_]/g, ' ').replace(/№/g, 'номер ').replace(/\s+/g, ' ').trim();
+  if (!synth || !spoken) return;
+  rememberRussianVoice();
+  window.setTimeout(() => {
+    const phrase = new SpeechSynthesisUtterance(spoken);
+    phrase.lang = 'ru-RU';
+    if (cachedRussianVoice) phrase.voice = cachedRussianVoice;
+    phrase.rate = 1;
+    synth.cancel();
+    window.setTimeout(() => {
+      synth.resume();
+      synth.speak(phrase);
+    }, 60);
+  }, delayMs);
+};

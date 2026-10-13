@@ -424,6 +424,75 @@ def pick_shelf_for_item(cur, gw_id):
     return target['id'], target['name'], 'свободное место'
 
 
+# Ходовой размер — тот, что даёт хотя бы 1% всех заказов за 60 дней. Сейчас это около
+# 25 самых частых размеров из сотни: 300×265, 300×255, 200×245 и т.п.
+POPULAR_SIZE_SHARE = 0.01
+
+
+def pick_demand_shelf(cur, gw_id):
+    """Полка для осмотренной вещи по спросу на размер: ходовой размер — на «Ходовую полку»,
+    остальное — на «Не ходовую». Кладовщик номер не выбирает.
+
+    Полки различаем по названию: в названии есть «не ходов» — полка для редких размеров,
+    просто «ходов» — для ходовых. Внутри группы: сначала полка, где уже лежит такая же
+    вещь (та же ткань и размер), иначе самая свободная. Заполненные (50 вещей) пропускаем.
+
+    Возвращает (shelf_id, shelf_name, is_popular) или (None, текст ошибки, is_popular).
+    """
+    cur.execute(
+        "SELECT o.material, o.width, o.height FROM goods_warehouse gw "
+        "LEFT JOIN orders o ON o.id = gw.order_id WHERE gw.id = %s",
+        (int(gw_id),),
+    )
+    material, width, height = cur.fetchone() or (None, None, None)
+
+    is_popular = False
+    if width and height:
+        cur.execute(
+            "SELECT COUNT(*) FILTER (WHERE width = %s AND height = %s), COUNT(*) FROM orders "
+            "WHERE created_at > now() - interval '60 days'",
+            (width, height),
+        )
+        same, total = cur.fetchone()
+        is_popular = bool(total) and (int(same) / int(total)) >= POPULAR_SIZE_SHARE
+
+    cur.execute(
+        "SELECT s.id, s.name, "
+        "  (SELECT COUNT(*) FROM goods_warehouse g WHERE g.shelf_id = s.id AND g.status = 'in_stock') "
+        "FROM shelves s ORDER BY s.name"
+    )
+    group = []
+    for sid, name, cnt in cur.fetchall():
+        low = (name or '').lower().replace('ё', 'е')
+        rare = 'не ходов' in low or 'неходов' in low
+        popular = not rare and 'ходов' in low
+        if (is_popular and popular) or (not is_popular and rare):
+            group.append({'id': sid, 'name': name, 'count': int(cnt or 0)})
+
+    kind = 'Ходовая полка' if is_popular else 'Не ходовая полка'
+    if not group:
+        return None, f'Не заведена «{kind}». Добавьте её в настройках полок', is_popular
+    free = [s for s in group if s['count'] < SHELF_CAPACITY]
+    if not free:
+        return None, f'Все «{kind}» заполнены (по {SHELF_CAPACITY} вещей). Заведите ещё одну', is_popular
+
+    if material and width and height:
+        cur.execute(
+            "SELECT gw.shelf_id FROM goods_warehouse gw JOIN orders o ON o.id = gw.order_id "
+            "WHERE gw.status = 'in_stock' AND gw.shelf_id = ANY(%s) "
+            "  AND o.material = %s AND o.width = %s AND o.height = %s "
+            "GROUP BY gw.shelf_id ORDER BY COUNT(*) DESC LIMIT 1",
+            ([s['id'] for s in free], material, width, height),
+        )
+        hit = cur.fetchone()
+        if hit:
+            same_shelf = next(s for s in free if s['id'] == hit[0])
+            return same_shelf['id'], same_shelf['name'], is_popular
+
+    target = sorted(free, key=lambda s: (s['count'], s['name']))[0]
+    return target['id'], target['name'], is_popular
+
+
 def log_return_history(cur, gw_id, order_id, actor_id, actor_name,
                        mp_return_id=None, return_reason=None, marketplace=None,
                        posting_number=None):

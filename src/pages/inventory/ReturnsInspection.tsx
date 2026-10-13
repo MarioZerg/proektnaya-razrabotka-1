@@ -110,7 +110,7 @@ const ReturnsInspection = () => {
         />
 
         {stage === 'inspected' && (
-          <InspectedShelfScanner shelves={shelves} onPlaced={() => load(stage)} />
+          <InspectedShelfScanner onPlaced={() => load(stage)} />
         )}
 
         {stage === 'atPackers' && !isAdmin && (

@@ -690,13 +690,9 @@ export const toShelfFromInspection = (
   }>;
 
 /** Кладовщик выбрал полку и сканирует стикер осмотренной вещи — вещь встаёт на полку. */
-export const scanInspectedToShelf = (
-  barcode: string,
-  shelfId: number,
-  actorId?: number,
-  actorName?: string,
-) =>
-  postAction({ action: 'scan_inspected_to_shelf', barcode, shelfId, actorId, actorName }) as Promise<{
+/** Полку выбирает система: ходовой размер — на «Ходовую полку», редкий — на «Не ходовую». */
+export const scanInspectedToShelf = (barcode: string, actorId?: number, actorName?: string) =>
+  postAction({ action: 'scan_inspected_to_shelf', barcode, actorId, actorName }) as Promise<{
     id: number;
     storageBarcode: string;
     orderNumber: string | null;
@@ -705,6 +701,8 @@ export const scanInspectedToShelf = (
     width: number | null;
     height: number | null;
     shelfName: string;
+    /** true — ходовой размер. */
+    popular?: boolean | null;
     /** Вещь уже лежала на этой полке — повтор после обрыва связи. */
     alreadyPlaced?: boolean;
   }>;

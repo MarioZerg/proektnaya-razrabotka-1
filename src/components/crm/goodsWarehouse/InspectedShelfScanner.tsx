@@ -1,21 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
 import { Input } from '@/components/ui/input';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
 import Icon from '@/components/ui/icon';
+import { cn } from '@/lib/utils';
 import { useAuth } from '@/context/AuthContext';
 import { useScannerAutoSubmit } from '@/hooks/useScannerAutoSubmit';
-import { playScanSound, playScanErrorSound, primeScanSounds } from '@/lib/scanSound';
+import { playScanSound, playScanErrorSound, primeScanSounds, speakText } from '@/lib/scanSound';
 import { scanInspectedToShelf } from '@/lib/goodsWarehouseApi';
-import type { Shelf } from '@/lib/shelvesApi';
 
 interface InspectedShelfScannerProps {
-  shelves: Shelf[];
   /** Вещь легла на полку — обновить список и счётчики. */
   onPlaced: () => void;
 }
@@ -24,20 +16,18 @@ interface PlacedRow {
   barcode: string;
   title: string;
   shelfName: string;
+  popular: boolean | null | undefined;
 }
-
-const SHELF_KEY = 'inspectedScanShelfId';
 
 /**
  * Сканер приёмки осмотренных вещей на полку.
  *
- * Упаковщица уже наклеила стикер хранения. Кладовщик выбирает полку, у которой стоит,
- * и пикает вещи подряд — каждая сразу встаёт на эту полку. Ручного выбора строк нет:
- * положить можно только то, что реально в руках.
+ * Полку выбирает система по спросу на размер: ходовой размер — на «Ходовую полку»,
+ * редкий — на «Не ходовую». Кладовщик только сканирует: после сигнала голос
+ * называет полку, и на экране она крупно — кладёт вещь туда.
  */
-const InspectedShelfScanner = ({ shelves, onPlaced }: InspectedShelfScannerProps) => {
+const InspectedShelfScanner = ({ onPlaced }: InspectedShelfScannerProps) => {
   const { user } = useAuth();
-  const [shelfId, setShelfId] = useState(() => localStorage.getItem(SHELF_KEY) || '');
   const [barcode, setBarcode] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -48,20 +38,8 @@ const InspectedShelfScanner = ({ shelves, onPlaced }: InspectedShelfScannerProps
 
   useEffect(() => {
     primeScanSounds();
+    focusInput();
   }, []);
-
-  useEffect(() => {
-    if (shelfId && !shelves.some((s) => String(s.id) === shelfId) && shelves.length) {
-      setShelfId('');
-    }
-  }, [shelves, shelfId]);
-
-  useEffect(() => {
-    if (shelfId) {
-      localStorage.setItem(SHELF_KEY, shelfId);
-      focusInput();
-    }
-  }, [shelfId]);
 
   const handleScan = async () => {
     const code = barcode.trim().toUpperCase();
@@ -74,14 +52,9 @@ const InspectedShelfScanner = ({ shelves, onPlaced }: InspectedShelfScannerProps
       focusInput();
       return;
     }
-    if (!shelfId) {
-      playScanErrorSound();
-      setError('Сначала выберите полку');
-      return;
-    }
     setBusy(true);
     try {
-      const send = () => scanInspectedToShelf(code, Number(shelfId), user?.id, user?.name);
+      const send = () => scanInspectedToShelf(code, user?.id, user?.name);
       if (placed.some((p) => p.barcode === code)) {
         throw new Error(`${code} уже принят на хранение — повторно не сканируется`);
       }
@@ -89,8 +62,6 @@ const InspectedShelfScanner = ({ shelves, onPlaced }: InspectedShelfScannerProps
       for (let attempt = 0; attempt < 3; attempt += 1) {
         try {
           const r = await send();
-          // Вещь уже на хранении. Засчитываем только повтор после обрыва связи
-          // в этом же скане — новый скан того же GW это дубль.
           if (r.alreadyPlaced && attempt === 0) {
             throw new Error(`${code} уже на хранении на полке «${r.shelfName}» — повторно не принимается`);
           }
@@ -105,11 +76,15 @@ const InspectedShelfScanner = ({ shelves, onPlaced }: InspectedShelfScannerProps
       }
       if (!res) throw new Error('Не удалось положить на полку');
       playScanSound();
+      speakText(res.shelfName);
       const title =
         res.material && res.width && res.height
           ? `${res.material} ${res.width}×${res.height}`
           : res.product || 'Товар';
-      setPlaced((prev) => [{ barcode: res.storageBarcode, title, shelfName: res.shelfName }, ...prev]);
+      setPlaced((prev) => [
+        { barcode: res.storageBarcode, title, shelfName: res.shelfName, popular: res.popular },
+        ...prev,
+      ]);
       onPlaced();
     } catch (e) {
       playScanErrorSound();
@@ -120,16 +95,14 @@ const InspectedShelfScanner = ({ shelves, onPlaced }: InspectedShelfScannerProps
     }
   };
 
-  useScannerAutoSubmit(barcode, handleScan, !busy && !!shelfId);
+  useScannerAutoSubmit(barcode, handleScan, !busy);
 
-  const shelfName = shelves.find((s) => String(s.id) === shelfId)?.name;
+  const last = placed[0];
 
   return (
     <div className="space-y-3 rounded-xl border-2 border-emerald-300 bg-emerald-50 p-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <p className="text-lg font-bold text-emerald-900">
-          {shelfId ? `Сканируйте вещи на полку «${shelfName ?? ''}»` : 'Выберите полку'}
-        </p>
+        <p className="text-lg font-bold text-emerald-900">Сканируйте вещи — полку подскажет система</p>
         {placed.length > 0 && (
           <span className="rounded-lg bg-emerald-600 px-3 py-1 text-base font-bold text-white">
             Принято: {placed.length}
@@ -137,35 +110,25 @@ const InspectedShelfScanner = ({ shelves, onPlaced }: InspectedShelfScannerProps
         )}
       </div>
 
-      <div className="grid gap-3 sm:grid-cols-[220px_minmax(0,1fr)]">
-        <Select value={shelfId} onValueChange={setShelfId}>
-          <SelectTrigger className="h-14 bg-white text-lg">
-            <SelectValue placeholder="Полка" />
-          </SelectTrigger>
-          <SelectContent>
-            {shelves.map((sh) => (
-              <SelectItem key={sh.id} value={String(sh.id)} className="text-base">
-                {sh.name}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        <Input
-          ref={inputRef}
-          value={barcode}
-          onChange={(e) => setBarcode(e.target.value)}
-          onKeyDown={(e) => e.key === 'Enter' && handleScan()}
-          placeholder={shelfId ? 'Поднесите стикер хранения к сканеру' : 'Сначала выберите полку'}
-          className="h-14 bg-white font-mono-tech text-xl"
-          autoComplete="off"
-          disabled={!shelfId}
-        />
-      </div>
+      <Input
+        ref={inputRef}
+        value={barcode}
+        onChange={(e) => setBarcode(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') {
+            e.preventDefault();
+            handleScan();
+          }
+        }}
+        placeholder="Поднесите стикер хранения к сканеру"
+        className="h-14 bg-white font-mono-tech text-xl"
+        autoComplete="off"
+      />
 
       {busy && (
         <p className="flex items-center gap-2 text-sm text-emerald-800">
           <Icon name="Loader2" size={16} className="animate-spin" />
-          Кладём на полку...
+          Подбираем полку...
         </p>
       )}
 
@@ -173,6 +136,20 @@ const InspectedShelfScanner = ({ shelves, onPlaced }: InspectedShelfScannerProps
         <div className="flex items-start gap-3 rounded-lg border border-destructive bg-destructive/10 p-3">
           <Icon name="TriangleAlert" size={22} className="mt-0.5 shrink-0 text-destructive" />
           <p className="text-base font-medium text-destructive">{error}</p>
+        </div>
+      )}
+
+      {last && !error && (
+        <div
+          className={cn(
+            'rounded-xl p-4 text-center text-white',
+            last.popular === false ? 'bg-slate-600' : 'bg-emerald-600',
+          )}
+        >
+          <div className="text-sm opacity-90">
+            {last.title} · {last.popular === false ? 'не ходовой размер' : 'ходовой размер'}
+          </div>
+          <div className="mt-1 text-3xl font-extrabold">{last.shelfName}</div>
         </div>
       )}
 

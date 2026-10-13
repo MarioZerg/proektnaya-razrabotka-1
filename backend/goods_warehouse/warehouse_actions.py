@@ -25,6 +25,7 @@ from shared import (
     next_storage_barcode,
     notify_admin,
     pick_shelf_for_item,
+    pick_demand_shelf,
     release_fbo_from_shelf,
     resolve_ozon_barcode,
     try_match_orders_from_stock,
@@ -1223,10 +1224,11 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
             return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True, 'moved': moved})}
 
         if action == 'scan_inspected_to_shelf':
-            # Кладовщик выбрал полку и сканирует стикер хранения осмотренной вещи —
-            # вещь сразу встаёт на эту полку. Стикер уже наклеен упаковщицей.
+            # Кладовщик сканирует стикер хранения осмотренной вещи — ПОЛКУ ВЫБИРАЕТ СИСТЕМА
+            # по спросу на размер: ходовой размер — на «Ходовую полку», редкий — на
+            # «Не ходовую» (pick_demand_shelf). Номер полки кладовщик не выбирает: он
+            # слышит его голосом после скана и кладёт вещь туда.
             code = str(body_data.get('barcode') or '').strip().upper()
-            shelf_id = body_data.get('shelfId')
             if not code:
                 return {'statusCode': 400, 'headers': headers,
                         'body': json.dumps({'error': 'Отсканируйте стикер'}, ensure_ascii=False)}
@@ -1235,17 +1237,11 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                         'body': json.dumps({'error': f'{code} — не стикер хранения GW. '
                                                      f'Сканируйте только стикер GW с осмотренной вещи'},
                                            ensure_ascii=False)}
-            if not shelf_id:
-                return {'statusCode': 400, 'headers': headers,
-                        'body': json.dumps({'error': 'Выберите полку'}, ensure_ascii=False)}
-            cur.execute("SELECT name FROM shelves WHERE id = %s", (int(shelf_id),))
-            shelf_row = cur.fetchone()
-            if not shelf_row:
-                return {'statusCode': 404, 'headers': headers,
-                        'body': json.dumps({'error': 'Полка не найдена'}, ensure_ascii=False)}
             cur.execute(
-                "SELECT gw.id, gw.status, o.order_number, o.product, o.material, o.width, o.height "
+                "SELECT gw.id, gw.status, o.order_number, o.product, o.material, o.width, o.height, "
+                "       gw.shelf_id, s.name "
                 "FROM goods_warehouse gw LEFT JOIN orders o ON o.id = gw.order_id "
+                "LEFT JOIN shelves s ON s.id = gw.shelf_id "
                 "WHERE gw.storage_barcode = %s",
                 (code,),
             )
@@ -1254,29 +1250,36 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                 return {'statusCode': 404, 'headers': headers,
                         'body': json.dumps({'error': f'Стикер {code} не найден'}, ensure_ascii=False)}
             gid, gstatus = row[0], row[1]
+
+            def _ok(shelf_name, popular, already=False):
+                return {'statusCode': 200, 'headers': headers, 'body': json.dumps({
+                    'id': gid, 'storageBarcode': code, 'orderNumber': row[2], 'product': row[3],
+                    'material': row[4], 'width': row[5], 'height': row[6],
+                    'shelfName': shelf_name, 'popular': popular, 'alreadyPlaced': already,
+                }, ensure_ascii=False)}
+
             if gstatus == 'in_stock':
-                cur.execute("SELECT shelf_id FROM goods_warehouse WHERE id = %s", (gid,))
-                cur_shelf = cur.fetchone()[0]
-                if cur_shelf and int(cur_shelf) == int(shelf_id):
-                    # Повтор после обрыва связи: вещь уже легла именно на эту полку.
-                    return {'statusCode': 200, 'headers': headers, 'body': json.dumps({
-                        'id': gid,
-                        'storageBarcode': code,
-                        'orderNumber': row[2],
-                        'product': row[3],
-                        'material': row[4],
-                        'width': row[5],
-                        'height': row[6],
-                        'shelfName': shelf_row[0],
-                        'alreadyPlaced': True,
-                    }, ensure_ascii=False)}
+                # Повтор после обрыва связи в ту же минуту — вещь уже легла, отвечаем полкой.
+                cur.execute(
+                    "SELECT 1 FROM goods_warehouse WHERE id = %s AND received_at > now() - interval '2 minutes'",
+                    (gid,),
+                )
+                if cur.fetchone() and row[8]:
+                    return _ok(row[8], None, True)
                 return {'statusCode': 409, 'headers': headers,
-                        'body': json.dumps({'error': f'{code} уже лежит на другой полке'}, ensure_ascii=False)}
+                        'body': json.dumps({'error': f'{code} уже на хранении на полке «{row[8] or "—"}» — '
+                                                     f'повторно не принимается', 'shelfName': row[8]},
+                                           ensure_ascii=False)}
             if gstatus not in ('inspected', 'taken'):
                 return {'statusCode': 409, 'headers': headers,
                         'body': json.dumps({'error': f'{code} не ожидает укладки после осмотра — '
                                                      f'этот сканер его не принимает'},
                                            ensure_ascii=False)}
+
+            shelf_id, shelf_name, popular = pick_demand_shelf(cur, gid)
+            if not shelf_id:
+                return {'statusCode': 409, 'headers': headers,
+                        'body': json.dumps({'error': shelf_name}, ensure_ascii=False)}
             cur.execute(
                 "UPDATE goods_warehouse SET status = 'in_stock', shelf_id = %s, received_at = now(), "
                 "taken_at = COALESCE(taken_at, now()), taken_by = COALESCE(taken_by, %s) WHERE id = %s",
@@ -1290,19 +1293,11 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
             )
             log_action(
                 cur, actor_id, actor_name, 'to_shelf_from_inspection', 'goods_warehouse', gid,
-                f'Сканом положил {code} на полку «{shelf_row[0]}»',
+                f'Сканом положил {code} на полку «{shelf_name}» '
+                f'({"ходовой" if popular else "не ходовой"} размер, полку выбрала система)',
             )
             conn.commit()
-            return {'statusCode': 200, 'headers': headers, 'body': json.dumps({
-                'id': gid,
-                'storageBarcode': code,
-                'orderNumber': row[2],
-                'product': row[3],
-                'material': row[4],
-                'width': row[5],
-                'height': row[6],
-                'shelfName': shelf_row[0],
-            }, ensure_ascii=False)}
+            return _ok(shelf_name, popular)
 
         if action == 'to_shelf_from_inspection':
             # Вещь вернулась с маркетплейса в порядке — осматривать её в цехе незачем.
