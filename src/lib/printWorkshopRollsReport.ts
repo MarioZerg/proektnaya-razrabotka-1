@@ -20,6 +20,13 @@ export interface ReportRoll {
   lastUsedAt: string | null;
   idleHours: number | null;
   cutters: string | null;
+  shortageQuantity?: number;
+  packerReturnedQuantity?: number;
+  defectQuantity?: number;
+  /** Метраж ушёл с рулона, но ни в заказы, ни в брак, ни в недостачу не записан. */
+  unrecordedQuantity?: number;
+  /** Закройщики, выходившие на эту смену, пока рулон лежал в цехе. */
+  shiftCutters?: string | null;
 }
 
 export interface ReportShift {
@@ -32,16 +39,16 @@ export interface ReportShift {
 /** Граница: рулон без расхода неделю и дольше считаем застрявшим. */
 const STUCK_HOURS = 7 * 24;
 
-const A4_WIDTH_PX = 794;
-const A4_HEIGHT_PX = 1123;
+export const A4_WIDTH_PX = 794;
+export const A4_HEIGHT_PX = 1123;
 /** Высота под содержимое листа: без полей и шапки. */
 const PAGE_BUDGET_PX = 960;
 
-const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+export const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
-const fmtQty = (n: number) => (Math.round(n * 100) / 100).toLocaleString('ru-RU');
+export const fmtQty = (n: number) => (Math.round(n * 100) / 100).toLocaleString('ru-RU');
 
-const fmtDate = (d: Date) =>
+export const fmtDate = (d: Date) =>
   `${String(d.getDate()).padStart(2, '0')}.${String(d.getMonth() + 1).padStart(2, '0')}.${d.getFullYear()}`;
 
 const fmtIdle = (hours: number | null) => {
@@ -52,7 +59,7 @@ const fmtIdle = (hours: number | null) => {
   return h ? `${d} дн ${h} ч` : `${d} дн`;
 };
 
-const shortName = (full: string) => {
+export const shortName = (full: string) => {
   const [last, ...rest] = full.trim().split(/\s+/);
   const initials = rest.map((p) => `${p[0].toUpperCase()}.`).join('');
   return initials ? `${last} ${initials}` : last;
@@ -190,7 +197,7 @@ const renderLine = (l: Line) => {
   }
 };
 
-const shiftKey = (wid: number, shift: number | null) => `${wid}-${shift ?? 'x'}`;
+export const shiftKey = (wid: number, shift: number | null) => `${wid}-${shift ?? 'x'}`;
 
 const byIdleDesc = (a: ReportRoll, b: ReportRoll) => (b.idleHours ?? 0) - (a.idleHours ?? 0);
 
@@ -315,7 +322,7 @@ const pageHtml = (lines: Line[], title: string, pageNo: number, pages: number) =
       .join('')}
   </div>`;
 
-const renderPage = async (pdf: jsPDFType, html: string, first: boolean) => {
+export const renderPage = async (pdf: jsPDFType, html: string, first: boolean) => {
   const box = document.createElement('div');
   box.style.position = 'fixed';
   box.style.left = '-99999px';
@@ -332,7 +339,7 @@ const renderPage = async (pdf: jsPDFType, html: string, first: boolean) => {
   }
 };
 
-const translit = (v: string) => {
+export const translit = (v: string) => {
   const map: Record<string, string> = {
     а: 'a', б: 'b', в: 'v', г: 'g', д: 'd', е: 'e', ё: 'e', ж: 'zh', з: 'z', и: 'i', й: 'y', к: 'k',
     л: 'l', м: 'm', н: 'n', о: 'o', п: 'p', р: 'r', с: 's', т: 't', у: 'u', ф: 'f', х: 'h', ц: 'c',
@@ -347,7 +354,7 @@ const translit = (v: string) => {
     .replace(/^-+|-+$/g, '');
 };
 
-const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
+export const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 /**
  * PDF о простое рулонов — ОТДЕЛЬНЫЙ ФАЙЛ НА КАЖДУЮ СМЕНУ: лист отдают старшему

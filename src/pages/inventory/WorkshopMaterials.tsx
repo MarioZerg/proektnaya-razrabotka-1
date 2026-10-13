@@ -16,6 +16,7 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
@@ -154,13 +155,16 @@ const WorkshopMaterials = () => {
   };
 
   // PDF о простое рулонов: на каждую смену — свой файл.
-  const handlePrint = async (cols: WorkshopMaterialColumn[]) => {
+  const handlePrint = async (cols: WorkshopMaterialColumn[], kind: 'idle' | 'unrecorded' = 'idle') => {
     if (cols.length === 0) return;
     setPrinting(true);
     try {
-      const { printWorkshopRollsReport } = await import('@/lib/printWorkshopRollsReport');
       const single = new Set(cols.map((c) => c.workshopId)).size === 1;
-      const made = await printWorkshopRollsReport(cols, single ? cols[0].workshopId : undefined);
+      const wid = single ? cols[0].workshopId : undefined;
+      const made =
+        kind === 'idle'
+          ? await (await import('@/lib/printWorkshopRollsReport')).printWorkshopRollsReport(cols, wid)
+          : await (await import('@/lib/printUnrecordedCutReport')).printUnrecordedCutReport(cols, wid);
       toast({ title: made === 1 ? 'PDF сформирован' : `Сформировано файлов: ${made}`, description: 'По одному на смену' });
     } catch (e) {
       toast({
@@ -184,25 +188,31 @@ const WorkshopMaterials = () => {
               <DropdownMenuTrigger asChild>
                 <Button variant="outline" size="sm" disabled={printing}>
                   <Icon name={printing ? 'Loader2' : 'FileDown'} size={16} className={`mr-1.5 ${printing ? 'animate-spin' : ''}`} />
-                  PDF простоя по сменам
+                  PDF по сменам
                 </Button>
               </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
-                {visibleColumns.length > 1 && (
-                  <>
-                    <DropdownMenuItem onClick={() => handlePrint(visibleColumns)}>
-                      <Icon name="Files" size={16} className="mr-2" />
-                      Все смены — каждая отдельным файлом
-                    </DropdownMenuItem>
-                    <DropdownMenuSeparator />
-                  </>
-                )}
-                {visibleColumns.map((c) => (
-                  <DropdownMenuItem key={`${c.workshopId}-${c.shiftNumber}`} onClick={() => handlePrint([c])}>
-                    <Icon name="FileText" size={16} className="mr-2" />
-                    {new Set(visibleColumns.map((v) => v.workshopId)).size > 1 ? `${c.workshopName} · ` : ''}
-                    {c.shiftLabel}
-                  </DropdownMenuItem>
+              <DropdownMenuContent align="end" className="w-72">
+                {(['idle', 'unrecorded'] as const).map((kind, idx) => (
+                  <div key={kind}>
+                    {idx > 0 && <DropdownMenuSeparator />}
+                    <DropdownMenuLabel className="flex items-center gap-2">
+                      <Icon name={kind === 'idle' ? 'Timer' : 'Scissors'} size={16} />
+                      {kind === 'idle' ? 'Простой рулонов' : 'Резка без записи'}
+                    </DropdownMenuLabel>
+                    {visibleColumns.length > 1 && (
+                      <DropdownMenuItem onClick={() => handlePrint(visibleColumns, kind)}>
+                        <Icon name="Files" size={16} className="mr-2" />
+                        Все смены — каждая отдельным файлом
+                      </DropdownMenuItem>
+                    )}
+                    {visibleColumns.map((c) => (
+                      <DropdownMenuItem key={`${kind}-${c.workshopId}-${c.shiftNumber}`} onClick={() => handlePrint([c], kind)}>
+                        <Icon name="FileText" size={16} className="mr-2" />
+                        {new Set(visibleColumns.map((v) => v.workshopId)).size > 1 ? `${c.workshopName} · ` : ''}
+                        {c.shiftLabel}
+                      </DropdownMenuItem>
+                    ))}
+                  </div>
                 ))}
               </DropdownMenuContent>
             </DropdownMenu>

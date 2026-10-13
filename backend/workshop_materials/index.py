@@ -230,7 +230,10 @@ def roll_report(dsn, headers, workshop_id):
         cur.execute(
             "SELECT r.id, r.barcode, m.id, m.name, m.unit, mt.name, r.workshop_id, w.name, "
             "       r.shift_number, r.initial_quantity, r.remaining_quantity, "
-            "       r.created_at, r.accepted_at, u.used, u.last_used, c.cutters "
+            "       r.created_at, r.accepted_at, u.used, u.last_used, c.cutters, "
+            # Куда ушёл метраж кроме заказов: недостача, возврат упаковщице, брак.
+            "       COALESCE(r.shortage_quantity, 0), COALESCE(r.packer_returned_quantity, 0), "
+            "       COALESCE(d.defects, 0), sc.shift_cutters "
             "FROM rolls r "
             "JOIN workshops w ON w.id = r.workshop_id "
             "JOIN materials m ON m.id = r.material_id "
@@ -246,6 +249,15 @@ def roll_report(dsn, headers, workshop_id):
             "       CASE WHEN EXISTS (SELECT 1 FROM users ua WHERE ua.id = omu.actor_user_id "
             "                         AND ua.role = 'cutter') THEN omu.actor_user_id END) "
             "  WHERE omu.roll_id = r.id) c ON true "
+            "LEFT JOIN LATERAL (SELECT SUM(md.quantity) AS defects FROM material_defects md "
+            "  WHERE md.roll_id = r.id) d ON true "
+            # Закройщики, выходившие на эту смену цеха, пока рулон лежал там. Если
+            # метраж ушёл без записи — кроил кто-то из них.
+            "LEFT JOIN LATERAL (SELECT string_agg(DISTINCT us.full_name, ', ') AS shift_cutters "
+            "  FROM shift_sessions ss JOIN users us ON us.id = ss.user_id "
+            "  WHERE ss.workshop_id = r.workshop_id AND ss.shift_number = r.shift_number "
+            "    AND COALESCE(ss.role, us.role) = 'cutter' "
+            "    AND ss.opened_at >= COALESCE(r.accepted_at, r.created_at)) sc ON true "
             "WHERE r.status = 'in_workshop' AND r.remaining_quantity > 0 "
             "  AND w.is_active = true AND w.name NOT IN ('Цех №2', 'Тестовый цех (QA)') "
             f"  {ws_cond} "
@@ -262,7 +274,8 @@ def roll_report(dsn, headers, workshop_id):
 
     rolls = []
     for (rid, barcode, mid, mname, unit, tname, wid, wname, shift, initial, remaining,
-         created, accepted, used, last_used, cutters) in rows:
+         created, accepted, used, last_used, cutters, shortage, packer_ret, defects,
+         shift_cutters) in rows:
         used_f = float(used or 0)
         opened = used_f > 0.001 or float(remaining) + 0.001 < float(initial)
         since = last_used or accepted or created
@@ -285,6 +298,14 @@ def roll_report(dsn, headers, workshop_id):
             'lastUsedAt': iso(last_used),
             'idleHours': round((now - since).total_seconds() / 3600, 1) if since else None,
             'cutters': cutters or None,
+            'shortageQuantity': float(shortage or 0),
+            'packerReturnedQuantity': float(packer_ret or 0),
+            'defectQuantity': float(defects or 0),
+            # Метраж, который ушёл с рулона, но нигде не записан.
+            'unrecordedQuantity': round(max(0.0, float(initial) - float(remaining) - used_f
+                                            - float(shortage or 0) - float(packer_ret or 0)
+                                            - float(defects or 0)), 2),
+            'shiftCutters': shift_cutters or None,
         })
     return {
         'statusCode': 200,
