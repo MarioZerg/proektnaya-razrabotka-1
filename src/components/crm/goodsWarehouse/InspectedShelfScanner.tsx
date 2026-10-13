@@ -82,10 +82,19 @@ const InspectedShelfScanner = ({ shelves, onPlaced }: InspectedShelfScannerProps
     setBusy(true);
     try {
       const send = () => scanInspectedToShelf(code, Number(shelfId), user?.id, user?.name);
+      if (placed.some((p) => p.barcode === code)) {
+        throw new Error(`${code} уже принят на хранение — повторно не сканируется`);
+      }
       let res: Awaited<ReturnType<typeof send>> | undefined;
       for (let attempt = 0; attempt < 3; attempt += 1) {
         try {
-          res = await send();
+          const r = await send();
+          // Вещь уже на хранении. Засчитываем только повтор после обрыва связи
+          // в этом же скане — новый скан того же GW это дубль.
+          if (r.alreadyPlaced && attempt === 0) {
+            throw new Error(`${code} уже на хранении на полке «${r.shelfName}» — повторно не принимается`);
+          }
+          res = r;
           break;
         } catch (err) {
           const msg = err instanceof Error ? err.message : '';

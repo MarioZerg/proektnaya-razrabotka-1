@@ -705,6 +705,8 @@ export const scanInspectedToShelf = (
     width: number | null;
     height: number | null;
     shelfName: string;
+    /** Вещь уже лежала на этой полке — повтор после обрыва связи. */
+    alreadyPlaced?: boolean;
   }>;
 
 /** Одна пачка раскладки: полка и стикеры вещей, которые кладут именно на неё. */
