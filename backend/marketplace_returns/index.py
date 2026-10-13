@@ -1201,15 +1201,102 @@ def _fill_wb_sticker_numbers(cur):
     return filled
 
 
+WB_ANALYTICS_API_BASE = 'https://seller-analytics-api.wildberries.ru'
+
+_RU_TO_EN = dict(zip(
+    'йцукенгшщзхъфывапролджэячсмитьбюЙЦУКЕНГШЩЗХЪФЫВАПРОЛДЖЭЯЧСМИТЬБЮёЁ',
+    "qwertyuiop[]asdfghjkl;'zxcvbnm,.QWERTYUIOP{}ASDFGHJKL:\"ZXCVBNM<>`~",
+))
+
+
+def normalize_scan(code):
+    """Код со сканера в английской раскладке.
+
+    Сканер «печатает» как клавиатура. Если на компьютере включён русский язык,
+    стикер WB *DbqW4cWU приходит как *ВиqЦ4сЦГ — и ни один поиск его не узнаёт.
+    Возвращаем символы на английскую раскладку.
+    """
+    raw = (code or '').strip()
+    if not re.search('[а-яА-ЯёЁ]', raw):
+        return raw
+    return ''.join(_RU_TO_EN.get(ch, ch) for ch in raw)
+
+
+def _pull_wb_item_return_for_scan(cur, code):
+    """Возврат WB по стикеру с пакета возврата (11 цифр, например 61176619330).
+
+    На пакете, который выдают на ПВЗ, WB клеит СВОЙ стикер возврата — это не
+    ярлык нашего отправления, и в заказах его нет. Номер стикера (stickerId)
+    и штрихкод вещи (shkId) отдаёт отчёт о возвратах продавцу. Находим там
+    строку, по номеру сборочного задания связываем с нашим заказом и заводим
+    заявку — дальше вещь принимается обычным путём.
+
+    Возвращает True, если заявка заведена.
+    """
+    raw = (code or '').strip().lstrip('*')
+    if not re.fullmatch(r'\d{6,15}', raw):
+        return False
+    shops = list_return_shops(cur) or [None]
+    date_to = datetime.now(timezone.utc).date()
+    date_from = date_to - timedelta(days=30)
+    for sid in shops:
+        creds, enabled = get_credentials(cur, 'wildberries', sid)
+        api_key = (creds.get('apiKey') or '').strip()
+        if not enabled or not api_key:
+            continue
+        for st_filter in ('active', 'archive'):
+            for offset in range(0, 3000, 1000):
+                status, data = http_json(
+                    f'{WB_ANALYTICS_API_BASE}/api/analytics/v1/item-returns'
+                    f'?dateFrom={date_from}&dateTo={date_to}&status={st_filter}'
+                    f'&limit=1000&offset={offset}',
+                    'GET', {'Authorization': api_key},
+                )
+                if status != 200 or not isinstance(data, dict):
+                    break
+                report = data.get('report') or []
+                hit = next(
+                    (r for r in report
+                     if raw in (str(r.get('stickerId') or ''), str(r.get('shkId') or ''))),
+                    None,
+                )
+                if hit:
+                    order_id = hit.get('orderId')
+                    rec = {
+                        'externalId': f"shk-{hit.get('shkId') or hit.get('stickerId')}",
+                        'postingNumber': str(order_id) if order_id else (hit.get('srid') or None),
+                        'offerId': str(hit.get('nmId')) if hit.get('nmId') else None,
+                        'sku': hit.get('nmId'),
+                        'productName': hit.get('subjectName'),
+                        'quantity': 1,
+                        'mpStatus': hit.get('returnStatus'),
+                        'reason': hit.get('returnReason') or hit.get('returnType'),
+                        'createdAt': hit.get('orderDt'),
+                        'returnBarcode': str(hit.get('stickerId') or raw),
+                    }
+                    save_return(cur, 'WB', rec, sid)
+                    # Стикер с пакета дописываем и в уже существующую заявку.
+                    cur.execute(
+                        "UPDATE marketplace_returns SET return_barcode = %s "
+                        "WHERE marketplace = 'WB' AND external_id = %s "
+                        "  AND (return_barcode IS NULL OR return_barcode = '')",
+                        (rec['returnBarcode'], rec['externalId']),
+                    )
+                    return True
+                if len(report) < 1000:
+                    break
+    return False
+
+
 def _unknown_return_message(code):
     # Цифры с ярлыка WB мы теперь понимаем, но сам ярлык может быть не нашим:
     # такой стикер печатается только на наши FBS-отправления. Говорим об этом
     # прямо, иначе кладовщик перебирает коды и думает, что сканер сломан.
     if _wb_sticker_number(code) is not None:
         return (
-            f'Стикер WB {code} не найден среди наших отправлений. Проверьте, что '
-            f'сканируете ярлык Wildberries с нашего пакета, либо отсканируйте '
-            f'наклейку возврата или номер отправления.'
+            f'Стикер WB {code} не найден ни среди наших отправлений, ни в отчёте '
+            f'WB о возвратах за 30 дней. Если возврат только что приехал на ПВЗ, '
+            f'WB мог ещё не обновить отчёт — повторите скан через час.'
         )
     return (
         f'Возврат {code} не найден. Для OZON — наклейка возврата или номер отправления, '
@@ -1684,7 +1771,7 @@ def handler(event: dict, context) -> dict:
                 # коробку, бессмысленно: OZON умеет искать по штрихкоду сам. Кладовщик
                 # пикает наклейку — мы спрашиваем возврат у площадки и заводим его у себя.
                 # Так работает приёмка любой коробки, даже если её ещё не было в списке.
-                code = (body_data.get('barcode') or '').strip()
+                code = normalize_scan(body_data.get('barcode') or '')
                 if not code:
                     return _resp(400, {'error': 'Отсканируйте штрихкод возврата'})
 
@@ -1728,6 +1815,16 @@ def handler(event: dict, context) -> dict:
                         )
                         if accepted_other is not None:
                             return _resp(200, accepted_other)
+
+                # Стикер возврата WB с пакета ПВЗ: его нет в заказах, он есть только
+                # в отчёте WB о возвратах. Находим, заводим заявку и принимаем.
+                if _pull_wb_item_return_for_scan(cur, code):
+                    conn.commit()
+                    accepted_other = _accept_return_by_order(
+                        cur, conn, code, actor_id, actor_name,
+                    )
+                    if accepted_other is not None:
+                        return _resp(200, accepted_other)
 
                 # Стикер WB и номер YM- в кабинете OZON не живут. Не спрашиваем
                 # чужую площадку и не пишем кладовщику «OZON не знает возврат».
@@ -2119,7 +2216,7 @@ def handler(event: dict, context) -> dict:
                 # Кладовщик сканирует стикер возврата с коробки. Ищем заявку по штрихкоду
                 # возврата, номеру отправления или внешнему номеру — что напечатано, то и
                 # сработает. Показываем только одобренные админом.
-                code = (body_data.get('code') or '').strip()
+                code = normalize_scan(body_data.get('code') or '')
                 if not code:
                     return _resp(400, {'error': 'Отсканируйте стикер возврата'})
 
@@ -2243,6 +2340,19 @@ def handler(event: dict, context) -> dict:
                         "         CASE WHEN r.goods_warehouse_id IS NULL THEN 0 ELSE 1 END, r.id "
                         "LIMIT 1",
                         (sticker_num,),
+                    )
+                    row = cur.fetchone()
+                if not row and _pull_wb_item_return_for_scan(cur, code):
+                    conn.commit()
+                    cur.execute(
+                        "SELECT r.id, r.marketplace, r.external_id, r.posting_number, "
+                        "r.product_name, r.return_reason, r.status, r.outcome, "
+                        "mi.material, mi.width, mi.height "
+                        "FROM marketplace_returns r "
+                        "LEFT JOIN marketplace_items mi ON mi.id = r.marketplace_item_id "
+                        "WHERE r.marketplace = 'WB' AND r.return_barcode = %s "
+                        "ORDER BY r.id DESC LIMIT 1",
+                        (code.lstrip('*'),),
                     )
                     row = cur.fetchone()
                 if not row:
