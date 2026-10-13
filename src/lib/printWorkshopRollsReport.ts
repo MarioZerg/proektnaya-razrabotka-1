@@ -251,28 +251,59 @@ const renderPage = async (pdf: jsPDFType, html: string, first: boolean) => {
   }
 };
 
+const translit = (v: string) => {
+  const map: Record<string, string> = {
+    а: 'a', б: 'b', в: 'v', г: 'g', д: 'd', е: 'e', ё: 'e', ж: 'zh', з: 'z', и: 'i', й: 'y', к: 'k',
+    л: 'l', м: 'm', н: 'n', о: 'o', п: 'p', р: 'r', с: 's', т: 't', у: 'u', ф: 'f', х: 'h', ц: 'c',
+    ч: 'ch', ш: 'sh', щ: 'sch', ъ: '', ы: 'y', ь: '', э: 'e', ю: 'yu', я: 'ya',
+  };
+  return v
+    .toLowerCase()
+    .split('')
+    .map((ch) => map[ch] ?? ch)
+    .join('')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+};
+
+const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
 /**
- * PDF о простое рулонов по сменам: какой рулон, сколько осталось, открыт ли,
- * сколько лежит без дела и кто из закройщиков с ним работал. В конце — список
- * материалов и отдельно материалы, с которыми работали за последние 7 суток.
+ * PDF о простое рулонов — ОТДЕЛЬНЫЙ ФАЙЛ НА КАЖДУЮ СМЕНУ: лист отдают старшему
+ * смены, и чужие рулоны в нём только мешают. В каждом файле: рулоны смены
+ * (застрявшие 7+ суток сверху), список материалов смены и материалы, с которыми
+ * смена работала за последние 7 суток.
+ *
+ * Данные берутся одним запросом, дальше файлы собираются в браузере.
+ * Возвращает число сформированных файлов.
  */
-export const printWorkshopRollsReport = async (shifts: ReportShift[], title: string, workshopId?: number) => {
+export const printWorkshopRollsReport = async (shifts: ReportShift[], workshopId?: number) => {
   const url = workshopId ? `${WORKSHOP_MATERIALS_URL}?report=1&workshop_id=${workshopId}` : `${WORKSHOP_MATERIALS_URL}?report=1`;
   const res = await fetch(url);
   if (!res.ok) throw new Error('Не удалось получить рулоны');
   const data = (await res.json()) as { rolls: ReportRoll[] };
-  const allowed = new Set(shifts.map((s) => shiftKey(s.workshopId, s.shiftNumber)));
-  const rolls = (data.rolls || []).filter((r) => allowed.has(shiftKey(r.workshopId, r.shiftNumber)));
-  if (rolls.length === 0) throw new Error('В выбранных сменах нет рулонов');
-
-  const showWorkshop = new Set(shifts.map((s) => s.workshopId)).size > 1;
-  const pages = paginate(buildLines(rolls, shifts, showWorkshop));
+  const all = data.rolls || [];
   const { default: jsPDF } = await import('jspdf');
-  const pdf = new jsPDF({ orientation: 'p', unit: 'mm', format: 'a4' });
-  for (let i = 0; i < pages.length; i++) {
-    await renderPage(pdf, pageHtml(pages[i], title, i + 1, pages.length), i === 0);
+  const date = fmtDate(new Date()).replace(/\./g, '-');
+
+  let made = 0;
+  for (const s of shifts) {
+    const key = shiftKey(s.workshopId, s.shiftNumber);
+    const rolls = all.filter((r) => shiftKey(r.workshopId, r.shiftNumber) === key);
+    if (rolls.length === 0) continue;
+    const title = `${s.workshopName} · ${s.shiftLabel}`;
+    const pages = paginate(buildLines(rolls, [s], false));
+    const pdf = new jsPDF({ orientation: 'p', unit: 'mm', format: 'a4' });
+    for (let i = 0; i < pages.length; i++) {
+      await renderPage(pdf, pageHtml(pages[i], title, i + 1, pages.length), i === 0);
+    }
+    // Браузер режет пачку скачиваний подряд — даём паузу между файлами.
+    if (made > 0) await wait(600);
+    pdf.save(`prostoy-${translit(s.workshopName)}-${translit(s.shiftLabel)}-${date}.pdf`);
+    made += 1;
   }
-  pdf.save(`prostoy-rulonov-${fmtDate(new Date()).replace(/\./g, '-')}.pdf`);
+  if (made === 0) throw new Error('В выбранных сменах нет рулонов');
+  return made;
 };
 
 export default printWorkshopRollsReport;

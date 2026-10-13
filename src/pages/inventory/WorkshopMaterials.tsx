@@ -12,6 +12,13 @@ import { useAuth } from '@/context/AuthContext';
 import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
 import WorkshopMaterialsCards from '@/components/crm/workshopMaterials/WorkshopMaterialsCards';
 import { Button } from '@/components/ui/button';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 import { useToast } from '@/hooks/use-toast';
 
 const WorkshopMaterials = () => {
@@ -146,19 +153,15 @@ const WorkshopMaterials = () => {
     };
   };
 
-  // PDF о простое рулонов — по тем сменам, что сейчас на экране.
-  const handlePrint = async () => {
-    if (visibleColumns.length === 0) return;
+  // PDF о простое рулонов: на каждую смену — свой файл.
+  const handlePrint = async (cols: WorkshopMaterialColumn[]) => {
+    if (cols.length === 0) return;
     setPrinting(true);
     try {
       const { printWorkshopRollsReport } = await import('@/lib/printWorkshopRollsReport');
-      const names = [...new Set(visibleColumns.map((c) => c.workshopName))].join(', ');
-      const single = new Set(visibleColumns.map((c) => c.workshopId)).size === 1;
-      await printWorkshopRollsReport(
-        visibleColumns,
-        names,
-        single ? visibleColumns[0].workshopId : undefined,
-      );
+      const single = new Set(cols.map((c) => c.workshopId)).size === 1;
+      const made = await printWorkshopRollsReport(cols, single ? cols[0].workshopId : undefined);
+      toast({ title: made === 1 ? 'PDF сформирован' : `Сформировано файлов: ${made}`, description: 'По одному на смену' });
     } catch (e) {
       toast({
         title: 'Не удалось сформировать PDF',
@@ -177,10 +180,32 @@ const WorkshopMaterials = () => {
           <div className="flex flex-wrap items-start justify-between gap-2">
           <h1 className="text-xl font-bold">Материал на производстве</h1>
           {visibleColumns.length > 0 && (
-            <Button variant="outline" size="sm" onClick={handlePrint} disabled={printing}>
-              <Icon name={printing ? 'Loader2' : 'FileDown'} size={16} className={`mr-1.5 ${printing ? 'animate-spin' : ''}`} />
-              PDF простоя по сменам
-            </Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="outline" size="sm" disabled={printing}>
+                  <Icon name={printing ? 'Loader2' : 'FileDown'} size={16} className={`mr-1.5 ${printing ? 'animate-spin' : ''}`} />
+                  PDF простоя по сменам
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                {visibleColumns.length > 1 && (
+                  <>
+                    <DropdownMenuItem onClick={() => handlePrint(visibleColumns)}>
+                      <Icon name="Files" size={16} className="mr-2" />
+                      Все смены — каждая отдельным файлом
+                    </DropdownMenuItem>
+                    <DropdownMenuSeparator />
+                  </>
+                )}
+                {visibleColumns.map((c) => (
+                  <DropdownMenuItem key={`${c.workshopId}-${c.shiftNumber}`} onClick={() => handlePrint([c])}>
+                    <Icon name="FileText" size={16} className="mr-2" />
+                    {new Set(visibleColumns.map((v) => v.workshopId)).size > 1 ? `${c.workshopName} · ` : ''}
+                    {c.shiftLabel}
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
           )}
           </div>
           <p className="mt-1 text-sm text-muted-foreground">
