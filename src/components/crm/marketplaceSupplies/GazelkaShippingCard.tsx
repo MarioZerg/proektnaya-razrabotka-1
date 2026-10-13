@@ -14,7 +14,7 @@ import {
 import Icon from '@/components/ui/icon';
 import { useToast } from '@/hooks/use-toast';
 import { formatDate } from '@/lib/dateUtils';
-import { fetchGazelkaPlans, type GazelkaPlan } from '@/lib/gazelkaApi';
+import { fetchGazelkaPlansForSupply, type GazelkaPlan } from '@/lib/gazelkaApi';
 import { updateSupply, type SupplyDetail } from '@/lib/marketplaceSuppliesApi';
 import { printGazelkaLabels, missingLabelFields } from '@/lib/gazelkaPackingLabel';
 
@@ -35,6 +35,7 @@ interface GazelkaShippingCardProps {
 const GazelkaShippingCard = ({ supply, onReload, isManager, gazelkaReady }: GazelkaShippingCardProps) => {
   const { toast } = useToast();
   const [plans, setPlans] = useState<GazelkaPlan[]>([]);
+  const [allCount, setAllCount] = useState(0);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState(supply.gazelkaPlanId ? String(supply.gazelkaPlanId) : '');
@@ -51,11 +52,14 @@ const GazelkaShippingCard = ({ supply, onReload, isManager, gazelkaReady }: Gaze
 
   useEffect(() => {
     setLoading(true);
-    fetchGazelkaPlans()
-      .then(setPlans)
+    fetchGazelkaPlansForSupply(supply.id)
+      .then((r) => {
+        setPlans(r.plans);
+        setAllCount(r.allCount);
+      })
       .catch((e) => setError(e instanceof Error ? e.message : 'Не удалось загрузить заявки Газельки'))
       .finally(() => setLoading(false));
-  }, []);
+  }, [supply.id]);
 
   const linkedPlan = plans.find((p) => p.id === supply.gazelkaPlanId);
 
@@ -218,7 +222,11 @@ const GazelkaShippingCard = ({ supply, onReload, isManager, gazelkaReady }: Gaze
                   {error ? (
                     <div className="px-2 py-1.5 text-sm text-destructive">{error}</div>
                   ) : plans.length === 0 && !loading ? (
-                    <div className="px-2 py-1.5 text-sm text-muted-foreground">Нет заявок в Газельке</div>
+                    <div className="px-2 py-1.5 text-sm text-muted-foreground">
+                      {allCount > 0
+                        ? `Нет заявок в ${supply.cluster || 'этот город'}. Остальные ${allCount} — на другие склады или уже привязаны к другим поставкам`
+                        : 'Нет заявок в Газельке'}
+                    </div>
                   ) : (
                     plans.map((p) => (
                       <SelectItem key={p.id} value={String(p.id)}>
@@ -229,6 +237,12 @@ const GazelkaShippingCard = ({ supply, onReload, isManager, gazelkaReady }: Gaze
                   )}
                 </SelectContent>
               </Select>
+              {!loading && !error && allCount > plans.length && (
+                <div className="w-full text-xs text-muted-foreground">
+                  Показаны только заявки {supply.marketplace} в {supply.cluster || 'город поставки'} · скрыто{' '}
+                  {allCount - plans.length} чужих
+                </div>
+              )}
               <Button
                 className="w-full sm:w-auto"
                 onClick={handleSave}

@@ -20,15 +20,20 @@ export interface GazelkaPlan {
   shipDate: string | null;
 }
 
-export const fetchGazelkaPlans = async (): Promise<GazelkaPlan[]> => {
+const loadPlans = async (supplyId?: number) => {
   const res = await fetch(GAZELKA_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ action: 'list_plans' }),
+    body: JSON.stringify({ action: 'list_plans', ...(supplyId ? { supplyId } : {}) }),
   });
   const data = await res.json();
   if (!res.ok) {
     throw new Error(data.error || 'Не удалось загрузить заявки Газельки');
   }
-  return (data.plans || []) as GazelkaPlan[];
+  return { plans: (data.plans || []) as GazelkaPlan[], allCount: Number(data.allCount) || 0 };
 };
+
+export const fetchGazelkaPlans = async (): Promise<GazelkaPlan[]> => (await loadPlans()).plans;
+
+/** Только заявки, подходящие поставке: та же площадка, тот же город, не занятые другой поставкой. */
+export const fetchGazelkaPlansForSupply = (supplyId: number) => loadPlans(supplyId);

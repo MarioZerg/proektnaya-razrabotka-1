@@ -2,6 +2,9 @@ import json
 import os
 import urllib.request
 import urllib.error
+import re
+
+import psycopg2
 
 # API сервиса грузоперевозок Газелька (gazelka.space). Только чтение заявок для привязки к
 # нашим FBO-поставкам. Ключ — в секрете GAZELKA_API_KEY (Bearer).
@@ -51,13 +54,61 @@ def gazelka_request(method, path, token, payload=None):
         return 0, str(e)
 
 
+def _norm(text):
+    t = (text or '').lower().replace('ё', 'е')
+    return re.sub(r'[^a-zа-я0-9]+', ' ', t).strip()
+
+
+# Служебные слова в названиях складов: по ним город не узнать.
+_STOP_WORDS = {'рфц', 'сц', 'мрфц', 'кгт', 'фф', 'склад', 'ozon', 'озон', 'wb', 'город', 'обл', 'область'}
+
+
+def _city_words(text):
+    return [w for w in _norm(text).split() if len(w) >= 4 and w not in _STOP_WORDS]
+
+
+def _same_place(cluster, address):
+    """Кластер поставки («САНКТ-ПЕТЕРБУРГ_РФЦ») и адрес заявки («Санкт-Петербург (Петрославянка)»)
+    про один город? Сравниваем по словам: хоть одно слово кластера есть в адресе или наоборот."""
+    a, b = _city_words(cluster), _city_words(address)
+    if not a or not b:
+        return False
+    a_text, b_text = ' '.join(a), ' '.join(b)
+    return any(w in b_text for w in a) or any(w in a_text for w in b)
+
+
+def _supply_context(supply_id):
+    """Площадка, кластер и привязанная заявка поставки + заявки, занятые другими поставками."""
+    conn = psycopg2.connect(os.environ['DATABASE_URL'])
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT marketplace, cluster, gazelka_plan_id FROM marketplace_supplies WHERE id = %s",
+            (int(supply_id),),
+        )
+        row = cur.fetchone()
+        cur.execute(
+            "SELECT gazelka_plan_id FROM marketplace_supplies "
+            "WHERE gazelka_plan_id IS NOT NULL AND id <> %s",
+            (int(supply_id),),
+        )
+        taken = {r[0] for r in cur.fetchall()}
+        return row, taken
+    finally:
+        conn.close()
+
+
 def handler(event: dict, context) -> dict:
     """Интеграция с сервисом грузоперевозок Газелька (gazelka.space) — только чтение заявок.
 
     Позволяет менеджеру выбрать заявку Газельки для нашей OZON FBO-поставки (вручную) и
     печатать упаковочные листы коробов (генерируются у нас). API-ключ — в секрете GAZELKA_API_KEY.
 
-    POST /  { action: 'list_plans' }
+    POST /  { action: 'list_plans', supplyId?: number }
+        - если передан supplyId — отдаём только заявки, подходящие ЭТОЙ поставке:
+          та же площадка, тот же город доставки и не привязанные к другой поставке.
+          Уже привязанная к ней заявка показывается всегда. В ответе также allCount —
+          сколько заявок всего, чтобы менеджер видел, что часть скрыта.
         - список активных/запланированных заявок Газельки (метод my-plans) со статусом и
           маркетплейсом (расшифровка из descriptions): id, дата подачи, статус (текст),
           маркетплейс (текст), склад доставки, дата доставки, число коробов/паллет,
@@ -129,4 +180,24 @@ def handler(event: dict, context) -> dict:
             'shipDate': route.get('date'),    # DTS — дата отгрузки (из маршрута)
         })
 
-    return _resp(200, {'plans': plans})
+    supply_id = body_data.get('supplyId')
+    if not supply_id:
+        return _resp(200, {'plans': plans, 'allCount': len(plans)})
+
+    row, taken = _supply_context(supply_id)
+    if not row:
+        return _resp(404, {'error': 'Поставка не найдена'})
+    marketplace, cluster, linked_id = row
+    mp = _norm(marketplace)
+
+    def fits(p):
+        if p['id'] == linked_id:
+            return True
+        if p['id'] in taken:
+            return False
+        if mp and _norm(p['marketplaceLabel']) and _norm(p['marketplaceLabel']) != mp:
+            return False
+        return _same_place(cluster, p['deliveryAddress'])
+
+    matched = [p for p in plans if fits(p)]
+    return _resp(200, {'plans': matched, 'allCount': len(plans)})

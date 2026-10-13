@@ -10,7 +10,9 @@
       "name": "Unknown action fails",
       "method": "POST",
       "path": "/",
-      "body": {"action": "nope"},
+      "body": {
+        "action": "nope"
+      },
       "expectedStatus": 400
     },
     {
@@ -18,6 +20,16 @@
       "method": "GET",
       "path": "/",
       "expectedStatus": 405
+    },
+    {
+      "name": "Чужая поставка не найдена",
+      "method": "POST",
+      "path": "/",
+      "body": {
+        "action": "list_plans",
+        "supplyId": 999999999
+      },
+      "expectedStatus": 404
     }
   ]
 }
