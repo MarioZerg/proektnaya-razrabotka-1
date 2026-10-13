@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import LiveCountBoard from '@/components/crm/LiveCountBoard';
-import SceneImage from '@/components/crm/SceneImage';
+import Icon from '@/components/ui/icon';
 import { isStorekeeperRole, type Role } from '@/lib/roles';
 
 export type KioskScreen =
@@ -39,67 +39,79 @@ const tiles: Array<{
   screen: KioskScreen;
   label: string;
   hint: string;
-  scene: string;
+  icon: string;
+  /** Цвет значка и лёгкого фона плитки. */
+  tone: string;
 }> = [
   {
     screen: 'shift',
     label: 'Открытие / Закрытие смены',
     hint: 'Пришёл — открой. Уходишь — закрой',
-    scene: 'kiosk4-shift',
+    icon: 'Clock',
+    tone: 'bg-emerald-500/15 text-emerald-700 ring-emerald-500/25',
   },
   {
     screen: 'orders',
     label: 'Печать заказов',
     hint: 'Стикер на сшитую вещь',
-    scene: 'kiosk4-orders',
+    icon: 'Printer',
+    tone: 'bg-sky-500/15 text-sky-700 ring-sky-500/25',
   },
   {
     screen: 'cutterSheet',
     label: 'Печать закройщиков',
     hint: 'Лист с бирками к стеку',
-    scene: 'kiosk4-cutter-sheet',
+    icon: 'Scissors',
+    tone: 'bg-amber-500/15 text-amber-800 ring-amber-500/25',
   },
   {
     screen: 'reviews',
     label: 'Отзывы',
     hint: 'Что написали покупатели',
-    scene: 'kiosk4-reviews',
+    icon: 'Star',
+    tone: 'bg-yellow-500/15 text-yellow-800 ring-yellow-500/30',
   },
   {
     screen: 'rolls',
     label: 'Работа с рулонами',
     hint: 'Ткань на стеллаже',
-    scene: 'kiosk4-rolls',
+    icon: 'Layers',
+    tone: 'bg-teal-500/15 text-teal-800 ring-teal-500/25',
   },
   {
     screen: 'unlabeled',
     label: 'Товар без стикера',
     hint: 'Найти вещь без бирки',
-    scene: 'kiosk4-unlabeled',
+    icon: 'PackageSearch',
+    tone: 'bg-orange-500/15 text-orange-800 ring-orange-500/25',
   },
   {
     screen: 'defect',
     label: 'Брак из рулона',
     hint: 'Испорченный кусок ткани',
-    scene: 'kiosk4-defect',
+    icon: 'TriangleAlert',
+    tone: 'bg-rose-500/15 text-rose-700 ring-rose-500/25',
   },
   {
     screen: 'repack',
     label: 'Перепаковка',
     hint: 'Годная вещь, мятая упаковка',
-    scene: 'kiosk4-repack',
+    icon: 'PackageOpen',
+    tone: 'bg-violet-500/15 text-violet-800 ring-violet-500/25',
   },
   {
     screen: 'flyer',
     label: 'Стикер на листовку',
     hint: 'Наклейка состава на вкладыш',
-    scene: 'kiosk4-flyer',
+    icon: 'FileText',
+    tone: 'bg-cyan-500/15 text-cyan-800 ring-cyan-500/25',
   },
   {
     screen: 'vacation',
     label: 'Отпуск',
     hint: 'Даты, когда вас не будет',
-    scene: 'kiosk4-vacation',
+    icon: 'Calendar',
+    tone: 'bg-slate-500/15 text-slate-700 ring-slate-500/25',
   },
 ];
 
@@ -160,13 +172,14 @@ const KioskMenu = ({
   const visibleTiles = tiles.filter((t) => !hidden.includes(t.screen));
 
   return (
-    <div className="grid grid-cols-3 gap-2">
+    <div className="grid grid-cols-3 gap-2.5">
       {visibleTiles.map((t) => (
         <KioskTile
           key={t.screen}
           label={t.label}
           hint={t.hint}
-          scene={t.scene}
+          icon={t.icon}
+          tone={t.tone}
           count={t.screen === 'repack' && repackCount > 0 ? repackCount : null}
           onClick={() => onSelect(t.screen)}
         />
@@ -175,17 +188,19 @@ const KioskMenu = ({
   );
 };
 
-/** Плитка терминала в том же виде, что станция склада товара: сцена, название, табло. */
+/** Плитка: значок + текст по центру, без иллюстраций — читается с расстояния. */
 const KioskTile = ({
   label,
   hint,
-  scene,
+  icon,
+  tone,
   count,
   onClick,
 }: {
   label: string;
   hint: string;
-  scene: string;
+  icon: string;
+  tone: string;
   count: number | null;
   onClick: () => void;
 }) => {
@@ -197,20 +212,25 @@ const KioskTile = ({
       onPointerDown={() => setPressed(true)}
       onPointerUp={() => setPressed(false)}
       onPointerLeave={() => setPressed(false)}
-      className={`group flex w-full min-w-0 flex-col overflow-hidden rounded-2xl border bg-[#f7f4ee] text-left shadow-sm transition duration-200 hover:-translate-y-1 hover:shadow-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring active:translate-y-0 motion-reduce:transition-none motion-reduce:hover:translate-y-0 ${
+      className={`relative flex min-h-[9.5rem] w-full min-w-0 flex-col items-center justify-center gap-2.5 overflow-hidden rounded-2xl border bg-white px-3 py-4 text-center shadow-sm transition duration-200 hover:-translate-y-0.5 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring active:translate-y-0 motion-reduce:transition-none motion-reduce:hover:translate-y-0 sm:min-h-[10.5rem] ${
         pressed ? 'scale-[0.98]' : ''
-      } ${count != null ? 'border-violet-200' : 'border-border'}`}
+      } ${count != null ? 'border-violet-200' : 'border-slate-200/90'}`}
     >
-      <div className="relative h-24 w-full shrink-0 overflow-hidden bg-[#f4efe6] sm:h-28">
-        <SceneImage name={scene} sizes="33vw" />
+      <span
+        className={`inline-flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl ring-1 ${tone}`}
+        aria-hidden
+      >
+        <Icon name={icon} size={28} strokeWidth={2.15} />
+      </span>
+      <div className="min-w-0 space-y-1">
+        <p className="text-balance text-sm font-bold leading-snug text-slate-900 sm:text-[0.95rem]">{label}</p>
+        <p className="text-pretty text-xs leading-snug text-slate-500">{hint}</p>
       </div>
-      <div className="flex min-w-0 flex-1 items-center gap-2 px-2.5 py-2.5">
-        <div className="min-w-0 flex-1">
-          <p className="text-sm font-bold leading-tight sm:text-base">{label}</p>
-          <p className="mt-0.5 text-xs leading-tight text-muted-foreground">{hint}</p>
-        </div>
-        {count != null && <LiveCountBoard value={count} tone="violet" />}
-      </div>
+      {count != null && (
+        <span className="absolute right-2.5 top-2.5">
+          <LiveCountBoard value={count} tone="violet" />
+        </span>
+      )}
     </button>
   );
 };

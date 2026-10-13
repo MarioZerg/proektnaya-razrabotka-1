@@ -3,6 +3,7 @@ import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import type { LiveFloorData, LivePerson } from '@/lib/liveFloorApi';
 import { initials, shortName, useTicker } from '@/components/crm/dashboard/liveFloor/liveFloorShared';
 import { BubbleHat } from '@/components/lider/bubbleHats';
+import { personFaceUrl } from '@/components/lider/bubbleFaces';
 
 const ROLE_RING: Record<string, string> = {
   cutter: '#f59e0b',
@@ -337,9 +338,12 @@ const LiderTvBubbles = ({ active, people, today }: LiderTvBubblesProps) => {
                 }}
               >
                 <Avatar className="h-full w-full">
-                  {p.avatarUrl ? (
-                    <AvatarImage src={p.avatarUrl} alt={p.name} referrerPolicy="no-referrer" className="object-cover" />
-                  ) : null}
+                  <AvatarImage
+                    src={personFaceUrl(p)}
+                    alt={p.name}
+                    referrerPolicy="no-referrer"
+                    className="object-cover"
+                  />
                   <AvatarFallback className="bg-slate-800 text-3xl font-black text-white">{initials(p.name)}</AvatarFallback>
                 </Avatar>
                 <span className="pointer-events-none absolute inset-0 rounded-full bg-[radial-gradient(circle_at_30%_22%,rgba(255,255,255,.35),transparent_42%)]" />

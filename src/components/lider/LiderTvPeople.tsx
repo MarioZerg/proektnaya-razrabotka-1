@@ -12,6 +12,7 @@ import {
   stageSince,
   useTicker,
 } from '@/components/crm/dashboard/liveFloor/liveFloorShared';
+import { personFaceUrl } from '@/components/lider/bubbleFaces';
 
 interface LiderTvPeopleProps {
   people: LivePerson[];
@@ -137,9 +138,12 @@ const PersonCard = ({
         <Avatar
           className={`h-10 w-10 shrink-0 text-sm font-bold text-white ${working ? '' : 'opacity-70'}`}
         >
-          {person.avatarUrl ? (
-            <AvatarImage src={person.avatarUrl} alt={person.name} referrerPolicy="no-referrer" className="object-cover" />
-          ) : null}
+          <AvatarImage
+            src={personFaceUrl(person)}
+            alt={person.name}
+            referrerPolicy="no-referrer"
+            className="object-cover"
+          />
           <AvatarFallback className={`bg-gradient-to-br text-white ${style.avatar}`}>
             {initials(person.name)}
           </AvatarFallback>

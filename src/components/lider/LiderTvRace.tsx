@@ -1,6 +1,7 @@
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import type { LivePerson, LiveRace, LiveRaceRunner } from '@/lib/liveFloorApi';
 import { initials, shortName } from '@/components/crm/dashboard/liveFloor/liveFloorShared';
+import { personFaceUrl } from '@/components/lider/bubbleFaces';
 import { useRaceAudio } from '@/components/lider/useRaceAudio';
 
 /** Тропа: цех слева внизу → мост → магазин вариков → роща на лужайке → ворота замка. */
@@ -93,12 +94,14 @@ const separate = (pts: { x: number; y: number }[]) => {
 };
 
 const RaceFigure = ({
+  id,
   name,
   avatarUrl,
   walking,
   finished,
   lead,
 }: {
+  id: number;
   name: string;
   avatarUrl?: string | null;
   walking: boolean;
@@ -113,9 +116,12 @@ const RaceFigure = ({
       style={walking ? { animation: 'race-bob 0.72s ease-in-out infinite' } : undefined}
     >
       <Avatar className="relative z-10 h-14 w-14 border-[3px] border-sky-200 shadow-[0_4px_14px_rgba(0,0,0,.45)]">
-        {avatarUrl ? (
-          <AvatarImage src={avatarUrl} alt={name} referrerPolicy="no-referrer" className="object-cover" />
-        ) : null}
+        <AvatarImage
+          src={personFaceUrl({ id, avatarUrl })}
+          alt={name}
+          referrerPolicy="no-referrer"
+          className="object-cover"
+        />
         <AvatarFallback className="bg-sky-800 text-base font-bold text-white">{initials(name)}</AvatarFallback>
       </Avatar>
       <svg viewBox="0 0 72 72" className="-mt-1 h-[4.5rem] w-[4.6rem] overflow-visible">
@@ -438,6 +444,7 @@ const LiderTvRace = ({ race, people, workingIds, active }: LiderTvRaceProps) => 
           style={{ left: `${(r.x / 1920) * 100}%`, top: `${(r.y / 920) * 100}%`, zIndex: 20 + (8 - r.place) }}
         >
           <RaceFigure
+            id={r.id}
             name={r.name}
             avatarUrl={r.avatarUrl}
             walking={r.working && !r.finished}

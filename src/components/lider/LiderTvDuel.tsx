@@ -1,8 +1,6 @@
 import { BubbleHat } from '@/components/lider/bubbleHats';
+import { personFaceUrl } from '@/components/lider/bubbleFaces';
 import type { TvDuel } from '@/lib/varikiApi';
-
-const initials = (name: string) =>
-  name.split(' ').slice(0, 2).map((p) => p[0]).join('').toUpperCase();
 
 const timeLeft = (iso: string | null | undefined) => {
   if (!iso) return '';
@@ -14,23 +12,19 @@ const timeLeft = (iso: string | null | undefined) => {
 };
 
 const Portrait = ({
+  id,
   name,
   avatarUrl,
   hatKey,
 }: {
+  id: number;
   name: string;
   avatarUrl?: string | null;
   hatKey: string | null;
 }) => (
   <div className="relative z-10 h-[260px] w-[260px] shrink-0">
     <div className="absolute inset-0 overflow-hidden rounded-full border-[10px] border-amber-300 bg-slate-800 shadow-[0_0_40px_rgba(251,191,36,.35)]">
-      {avatarUrl ? (
-        <img src={avatarUrl} alt="" className="h-full w-full object-cover" />
-      ) : (
-        <div className="flex h-full w-full items-center justify-center text-7xl font-black text-white">
-          {initials(name)}
-        </div>
-      )}
+      <img src={personFaceUrl({ id, avatarUrl })} alt={name} className="h-full w-full object-cover" />
     </div>
     {hatKey && (
       <div
@@ -55,7 +49,7 @@ const LiderTvDuel = ({ duel }: { duel: TvDuel }) => {
       <div className="absolute inset-0 z-50 flex flex-col items-center justify-center bg-[radial-gradient(circle_at_center,#5a3414_0%,#120a06_68%)] px-10 text-white">
         <p className="text-3xl font-semibold uppercase tracking-[0.45em] text-amber-300">Награждение</p>
         <div className="mt-44">
-          <Portrait name={winner.name} avatarUrl={winner.avatarUrl} hatKey={duel.hatKey} />
+          <Portrait id={winner.id} name={winner.name} avatarUrl={winner.avatarUrl} hatKey={duel.hatKey} />
         </div>
         <h2 className="mt-8 text-center text-6xl font-black">{winner.name}</h2>
         {hatStays ? (
@@ -92,6 +86,7 @@ const LiderTvDuel = ({ duel }: { duel: TvDuel }) => {
       <div className="flex flex-1 items-center justify-between gap-6">
         <div className="flex w-[320px] flex-col items-center">
           <Portrait
+            id={duel.left.id}
             name={duel.left.name}
             avatarUrl={duel.left.avatarUrl}
             hatKey={duel.hatOn === 'left' ? duel.hatKey : null}
@@ -109,6 +104,7 @@ const LiderTvDuel = ({ duel }: { duel: TvDuel }) => {
         </div>
         <div className="flex w-[320px] flex-col items-center">
           <Portrait
+            id={duel.right.id}
             name={duel.right.name}
             avatarUrl={duel.right.avatarUrl}
             hatKey={duel.hatOn === 'right' ? duel.hatKey : null}
