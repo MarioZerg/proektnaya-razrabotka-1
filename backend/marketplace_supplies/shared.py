@@ -1113,7 +1113,7 @@ def find_cancelled_items(cur, supply_id):
         "SELECT msi.id, gw.storage_barcode, o.order_number, o.group_key "
         "FROM marketplace_supply_items msi "
         "JOIN goods_warehouse gw ON gw.id = msi.goods_warehouse_id "
-        "JOIN orders o ON o.id = gw.order_id "
+        "JOIN orders o ON o.id = COALESCE(gw.reserved_order_id, gw.order_id) "
         f"WHERE msi.supply_id = %s AND o.group_key IN ({keys_csv})",
         (int(supply_id),),
     )
@@ -1337,11 +1337,15 @@ def check_incomplete_groups(cur, supply_id):
     Возвращает список словарей с ключами groupKey, inSupply, total.
     """
     cur.execute(
+        # Заказ берём ТОТ, которым вещь едет сейчас. Вещь, сшитая под отменённый
+        # Яндекс и отданная с полки под OZON, к связке Яндекса уже не относится —
+        # иначе чужой «неполный» ярлык блокировал поставку другой площадки.
         "SELECT o.group_key, count(*) AS in_supply, max(o.group_size) AS total "
         "FROM marketplace_supply_items msi "
         "JOIN goods_warehouse gw ON gw.id = msi.goods_warehouse_id "
-        "JOIN orders o ON o.id = gw.order_id "
+        "JOIN orders o ON o.id = COALESCE(gw.reserved_order_id, gw.order_id) "
         "WHERE msi.supply_id = %s AND o.group_key IS NOT NULL "
+        "  AND COALESCE(o.group_size, 1) > 1 "
         "GROUP BY o.group_key HAVING count(*) < max(o.group_size)",
         (int(supply_id),),
     )

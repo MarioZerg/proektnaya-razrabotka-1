@@ -952,7 +952,8 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
             # заблокировать всю поставку в конце сборки.
             cur.execute(
                 "SELECT o.group_key, o.group_size FROM goods_warehouse gw "
-                "JOIN orders o ON o.id = gw.order_id WHERE gw.id = %s",
+                "JOIN orders o ON o.id = COALESCE(gw.reserved_order_id, gw.order_id) "
+                "WHERE gw.id = %s",
                 (goods_id,),
             )
             g_row = cur.fetchone()
@@ -961,7 +962,7 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                 cur.execute(
                     "SELECT count(*) FROM marketplace_supply_items msi "
                     "JOIN goods_warehouse gw2 ON gw2.id = msi.goods_warehouse_id "
-                    "JOIN orders o2 ON o2.id = gw2.order_id "
+                    "JOIN orders o2 ON o2.id = COALESCE(gw2.reserved_order_id, gw2.order_id) "
                     "WHERE msi.supply_id = %s AND o2.group_key = %s",
                     (int(supply_id), g_row[0]),
                 )
