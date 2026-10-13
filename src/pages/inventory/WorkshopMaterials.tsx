@@ -11,9 +11,13 @@ import { STOCK_LOW_LIMIT, STOCK_MEDIUM_LIMIT } from '@/lib/stockLevels';
 import { useAuth } from '@/context/AuthContext';
 import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
 import WorkshopMaterialsCards from '@/components/crm/workshopMaterials/WorkshopMaterialsCards';
+import { Button } from '@/components/ui/button';
+import { useToast } from '@/hooks/use-toast';
 
 const WorkshopMaterials = () => {
   const { user } = useAuth();
+  const { toast } = useToast();
+  const [printing, setPrinting] = useState(false);
   const [types, setTypes] = useState<WorkshopMaterialType[]>([]);
   const [columns, setColumns] = useState<WorkshopMaterialColumn[]>([]);
   const [activeColumn, setActiveColumn] = useState<{ workshopId: number; shiftNumber: number | null } | null>(null);
@@ -142,11 +146,43 @@ const WorkshopMaterials = () => {
     };
   };
 
+  // PDF о простое рулонов — по тем сменам, что сейчас на экране.
+  const handlePrint = async () => {
+    if (visibleColumns.length === 0) return;
+    setPrinting(true);
+    try {
+      const { printWorkshopRollsReport } = await import('@/lib/printWorkshopRollsReport');
+      const names = [...new Set(visibleColumns.map((c) => c.workshopName))].join(', ');
+      const single = new Set(visibleColumns.map((c) => c.workshopId)).size === 1;
+      await printWorkshopRollsReport(
+        visibleColumns,
+        names,
+        single ? visibleColumns[0].workshopId : undefined,
+      );
+    } catch (e) {
+      toast({
+        title: 'Не удалось сформировать PDF',
+        description: e instanceof Error ? e.message : undefined,
+        variant: 'destructive',
+      });
+    } finally {
+      setPrinting(false);
+    }
+  };
+
   return (
     <CrmLayout>
       <div className="min-w-0 space-y-4 overflow-x-hidden sm:space-y-6">
         <div>
+          <div className="flex flex-wrap items-start justify-between gap-2">
           <h1 className="text-xl font-bold">Материал на производстве</h1>
+          {visibleColumns.length > 0 && (
+            <Button variant="outline" size="sm" onClick={handlePrint} disabled={printing}>
+              <Icon name={printing ? 'Loader2' : 'FileDown'} size={16} className={`mr-1.5 ${printing ? 'animate-spin' : ''}`} />
+              PDF простоя по сменам
+            </Button>
+          )}
+          </div>
           <p className="mt-1 text-sm text-muted-foreground">
             Остатки материалов в цехах по сменам (рулоны со статусом «в цехе»)
           </p>

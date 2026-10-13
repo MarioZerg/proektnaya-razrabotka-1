@@ -72,6 +72,9 @@ def handler(event: dict, context) -> dict:
     params = event.get('queryStringParameters') or {}
     workshop_id_filter = params.get('workshop_id')
 
+    if params.get('report'):
+        return roll_report(dsn, headers, params.get('workshop_id'))
+
     conn = psycopg2.connect(dsn)
     try:
         cur = conn.cursor()
@@ -210,4 +213,81 @@ def handler(event: dict, context) -> dict:
             # материала видит остатки ВСЕХ смен своего цеха — он ими и работает.
             'materialFreeShifts': {str(k): sorted(v) for k, v in material_free.items()},
         }),
+    }
+
+
+def roll_report(dsn, headers, workshop_id):
+    """Все рулоны в цехах для печатного отчёта о простое.
+
+    Один запрос: по каждому рулону — остаток, был ли открыт, дата последнего
+    расхода и закройщики, которые с ним работали. Расход читается по индексу
+    (roll_id, created_at), поэтому запрос не перебирает всю историю.
+    """
+    ws_cond = f"AND r.workshop_id = {int(workshop_id)}" if workshop_id else ""
+    conn = psycopg2.connect(dsn)
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT r.id, r.barcode, m.id, m.name, m.unit, mt.name, r.workshop_id, w.name, "
+            "       r.shift_number, r.initial_quantity, r.remaining_quantity, "
+            "       r.created_at, r.accepted_at, u.used, u.last_used, c.cutters "
+            "FROM rolls r "
+            "JOIN workshops w ON w.id = r.workshop_id "
+            "JOIN materials m ON m.id = r.material_id "
+            "JOIN material_types mt ON mt.id = m.type_id "
+            "LEFT JOIN LATERAL (SELECT SUM(omu.quantity) AS used, MAX(omu.created_at) AS last_used "
+            "  FROM order_material_usage omu WHERE omu.roll_id = r.id) u ON true "
+            # Кто кроил с этого рулона: закройщик заказа, а если его нет — тот,
+            # кто списал расход, если он закройщик.
+            "LEFT JOIN LATERAL (SELECT string_agg(DISTINCT us.full_name, ', ') AS cutters "
+            "  FROM order_material_usage omu "
+            "  LEFT JOIN orders o ON o.id = omu.order_id "
+            "  JOIN users us ON us.id = COALESCE(o.cutter_user_id, "
+            "       CASE WHEN EXISTS (SELECT 1 FROM users ua WHERE ua.id = omu.actor_user_id "
+            "                         AND ua.role = 'cutter') THEN omu.actor_user_id END) "
+            "  WHERE omu.roll_id = r.id) c ON true "
+            "WHERE r.status = 'in_workshop' AND r.remaining_quantity > 0 "
+            "  AND w.is_active = true AND w.name NOT IN ('Цех №2', 'Тестовый цех (QA)') "
+            f"  {ws_cond} "
+            "ORDER BY w.id, r.shift_number, mt.sort_order, m.sort_order, r.barcode"
+        )
+        rows = cur.fetchall()
+        cur.execute("SELECT LOCALTIMESTAMP")
+        now = cur.fetchone()[0]
+    finally:
+        conn.close()
+
+    def iso(v):
+        return (v.isoformat() + 'Z') if v else None
+
+    rolls = []
+    for (rid, barcode, mid, mname, unit, tname, wid, wname, shift, initial, remaining,
+         created, accepted, used, last_used, cutters) in rows:
+        used_f = float(used or 0)
+        opened = used_f > 0.001 or float(remaining) + 0.001 < float(initial)
+        since = last_used or accepted or created
+        rolls.append({
+            'id': rid,
+            'barcode': barcode,
+            'materialId': mid,
+            'materialName': mname,
+            'unit': unit,
+            'typeName': tname,
+            'workshopId': wid,
+            'workshopName': wname,
+            'shiftNumber': shift,
+            'initialQuantity': float(initial),
+            'remainingQuantity': float(remaining),
+            'usedQuantity': used_f,
+            'opened': opened,
+            'pendingAcceptance': accepted is None,
+            'acceptedAt': iso(accepted),
+            'lastUsedAt': iso(last_used),
+            'idleHours': round((now - since).total_seconds() / 3600, 1) if since else None,
+            'cutters': cutters or None,
+        })
+    return {
+        'statusCode': 200,
+        'headers': headers,
+        'body': json.dumps({'rolls': rolls, 'generatedAt': iso(now)}, ensure_ascii=False),
     }

@@ -11,6 +11,12 @@
       "method": "GET",
       "path": "/",
       "expectedStatus": 200
+    },
+    {
+      "name": "Roll idle report",
+      "method": "GET",
+      "path": "/?report=1",
+      "expectedStatus": 200
     }
   ]
 }
