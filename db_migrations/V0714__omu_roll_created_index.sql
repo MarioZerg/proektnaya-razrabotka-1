@@ -1,0 +1,1 @@
+CREATE INDEX IF NOT EXISTS idx_omu_roll_created ON t_p86119184_proektnaya_razrabotk.order_material_usage (roll_id, created_at DESC);

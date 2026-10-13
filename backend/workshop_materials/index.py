@@ -131,8 +131,15 @@ def handler(event: dict, context) -> dict:
             # Отдельно считаем непринятое: рулон отгружен в цех, но смена его ещё
             # не подтвердила. Такой материал показывается как «в пути» и в раскрой не идёт.
             f"COALESCE(SUM(r.remaining_quantity) FILTER (WHERE r.accepted_at IS NULL), 0), "
-            f"COUNT(r.id) FILTER (WHERE r.accepted_at IS NULL) "
+            f"COUNT(r.id) FILTER (WHERE r.accepted_at IS NULL), "
+            # Застрявшие рулоны: принятые, но без расхода больше трёх суток.
+            # Последний расход берём по индексу (roll_id, created_at) — один
+            # короткий заход на рулон, без чтения всей истории расхода.
+            f"COUNT(r.id) FILTER (WHERE r.accepted_at IS NOT NULL AND "
+            f"  COALESCE(lu.last_used, r.accepted_at) < now() - interval '3 days') "
             f"FROM rolls r "
+            f"LEFT JOIN LATERAL (SELECT omu.created_at AS last_used FROM order_material_usage omu "
+            f"  WHERE omu.roll_id = r.id ORDER BY omu.created_at DESC LIMIT 1) lu ON true "
             f"JOIN workshops w ON w.id = r.workshop_id "
             f"JOIN materials m ON m.id = r.material_id "
             f"JOIN material_types mt ON mt.id = m.type_id "
@@ -148,7 +155,7 @@ def handler(event: dict, context) -> dict:
         types_map = {}
         materials_map = {}
         for (type_id, type_name, _type_sort, material_id, material_name, unit, _mat_sort,
-             r_workshop_id, shift_number, qty, roll_count, pending_qty, pending_rolls) in rows:
+             r_workshop_id, shift_number, qty, roll_count, pending_qty, pending_rolls, stale_rolls) in rows:
             if type_id not in types_map:
                 types_map[type_id] = {'id': type_id, 'name': type_name, 'materials': []}
             if material_id not in materials_map:
@@ -162,6 +169,8 @@ def handler(event: dict, context) -> dict:
                     # Сколько из остатка ещё не принято сменой.
                     'pendingQuantity': 0.0,
                     'pendingRolls': 0,
+                    # Рулоны без расхода больше трёх суток.
+                    'staleRolls': 0,
                 }
                 materials_map[material_id] = mat_entry
                 types_map[type_id]['materials'].append(mat_entry)
@@ -174,11 +183,13 @@ def handler(event: dict, context) -> dict:
                 'rollCount': roll_count,
                 'pendingQuantity': float(pending_qty or 0),
                 'pendingRolls': pending_rolls or 0,
+                'staleRolls': stale_rolls or 0,
             })
             entry['totalQuantity'] += float(qty)
             entry['totalRolls'] += roll_count
             entry['pendingQuantity'] += float(pending_qty or 0)
             entry['pendingRolls'] += pending_rolls or 0
+            entry['staleRolls'] += stale_rolls or 0
 
         result = list(types_map.values())
     finally:

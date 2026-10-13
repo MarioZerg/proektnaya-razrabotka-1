@@ -1700,11 +1700,17 @@ def handler(event: dict, context) -> dict:
                 # Нужно закройщику и швее при закрытии: если система знает, что из
                 # рулона израсходовано 470 из 500 м, то заявленная недостача в 300 м
                 # физически невозможна — таких метров на рулоне уже не было.
-                f"COALESCE((SELECT SUM(omu.quantity) FROM order_material_usage omu "
-                f"          WHERE omu.roll_id = r.id), 0) "
+                f"COALESCE(u.used, 0), "
+                # Когда рулоном пользовались в последний раз — по нему считаем простой.
+                # Сумму и дату берём ОДНИМ проходом по индексу (roll_id, created_at)
+                # INCLUDE quantity, без отдельного подзапроса на каждое поле.
+                f"u.last_used "
                 f"FROM rolls r "
                 f"LEFT JOIN materials m ON m.id = r.material_id "
                 f"LEFT JOIN workshops w ON w.id = r.workshop_id "
+                f"LEFT JOIN LATERAL (SELECT SUM(omu.quantity) AS used, "
+                f"       MAX(omu.created_at) AS last_used "
+                f"       FROM order_material_usage omu WHERE omu.roll_id = r.id) u ON true "
                 f"{where_clause} "
                 # Ограничиваем выборку: рулонов накопились тысячи, и 90% из них
                 # закрыты — они грузились в браузер каждый раз впустую, по 2 МБ.
@@ -1756,6 +1762,11 @@ def handler(event: dict, context) -> dict:
                     'defectReason': r[17],
                     # Фактический расход по заказам — по нему терминал проверяет недостачу.
                     'usedQuantity': float(r[18] or 0),
+                    # Последний расход с рулона: таймер простоя на «Материалах в цехе».
+                    'lastUsedAt': (r[19].isoformat() + 'Z') if r[19] else None,
+                    # С какого момента рулон лежит в цехе: если им ни разу не
+                    # пользовались, простой считается от приёмки сменой.
+                    'acceptedAt': (r[14].isoformat() + 'Z') if r[14] else None,
                 }
                 for r in cur.fetchall()
             ]

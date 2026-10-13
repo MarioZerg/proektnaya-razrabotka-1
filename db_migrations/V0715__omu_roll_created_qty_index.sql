@@ -1,0 +1,2 @@
+DROP INDEX IF EXISTS t_p86119184_proektnaya_razrabotk.idx_omu_roll_created;
+CREATE INDEX IF NOT EXISTS idx_omu_roll_created_qty ON t_p86119184_proektnaya_razrabotk.order_material_usage (roll_id, created_at DESC) INCLUDE (quantity);

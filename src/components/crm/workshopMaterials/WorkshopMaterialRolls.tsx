@@ -21,32 +21,82 @@ const untouched = (roll: Roll) => {
   return used <= 0.001 && roll.remainingQuantity + 0.001 >= roll.initialQuantity;
 };
 
-const RollLine = ({ roll, unit }: { roll: Roll; unit: string }) => (
-  <li className="flex min-w-0 items-baseline justify-between gap-2 border-b border-border/70 px-2 py-1.5 last:border-0">
-    <span className="min-w-0 truncate font-mono-tech text-xs font-semibold">{roll.barcode}</span>
-    <span className="shrink-0 text-right text-xs tabular-nums">
-      {formatQuantity(roll.remainingQuantity)}
-      {!untouched(roll) && (
-        <span className="text-muted-foreground"> / {formatQuantity(roll.initialQuantity)}</span>
-      )}{' '}
-      {unit}
-      {roll.pendingAcceptance && (
-        <span className="mt-0.5 block text-[10px] font-medium text-amber-700">в пути</span>
-      )}
-    </span>
-  </li>
-);
+/** С какого момента рулон без дела: последний расход, иначе приёмка сменой, иначе отгрузка. */
+const idleSince = (roll: Roll) => roll.lastUsedAt || roll.acceptedAt || roll.createdAt;
+
+const idleMs = (roll: Roll, now: number) => {
+  const since = idleSince(roll);
+  return since ? Math.max(0, now - new Date(since).getTime()) : 0;
+};
+
+const HOUR = 3_600_000;
+const DAY = 24 * HOUR;
+
+const formatIdle = (ms: number) => {
+  if (ms < HOUR) return `${Math.max(1, Math.floor(ms / 60_000))} мин`;
+  if (ms < DAY) {
+    const h = Math.floor(ms / HOUR);
+    const m = Math.floor((ms % HOUR) / 60_000);
+    return m ? `${h} ч ${m} мин` : `${h} ч`;
+  }
+  const d = Math.floor(ms / DAY);
+  const h = Math.floor((ms % DAY) / HOUR);
+  return h ? `${d} дн ${h} ч` : `${d} дн`;
+};
+
+/** До суток — норма, до трёх — стоит присмотреться, дольше — рулон застрял. */
+const idleClass = (ms: number) =>
+  ms >= 3 * DAY
+    ? 'bg-red-100 text-red-800'
+    : ms >= DAY
+      ? 'bg-amber-100 text-amber-800'
+      : 'bg-emerald-50 text-emerald-800';
+
+const RollLine = ({ roll, unit, now }: { roll: Roll; unit: string; now: number }) => {
+  const ms = idleMs(roll, now);
+  return (
+    <li className="border-b border-border/70 px-2 py-1.5 last:border-0">
+      <div className="flex min-w-0 items-baseline justify-between gap-2">
+        <span className="min-w-0 truncate font-mono-tech text-xs font-semibold">{roll.barcode}</span>
+        <span className="shrink-0 text-right text-xs tabular-nums">
+          {formatQuantity(roll.remainingQuantity)}
+          {!untouched(roll) && (
+            <span className="text-muted-foreground"> / {formatQuantity(roll.initialQuantity)}</span>
+          )}{' '}
+          {unit}
+        </span>
+      </div>
+      <div className="mt-1 flex flex-wrap items-center gap-1">
+        {roll.pendingAcceptance ? (
+          <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-800">
+            в пути
+          </span>
+        ) : (
+          <span
+            className={`inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-medium tabular-nums ${idleClass(ms)}`}
+            title={roll.lastUsedAt ? 'С последнего расхода' : 'С приёмки в цех, расходов ещё не было'}
+          >
+            <Icon name="Timer" size={11} />
+            {roll.lastUsedAt ? 'простой' : 'не трогали'} {formatIdle(ms)}
+          </span>
+        )}
+      </div>
+    </li>
+  );
+};
 
 const Column = ({
   title,
   rolls,
   unit,
   empty,
+  now,
 }: {
   title: string;
   rolls: Roll[];
   unit: string;
   empty: string;
+  now: number;
 }) => (
   <div className="min-w-0 overflow-hidden rounded-md border border-border bg-card">
     <div className="border-b border-border bg-muted/60 px-2 py-1.5 text-[11px] font-semibold">
@@ -58,7 +108,7 @@ const Column = ({
     ) : (
       <ul>
         {rolls.map((roll) => (
-          <RollLine key={roll.id} roll={roll} unit={unit} />
+          <RollLine key={roll.id} roll={roll} unit={unit} now={now} />
         ))}
       </ul>
     )}
@@ -79,6 +129,13 @@ const WorkshopMaterialRolls = ({
   const usedTitle = cut ? 'Уже кроили' : 'Уже использовали';
   const [rolls, setRolls] = useState<Roll[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // Таймер простоя тикает раз в минуту — секунды тут ни к чему, а сервер не дёргаем.
+  const [now, setNow] = useState(() => Date.now());
+
+  useEffect(() => {
+    const t = window.setInterval(() => setNow(Date.now()), 60_000);
+    return () => window.clearInterval(t);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -111,12 +168,10 @@ const WorkshopMaterialRolls = ({
       const mine = rolls.filter(
         (roll) => roll.workshopId === col.workshopId && roll.shiftNumber === col.shiftNumber,
       );
-      const fresh = mine
-        .filter(untouched)
-        .sort((a, b) => a.barcode.localeCompare(b.barcode, 'ru'));
-      const cut = mine
-        .filter((roll) => !untouched(roll))
-        .sort((a, b) => b.remainingQuantity - a.remainingQuantity);
+      // Сверху — дольше всех без дела: застрявший рулон видно сразу.
+      const byIdle = (a: Roll, b: Roll) => idleMs(b, now) - idleMs(a, now);
+      const fresh = mine.filter(untouched).sort(byIdle);
+      const cut = mine.filter((roll) => !untouched(roll)).sort(byIdle);
       return { col, fresh, cut };
     })
     .filter((table) => table.fresh.length + table.cut.length > 0);
@@ -134,8 +189,8 @@ const WorkshopMaterialRolls = ({
             {col.shiftLabel}
           </p>
           <div className="grid grid-cols-2 gap-2">
-            <Column title="Новые, не тронутые" rolls={fresh} unit={material.unit} empty="Нет" />
-            <Column title={usedTitle} rolls={cut} unit={material.unit} empty="Нет" />
+            <Column title="Новые, не тронутые" rolls={fresh} unit={material.unit} empty="Нет" now={now} />
+            <Column title={usedTitle} rolls={cut} unit={material.unit} empty="Нет" now={now} />
           </div>
         </div>
       ))}

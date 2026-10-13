@@ -52,6 +52,10 @@ export interface Roll {
    * рулоне физически не было.
    */
   usedQuantity?: number;
+  /** Последний расход с рулона — от него считается простой. */
+  lastUsedAt?: string;
+  /** Когда смена приняла рулон: простой нетронутого рулона идёт с этого момента. */
+  acceptedAt?: string;
 }
 
 export type RollMovementKind =

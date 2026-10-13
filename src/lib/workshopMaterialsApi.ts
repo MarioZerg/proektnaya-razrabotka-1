@@ -12,6 +12,8 @@ export interface WorkshopMaterialCell {
   /** Сколько из этого остатка ещё не принято сменой (материал в пути). */
   pendingQuantity?: number;
   pendingRolls?: number;
+  /** Рулоны без расхода больше трёх суток. */
+  staleRolls?: number;
 }
 
 export interface WorkshopMaterialRow {
@@ -27,6 +29,8 @@ export interface WorkshopMaterialRow {
    */
   pendingQuantity?: number;
   pendingRolls?: number;
+  /** Рулоны без расхода больше трёх суток — застряли в цехе. */
+  staleRolls?: number;
 }
 
 export interface WorkshopMaterialType {
@@ -77,6 +81,7 @@ const withoutRetiredWorkshops = (
             totalRolls: cells.reduce((s, c) => s + c.rollCount, 0),
             pendingQuantity: cells.reduce((s, c) => s + (c.pendingQuantity ?? 0), 0),
             pendingRolls: cells.reduce((s, c) => s + (c.pendingRolls ?? 0), 0),
+            staleRolls: cells.reduce((s, c) => s + (c.staleRolls ?? 0), 0),
           };
         })
         .filter((m) => m.cells.length > 0 || m.totalQuantity > 0),

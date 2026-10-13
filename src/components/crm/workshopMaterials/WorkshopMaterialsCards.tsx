@@ -64,6 +64,12 @@ const WorkshopMaterialsCards = ({
                   <span className="min-w-0 break-words text-sm font-medium leading-snug">
                     {m.materialName}
                   </span>
+                  {(m.staleRolls ?? 0) > 0 && (
+                    <span className="ml-auto inline-flex shrink-0 items-center gap-1 rounded bg-red-100 px-1.5 py-0.5 text-[11px] font-medium text-red-800">
+                      <Icon name="Timer" size={12} />
+                      простой &gt;3 дн: {m.staleRolls} рул.
+                    </span>
+                  )}
                 </button>
                 <div
                   className={`mt-2 grid gap-1.5 ${
@@ -96,6 +102,11 @@ const WorkshopMaterialsCards = ({
                         <div className="mt-0.5 break-words text-sm tabular-nums leading-snug">
                           {cell ? qtyLine(cell.quantity, m.unit, cell.rollCount) : '—'}
                         </div>
+                        {(cell?.staleRolls ?? 0) > 0 && (
+                          <div className="mt-0.5 text-[11px] font-medium text-red-700">
+                            простой &gt;3 дн: {cell?.staleRolls} рул.
+                          </div>
+                        )}
                         {(cell?.pendingQuantity ?? 0) > 0 && (
                           <div className="mt-0.5 text-[11px] font-medium text-amber-700">
                             в пути: {formatQuantity(cell?.pendingQuantity ?? 0)} {m.unit}
