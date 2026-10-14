@@ -150,8 +150,8 @@ const ShelvesSettings = () => {
           <h1 className="text-xl font-bold">Полки на складе</h1>
           <p className="mt-1 text-sm text-muted-foreground">
             Полку при укладке система выбирает сама: однотипный товар кладёт вместе,
-            ходовой — на ближние полки. На одной полке не больше 50 вещей, дальше
-            занимается следующая свободная. Фото показывает, где стоит контейнер:
+            ходовой — на ближние полки, остальное — на самую свободную. Ограничения
+            по количеству вещей на полке нет. Фото показывает, где стоит контейнер:
             его ставит кладовщик, и только после этого на карточке товара появляется
             кнопка «Посмотреть полку»
           </p>
@@ -205,7 +205,7 @@ const ShelvesSettings = () => {
                 <TableRow className="bg-primary hover:bg-primary">
                   <TableHead className="text-primary-foreground">#</TableHead>
                   <TableHead className="text-primary-foreground">Название</TableHead>
-                  <TableHead className="text-primary-foreground">Товаров из 50</TableHead>
+                  <TableHead className="text-primary-foreground">Товаров</TableHead>
                   <TableHead className="text-primary-foreground" />
                 </TableRow>
               </TableHeader>
