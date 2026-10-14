@@ -92,6 +92,7 @@ export const syncReviews = async (): Promise<SyncReviewsResult> => {
         if (created === 0) throw e;
         break;
       }
+      await new Promise((r) => setTimeout(r, 2000 * fails));
       continue;
     }
 

@@ -5,6 +5,7 @@ import urllib.error
 from datetime import datetime, timezone
 
 import psycopg2
+from psycopg2.extras import execute_values
 
 # Отзывы с маркетплейсов OZON и WB (FBS). Функция:
 #   - action=sync: тянет свежие отзывы из OZON (/v1/review/list) и WB
@@ -217,7 +218,7 @@ def backfill_wb_rids(cur, api_key):
     # Год назад: отзывы часто приходят на старые задания, а rid раньше не писали.
     date_from = int(datetime.now(timezone.utc).timestamp()) - 365 * 24 * 3600
     next_val = 0
-    filled = 0
+    pairs = []
     for _ in range(20):
         st, data = wb_market_get(
             f'/api/v3/orders?limit=1000&next={next_val}&dateFrom={date_from}',
@@ -227,21 +228,43 @@ def backfill_wb_rids(cur, api_key):
             break
         orders = data.get('orders') or []
         for o in orders:
-            oid = o.get('id')
             rid = (o.get('rid') or '').strip()
-            if not oid or not rid:
-                continue
-            cur.execute(
-                "UPDATE orders SET wb_rid = %s "
-                "WHERE wb_order_id = %s AND wb_rid IS NULL "
-                "AND NOT EXISTS (SELECT 1 FROM orders x WHERE x.wb_rid = %s)",
-                (rid, int(oid), rid),
-            )
-            filled += cur.rowcount or 0
+            if o.get('id') and rid:
+                pairs.append((o.get('id'), rid))
         next_val = data.get('next') or 0
         if not orders or not next_val:
             break
-    return filled
+    return set_wb_rids(cur, pairs)
+
+
+def set_wb_rids(cur, pairs):
+    """Одним запросом дописывает rid заказам WB, у которых его ещё нет.
+
+    Раньше писали по запросу на каждое задание — тысячи запросов за вызов,
+    и база отвечала «rate limit exceeded».
+    """
+    oids, rids, seen_oid, seen_rid = [], [], set(), set()
+    for oid, rid in pairs:
+        try:
+            oid = int(oid)
+        except (TypeError, ValueError):
+            continue
+        if not rid or oid in seen_oid or rid in seen_rid:
+            continue
+        seen_oid.add(oid)
+        seen_rid.add(rid)
+        oids.append(oid)
+        rids.append(rid)
+    if not oids:
+        return 0
+    cur.execute(
+        "UPDATE orders o SET wb_rid = v.rid "
+        "FROM unnest(%s::bigint[], %s::text[]) AS v(oid, rid) "
+        "WHERE o.wb_order_id = v.oid AND o.wb_rid IS NULL "
+        "AND NOT EXISTS (SELECT 1 FROM orders x WHERE x.wb_rid = v.rid)",
+        (oids, rids),
+    )
+    return cur.rowcount or 0
 
 
 def resolve_wb_order(by_wb_order, by_rid, by_number, rv):
@@ -375,6 +398,38 @@ def upsert_review(
     return 1
 
 
+def upsert_reviews_bulk(cur, marketplace, rows):
+    """Пакетная запись отзывов: один запрос на всю порцию вместо 2–3 на отзыв.
+
+    rows — кортежи (external_id, order_id, sku, name, rating, text, date, srid, status).
+    Возвращает число новых отзывов.
+    """
+    uniq = {}
+    for r in rows:
+        if r[0]:
+            uniq[r[0]] = r
+    if not uniq:
+        return 0
+    values = [
+        (marketplace, ext, oid, sku, (name or '')[:300], rating, text, dt, srid or None, status)
+        for ext, oid, sku, name, rating, text, dt, srid, status in uniq.values()
+    ]
+    inserted = execute_values(
+        cur,
+        "INSERT INTO reviews (marketplace, external_id, order_id, product_sku, product_name, "
+        " rating, text, review_date, wb_srid, wb_order_status) VALUES %s "
+        "ON CONFLICT (marketplace, external_id) DO UPDATE SET "
+        "  wb_srid = COALESCE(reviews.wb_srid, EXCLUDED.wb_srid), "
+        "  order_id = COALESCE(reviews.order_id, EXCLUDED.order_id), "
+        "  wb_order_status = COALESCE(EXCLUDED.wb_order_status, reviews.wb_order_status) "
+        "RETURNING (xmax = 0)",
+        values,
+        page_size=len(values),
+        fetch=True,
+    )
+    return sum(1 for (is_new,) in inserted if is_new)
+
+
 def handle_sync(cur, body_data=None):
     """Загружает отзывы порциями.
 
@@ -406,12 +461,21 @@ def handle_sync(cur, body_data=None):
     if wb_skip == 0 and wb_stage == 'false':
         if ozon_on and client_id and ozon_key:
             try:
-                for rv in fetch_ozon_reviews(client_id, ozon_key):
-                    order_id = match_order_ozon(cur, rv['posting_number'])
-                    created += upsert_review(
-                        cur, 'OZON', rv['external_id'], order_id, rv['sku'],
-                        rv['product_name'], rv['rating'], rv['text'], rv['review_date'],
+                ozon_reviews = list(fetch_ozon_reviews(client_id, ozon_key))
+                postings = list({rv['posting_number'] for rv in ozon_reviews if rv.get('posting_number')})
+                by_posting = {}
+                if postings:
+                    cur.execute(
+                        "SELECT ozon_posting_number, id FROM orders "
+                        "WHERE ozon_posting_number = ANY(%s)",
+                        (postings,),
                     )
+                    by_posting = {r[0]: r[1] for r in cur.fetchall()}
+                created += upsert_reviews_bulk(cur, 'OZON', [
+                    (rv['external_id'], by_posting.get(rv.get('posting_number')), rv['sku'],
+                     rv['product_name'], rv['rating'], rv['text'], rv['review_date'], None, None)
+                    for rv in ozon_reviews
+                ])
             except Exception as e:
                 # Отзывы OZON доступны только на платной подписке Premium Plus. Без неё
                 # площадка отвечает отказом — это не поломка, поэтому пишем понятно.
@@ -434,18 +498,10 @@ def handle_sync(cur, body_data=None):
             reviews, got = fetch_wb_reviews(wb_key, wb_stage, wb_skip, page_size)
 
             # Если WB отдал и id задания, и srid — дописываем rid заказу сразу.
-            for rv in reviews:
-                if not rv.get('order_id') or not rv.get('srid'):
-                    continue
-                try:
-                    cur.execute(
-                        "UPDATE orders SET wb_rid = COALESCE(wb_rid, %s) "
-                        "WHERE wb_order_id = %s AND wb_rid IS NULL "
-                        "AND NOT EXISTS (SELECT 1 FROM orders x WHERE x.wb_rid = %s)",
-                        (rv['srid'], int(rv['order_id']), rv['srid']),
-                    )
-                except (TypeError, ValueError):
-                    pass
+            set_wb_rids(cur, [
+                (rv['order_id'], rv['srid'])
+                for rv in reviews if rv.get('order_id') and rv.get('srid')
+            ])
 
             order_ids = []
             for r in reviews:
@@ -480,16 +536,12 @@ def handle_sync(cur, body_data=None):
                 )
                 by_rid = {r[0]: r[1] for r in cur.fetchall()}
 
-            for rv in reviews:
-                if not rv['external_id']:
-                    continue
-                order_id = resolve_wb_order(by_wb_order, by_rid, by_number, rv)
-                created += upsert_review(
-                    cur, 'WB', rv['external_id'], order_id, rv['nm_id'],
-                    rv['product_name'], rv['rating'], rv['text'], rv['review_date'],
-                    wb_srid=rv.get('srid') or None,
-                    wb_order_status=rv.get('order_status'),
-                )
+            created += upsert_reviews_bulk(cur, 'WB', [
+                (rv['external_id'], resolve_wb_order(by_wb_order, by_rid, by_number, rv),
+                 rv['nm_id'], rv['product_name'], rv['rating'], rv['text'], rv['review_date'],
+                 rv.get('srid'), rv.get('order_status'))
+                for rv in reviews if rv['external_id']
+            ])
 
             # Старые отзывы без заказа — по сохранённому srid после догрузки rid.
             try:
