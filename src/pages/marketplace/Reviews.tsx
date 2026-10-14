@@ -110,9 +110,9 @@ const Reviews = () => {
 
   return (
     <CrmLayout>
-      <div className="space-y-6">
+      <div className="min-w-0 space-y-4 sm:space-y-6">
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center gap-2 sm:gap-3">
             <h1 className="text-xl font-bold">Отзывы</h1>
             {!loading && (
               <>
@@ -129,7 +129,12 @@ const Reviews = () => {
             )}
           </div>
           {isAdmin && (
-            <Button variant="outline" onClick={handleSync} disabled={syncing}>
+            <Button
+              variant="outline"
+              onClick={handleSync}
+              disabled={syncing}
+              className="w-full sm:w-auto"
+            >
               <Icon
                 name={syncing ? 'Loader2' : 'RefreshCw'}
                 size={16}
@@ -142,7 +147,7 @@ const Reviews = () => {
 
         <EmployeeRatingCards rating={rating} />
 
-        <div className="flex flex-wrap items-center gap-3">
+        <div className="grid grid-cols-2 items-center gap-2 sm:flex sm:flex-wrap sm:gap-3">
           <Select value={marketplace} onValueChange={(v) => setMarketplace(v as typeof marketplace)}>
             <SelectTrigger className="w-full sm:w-44">
               <SelectValue />
@@ -163,7 +168,7 @@ const Reviews = () => {
               <SelectItem value="low">Плохие (1–3)</SelectItem>
             </SelectContent>
           </Select>
-          <div className="relative w-full sm:max-w-xs sm:flex-1">
+          <div className="relative col-span-2 w-full sm:max-w-xs sm:flex-1">
             <Icon
               name="Search"
               size={14}
@@ -172,11 +177,13 @@ const Reviews = () => {
             <Input
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              placeholder="Поиск: srid, заказ, швея…"
+              placeholder="Поиск: заказ, товар, швея…"
               className="pl-8"
             />
           </div>
-          <p className="ml-auto text-sm text-muted-foreground">Показано: {filtered.length}</p>
+          <p className="col-span-2 text-sm text-muted-foreground sm:ml-auto">
+            Найдено: {filtered.length}
+          </p>
         </div>
 
         {listError && (

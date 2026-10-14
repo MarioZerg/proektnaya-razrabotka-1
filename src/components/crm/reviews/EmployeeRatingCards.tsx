@@ -34,7 +34,7 @@ const RatingRow = ({ emp }: { emp: EmployeeRating }) => (
 
 const EmployeeRatingCards = ({ rating }: EmployeeRatingCardsProps) => {
   return (
-    <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+    <div className="grid grid-cols-1 gap-3 sm:gap-4 md:grid-cols-3">
       {stages.map((s) => {
         const list = rating[s.key];
         return (
@@ -49,7 +49,11 @@ const EmployeeRatingCards = ({ rating }: EmployeeRatingCardsProps) => {
               {list.length === 0 ? (
                 <p className="text-sm text-muted-foreground">Нет данных по отзывам</p>
               ) : (
-                list.map((emp) => <RatingRow key={emp.userId} emp={emp} />)
+                <div className="max-h-56 overflow-y-auto pr-1">
+                  {list.map((emp) => (
+                    <RatingRow key={emp.userId} emp={emp} />
+                  ))}
+                </div>
               )}
             </CardContent>
           </Card>
