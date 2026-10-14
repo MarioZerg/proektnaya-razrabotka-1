@@ -10,6 +10,11 @@ import { Badge } from '@/components/ui/badge';
 import Icon from '@/components/ui/icon';
 import { formatDate } from '@/lib/dateUtils';
 import type { Review } from '@/lib/reviewsApi';
+import ReviewPeopleTimeline from '@/components/crm/reviews/ReviewPeopleTimeline';
+import {
+  wbOrderStatusClass,
+  wbOrderStatusLabel,
+} from '@/components/crm/reviews/reviewStatus';
 
 interface ReviewsTableProps {
   reviews: Review[];
@@ -33,9 +38,6 @@ const Stars = ({ rating }: { rating: number | null }) => {
   );
 };
 
-const person = (name: string | null) =>
-  name ? <span>{name}</span> : <span className="text-muted-foreground">—</span>;
-
 const ReviewsTable = ({ reviews, error = null }: ReviewsTableProps) => {
   if (reviews.length === 0) {
     if (error) return null;
@@ -53,11 +55,10 @@ const ReviewsTable = ({ reviews, error = null }: ReviewsTableProps) => {
           <TableRow>
             <TableHead>Площадка</TableHead>
             <TableHead>Оценка</TableHead>
+            <TableHead>Статус</TableHead>
             <TableHead className="min-w-[220px]">Отзыв</TableHead>
             <TableHead>Товар / Заказ</TableHead>
-            <TableHead>Закройщик</TableHead>
-            <TableHead>Швея</TableHead>
-            <TableHead>Упаковщик</TableHead>
+            <TableHead className="min-w-[220px]">Кто делал</TableHead>
             <TableHead>Дата отзыва</TableHead>
             <TableHead>Создан</TableHead>
             <TableHead>Завершён</TableHead>
@@ -66,6 +67,7 @@ const ReviewsTable = ({ reviews, error = null }: ReviewsTableProps) => {
         <TableBody>
           {reviews.map((r) => {
             const mp = marketplaceBadge[r.marketplace] || { label: r.marketplace, className: '' };
+            const statusLabel = wbOrderStatusLabel(r.wbOrderStatus);
             return (
               <TableRow key={r.id}>
                 <TableCell>
@@ -73,6 +75,19 @@ const ReviewsTable = ({ reviews, error = null }: ReviewsTableProps) => {
                 </TableCell>
                 <TableCell>
                   <Stars rating={r.rating} />
+                </TableCell>
+                <TableCell>
+                  {statusLabel ? (
+                    <span
+                      className={`inline-flex rounded-full px-2 py-0.5 text-xs font-semibold ${wbOrderStatusClass(
+                        r.wbOrderStatus,
+                      )}`}
+                    >
+                      {statusLabel}
+                    </span>
+                  ) : (
+                    <span className="text-muted-foreground">—</span>
+                  )}
                 </TableCell>
                 <TableCell className="max-w-[320px]">
                   <span className="line-clamp-3 text-sm">{r.text || '—'}</span>
@@ -95,9 +110,13 @@ const ReviewsTable = ({ reviews, error = null }: ReviewsTableProps) => {
                     </div>
                   )}
                 </TableCell>
-                <TableCell className="text-sm">{person(r.cutterName)}</TableCell>
-                <TableCell className="text-sm">{person(r.sewerName)}</TableCell>
-                <TableCell className="text-sm">{person(r.packerName)}</TableCell>
+                <TableCell>
+                  <ReviewPeopleTimeline
+                    cutterName={r.cutterName}
+                    sewerName={r.sewerName}
+                    packerName={r.packerName}
+                  />
+                </TableCell>
                 <TableCell className="whitespace-nowrap text-sm text-muted-foreground">
                   {r.reviewDate ? formatDate(r.reviewDate) : '—'}
                 </TableCell>

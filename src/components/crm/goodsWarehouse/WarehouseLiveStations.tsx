@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import LiveCountBoard, { type CountTone } from '@/components/crm/LiveCountBoard';
 import SceneImage from '@/components/crm/SceneImage';
+import { zoneDotClass, zoneLabels, type WorkZone } from '@/lib/workZone';
 
 type SceneKind = 'receive' | 'shelves' | 'van' | 'returns' | 'stocktake' | 'picking';
 
@@ -12,6 +13,8 @@ export interface WarehouseStation {
   /** Пока очередь не пришла, ноль не показываем: это выглядит как «работы нет». */
   loading?: boolean;
   tone: CountTone;
+  /** Чья зона: цех, склад или передача — точка в углу плашки. */
+  zone: WorkZone;
   scene: SceneKind;
   onClick: () => void;
 }
@@ -56,25 +59,35 @@ const StationCard = ({ station }: { station: WarehouseStation }) => {
         pressed ? 'scale-[0.98]' : ''
       } ${
         alive
-          ? station.tone === 'cyan'
-            ? 'border-cyan-300'
-            : 'border-violet-200'
+          ? station.tone === 'white'
+            ? 'border-slate-400'
+            : station.tone === 'cyan'
+              ? 'border-cyan-300'
+              : 'border-violet-200'
           : 'border-border'
       } ${station.loading ? 'cursor-wait' : 'cursor-pointer'}`}
     >
       <div className="relative h-40 w-full overflow-hidden bg-[#f4efe6] sm:aspect-video sm:h-auto">
         <SceneImage name={SCENE_SRC[station.scene]} className={SCENE_POS[station.scene]} />
       </div>
-      <div className="flex min-w-0 flex-1 items-center gap-3 px-3 py-3 sm:items-start">
-        <div className="min-w-0 flex-1">
-          <p className="text-sm font-bold leading-tight">{station.title}</p>
-          {station.hint && (
-            <p className="mt-1 text-xs leading-tight text-muted-foreground">{station.hint}</p>
+      <div className="flex min-w-0 flex-1 flex-col gap-2 px-3 py-3">
+        <div className="flex min-w-0 items-center gap-3 sm:items-start">
+          <div className="min-w-0 flex-1">
+            <p className="text-sm font-bold leading-tight">{station.title}</p>
+            {station.hint && (
+              <p className="mt-1 text-xs leading-tight text-muted-foreground">{station.hint}</p>
+            )}
+          </div>
+          {station.count != null && (
+            <LiveCountBoard value={station.count} tone={station.tone} loading={station.loading} />
           )}
         </div>
-        {station.count != null && (
-          <LiveCountBoard value={station.count} tone={station.tone} loading={station.loading} />
-        )}
+        {/* Зона внизу белого блока: фиолет — цех, зелёный — склад, градиент — передача. */}
+        <span
+          className={`h-2.5 w-2.5 rounded-full ${zoneDotClass[station.zone]}`}
+          title={zoneLabels[station.zone]}
+          aria-hidden
+        />
       </div>
     </button>
   );

@@ -4,9 +4,13 @@ import Icon from '@/components/ui/icon';
 import { fetchReviews, type Review } from '@/lib/reviewsApi';
 import { formatDate } from '@/lib/dateUtils';
 import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
+import ReviewPeopleTimeline from '@/components/crm/reviews/ReviewPeopleTimeline';
+import {
+  wbOrderStatusClass,
+  wbOrderStatusLabel,
+} from '@/components/crm/reviews/reviewStatus';
 
-/** Экран отзывов на терминале: последние отзывы с маркетплейсов, чтобы цех видел оценки
- * покупателей и кто участвовал в производстве заказа. */
+/** Экран отзывов на терминале: оценка, статус (у клиента / вернули) и кто шил. */
 const KioskReviewsScreen = () => {
   const [reviews, setReviews] = useState<Review[]>([]);
   const [loading, setLoading] = useState(true);
@@ -63,6 +67,7 @@ const KioskReviewsScreen = () => {
               : r.rating >= 3
                 ? 'text-amber-600'
                 : 'text-red-600';
+        const statusLabel = wbOrderStatusLabel(r.wbOrderStatus);
         return (
           <div key={r.id} className="rounded-lg border border-border p-4">
             <div className="flex flex-wrap items-center justify-between gap-2">
@@ -70,7 +75,18 @@ const KioskReviewsScreen = () => {
                 <Icon name="Star" size={18} className="fill-current" />
                 {r.rating ?? '—'}
               </span>
-              <Badge variant="secondary">{r.marketplace}</Badge>
+              <div className="flex flex-wrap items-center gap-1.5">
+                <Badge variant="secondary">{r.marketplace}</Badge>
+                {statusLabel && (
+                  <span
+                    className={`rounded-full px-2 py-0.5 text-xs font-semibold ${wbOrderStatusClass(
+                      r.wbOrderStatus,
+                    )}`}
+                  >
+                    {statusLabel}
+                  </span>
+                )}
+              </div>
               <span className="text-sm text-muted-foreground">
                 {r.reviewDate ? formatDate(r.reviewDate) : ''}
               </span>
@@ -78,13 +94,14 @@ const KioskReviewsScreen = () => {
             <p className="mt-2">{r.text || 'Без комментария'}</p>
             <p className="mt-1 text-sm text-muted-foreground">
               {r.productName || r.productSku || ''}
+              {r.orderNumber ? ` · ${r.orderNumber}` : ' · заказ не сопоставлен'}
             </p>
-            {(r.cutterName || r.sewerName || r.packerName) && (
-              <p className="mt-1 text-xs text-muted-foreground">
-                Кроил: {r.cutterName || '—'} · Шил: {r.sewerName || '—'} · Упаковал:{' '}
-                {r.packerName || '—'}
-              </p>
-            )}
+            <ReviewPeopleTimeline
+              cutterName={r.cutterName}
+              sewerName={r.sewerName}
+              packerName={r.packerName}
+              compact
+            />
           </div>
         );
       })}

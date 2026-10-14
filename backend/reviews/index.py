@@ -175,6 +175,8 @@ def fetch_wb_reviews(api_key, is_answered='false', skip=0, take=1000):
             or prod.get('rid')
             or ''
         )
+        # buyout — выкуплен (у клиента), returned — вернули, rejected — отказ.
+        order_status = (f.get('orderStatus') or '').strip() or None
         reviews.append({
             'external_id': str(f.get('id') or ''),
             'srid': str(srid).strip(),
@@ -184,6 +186,7 @@ def fetch_wb_reviews(api_key, is_answered='false', skip=0, take=1000):
             'rating': f.get('productValuation'),
             'text': (f.get('text') or '').strip(),
             'review_date': _parse_dt(f.get('createdDate')),
+            'order_status': order_status,
         })
     return reviews, len(feedbacks)
 
@@ -211,12 +214,11 @@ def backfill_wb_rids(cur, api_key):
     Отзыв WB приходит со srid = rid задания. Номер заказа у нас — id задания,
     rid раньше выкидывали. Берём задания за последние полгода и дописываем rid.
     """
-    date_from = int(datetime.now(timezone.utc).timestamp()) - 180 * 24 * 3600
+    # Год назад: отзывы часто приходят на старые задания, а rid раньше не писали.
+    date_from = int(datetime.now(timezone.utc).timestamp()) - 365 * 24 * 3600
     next_val = 0
     filled = 0
-    # До 10 тыс. заданий: трёх страниц не хватало — у старых заказов rid
-    # оставался пустым, и отзывы с буквенным srid не находили швею.
-    for _ in range(10):
+    for _ in range(20):
         st, data = wb_market_get(
             f'/api/v3/orders?limit=1000&next={next_val}&dateFrom={date_from}',
             api_key,
@@ -269,7 +271,7 @@ def rematch_wb_reviews(cur):
 
     srid лежит в reviews.wb_srid, rid задания — в orders.wb_rid. После догрузки
     rid в старые заказы (backfill) можно закрыть дыры без повторной выгрузки
-    всего архива отзывов с WB.
+    всего архива отзывов с WB. Дополнительно: цифровой id задания в номере заказа.
     """
     cur.execute(
         "UPDATE reviews r SET order_id = o.id "
@@ -296,6 +298,17 @@ def rematch_wb_reviews(cur):
         "  AND r.order_id IS NULL "
         "  AND r.wb_srid IS NOT NULL AND r.wb_srid <> '' "
         "  AND o.order_number = r.wb_srid"
+    )
+    linked += cur.rowcount or 0
+    # Номер заказа у нас часто = цифровой id задания WB.
+    cur.execute(
+        "UPDATE reviews r SET order_id = o.id "
+        "FROM orders o "
+        "WHERE r.marketplace = 'WB' "
+        "  AND r.order_id IS NULL "
+        "  AND o.wb_order_id IS NOT NULL "
+        "  AND o.order_number = o.wb_order_id::text "
+        "  AND r.wb_srid = o.wb_order_id::text"
     )
     linked += cur.rowcount or 0
     return linked
@@ -327,7 +340,7 @@ def match_order_wb(cur, wb_order_id, order_number):
 
 def upsert_review(
     cur, marketplace, external_id, order_id, product_sku, product_name,
-    rating, text, review_date, wb_srid=None,
+    rating, text, review_date, wb_srid=None, wb_order_status=None,
 ):
     if not external_id:
         return 0
@@ -339,24 +352,24 @@ def upsert_review(
     row = cur.fetchone()
     if row:
         rid, prev_order, prev_srid = row
-        # Дописываем буквенный srid и заказ, если раньше отзыв пришёл «пустым».
-        if (wb_srid and not prev_srid) or (order_id and not prev_order):
-            cur.execute(
-                "UPDATE reviews SET "
-                "  wb_srid = COALESCE(wb_srid, %s), "
-                "  order_id = COALESCE(order_id, %s) "
-                "WHERE id = %s",
-                (wb_srid or None, order_id, rid),
-            )
+        # Дописываем srid, заказ и статус заказа (у клиента / вернули).
+        cur.execute(
+            "UPDATE reviews SET "
+            "  wb_srid = COALESCE(wb_srid, %s), "
+            "  order_id = COALESCE(order_id, %s), "
+            "  wb_order_status = COALESCE(%s, wb_order_status) "
+            "WHERE id = %s",
+            (wb_srid or None, order_id, wb_order_status, rid),
+        )
         return 0
     cur.execute(
         "INSERT INTO reviews (marketplace, external_id, order_id, product_sku, product_name, "
-        " rating, text, review_date, wb_srid) "
-        "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
+        " rating, text, review_date, wb_srid, wb_order_status) "
+        "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
         (
             marketplace, external_id, order_id, product_sku,
             (product_name or '')[:300], rating, text, review_date,
-            wb_srid or None,
+            wb_srid or None, wb_order_status,
         ),
     )
     return 1
@@ -449,12 +462,18 @@ def handle_sync(cur, body_data=None):
                     (order_ids,),
                 )
                 by_wb_order = {r[0]: r[1] for r in cur.fetchall()}
+                # Номер заказа часто = id задания строкой.
+                cur.execute(
+                    "SELECT order_number, id FROM orders WHERE order_number = ANY(%s)",
+                    ([str(x) for x in order_ids],),
+                )
+                by_number.update({r[0]: r[1] for r in cur.fetchall()})
             if srids:
                 cur.execute(
                     "SELECT order_number, id FROM orders WHERE order_number = ANY(%s)",
                     (srids,),
                 )
-                by_number = {r[0]: r[1] for r in cur.fetchall()}
+                by_number.update({r[0]: r[1] for r in cur.fetchall()})
                 cur.execute(
                     "SELECT wb_rid, id FROM orders WHERE wb_rid = ANY(%s)",
                     (srids,),
@@ -469,6 +488,7 @@ def handle_sync(cur, body_data=None):
                     cur, 'WB', rv['external_id'], order_id, rv['nm_id'],
                     rv['product_name'], rv['rating'], rv['text'], rv['review_date'],
                     wb_srid=rv.get('srid') or None,
+                    wb_order_status=rv.get('order_status'),
                 )
 
             # Старые отзывы без заказа — по сохранённому srid после догрузки rid.
@@ -512,7 +532,7 @@ def handle_sync(cur, body_data=None):
 def handle_list(cur):
     cur.execute(
         "SELECT r.id, r.marketplace, r.rating, r.text, r.review_date, r.product_name, r.product_sku, "
-        "r.wb_srid, "
+        "r.wb_srid, r.wb_order_status, "
         "o.id, o.order_number, o.order_type, o.created_at, o.completed_at, o.sewing_status, "
         "o.wb_rid, "
         "cu.full_name, su.full_name, pu.full_name "
@@ -534,17 +554,18 @@ def handle_list(cur):
         'productName': r[5],
         'productSku': r[6],
         # Буквенный ключ WB — по нему ищем заказ и швею.
-        'wbSrid': r[7] or r[14],
-        'orderId': r[8],
-        'orderNumber': r[9],
-        'orderType': r[10],
-        'orderCreatedAt': _iso(r[11]),
-        'orderCompletedAt': _iso(r[12]),
-        'sewingStatus': r[13],
-        'wbRid': r[14],
-        'cutterName': r[15],
-        'sewerName': r[16],
-        'packerName': r[17],
+        'wbSrid': r[7] or r[15],
+        'wbOrderStatus': r[8],
+        'orderId': r[9],
+        'orderNumber': r[10],
+        'orderType': r[11],
+        'orderCreatedAt': _iso(r[12]),
+        'orderCompletedAt': _iso(r[13]),
+        'sewingStatus': r[14],
+        'wbRid': r[15],
+        'cutterName': r[16],
+        'sewerName': r[17],
+        'packerName': r[18],
     } for r in rows]
     return _resp(200, {'reviews': reviews})
 

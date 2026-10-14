@@ -13,6 +13,8 @@ export interface Review {
   /** Буквенный srid/rid WB — по нему отзыв цепляется к заказу и швее. */
   wbSrid?: string | null;
   wbRid?: string | null;
+  /** WB: buyout / returned / rejected / notSpecified. */
+  wbOrderStatus?: string | null;
   orderId: number | null;
   orderNumber: string | null;
   orderType: string | null;

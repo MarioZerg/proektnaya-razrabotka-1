@@ -20,6 +20,7 @@ import {
 import Icon from '@/components/ui/icon';
 import ErrorBoundary from '@/components/ErrorBoundary';
 import ShiftQrDialog from '@/components/crm/ShiftQrDialog';
+import RadioDialog from '@/components/crm/variki/radio/RadioDialog';
 import MyAvatarButton from '@/components/crm/MyAvatarButton';
 import HeaderSalaryWidget from '@/components/crm/HeaderSalaryWidget';
 import StorekeeperTasksWidget from '@/components/crm/StorekeeperTasksWidget';
@@ -114,6 +115,7 @@ const CrmLayout = ({ children }: { children: ReactNode }) => {
     location.pathname === '/crm/chat' || location.pathname === '/crm/shop-chat';
   const [testAccounts, setTestAccounts] = useState<TestAccount[]>([]);
   const [qrOpen, setQrOpen] = useState(false);
+  const [radioOpen, setRadioOpen] = useState(false);
   const [kioskPreviewOpen, setKioskPreviewOpen] = useState(false);
   // Неподписанные документы закрывают систему: пока их не подписали, вместо страниц
   // показываем экран подписания. null — ещё проверяем, не мигаем интерфейсом зря.
@@ -388,9 +390,21 @@ const CrmLayout = ({ children }: { children: ReactNode }) => {
                   </DropdownMenuContent>
                 </DropdownMenu>
               )}
+              {user.role !== 'accountant' && (
+                <button
+                  onClick={() => setRadioOpen(true)}
+                  className="ml-auto grid h-9 w-9 place-items-center rounded-xl text-sidebar-foreground/65 transition hover:bg-sidebar-accent hover:text-sidebar-foreground"
+                  aria-label="Радио в цехе"
+                  title="Радио в цехе"
+                >
+                  <Icon name="Radio" size={16} />
+                </button>
+              )}
               <button
                 onClick={handleLogout}
-                className="ml-auto grid h-9 w-9 place-items-center rounded-xl text-sidebar-foreground/65 transition hover:bg-destructive/20 hover:text-red-300"
+                className={`grid h-9 w-9 place-items-center rounded-xl text-sidebar-foreground/65 transition hover:bg-destructive/20 hover:text-red-300 ${
+                  user.role === 'accountant' ? 'ml-auto' : ''
+                }`}
                 aria-label="Выйти"
               >
                 <Icon name="LogOut" size={16} />
@@ -401,6 +415,7 @@ const CrmLayout = ({ children }: { children: ReactNode }) => {
       </Sidebar>
 
       <ShiftQrDialog open={qrOpen} onOpenChange={setQrOpen} />
+      <RadioDialog open={radioOpen} onOpenChange={setRadioOpen} />
       {user.role === 'admin' && (
         <KioskPreviewDialog
           open={kioskPreviewOpen}

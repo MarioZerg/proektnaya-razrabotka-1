@@ -19,7 +19,6 @@ import BuyConfirmDialog from '@/components/crm/variki/shop/BuyConfirmDialog';
 import DuelTab from '@/components/crm/variki/duel/DuelTab';
 import ShaftTab from '@/components/crm/variki/shaft/ShaftTab';
 import GameRulesTab from '@/components/crm/variki/GameRulesTab';
-import RadioTab from '@/components/crm/variki/radio/RadioTab';
 
 /**
  * Магазин вариков: сотрудник тратит игровую валюту на настоящие подарки.
@@ -42,7 +41,7 @@ const VarikiShop = () => {
   const [buying, setBuying] = useState(false);
   const [confirmItem, setConfirmItem] = useState<ShopItem | null>(null);
   const [visitDate, setVisitDate] = useState('');
-  const [tab, setTab] = useState<'shop' | 'duel' | 'shaft' | 'rules' | 'radio'>('shop');
+  const [tab, setTab] = useState<'shop' | 'duel' | 'shaft' | 'rules'>('shop');
   const shaftAllowed = user?.role === 'admin' || user?.role === 'sewer';
 
   const load = () => {
@@ -171,17 +170,12 @@ const VarikiShop = () => {
               Шахта
             </Button>
           )}
-          <Button variant={tab === 'radio' ? 'default' : 'outline'} onClick={() => setTab('radio')}>
-            Радио
-          </Button>
           <Button variant={tab === 'rules' ? 'default' : 'outline'} onClick={() => setTab('rules')}>
             Правила игр
           </Button>
         </div>
 
-        {tab === 'radio' ? (
-          <RadioTab />
-        ) : tab === 'rules' ? (
+        {tab === 'rules' ? (
           <GameRulesTab />
         ) : tab === 'shaft' && user?.id && shaftAllowed ? (
           <ShaftTab userId={user.id} />

@@ -215,7 +215,7 @@ const DashboardWidgetsGrid = ({ widgets, loading }: DashboardWidgetsGridProps) =
                         </p>
                       )}
                     </div>
-                    <LiveCountBoard value={w.value} tone="cyan" loading={loading} size="sm" />
+                    <LiveCountBoard value={w.value} tone="white" loading={loading} size="sm" />
                   </div>
                   {w.matrix && !loading && <WidgetMatrix matrix={w.matrix} />}
                   {w.parts && !w.matrix && !loading && (
@@ -254,7 +254,7 @@ const DashboardWidgetsGrid = ({ widgets, loading }: DashboardWidgetsGridProps) =
                         </p>
                       )}
                     </div>
-                    <LiveCountBoard value={w.value} tone="cyan" loading={loading} size="md" />
+                    <LiveCountBoard value={w.value} tone="white" loading={loading} size="md" />
                   </div>
                   {w.matrix && !loading && <WidgetMatrix matrix={w.matrix} />}
                   {w.parts && !w.matrix && !loading && (
