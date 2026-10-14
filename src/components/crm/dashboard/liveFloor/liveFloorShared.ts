@@ -153,7 +153,11 @@ export const useTicker = (): number => {
 /** Что человек держит в руках прямо сейчас. */
 export const ordersInHands = (person: LivePerson, orders: LiveOrder[]) => {
   if (person.role === 'cutter') {
-    return orders.filter((o) => o.sewingStatus === 'На раскрое' && o.assignedUserId === person.id);
+    // Отменённые покупателем закройщица у себя не видит — экран кроя их прячет.
+    // Раньше они висели здесь «в стеке» днями, хотя у человека пусто.
+    return orders.filter(
+      (o) => o.sewingStatus === 'На раскрое' && o.assignedUserId === person.id && !o.isCancelled,
+    );
   }
   if (person.role === 'sewer') {
     return orders.filter(
