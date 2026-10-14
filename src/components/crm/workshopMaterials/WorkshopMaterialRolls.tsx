@@ -163,11 +163,16 @@ const WorkshopMaterialRolls = ({
     );
   }
 
+  // Упаковка — общий пул: все коробки цеха в одной таблице, без разбивки по сменам.
+  const sharedPool = typeName === 'Упаковка';
+
   const tables = columns
     .map((col) => {
-      const mine = rolls.filter(
-        (roll) => roll.workshopId === col.workshopId && roll.shiftNumber === col.shiftNumber,
-      );
+      const mine = rolls.filter((roll) => {
+        if (roll.workshopId !== col.workshopId) return false;
+        if (sharedPool || col.shiftNumber == null) return true;
+        return roll.shiftNumber === col.shiftNumber;
+      });
       // Сверху — дольше всех без дела: застрявший рулон видно сразу.
       const byIdle = (a: Roll, b: Roll) => idleMs(b, now) - idleMs(a, now);
       const fresh = mine.filter(untouched).sort(byIdle);

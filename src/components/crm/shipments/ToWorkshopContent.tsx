@@ -37,6 +37,7 @@ const ToWorkshopContent = ({ state, actions }: ToWorkshopContentProps) => {
           setReqWorkshopId={state.setReqWorkshopId}
           reqShiftNumber={state.reqShiftNumber}
           setReqShiftNumber={state.setReqShiftNumber}
+          isPackagingOnlyRequest={state.isPackagingOnlyRequest}
           activeTab={state.activeTab}
           setActiveTab={state.setActiveTab}
           newCount={state.newCount}

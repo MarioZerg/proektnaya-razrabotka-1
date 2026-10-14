@@ -100,6 +100,61 @@ const withoutRetiredWorkshops = (
   return { types, columns, activeColumn, materialFreeShifts };
 };
 
+/**
+ * Пакеты и этикетки — общий пул цеха: все смены сливаем в одну ячейку
+ * «Все смены», чтобы не плодить пустые плашки по сменам.
+ */
+export const mergePackagingCellsByWorkshop = (
+  types: WorkshopMaterialType[],
+): WorkshopMaterialType[] =>
+  types.map((type) => {
+    if (type.name !== 'Упаковка') return type;
+    return {
+      ...type,
+      materials: type.materials.map((m) => {
+        const byWorkshop = new Map<number, WorkshopMaterialCell>();
+        for (const c of m.cells) {
+          const prev = byWorkshop.get(c.workshopId);
+          if (!prev) {
+            byWorkshop.set(c.workshopId, {
+              workshopId: c.workshopId,
+              shiftNumber: null,
+              quantity: c.quantity,
+              rollCount: c.rollCount,
+              pendingQuantity: c.pendingQuantity ?? 0,
+              pendingRolls: c.pendingRolls ?? 0,
+              staleRolls: c.staleRolls ?? 0,
+            });
+            continue;
+          }
+          prev.quantity += c.quantity;
+          prev.rollCount += c.rollCount;
+          prev.pendingQuantity = (prev.pendingQuantity ?? 0) + (c.pendingQuantity ?? 0);
+          prev.pendingRolls = (prev.pendingRolls ?? 0) + (c.pendingRolls ?? 0);
+          prev.staleRolls = (prev.staleRolls ?? 0) + (c.staleRolls ?? 0);
+        }
+        return { ...m, cells: [...byWorkshop.values()] };
+      }),
+    };
+  });
+
+/** Колонки для блока «Упаковка»: одна плашка на цех, без разбивки по сменам. */
+export const packagingColumns = (
+  columns: WorkshopMaterialColumn[],
+): WorkshopMaterialColumn[] => {
+  const seen = new Map<number, WorkshopMaterialColumn>();
+  for (const c of columns) {
+    if (seen.has(c.workshopId)) continue;
+    seen.set(c.workshopId, {
+      workshopId: c.workshopId,
+      workshopName: c.workshopName,
+      shiftNumber: null,
+      shiftLabel: 'Все смены',
+    });
+  }
+  return [...seen.values()];
+};
+
 export const fetchWorkshopMaterials = async (workshopId?: number): Promise<WorkshopMaterialsResponse> => {
   if (workshopId != null && isRetiredWorkshop({ id: workshopId })) {
     return { types: [], columns: [], activeColumn: null, materialFreeShifts: {} };

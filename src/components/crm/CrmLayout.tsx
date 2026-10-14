@@ -7,6 +7,7 @@ import {
   SidebarHeader,
   SidebarProvider,
   SidebarTrigger,
+  useSidebar,
 } from '@/components/ui/sidebar';
 import {
   DropdownMenu,
@@ -33,9 +34,50 @@ import DocsGate from '@/components/crm/personal/DocsGate';
 import DocsCountdownBanner from '@/components/crm/personal/DocsCountdownBanner';
 import CloseSidebarOnNavigate from '@/components/crm/CloseSidebarOnNavigate';
 import SidebarNav from '@/components/crm/SidebarNav';
+import { shortName } from '@/components/crm/users/usersShared';
 import { fetchStartupInfo, resetStartupInfoCache, impersonateUser } from '@/lib/authApi';
 import { useToast } from '@/hooks/use-toast';
 import type { Role } from '@/lib/roles';
+
+/** Блок логотипа: на телефоне крестик справа в отдельной зоне — не путается с переходом на главную. */
+const CrmSidebarBrand = ({ roleLabel }: { roleLabel: string }) => {
+  const { isMobile, setOpenMobile } = useSidebar();
+
+  return (
+    <div className="flex items-stretch overflow-hidden rounded-2xl border border-sidebar-border bg-sidebar-accent/60">
+      <Link
+        to="/crm"
+        className="flex min-w-0 flex-1 items-center gap-3 px-2.5 py-2 transition hover:bg-sidebar-accent/80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-sidebar-ring"
+      >
+        <span className="grid h-11 w-11 shrink-0 place-items-center overflow-hidden rounded-full bg-[#5c6253] ring-1 ring-white/10">
+          <img
+            src="/assets/megatul-logo-light.png"
+            alt=""
+            className="h-9 w-9 object-contain"
+          />
+        </span>
+        <span className="min-w-0 flex-1">
+          <span className="block truncate text-[15px] font-bold tracking-[0.06em] text-sidebar-foreground">
+            МЕГАТЮЛЬ
+          </span>
+          <span className="mt-0.5 block truncate text-[11px] font-medium text-sidebar-foreground/50">
+            {roleLabel}
+          </span>
+        </span>
+      </Link>
+      {isMobile ? (
+        <button
+          type="button"
+          aria-label="Закрыть меню"
+          onClick={() => setOpenMobile(false)}
+          className="flex w-12 shrink-0 items-center justify-center border-l border-sidebar-border bg-sidebar-accent/40 text-sidebar-foreground/70 transition hover:bg-sidebar-accent hover:text-sidebar-foreground"
+        >
+          <Icon name="X" size={18} />
+        </button>
+      ) : null}
+    </div>
+  );
+};
 
 /** Порядок в меню «переключить аккаунт»: бухгалтер рядом с админом, не в хвосте. */
 const ACCOUNT_SWITCH_ORDER: Role[] = [
@@ -247,119 +289,113 @@ const CrmLayout = ({ children }: { children: ReactNode }) => {
     <SidebarProvider>
       {/* На телефоне меню выезжает поверх страницы — после выбора раздела закрываем его. */}
       <CloseSidebarOnNavigate />
-      <Sidebar>
+      <Sidebar className="crm-sidebar">
         {/* Название компании закреплено сверху: видно, в какой системе работаешь,
             и на телефоне сразу понятно, что выехало именно меню. */}
-        <SidebarHeader className="border-b border-sidebar-border px-3 py-3">
-          {/* Фирменный логотип целиком: знак и светлая плашка «МЕГАТЮЛЬ». Плашка
-              сама даёт светлый фон, поэтому на тёмном меню читается — отдельная
-              осветлённая версия знака больше не нужна.
-              Логотип широкий (545×300) и при нормальной высоте занимает почти всю
-              ширину меню, поэтому ни названия, ни подписи рядом не ставим: они
-              налезали бы на край. Название и так нарисовано в самом логотипе. */}
-          <Link to="/crm" className="block">
-            <img
-              src="/assets/megatul-logo.png"
-              alt="МЕГАТЮЛЬ — управление производством"
-              className="h-12 w-auto max-w-full object-contain object-left"
-            />
-          </Link>
+        <SidebarHeader className="border-b border-sidebar-border/80 px-3 py-3">
+          <CrmSidebarBrand roleLabel={roleLabels[user.role] || 'Производство'} />
         </SidebarHeader>
-        <SidebarContent>
+        <SidebarContent className="crm-sidebar-scroll">
           <SidebarNav nav={nav} pickingPending={pickingPending} />
         </SidebarContent>
-        <SidebarFooter className="border-t border-sidebar-border p-3">
-          {/* Админу — быстрый вход в терминал цеха, чтобы проверить, что видит каждая
-              должность на планшете в цехе. */}
+        <SidebarFooter className="border-t border-sidebar-border/80 p-3">
           {user.role === 'admin' && (
             <button
               onClick={() => setKioskPreviewOpen(true)}
-              className="mb-2 flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm text-sidebar-foreground/80 transition hover:bg-sidebar-accent hover:text-sidebar-foreground"
+              className="mb-2 flex w-full items-center gap-2.5 rounded-xl px-2.5 py-2 text-sm text-sidebar-foreground/80 transition hover:bg-sidebar-accent hover:text-sidebar-foreground"
             >
-              <Icon name="MonitorPlay" size={16} className="shrink-0" />
+              <span className="grid h-8 w-8 place-items-center rounded-lg bg-sidebar-accent">
+                <Icon name="MonitorPlay" size={16} className="shrink-0" />
+              </span>
               <span className="truncate">Проверить киоск</span>
             </button>
           )}
           {user.isDemo && (
-            <div className="mb-2 flex items-center gap-1.5 rounded-sm bg-sidebar-accent/60 px-2 py-1">
-              <Icon name="FlaskConical" size={12} className="shrink-0 text-sidebar-foreground/60" />
-              <p className="truncate text-[10px] uppercase tracking-wide text-sidebar-foreground/60">
+            <div className="mb-2 flex items-center gap-1.5 rounded-lg bg-amber-500/15 px-2.5 py-1.5">
+              <Icon name="FlaskConical" size={12} className="shrink-0 text-amber-400" />
+              <p className="truncate text-[10px] font-semibold uppercase tracking-wide text-amber-300/90">
                 Демо-режим
               </p>
             </div>
           )}
-          <div className="flex items-center gap-2.5 px-1 py-1">
-            <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-sidebar-accent text-xs font-semibold">
-              {initials}
-            </span>
-            <div className="min-w-0 flex-1">
-              <p className="truncate text-sm font-medium">{user.name}</p>
-              <p className="truncate text-xs text-sidebar-foreground/60">
-                {roleLabels[user.role] || 'Должность не утверждена'}
-              </p>
+          <div className="rounded-2xl border border-sidebar-border/70 bg-sidebar-accent/35 p-2.5">
+            <div className="flex items-center gap-2.5">
+              <MyAvatarButton initials={initials} />
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-sm font-semibold leading-tight" title={user.name}>
+                  {shortName(user.name)}
+                </p>
+                <p className="truncate text-xs text-sidebar-foreground/55">
+                  {roleLabels[user.role] || 'Должность не утверждена'}
+                </p>
+              </div>
             </div>
-            {otherRoles.length > 0 && (
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <button
-                    className="text-sidebar-foreground/60 hover:text-sidebar-foreground"
-                    aria-label="Переключить должность"
-                  >
-                    <Icon name="Repeat" size={16} />
-                  </button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end" className="w-52">
-                  <DropdownMenuLabel>Переключить должность</DropdownMenuLabel>
-                  <DropdownMenuSeparator />
-                  {user.availableRoles.map((role) => (
-                    <DropdownMenuItem
-                      key={role}
-                      onClick={() => handleSwitchRole(role)}
-                      disabled={role === user.role}
+            <div className="mt-2.5 flex items-center gap-1">
+              {otherRoles.length > 0 && (
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <button
+                      className="grid h-9 w-9 place-items-center rounded-xl text-sidebar-foreground/65 transition hover:bg-sidebar-accent hover:text-sidebar-foreground"
+                      aria-label="Переключить должность"
                     >
-                      <span className="flex-1 truncate">{roleLabels[role]}</span>
-                      {role === user.role && <Icon name="Check" size={14} className="ml-2" />}
-                    </DropdownMenuItem>
-                  ))}
-                </DropdownMenuContent>
-              </DropdownMenu>
-            )}
-            {canSwitchAccounts && switchableAccounts.length > 0 && (
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <button
-                    className="text-sidebar-foreground/60 hover:text-sidebar-foreground"
-                    aria-label="Переключить аккаунт"
-                    title="Посмотреть систему глазами сотрудника"
-                  >
-                    <Icon name="Users" size={16} />
-                  </button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end" className="w-56">
-                  <DropdownMenuLabel>Переключить аккаунт</DropdownMenuLabel>
-                  <DropdownMenuSeparator />
-                  {switchableAccounts.map((acc) => (
-                    <DropdownMenuItem
-                      key={`${acc.id}-${acc.role}`}
-                      onClick={() => handleSwitchAccount(acc)}
-                      disabled={acc.id === user.id && acc.role === user.role}
+                      <Icon name="Repeat" size={16} />
+                    </button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" className="w-52">
+                    <DropdownMenuLabel>Переключить должность</DropdownMenuLabel>
+                    <DropdownMenuSeparator />
+                    {user.availableRoles.map((role) => (
+                      <DropdownMenuItem
+                        key={role}
+                        onClick={() => handleSwitchRole(role)}
+                        disabled={role === user.role}
+                      >
+                        <span className="flex-1 truncate">{roleLabels[role]}</span>
+                        {role === user.role && <Icon name="Check" size={14} className="ml-2" />}
+                      </DropdownMenuItem>
+                    ))}
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              )}
+              {canSwitchAccounts && switchableAccounts.length > 0 && (
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <button
+                      className="grid h-9 w-9 place-items-center rounded-xl text-sidebar-foreground/65 transition hover:bg-sidebar-accent hover:text-sidebar-foreground"
+                      aria-label="Переключить аккаунт"
+                      title="Посмотреть систему глазами сотрудника"
                     >
-                      <span className="flex-1 truncate">{acc.name}</span>
-                      <span className="ml-2 text-xs text-muted-foreground">
-                        {roleLabels[acc.role]}
-                      </span>
-                    </DropdownMenuItem>
-                  ))}
-                </DropdownMenuContent>
-              </DropdownMenu>
-            )}
-            <button
-              onClick={handleLogout}
-              className="text-sidebar-foreground/60 hover:text-sidebar-foreground"
-              aria-label="Выйти"
-            >
-              <Icon name="LogOut" size={16} />
-            </button>
+                      <Icon name="Users" size={16} />
+                    </button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end" className="w-56">
+                    <DropdownMenuLabel>Переключить аккаунт</DropdownMenuLabel>
+                    <DropdownMenuSeparator />
+                    {switchableAccounts.map((acc) => (
+                      <DropdownMenuItem
+                        key={`${acc.id}-${acc.role}`}
+                        onClick={() => handleSwitchAccount(acc)}
+                        disabled={acc.id === user.id && acc.role === user.role}
+                      >
+                        <span className="flex-1 truncate" title={acc.name}>
+                          {shortName(acc.name)}
+                        </span>
+                        <span className="ml-2 text-xs text-muted-foreground">
+                          {roleLabels[acc.role]}
+                        </span>
+                      </DropdownMenuItem>
+                    ))}
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              )}
+              <button
+                onClick={handleLogout}
+                className="ml-auto grid h-9 w-9 place-items-center rounded-xl text-sidebar-foreground/65 transition hover:bg-destructive/20 hover:text-red-300"
+                aria-label="Выйти"
+              >
+                <Icon name="LogOut" size={16} />
+              </button>
+            </div>
           </div>
         </SidebarFooter>
       </Sidebar>
@@ -393,18 +429,17 @@ const CrmLayout = ({ children }: { children: ReactNode }) => {
         <DocsCountdownBanner />
         {/* min-w-0 на шапке: без него виджеты с крупным балансом раздвигали
             строку и правый край уезжал за экран телефона. */}
-        <div className="flex min-w-0 items-center gap-2 border-b border-border px-3 py-2.5 sm:px-4">
-          <SidebarTrigger className="shrink-0" />
+        <div className="flex min-w-0 items-center gap-2 border-b border-border bg-background/90 px-3 py-2.5 backdrop-blur-md sm:px-4">
+          <SidebarTrigger className="shrink-0 rounded-xl" />
           {/* Персональный QR сотрудника — рядом с меню, чтобы быстро показать его сканеру. */}
           <button
             onClick={() => setQrOpen(true)}
-            className="shrink-0 rounded-md p-2 text-muted-foreground hover:bg-accent hover:text-foreground"
+            className="shrink-0 rounded-xl p-2 text-muted-foreground transition hover:bg-accent hover:text-foreground"
             aria-label="Мой QR-код"
             title="Мой QR-код"
           >
             <Icon name="QrCode" size={20} />
           </button>
-          <MyAvatarButton />
           {user?.role !== 'accountant' ? (
             <div className="ml-auto min-w-0">
               <HeaderSalaryWidget />

@@ -41,24 +41,14 @@ const SidebarNav = ({ nav, pickingPending }: SidebarNavProps) => {
   );
 
   // РАЗДЕЛ ТЕКУЩЕЙ СТРАНИЦЫ РАСКРЫВАЕТСЯ САМ.
-  //
-  // Раньше меню всегда открывалось полностью свёрнутым: человек заходил в поставку,
-  // открывал меню и не видел, где он находится — приходилось вспоминать, в каком
-  // разделе лежит страница, и раскрывать его руками на каждом переходе.
   useEffect(() => {
     if (activeGroup) setOpenGroups({ [activeGroup]: true });
   }, [activeGroup]);
 
-  // Аккордеон: раскрытие одной группы сворачивает остальные, чтобы меню не
-  // разворачивалось во весь экран и не приходилось его прокручивать.
+  // Аккордеон: раскрытие одной группы сворачивает остальные.
   const toggleGroup = (label: string) =>
     setOpenGroups((prev) => (prev[label] ? {} : { [label]: true }));
 
-  // ПОИСК ПО МЕНЮ.
-  //
-  // Разделов больше сорока, и нужную страницу приходилось искать глазами по всем
-  // группам, помня, в какой она лежит. Теперь достаточно набрать часть названия:
-  // показываем только совпавшие пункты, а группы с совпадениями раскрываем сразу.
   const search = query.trim().toLowerCase();
   const visibleNav = useMemo(() => {
     if (!search) return nav;
@@ -67,8 +57,6 @@ const SidebarNav = ({ nav, pickingPending }: SidebarNavProps) => {
         if (!item.children) {
           return item.label.toLowerCase().includes(search) ? item : null;
         }
-        // Совпало название самой группы — показываем её целиком: человек ищет
-        // «Отгрузки» и должен увидеть все отгрузки, а не пустой заголовок.
         if (item.label.toLowerCase().includes(search)) return item;
         const children = item.children.filter((c) =>
           c.label.toLowerCase().includes(search),
@@ -79,38 +67,45 @@ const SidebarNav = ({ nav, pickingPending }: SidebarNavProps) => {
   }, [nav, search]);
 
   return (
-    <SidebarGroup className="gap-2">
-      {/* Поиск закреплён сверху и не уезжает при прокрутке длинного меню. */}
-      <div className="relative px-1">
-        <Icon
-          name="Search"
-          size={15}
-          className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-sidebar-foreground/50"
-        />
-        <Input
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          placeholder="Поиск по разделам"
-          className="h-9 border-sidebar-border bg-sidebar-accent/50 pl-8 pr-8 text-sm text-sidebar-foreground placeholder:text-sidebar-foreground/50 focus-visible:ring-sidebar-ring"
-        />
-        {query && (
-          <button
-            type="button"
-            onClick={() => setQuery('')}
-            aria-label="Очистить поиск"
-            className="absolute right-3.5 top-1/2 -translate-y-1/2 text-sidebar-foreground/50 transition hover:text-sidebar-foreground"
-          >
-            <Icon name="X" size={14} />
-          </button>
-        )}
+    <SidebarGroup className="gap-3 px-2.5 py-2">
+      {/* Поиск не уезжает при прокрутке длинного меню. */}
+      <div className="sticky top-0 z-10 -mx-0.5 bg-sidebar/95 px-0.5 pb-1 backdrop-blur-sm">
+        <div className="relative">
+          <Icon
+            name="Search"
+            size={15}
+            className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sidebar-foreground/45"
+          />
+          <Input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Найти раздел…"
+            className="h-10 rounded-xl border-sidebar-border/80 bg-sidebar-accent/40 pl-9 pr-9 text-sm text-sidebar-foreground shadow-none placeholder:text-sidebar-foreground/40 focus-visible:border-sidebar-ring focus-visible:ring-1 focus-visible:ring-sidebar-ring"
+          />
+          {query ? (
+            <button
+              type="button"
+              onClick={() => setQuery('')}
+              aria-label="Очистить поиск"
+              className="absolute right-2 top-1/2 grid h-8 w-8 -translate-y-1/2 place-items-center rounded-lg text-sidebar-foreground/45 transition hover:bg-sidebar-accent hover:text-sidebar-foreground"
+            >
+              <Icon name="X" size={14} />
+            </button>
+          ) : null}
+        </div>
       </div>
 
       <SidebarGroupContent>
-        <SidebarMenu className="gap-0.5">
+        <SidebarMenu className="gap-1">
           {visibleNav.length === 0 && (
-            <p className="px-2 py-3 text-sm text-sidebar-foreground/60">
-              Ничего не найдено
-            </p>
+            <div className="mx-1 rounded-xl border border-dashed border-sidebar-border/80 px-3 py-6 text-center">
+              <Icon
+                name="SearchX"
+                size={20}
+                className="mx-auto mb-2 text-sidebar-foreground/40"
+              />
+              <p className="text-sm text-sidebar-foreground/60">Ничего не найдено</p>
+            </div>
           )}
 
           {visibleNav.map((item) => {
@@ -118,13 +113,20 @@ const SidebarNav = ({ nav, pickingPending }: SidebarNavProps) => {
               const isActive = location.pathname === item.path;
               return (
                 <SidebarMenuItem key={item.label}>
-                  <SidebarMenuButton asChild isActive={isActive} tooltip={item.label}>
-                    <Link to={item.path!} className="gap-2.5">
+                  <SidebarMenuButton
+                    asChild
+                    isActive={isActive}
+                    tooltip={item.label}
+                    className="crm-nav-item gap-2.5 rounded-xl px-2.5"
+                  >
+                    <Link to={item.path!}>
                       <Icon
                         name={item.icon}
-                        size={17}
+                        size={18}
                         className={
-                          isActive ? 'shrink-0' : 'shrink-0 text-sidebar-foreground/70'
+                          isActive
+                            ? 'shrink-0 text-emerald-300'
+                            : 'shrink-0 text-sidebar-foreground/65'
                         }
                       />
                       <span className="truncate">{item.label}</span>
@@ -134,8 +136,6 @@ const SidebarNav = ({ nav, pickingPending }: SidebarNavProps) => {
               );
             }
 
-            // При поиске группы раскрыты всегда: иначе найденное пришлось бы
-            // открывать вручную, и смысл поиска терялся бы.
             const isOpen = search ? true : openGroups[item.label] ?? false;
             const hasActiveChild = item.children.some(
               (c) => c.path === location.pathname,
@@ -143,63 +143,63 @@ const SidebarNav = ({ nav, pickingPending }: SidebarNavProps) => {
 
             return (
               <SidebarMenuItem key={item.label}>
-                {/* Свёрнутая группа с открытой внутри страницей подсвечивается:
-                    видно, где ты находишься, даже не раскрывая её. */}
                 <SidebarMenuButton
                   onClick={() => toggleGroup(item.label)}
                   isActive={hasActiveChild && !isOpen}
                   tooltip={item.label}
                   className={
                     item.highlight
-                      ? 'gap-2.5 font-semibold text-amber-500 hover:text-amber-400'
-                      : 'gap-2.5'
+                      ? 'crm-nav-item gap-2.5 rounded-xl px-2.5 font-semibold text-amber-400 hover:text-amber-300'
+                      : 'crm-nav-item gap-2.5 rounded-xl px-2.5'
                   }
                 >
                   <Icon
                     name={item.icon}
-                    size={17}
+                    size={18}
                     className={
                       item.highlight
-                        ? 'shrink-0 text-amber-500'
+                        ? 'shrink-0 text-amber-400'
                         : hasActiveChild
-                          ? 'shrink-0'
-                          : 'shrink-0 text-sidebar-foreground/70'
+                          ? 'shrink-0 text-emerald-300'
+                          : 'shrink-0 text-sidebar-foreground/65'
                     }
                   />
                   <span className="truncate">{item.label}</span>
                   <Icon
                     name="ChevronRight"
                     size={14}
-                    className={`ml-auto shrink-0 text-sidebar-foreground/50 transition-transform duration-200 ${
+                    className={`ml-auto shrink-0 text-sidebar-foreground/40 transition-transform duration-200 ${
                       isOpen ? 'rotate-90' : ''
                     }`}
                   />
                 </SidebarMenuButton>
 
-                {isOpen && (
-                  <SidebarMenuSub className="mt-0.5 gap-0.5">
-                    {item.children.map((child) => (
-                      <SidebarMenuSubItem key={child.path}>
-                        <SidebarMenuSubButton
-                          asChild
-                          isActive={location.pathname === child.path}
-                        >
-                          <Link to={child.path}>
-                            <span className="truncate">{child.label}</span>
-                            {/* Новая работа по подбору: вещь уже подобрана под заказ
-                                и ждёт, чтобы кладовщик наклеил стикер отправления. */}
-                            {child.path === '/crm/inventory/goods-picking' &&
-                              pickingPending > 0 && (
+                {isOpen ? (
+                  <SidebarMenuSub className="crm-nav-sub mt-1 ml-3.5 gap-0.5 border-l border-sidebar-border/70 py-1 pl-2.5">
+                    {item.children.map((child) => {
+                      const childActive = location.pathname === child.path;
+                      return (
+                        <SidebarMenuSubItem key={child.path}>
+                          <SidebarMenuSubButton
+                            asChild
+                            isActive={childActive}
+                            className="crm-nav-sub-item rounded-lg px-2.5"
+                          >
+                            <Link to={child.path}>
+                              <span className="truncate">{child.label}</span>
+                              {child.path === '/crm/inventory/goods-picking' &&
+                              pickingPending > 0 ? (
                                 <span className="ml-auto flex h-5 min-w-5 shrink-0 items-center justify-center rounded-full bg-destructive px-1.5 text-[11px] font-bold text-destructive-foreground">
                                   {pickingPending}
                                 </span>
-                              )}
-                          </Link>
-                        </SidebarMenuSubButton>
-                      </SidebarMenuSubItem>
-                    ))}
+                              ) : null}
+                            </Link>
+                          </SidebarMenuSubButton>
+                        </SidebarMenuSubItem>
+                      );
+                    })}
                   </SidebarMenuSub>
-                )}
+                ) : null}
               </SidebarMenuItem>
             );
           })}

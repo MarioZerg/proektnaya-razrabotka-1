@@ -35,8 +35,16 @@ const shrinkPhoto = (file: File): Promise<string> =>
     img.src = url;
   });
 
-/** Иконка у QR: своё фото профиля, по нажатию — окно загрузки. */
-const MyAvatarButton = () => {
+interface Props {
+  /** Инициалы, если фото ещё нет — для кружка в подвале меню. */
+  initials?: string;
+}
+
+/**
+ * Фото профиля: кружок в подвале бокового меню, по нажатию — окно загрузки.
+ * Появляется на пузырьке смены и в дуэли.
+ */
+const MyAvatarButton = ({ initials = '?' }: Props) => {
   const { toast } = useToast();
   const fileRef = useRef<HTMLInputElement>(null);
   const [open, setOpen] = useState(false);
@@ -100,17 +108,18 @@ const MyAvatarButton = () => {
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="shrink-0 rounded-md p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
+        className="relative grid h-9 w-9 shrink-0 place-items-center overflow-hidden rounded-full bg-gradient-to-br from-emerald-700/80 to-sidebar-accent text-xs font-semibold text-sidebar-foreground ring-1 ring-white/10 transition hover:ring-white/25"
         aria-label="Фото профиля"
         title="Фото профиля"
       >
         {avatarUrl ? (
-          <img src={avatarUrl} alt="" className="h-8 w-8 rounded-full object-cover" />
+          <img src={avatarUrl} alt="" className="h-full w-full object-cover" />
         ) : (
-          <span className="flex h-8 w-8 items-center justify-center">
-            <Icon name="Camera" size={20} />
-          </span>
+          initials
         )}
+        <span className="absolute inset-x-0 bottom-0 flex h-3.5 items-center justify-center bg-black/45">
+          <Icon name="Camera" size={10} className="text-white" />
+        </span>
       </button>
 
       <Dialog

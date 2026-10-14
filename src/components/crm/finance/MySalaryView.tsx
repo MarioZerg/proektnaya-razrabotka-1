@@ -90,8 +90,10 @@ const MySalaryView = ({
           </p>
         </div>
       ) : (
-        <div className="grid grid-cols-1 gap-6 lg:grid-cols-4">
-          <div className="order-2 space-y-4 lg:order-1 lg:col-span-3">
+        {/* До xl — одной колонкой: при открытом меню ERP на ~1024px правая
+            колонка 1/4 сжималась до ~170px, календарь и выплаты «уплывали». */}
+        <div className="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(16.5rem,19rem)]">
+          <div className="order-2 min-w-0 space-y-4 xl:order-1">
             <MyAccrualsFilter
               dateFrom={myDateFrom}
               dateTo={myDateTo}
@@ -109,13 +111,15 @@ const MySalaryView = ({
               filtered={!!myDateFrom || !!myDateTo}
             />
           </div>
-          <div className="order-1 space-y-3 lg:order-2 lg:col-span-1 lg:space-y-6">
+          <div className="order-1 min-w-0 space-y-3 xl:order-2 xl:space-y-6">
             <div className="rounded-md border border-border p-4">
               <p className="text-sm text-muted-foreground">К выплате</p>
               {myLoading && myBalance === 0 && !myError ? (
                 <Skeleton className="mt-1 h-7 w-28" />
               ) : (
-                <p className="text-xl font-bold">{formatMoney(myBalance)} ₽</p>
+                <p className="text-xl font-bold tabular-nums break-all">
+                  {formatMoney(myBalance)} ₽
+                </p>
               )}
             </div>
             <MyWorkCalendar

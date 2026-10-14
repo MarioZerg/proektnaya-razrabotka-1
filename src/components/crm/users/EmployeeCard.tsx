@@ -40,57 +40,47 @@ const EmployeeCard = ({
   onUnarchive,
 }: EmployeeCardProps) => (
   <div
-    className={`flex items-center gap-2 rounded-lg border p-2.5 transition hover:bg-muted/40 sm:gap-3 sm:p-3 ${
+    className={`flex min-w-0 items-center gap-2 rounded-lg border p-2.5 transition hover:bg-muted/40 sm:gap-3 sm:p-3 ${
       emp.isActive === false ? 'border-border bg-muted/30' : 'border-border bg-card'
     }`}
   >
+    {/* basis-0 + min-w-0: иначе у button во flex имя сжимается в столбик по буквам. */}
     <button
       type="button"
       onClick={() => onOpenCard(emp)}
-      className="flex min-w-0 flex-1 items-center gap-2 text-left sm:gap-3"
+      className="flex min-w-0 flex-1 basis-0 items-center gap-2 overflow-hidden text-left sm:gap-3"
     >
       <Avatar className="h-8 w-8 shrink-0 sm:h-11 sm:w-11">
         {emp.avatarUrl && <AvatarImage src={emp.avatarUrl} />}
         <AvatarFallback className="text-sm">{initials(emp.fullName)}</AvatarFallback>
       </Avatar>
 
-      <div className="min-w-0 flex-1">
-        {/* Имя и инициал отчества без обрезки: раньше truncate съедал «Елена А.»
-            и в списке оставалась одна фамилия. Значки документов — отдельной
-            строкой под именем, чтобы не отбирать у него ширину. */}
+      <div className="min-w-0 flex-1 overflow-hidden">
+        {/* Имя обычным блоком — не flex+basis-full: на узком экране break-words
+            ломал ФИО на буквы в столбик. Значки документов — строкой ниже. */}
         <p
-          className="flex flex-wrap items-center gap-x-1.5 gap-y-1 text-sm font-semibold leading-snug sm:text-base"
+          className="text-sm font-semibold leading-snug sm:text-base"
           title={emp.fullName}
         >
-          {/* Красный знак: сотрудник подписал Акт о расторжении и ждёт решения.
-              Он виден прямо в списке, чтобы заявление не пролежало незамеченным
-              — от него зависит, работает человек завтра или нет. */}
           {emp.terminationPending && (
             <Icon
               name="CircleAlert"
               size={16}
-              className="shrink-0 text-destructive"
+              className="mr-1 inline-block align-text-bottom text-destructive"
               aria-label="Договор подан на расторжение"
             />
           )}
-          <span className="min-w-0 basis-full break-words">{shortName(emp.fullName)}</span>
-          {/* Готовность документов тремя значками: сканы, паспорт, номер для
-              выплат. Раньше это было видно только внутри карточки, и понять,
-              кому чего не хватает, можно было лишь открыв каждого по очереди. */}
-          <DocsReadyBadges emp={emp} compact />
+          <span className="whitespace-nowrap">{shortName(emp.fullName)}</span>
         </p>
-        {/* Должность и цех — одной строкой с обрезкой: на телефоне они уходили
-            на третью строку и карточка вырастала вдвое. */}
-        <div className="mt-0.5 flex items-center gap-x-1.5 truncate text-xs text-muted-foreground">
-          <span className="truncate">{roleLabels[emp.role] || 'Без должности'}</span>
-          {emp.workshop && <span className="shrink-0">· {emp.workshop}</span>}
-          {/* Логин — служебная строка, нужная редко. На узком экране прячем: из-за
-              него данные переносились на третью строку и карточка «разбегалась». */}
+        <div className="mt-0.5">
+          <DocsReadyBadges emp={emp} compact />
+        </div>
+        <div className="mt-0.5 flex min-w-0 items-center gap-x-1.5 text-xs text-muted-foreground">
+          <span className="min-w-0 truncate">{roleLabels[emp.role] || 'Без должности'}</span>
+          {emp.workshop && <span className="shrink-0 truncate">· {emp.workshop}</span>}
           <span className="hidden shrink-0 sm:inline">
             · логин <span className="font-mono-tech">{emp.login}</span>
           </span>
-          {/* Отключённая учётная запись: человек уволен или ещё не утверждён —
-              администратор должен видеть это без открытия карточки. */}
           {emp.isActive === false && (
             <Badge variant="outline" className="shrink-0 text-muted-foreground">
               Отключён
@@ -102,8 +92,6 @@ const EmployeeCard = ({
             </Badge>
           )}
         </div>
-        {/* В архиве показываем причину увольнения прямо в списке: чаще всего
-            за этим сюда и заходят. */}
         {emp.archivedAt && emp.archiveReason && (
           <p className="mt-0.5 truncate text-xs text-muted-foreground" title={emp.archiveReason}>
             Причина: {emp.archiveReason}
@@ -112,9 +100,6 @@ const EmployeeCard = ({
       </div>
     </button>
 
-    {/* Кнопки всегда справа от имени и всегда на экране — ради этого и делалась карточка. */}
-    {/* На телефоне кнопки меньше: тремя кнопками по 40px они съедали половину
-        ширины, и на имя не оставалось места. */}
     <div className="flex shrink-0 items-center gap-1 sm:gap-1.5">
       {/* АРХИВ. Уволенному нечего редактировать и незачем входить под ним в
           систему — оставляем одно действие: вернуть на работу. */}

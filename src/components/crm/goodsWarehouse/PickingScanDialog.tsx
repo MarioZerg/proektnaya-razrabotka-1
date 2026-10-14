@@ -180,8 +180,11 @@ const PickingScanDialog = ({ open, onOpenChange, onOpenCard }: PickingScanDialog
             if (!(e.target as HTMLElement).closest('input, button, a')) focusInput();
           }}
         >
-          <div className="space-y-1.5">
-            <p className="text-sm font-medium">Сканируйте пакет с товаром</p>
+          <div className="space-y-1.5 rounded-lg border border-primary/30 bg-primary/5 p-3">
+            <p className="flex items-center gap-2 text-sm font-medium text-foreground">
+              <Icon name="ScanLine" size={18} className="shrink-0" />
+              Сканируйте пакет с товаром
+            </p>
             {/* Кладовщик раньше искал вещь с конкретным номером стикера и не знал,
                 что подойдёт любая такая же. Пишем это прямо у поля ввода. */}
             <p className="text-xs text-muted-foreground">
@@ -196,7 +199,7 @@ const PickingScanDialog = ({ open, onOpenChange, onOpenCard }: PickingScanDialog
               onKeyDown={(e) => e.key === 'Enter' && handleScan()}
               onBlur={focusInput}
               placeholder="Сканируйте пакет с товаром"
-              className="h-12 font-mono-tech text-lg"
+              className="h-12 bg-background font-mono-tech text-lg"
               autoComplete="off"
             />
           </div>

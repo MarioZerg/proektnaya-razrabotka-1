@@ -5,6 +5,8 @@ import { useAuth } from '@/context/AuthContext';
 import { useScannerAutoSubmit } from '@/hooks/useScannerAutoSubmit';
 import { playScanSound, playScanErrorSound, primeScanSounds } from '@/lib/scanSound';
 import { acceptRepairPiece } from '@/lib/repairFabricApi';
+import ScanErrorAlert from '@/components/crm/scan/ScanErrorAlert';
+import ScanInputCard from '@/components/crm/scan/ScanInputCard';
 
 interface RepairPieceBatchScannerProps {
   /** Кусок лёг в цех — обновить список. */
@@ -105,49 +107,47 @@ const RepairPieceBatchScanner = ({ onAccepted }: RepairPieceBatchScannerProps) =
   useScannerAutoSubmit(barcode, handleScan, !busy);
 
   return (
-    <div className="space-y-3 rounded-xl border-2 border-violet-300 bg-violet-50 p-4">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <p className="text-lg font-bold text-violet-900">Сканируйте стикеры на перешив подряд</p>
-        {accepted.length > 0 && (
-          <span className="rounded-lg bg-violet-600 px-3 py-1 text-base font-bold text-white">
+    <ScanInputCard
+      title="Сканируйте стикеры на перешив подряд"
+      headerRight={
+        accepted.length > 0 ? (
+          <span className="rounded-lg bg-primary px-3 py-1 text-base font-bold text-primary-foreground">
             Принято: {accepted.length}
           </span>
-        )}
-      </div>
-
+        ) : null
+      }
+      onBackgroundClick={(e) => {
+        if (!(e.target as HTMLElement).closest('input, button, a')) focusInput();
+      }}
+    >
       <Input
         ref={inputRef}
         value={barcode}
         onChange={(e) => setBarcode(e.target.value)}
         onKeyDown={(e) => e.key === 'Enter' && handleScan()}
         placeholder="Поднесите стикер RS к сканеру"
-        className="h-14 bg-white font-mono-tech text-xl"
+        className="h-12 bg-background font-mono-tech text-lg"
         autoComplete="off"
       />
 
       {busy && (
-        <p className="flex items-center gap-2 text-sm text-violet-800">
+        <p className="flex items-center gap-2 text-sm text-muted-foreground">
           <Icon name="Loader2" size={16} className="animate-spin" />
           Принимаем в цех...
         </p>
       )}
 
-      {error && (
-        <div className="flex items-start gap-3 rounded-lg border border-destructive bg-destructive/10 p-3">
-          <Icon name="TriangleAlert" size={22} className="mt-0.5 shrink-0 text-destructive" />
-          <p className="text-base font-medium text-destructive">{error}</p>
-        </div>
-      )}
+      {error && <ScanErrorAlert>{error}</ScanErrorAlert>}
 
       {accepted.length > 0 && (
         <div className="max-h-64 space-y-1 overflow-y-auto">
           {accepted.map((a) => (
             <div
               key={a.barcode}
-              className="flex items-center justify-between gap-2 rounded-md bg-white px-3 py-2 text-sm"
+              className="flex items-center justify-between gap-2 rounded-md border border-border bg-background px-3 py-2 text-sm"
             >
               <span className="flex min-w-0 items-center gap-2">
-                <Icon name="CircleCheck" size={16} className="shrink-0 text-violet-600" />
+                <Icon name="CircleCheck" size={16} className="shrink-0 text-emerald-600" />
                 <span className="truncate font-medium">{a.title}</span>
                 {a.reason && <span className="truncate text-muted-foreground">· {a.reason}</span>}
               </span>
@@ -159,7 +159,7 @@ const RepairPieceBatchScanner = ({ onAccepted }: RepairPieceBatchScannerProps) =
           ))}
         </div>
       )}
-    </div>
+    </ScanInputCard>
   );
 };
 

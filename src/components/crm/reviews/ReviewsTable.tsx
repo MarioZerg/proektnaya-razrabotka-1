@@ -86,6 +86,14 @@ const ReviewsTable = ({ reviews, error = null }: ReviewsTableProps) => {
                   ) : (
                     <div className="text-xs text-muted-foreground">Заказ не сопоставлен</div>
                   )}
+                  {(r.wbSrid || r.wbRid) && (
+                    <div
+                      className="mt-0.5 font-mono-tech text-[11px] text-fuchsia-800"
+                      title="Буквенный код заказа WB (srid/rid)"
+                    >
+                      {r.wbSrid || r.wbRid}
+                    </div>
+                  )}
                 </TableCell>
                 <TableCell className="text-sm">{person(r.cutterName)}</TableCell>
                 <TableCell className="text-sm">{person(r.sewerName)}</TableCell>

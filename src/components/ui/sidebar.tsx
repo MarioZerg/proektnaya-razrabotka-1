@@ -1,7 +1,7 @@
 import * as React from "react"
 import { Slot } from "@radix-ui/react-slot"
 import { VariantProps, cva } from "class-variance-authority"
-import { PanelLeft, X } from "lucide-react"
+import { PanelLeft } from "lucide-react"
 
 import { useIsMobile } from "@/hooks/use-mobile"
 import { cn } from "@/lib/utils"
@@ -19,8 +19,8 @@ import {
 
 const SIDEBAR_COOKIE_NAME = "sidebar:state"
 const SIDEBAR_COOKIE_MAX_AGE = 60 * 60 * 24 * 7
-const SIDEBAR_WIDTH = "16rem"
-const SIDEBAR_WIDTH_MOBILE = "18rem"
+const SIDEBAR_WIDTH = "17.5rem"
+const SIDEBAR_WIDTH_MOBILE = "min(22rem, calc(100vw - 2.5rem))"
 const SIDEBAR_WIDTH_ICON = "3rem"
 const SIDEBAR_KEYBOARD_SHORTCUT = "b"
 
@@ -200,7 +200,7 @@ const Sidebar = React.forwardRef<
           <SheetContent
             data-sidebar="sidebar"
             data-mobile="true"
-            className="w-[--sidebar-width] bg-sidebar p-0 text-sidebar-foreground [&>button]:hidden"
+            className="w-[--sidebar-width] border-sidebar-border bg-sidebar p-0 text-sidebar-foreground shadow-2xl [&>button]:hidden"
             style={
               {
                 "--sidebar-width": SIDEBAR_WIDTH_MOBILE,
@@ -223,16 +223,7 @@ const Sidebar = React.forwardRef<
               if (closed) setOpenMobile(false)
             }}
           >
-            <div className="flex h-full w-full flex-col">
-              {/* Явная кнопка закрытия — для тех, кто не пользуется жестами. */}
-              <button
-                type="button"
-                aria-label="Закрыть меню"
-                onClick={() => setOpenMobile(false)}
-                className="absolute right-3 top-3 z-10 grid h-9 w-9 place-items-center rounded-md text-sidebar-foreground/70 hover:bg-sidebar-accent hover:text-sidebar-foreground"
-              >
-                <X className="h-5 w-5" />
-              </button>
+            <div className="flex h-full w-full flex-col pt-[env(safe-area-inset-top)]">
               {children}
             </div>
           </SheetContent>

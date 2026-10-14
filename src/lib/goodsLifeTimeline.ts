@@ -392,7 +392,23 @@ export const lifeFromRepairPiece = (piece: RepairPiece): LifeEvent[] => {
       label: KIND_LABEL.repair,
       at: piece.createdAt,
       who: piece.createdByName,
-      detail: [piece.reasonLabel, who ? `добавил ${who}` : null].filter(Boolean).join(' · '),
+      detail: [
+        piece.reasonLabel,
+        who ? `добавил ${who}` : null,
+        piece.sourceOrderNumber ? `из заказа ${piece.sourceOrderNumber}` : null,
+      ]
+        .filter(Boolean)
+        .join(' · '),
+    });
+  }
+  // Закрепление и раскрой пишут в used_at одно и то же поле — смотрим статус.
+  if (piece.usedAt && piece.status === 'reserved') {
+    push(out, {
+      kind: 'picked',
+      label: 'Закреплён за заказом',
+      at: piece.usedAt,
+      who: piece.usedByName,
+      detail: piece.usedOrderNumber ? `заказ ${piece.usedOrderNumber}` : null,
     });
   }
   if (piece.usedAt && piece.status === 'used') {
@@ -402,6 +418,20 @@ export const lifeFromRepairPiece = (piece: RepairPiece): LifeEvent[] => {
       at: piece.usedAt,
       who: piece.usedByName,
       detail: piece.usedOrderNumber ? `заказ ${piece.usedOrderNumber}` : null,
+    });
+  }
+  if (piece.usedAt && piece.status === 'written_off') {
+    const writeOffDetail =
+      piece.comment
+        ?.split('|')
+        .map((s) => s.trim())
+        .find((s) => s.startsWith('Списан')) || piece.comment;
+    push(out, {
+      kind: 'lost',
+      label: 'Списан',
+      at: piece.usedAt,
+      who: piece.usedByName,
+      detail: writeOffDetail || null,
     });
   }
   return mergeSort(out);

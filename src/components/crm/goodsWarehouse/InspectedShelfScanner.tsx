@@ -6,6 +6,8 @@ import { useAuth } from '@/context/AuthContext';
 import { useScannerAutoSubmit } from '@/hooks/useScannerAutoSubmit';
 import { playScanSound, playScanErrorSound, primeScanSounds, speakText } from '@/lib/scanSound';
 import { scanInspectedToShelf } from '@/lib/goodsWarehouseApi';
+import ScanErrorAlert from '@/components/crm/scan/ScanErrorAlert';
+import ScanInputCard from '@/components/crm/scan/ScanInputCard';
 
 interface InspectedShelfScannerProps {
   /** Вещь легла на полку — обновить список и счётчики. */
@@ -100,16 +102,19 @@ const InspectedShelfScanner = ({ onPlaced }: InspectedShelfScannerProps) => {
   const last = placed[0];
 
   return (
-    <div className="space-y-3 rounded-xl border-2 border-emerald-300 bg-emerald-50 p-4">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <p className="text-lg font-bold text-emerald-900">Сканируйте вещи — полку подскажет система</p>
-        {placed.length > 0 && (
-          <span className="rounded-lg bg-emerald-600 px-3 py-1 text-base font-bold text-white">
+    <ScanInputCard
+      title="Сканируйте вещи — полку подскажет система"
+      headerRight={
+        placed.length > 0 ? (
+          <span className="rounded-lg bg-primary px-3 py-1 text-base font-bold text-primary-foreground">
             Принято: {placed.length}
           </span>
-        )}
-      </div>
-
+        ) : null
+      }
+      onBackgroundClick={(e) => {
+        if (!(e.target as HTMLElement).closest('input, button, a')) focusInput();
+      }}
+    >
       <Input
         ref={inputRef}
         value={barcode}
@@ -121,23 +126,18 @@ const InspectedShelfScanner = ({ onPlaced }: InspectedShelfScannerProps) => {
           }
         }}
         placeholder="Поднесите стикер хранения к сканеру"
-        className="h-14 bg-white font-mono-tech text-xl"
+        className="h-12 bg-background font-mono-tech text-lg"
         autoComplete="off"
       />
 
       {busy && (
-        <p className="flex items-center gap-2 text-sm text-emerald-800">
+        <p className="flex items-center gap-2 text-sm text-muted-foreground">
           <Icon name="Loader2" size={16} className="animate-spin" />
           Подбираем полку...
         </p>
       )}
 
-      {error && (
-        <div className="flex items-start gap-3 rounded-lg border border-destructive bg-destructive/10 p-3">
-          <Icon name="TriangleAlert" size={22} className="mt-0.5 shrink-0 text-destructive" />
-          <p className="text-base font-medium text-destructive">{error}</p>
-        </div>
-      )}
+      {error && <ScanErrorAlert>{error}</ScanErrorAlert>}
 
       {last && !error && (
         <div
@@ -158,7 +158,7 @@ const InspectedShelfScanner = ({ onPlaced }: InspectedShelfScannerProps) => {
           {placed.map((p, idx) => (
             <div
               key={`${p.barcode}-${idx}`}
-              className="flex items-center justify-between gap-2 rounded-md bg-white px-3 py-2 text-sm"
+              className="flex items-center justify-between gap-2 rounded-md border border-border bg-background px-3 py-2 text-sm"
             >
               <span className="flex min-w-0 items-center gap-2">
                 <Icon name="CircleCheck" size={16} className="shrink-0 text-emerald-600" />
@@ -171,7 +171,7 @@ const InspectedShelfScanner = ({ onPlaced }: InspectedShelfScannerProps) => {
           ))}
         </div>
       )}
-    </div>
+    </ScanInputCard>
   );
 };
 

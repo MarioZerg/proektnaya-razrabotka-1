@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Card } from '@/components/ui/card';
 import Icon from '@/components/ui/icon';
+import LiveCountBoard from '@/components/crm/LiveCountBoard';
 import { useAuth } from '@/context/AuthContext';
 import ProductionCapacityDialog from '@/components/crm/dashboard/ProductionCapacityDialog';
 import ProductionFlowCard from '@/components/crm/dashboard/ProductionFlowCard';
@@ -110,7 +111,7 @@ const DashboardWidgetsGrid = ({ widgets, loading }: DashboardWidgetsGridProps) =
   }).filter((g) => g.items.length > 0);
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-3 md:space-y-5">
       {groups.map((group) => (
         <div
           key={group.key}
@@ -121,22 +122,22 @@ const DashboardWidgetsGrid = ({ widgets, loading }: DashboardWidgetsGridProps) =
                 ? 'dashboard-stage-warehouse'
                 : undefined
           }
-          className="space-y-2.5"
+          className="space-y-2"
         >
           {/* Заголовок этапа: видно, на каком участке пути находится показатель.
               Раньше плитки шли сплошной лентой, и «Не принятые поставки» стояли
               между пошивом и стикеровкой — нужную приходилось искать глазами. */}
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2.5">
             <Icon
               name={group.icon}
-              size={15}
+              size={18}
               className={
-                group.key === 'attention' ? 'text-destructive' : 'text-muted-foreground'
+                group.key === 'attention' ? 'text-destructive' : 'text-foreground/70'
               }
             />
             <h2
-              className={`text-xs font-semibold uppercase tracking-wide ${
-                group.key === 'attention' ? 'text-destructive' : 'text-muted-foreground'
+              className={`text-sm font-bold tracking-wide sm:text-base ${
+                group.key === 'attention' ? 'text-destructive' : 'text-foreground'
               }`}
             >
               {group.title}
@@ -147,7 +148,7 @@ const DashboardWidgetsGrid = ({ widgets, loading }: DashboardWidgetsGridProps) =
           <div
             className={
               group.key === 'production'
-                ? 'grid grid-cols-1 gap-3 lg:grid-cols-2 2xl:grid-cols-3'
+                ? 'grid grid-cols-2 gap-2 sm:gap-3 lg:grid-cols-2 2xl:grid-cols-3'
                 : 'grid grid-cols-2 gap-2 md:grid-cols-2 md:gap-3 lg:grid-cols-3 2xl:grid-cols-4'
             }
           >
@@ -172,7 +173,7 @@ const DashboardWidgetsGrid = ({ widgets, loading }: DashboardWidgetsGridProps) =
                 {w.spotlight && <WidgetRunRing />}
               <Card
                 onClick={w.spotlight ? undefined : () => navigate(w.path)}
-                className={`group relative min-w-0 overflow-hidden border p-2.5 transition-all hover:shadow-md md:p-4 ${
+                className={`group relative min-w-0 overflow-hidden border p-2 transition-all hover:shadow-md md:p-4 ${
                   w.spotlight ? 'cursor-default rounded-xl' : 'h-full cursor-pointer md:flex md:flex-col md:gap-3'
                 } ${
                   w.spotlight
@@ -204,9 +205,9 @@ const DashboardWidgetsGrid = ({ widgets, loading }: DashboardWidgetsGridProps) =
                   <div className="flex items-start justify-between gap-2">
                     <div className="min-w-0">
                       <span
-                        className={`grid h-8 w-8 shrink-0 place-items-center rounded-lg ${toneIcon[w.tone]}`}
+                        className={`grid h-7 w-7 shrink-0 place-items-center rounded-md ${toneIcon[w.tone]}`}
                       >
-                        <Icon name={w.icon} size={16} />
+                        <Icon name={w.icon} size={14} />
                       </span>
                       {w.spotlight && (
                         <p className="mt-1 max-w-[7.5rem] text-[11px] font-semibold leading-tight">
@@ -214,11 +215,7 @@ const DashboardWidgetsGrid = ({ widgets, loading }: DashboardWidgetsGridProps) =
                         </p>
                       )}
                     </div>
-                    <span
-                      className={`min-w-0 text-right text-xl font-bold leading-none tabular-nums tracking-tight ${toneValue[w.tone]}`}
-                    >
-                      {loading ? '—' : w.value}
-                    </span>
+                    <LiveCountBoard value={w.value} tone="cyan" loading={loading} size="sm" />
                   </div>
                   {w.matrix && !loading && <WidgetMatrix matrix={w.matrix} />}
                   {w.parts && !w.matrix && !loading && (
@@ -257,11 +254,7 @@ const DashboardWidgetsGrid = ({ widgets, loading }: DashboardWidgetsGridProps) =
                         </p>
                       )}
                     </div>
-                    <span
-                      className={`text-3xl font-bold leading-none tracking-tight ${toneValue[w.tone]}`}
-                    >
-                      {loading ? '—' : w.value}
-                    </span>
+                    <LiveCountBoard value={w.value} tone="cyan" loading={loading} size="md" />
                   </div>
                   {w.matrix && !loading && <WidgetMatrix matrix={w.matrix} />}
                   {w.parts && !w.matrix && !loading && (

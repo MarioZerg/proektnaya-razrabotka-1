@@ -215,7 +215,7 @@ const RollAuditScanner = ({ open, onOpenChange, onFinished }: RollAuditScannerPr
                 value={code}
                 onChange={(e) => setCode(e.target.value)}
                 placeholder="Отсканируйте стикер склада"
-                className="h-12 font-mono text-lg"
+                className="h-12 font-mono-tech text-lg"
                 autoFocus
                 autoComplete="off"
                 onKeyDown={(e) => {
@@ -234,10 +234,17 @@ const RollAuditScanner = ({ open, onOpenChange, onFinished }: RollAuditScannerPr
             {flash && (
               <div
                 className={cn(
-                  'rounded-md px-3 py-2 text-sm font-semibold text-white',
-                  flash.ok ? 'bg-emerald-600' : 'bg-red-600',
+                  'flex items-start gap-2 rounded-lg border px-3 py-2 text-sm font-medium',
+                  flash.ok
+                    ? 'border-emerald-300 bg-emerald-50 text-emerald-900'
+                    : 'border-destructive bg-destructive/10 text-destructive',
                 )}
               >
+                <Icon
+                  name={flash.ok ? 'CircleCheck' : 'TriangleAlert'}
+                  size={18}
+                  className="mt-0.5 shrink-0"
+                />
                 {flash.text}
               </div>
             )}
@@ -270,7 +277,7 @@ const RollAuditScanner = ({ open, onOpenChange, onFinished }: RollAuditScannerPr
                     return (
                       <div key={b} className="flex justify-between gap-2 border-l-4 border-emerald-400 px-3 py-1.5 text-sm">
                         <div className="min-w-0">
-                          <div className="font-mono font-semibold">{b}</div>
+                          <div className="font-mono-tech font-semibold">{b}</div>
                           <div className="truncate text-xs text-muted-foreground">{r?.material}</div>
                         </div>
                         {r && (
@@ -310,7 +317,7 @@ const RollAuditScanner = ({ open, onOpenChange, onFinished }: RollAuditScannerPr
                       className="flex justify-between gap-2 px-3 py-1.5 text-sm hover:bg-muted/50"
                     >
                       <div className="min-w-0">
-                        <div className="font-mono font-semibold">{m.barcode}</div>
+                        <div className="font-mono-tech font-semibold">{m.barcode}</div>
                         <div className="truncate text-xs text-muted-foreground">{m.material}</div>
                       </div>
                       <div className="shrink-0 text-right text-xs tabular-nums">

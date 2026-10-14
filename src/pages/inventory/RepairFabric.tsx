@@ -15,6 +15,7 @@ import {
 import RepairPieceBatchScanner from '@/components/crm/repairFabric/RepairPieceBatchScanner';
 import RepairFabricFilters from '@/components/crm/repairFabric/RepairFabricFilters';
 import RepairPieceCards from '@/components/crm/repairFabric/RepairPieceCards';
+import RepairPieceDetailDialog from '@/components/crm/repairFabric/RepairPieceDetailDialog';
 import RepairPieceTable from '@/components/crm/repairFabric/RepairPieceTable';
 
 /**
@@ -54,6 +55,7 @@ const RepairFabric = () => {
   const [deleting, setDeleting] = useState<number | null>(null);
   const [search, setSearch] = useState('');
   const [addOpen, setAddOpen] = useState(false);
+  const [selected, setSelected] = useState<RepairPiece | null>(null);
 
   const load = () => {
     setLoading(true);
@@ -70,6 +72,13 @@ const RepairFabric = () => {
   };
 
   useEffect(load, [tab]);
+
+  // После списания/удаления список обновляется — подтягиваем свежий кусок в карточку.
+  useEffect(() => {
+    if (!selected) return;
+    const fresh = pieces.find((p) => p.id === selected.id) || null;
+    setSelected(fresh);
+  }, [pieces]); // eslint-disable-line react-hooks/exhaustive-deps -- только при смене списка
 
   const materials = useMemo(
     () => [...new Set(pieces.map((p) => p.material))].sort(),
@@ -230,6 +239,7 @@ const RepairFabric = () => {
               deleting={deleting}
               handleWriteOff={handleWriteOff}
               handleDelete={handleDelete}
+              onOpen={setSelected}
             />
 
             <RepairPieceTable
@@ -239,9 +249,23 @@ const RepairFabric = () => {
               deleting={deleting}
               handleWriteOff={handleWriteOff}
               handleDelete={handleDelete}
+              onOpen={setSelected}
             />
           </>
         )}
+
+        <RepairPieceDetailDialog
+          piece={selected}
+          open={!!selected}
+          onOpenChange={(open) => {
+            if (!open) setSelected(null);
+          }}
+          isAdmin={isAdmin}
+          writingOff={writingOff}
+          deleting={deleting}
+          onWriteOff={handleWriteOff}
+          onDelete={handleDelete}
+        />
       </div>
     </CrmLayout>
   );

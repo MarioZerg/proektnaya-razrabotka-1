@@ -25,6 +25,7 @@ export const useToWorkshopActions = (state: ToWorkshopState) => {
     requestShiftNumber,
     reqMaterialIds,
     reqComment,
+    isPackagingOnlyRequest,
     setCreating,
     setCreateOpen,
     load,
@@ -55,9 +56,8 @@ export const useToWorkshopActions = (state: ToWorkshopState) => {
       });
       return;
     }
-    // Рулон, который в итоге попадёт в цех по этой заявке, обязан принадлежать смене —
-    // без открытой смены заявку создать нельзя (проверяется и на сервере).
-    if (!requestShiftNumber) {
+    // Ткань и тесьма — под смену. Пакеты и этикетки — общий пул цеха, смена не нужна.
+    if (!isPackagingOnlyRequest && !requestShiftNumber) {
       toast({
         title: isAdmin
           ? 'Выберите смену, на которую нужен материал'
@@ -75,13 +75,19 @@ export const useToWorkshopActions = (state: ToWorkshopState) => {
     try {
       await requestToWorkshop({
         workshopId: requestWorkshopId,
-        shiftNumber: requestShiftNumber,
+        ...(isPackagingOnlyRequest
+          ? {}
+          : { shiftNumber: requestShiftNumber ?? undefined }),
         comment: reqComment.trim() || undefined,
         materialId: materialIds[0],
         materialIds,
         requestedBy: user?.id,
       });
-      toast({ title: 'Заявка отправлена кладовщику' });
+      toast({
+        title: isPackagingOnlyRequest
+          ? 'Заявка отправлена — упаковка на все смены цеха'
+          : 'Заявка отправлена кладовщику',
+      });
       setCreateOpen(false);
       load();
     } catch (e) {

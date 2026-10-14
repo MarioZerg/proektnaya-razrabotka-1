@@ -17,17 +17,12 @@ import { playScanSound, playScanErrorSound, primeScanSounds } from '@/lib/scanSo
 import { fetchShelves, type Shelf } from '@/lib/shelvesApi';
 import { scanStocktake, undoStocktakeScan, type Stocktake } from '@/lib/stocktakesApi';
 import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
+import ScanErrorAlert from '@/components/crm/scan/ScanErrorAlert';
+import ScanInputCard from '@/components/crm/scan/ScanInputCard';
 
 interface StocktakeScannerProps {
   stocktake: Stocktake;
   onScanned: () => void;
-}
-
-/** Последние сканы — короткая лента, чтобы кладовщик видел, что счётчик реагирует. */
-interface ScanRow {
-  barcode: string;
-  title: string;
-  warning: string | null;
 }
 
 /**
@@ -35,6 +30,9 @@ interface ScanRow {
  *
  * Полка выбирается один раз на стеллаж, а не на каждую вещь: так система понимает,
  * что вещь лежит не там, где числится, и при подтверждении сама поправит адрес.
+ *
+ * Ленту сканов не держим на экране — мешает работе. Ошибочный пик снимается
+ * одной кнопкой «убрать последний».
  *
  * POEHALI: scanStocktake уже есть. FRONTEND-ONLY: HID-скан и выбор полки на экране.
  */
@@ -46,7 +44,9 @@ const StocktakeScanner = ({ stocktake, onScanned }: StocktakeScannerProps) => {
   const [shelfId, setShelfId] = useState('');
   const [barcode, setBarcode] = useState('');
   const [saving, setSaving] = useState(false);
-  const [rows, setRows] = useState<ScanRow[]>([]);
+  const [lastBarcode, setLastBarcode] = useState<string | null>(null);
+  const [lastTitle, setLastTitle] = useState<string | null>(null);
+  const [lastWarning, setLastWarning] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -82,16 +82,9 @@ const StocktakeScanner = ({ stocktake, onScanned }: StocktakeScannerProps) => {
         actorName: user?.name,
       });
       playScanSound();
-      setRows((prev) =>
-        [
-          {
-            barcode: res.barcode,
-            title: [res.orderNumber, res.product].filter(Boolean).join(' · ') || 'Вещь',
-            warning: res.warning,
-          },
-          ...prev,
-        ].slice(0, 12),
-      );
+      setLastBarcode(res.barcode);
+      setLastTitle([res.orderNumber, res.product].filter(Boolean).join(' · ') || 'Вещь');
+      setLastWarning(res.warning);
       onScanned();
     } catch (e) {
       playScanErrorSound();
@@ -104,10 +97,13 @@ const StocktakeScanner = ({ stocktake, onScanned }: StocktakeScannerProps) => {
 
   useScannerAutoSubmit(barcode, handleScan, !saving);
 
-  const handleUndo = async (code: string) => {
+  const handleUndoLast = async () => {
+    if (!lastBarcode) return;
     try {
-      await undoStocktakeScan(stocktake.id, code, user?.id, user?.name);
-      setRows((prev) => prev.filter((r) => r.barcode !== code));
+      await undoStocktakeScan(stocktake.id, lastBarcode, user?.id, user?.name);
+      setLastBarcode(null);
+      setLastTitle(null);
+      setLastWarning(null);
       onScanned();
     } catch (e) {
       toast({
@@ -121,9 +117,14 @@ const StocktakeScanner = ({ stocktake, onScanned }: StocktakeScannerProps) => {
   const shelfName = shelves.find((s) => String(s.id) === shelfId)?.name;
 
   return (
-    <div
-      className="space-y-4 rounded-md border border-border p-4"
-      onClick={(e) => {
+    <ScanInputCard
+      title="Сканируйте стикеры хранения GW"
+      hint={
+        shelfName
+          ? `Полка «${shelfName}» — вещи с другой полки система заметит сама`
+          : 'Сначала выберите полку, у которой стоите'
+      }
+      onBackgroundClick={(e) => {
         if (
           !(e.target as HTMLElement).closest(
             'input, button, a, textarea, [role="combobox"]',
@@ -133,9 +134,9 @@ const StocktakeScanner = ({ stocktake, onScanned }: StocktakeScannerProps) => {
         }
       }}
     >
-      <div className="grid gap-3 sm:grid-cols-2">
+      <div className="grid gap-3 sm:grid-cols-[minmax(0,14rem)_1fr_auto] sm:items-end">
         <div className="space-y-1.5">
-          <Label>Полка, которую считаете</Label>
+          <Label>Полка</Label>
           <Select value={shelfId} onValueChange={setShelfId}>
             <SelectTrigger>
               <SelectValue placeholder="Выберите полку" />
@@ -150,7 +151,7 @@ const StocktakeScanner = ({ stocktake, onScanned }: StocktakeScannerProps) => {
           </Select>
         </div>
         <div className="space-y-1.5">
-          <Label>Стикер хранения GW</Label>
+          <Label>Стикер GW</Label>
           <Input
             ref={inputRef}
             autoFocus
@@ -158,19 +159,27 @@ const StocktakeScanner = ({ stocktake, onScanned }: StocktakeScannerProps) => {
             onChange={(e) => setBarcode(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && handleScan()}
             onBlur={(e) => {
-              // Возвращаем фокус в поле, только если человек НЕ ушёл на другую
-              // кнопку. Раньше фокус отбирался всегда, и нажать «Закрыть
-              // инвентаризацию» было невозможно: поле перехватывало фокус
-              // на середине клика, и кнопка не срабатывала.
               const next = e.relatedTarget as HTMLElement | null;
               if (next?.closest('button, a, input, textarea, [role="combobox"]')) return;
               focusInput();
             }}
-            placeholder="Наведите сканер на стикер GW"
-            className="h-11 font-mono-tech"
+            placeholder="Наведите сканер"
+            className="h-12 font-mono-tech"
             autoComplete="off"
           />
         </div>
+        {lastBarcode && (
+          <Button
+            type="button"
+            variant="outline"
+            className="h-12 shrink-0"
+            onClick={handleUndoLast}
+            title="Убрать последний скан"
+          >
+            <Icon name="Undo2" size={16} className="mr-1.5" />
+            Убрать последний
+          </Button>
+        )}
       </div>
 
       {shelvesError && (
@@ -181,49 +190,21 @@ const StocktakeScanner = ({ stocktake, onScanned }: StocktakeScannerProps) => {
         />
       )}
 
-      <p className="text-sm text-muted-foreground">
-        {shelfName
-          ? `Считаем полку «${shelfName}». Вещь с другой полки система заметит сама и поправит адрес после подтверждения`
-          : 'Выберите полку — тогда система увидит вещи, лежащие не на своём месте'}
-      </p>
+      {error && <ScanErrorAlert>{error}</ScanErrorAlert>}
 
-      {error && (
-        <div className="flex items-start gap-2 rounded-md border border-destructive/40 bg-destructive/5 p-3">
-          <Icon name="CircleAlert" size={18} className="mt-0.5 shrink-0 text-destructive" />
-          <p className="text-sm">{error}</p>
-        </div>
+      {lastBarcode && !error && (
+        <p
+          className={`text-sm ${
+            lastWarning ? 'text-amber-800' : 'text-muted-foreground'
+          }`}
+        >
+          Последний: <span className="font-medium text-foreground">{lastTitle}</span>
+          {' · '}
+          <span className="font-mono-tech">{lastBarcode}</span>
+          {lastWarning ? ` — ${lastWarning}` : ''}
+        </p>
       )}
-
-      {rows.length > 0 && (
-        <div className="space-y-1.5">
-          <p className="text-sm font-medium">Последние сканы</p>
-          {rows.map((r) => (
-            <div
-              key={r.barcode}
-              className={`flex items-start justify-between gap-2 rounded-md border p-2.5 ${
-                r.warning
-                  ? 'border-amber-300 bg-amber-50'
-                  : 'border-emerald-300 bg-emerald-50'
-              }`}
-            >
-              <div className="min-w-0">
-                <p className="text-sm font-medium">{r.title}</p>
-                <p className="font-mono-tech text-xs text-muted-foreground">{r.barcode}</p>
-                {r.warning && <p className="text-xs text-amber-800">{r.warning}</p>}
-              </div>
-              <Button
-                size="icon"
-                variant="ghost"
-                onClick={() => handleUndo(r.barcode)}
-                title="Убрать этот скан"
-              >
-                <Icon name="X" size={14} />
-              </Button>
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
+    </ScanInputCard>
   );
 };
 

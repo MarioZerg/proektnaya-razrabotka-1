@@ -13,9 +13,8 @@ interface ToMarketplaceCardsProps {
 }
 
 /**
- * Мобильный вид списка поставок в маркет. Шесть колонок table-fixed на телефоне
- * сжимают заголовки в кашу и накладывают «Открытая» на Wildberries — карточку
- * пальцем попасть проще, чем в сплющенную строку.
+ * Список поставок карточками — телефон и планшет / узкая колонка CRM.
+ * Таблица с несколькими колонками здесь сжимает статусы и маркетплейсы в кашу.
  */
 const ToMarketplaceCards = ({ supplies, onOpen }: ToMarketplaceCardsProps) => (
   <div className="space-y-3">
@@ -27,11 +26,16 @@ const ToMarketplaceCards = ({ supplies, onOpen }: ToMarketplaceCardsProps) => (
         className="w-full min-w-0 overflow-hidden rounded-lg border border-border bg-card p-3 text-left"
       >
         <div className="flex items-start justify-between gap-2">
-          <div className="min-w-0">
-            <div className="break-words font-semibold leading-snug">
-              <SupplyTypeBadge type={s.type} className="mr-2 align-middle" />
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+              <SupplyTypeBadge type={s.type} />
+              {s.isB2b && <B2bBadge />}
+              <span className={marketplaceLogo[s.marketplace]?.className}>
+                {marketplaceLogo[s.marketplace]?.label || s.marketplace}
+              </span>
+            </div>
+            <div className="mt-1 break-words font-semibold leading-snug">
               {s.supplyNumber || `Поставка №${s.id}`}
-              {s.isB2b && <B2bBadge className="ml-2 align-middle" />}
             </div>
             <div className="mt-0.5 text-xs text-muted-foreground">
               #{s.id}
@@ -39,42 +43,47 @@ const ToMarketplaceCards = ({ supplies, onOpen }: ToMarketplaceCardsProps) => (
               {s.type !== 'FBS' && s.gazelkaId ? ` · Газелька ${s.gazelkaId}` : ''}
             </div>
           </div>
-          <Badge className={`shrink-0 ${statusVariant[s.status]?.className || ''}`}>
+          <Badge className={`max-w-[40%] shrink-0 whitespace-normal text-center ${statusVariant[s.status]?.className || ''}`}>
             {s.status}
           </Badge>
         </div>
 
         {s.lockedByName && (
-          <span className="mt-2 inline-flex items-center gap-1 rounded-sm bg-amber-100 px-1.5 py-0.5 text-[11px] font-medium text-amber-900">
-            <Icon name="Lock" size={11} />
-            Собирает: {s.lockedByName}
+          <span className="mt-2 inline-flex max-w-full items-center gap-1 rounded-sm bg-amber-100 px-1.5 py-0.5 text-[11px] font-medium text-amber-900">
+            <Icon name="Lock" size={11} className="shrink-0" />
+            <span className="min-w-0 break-words">Собирает: {s.lockedByName}</span>
           </span>
         )}
 
-        <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
-          <span className={marketplaceLogo[s.marketplace]?.className}>
-            {marketplaceLogo[s.marketplace]?.label || s.marketplace}
-          </span>
-          {s.marketplace === 'WB' && s.type === 'FBS' ? (
-            <Badge variant={s.itemsCount > 0 ? 'default' : 'outline'}>{s.itemsCount} шт.</Badge>
-          ) : s.type === 'FBO' && s.plannedQuantity ? (
-            <span
-              className={
-                s.itemsCount >= s.plannedQuantity
-                  ? 'font-medium text-emerald-600'
-                  : 'font-medium text-amber-600'
-              }
-            >
-              {s.itemsCount} из {s.plannedQuantity} шт.
-            </span>
-          ) : (
-            <span>{s.itemsCount} шт.</span>
-          )}
+        <div className="mt-3 grid grid-cols-2 gap-2 text-sm">
+          <div className="min-w-0">
+            <div className="text-[11px] text-muted-foreground">Товары</div>
+            {s.marketplace === 'WB' && s.type === 'FBS' ? (
+              <Badge variant={s.itemsCount > 0 ? 'default' : 'outline'}>{s.itemsCount} шт.</Badge>
+            ) : s.type === 'FBO' && s.plannedQuantity ? (
+              <span
+                className={
+                  s.itemsCount >= s.plannedQuantity
+                    ? 'font-medium text-emerald-600'
+                    : 'font-medium text-amber-600'
+                }
+              >
+                {s.itemsCount} из {s.plannedQuantity} шт.
+              </span>
+            ) : (
+              <span>{s.itemsCount} шт.</span>
+            )}
+            {!!s.readyToScanCount && s.status !== 'Выполнена' && (
+              <div className="mt-0.5 text-xs text-amber-700">
+                ждёт скана: {s.readyToScanCount}
+              </div>
+            )}
+          </div>
+          <div className="min-w-0">
+            <div className="text-[11px] text-muted-foreground">Создан</div>
+            <div className="text-muted-foreground">{formatDate(s.createdAt)}</div>
+          </div>
         </div>
-
-        {!!s.readyToScanCount && s.status !== 'Выполнена' && (
-          <div className="mt-1 text-xs text-amber-700">ждёт сканирования: {s.readyToScanCount}</div>
-        )}
 
         {(s.sewingTotal || 0) > 0 && (
           <div className="mt-2">
@@ -83,14 +92,19 @@ const ToMarketplaceCards = ({ supplies, onOpen }: ToMarketplaceCardsProps) => (
           </div>
         )}
 
-        <div className="mt-2 space-y-0.5 text-xs text-muted-foreground">
-          <div>Создан: {formatDate(s.createdAt)}</div>
-          {s.type !== 'FBS' && s.shipToGazelkaAt && <div>В Газельку: {formatDate(s.shipToGazelkaAt)}</div>}
-          {s.shipToMarketplaceAt && <div>В маркет: {formatDate(s.shipToMarketplaceAt)}</div>}
-          {s.completedAt && (
-            <div className="font-medium text-emerald-600">Выполнен: {formatDate(s.completedAt)}</div>
-          )}
-        </div>
+        {(s.type !== 'FBS' && s.shipToGazelkaAt) || s.shipToMarketplaceAt || s.completedAt ? (
+          <div className="mt-2 space-y-0.5 text-xs text-muted-foreground">
+            {s.type !== 'FBS' && s.shipToGazelkaAt && (
+              <div>В Газельку: {formatDate(s.shipToGazelkaAt)}</div>
+            )}
+            {s.shipToMarketplaceAt && <div>В маркет: {formatDate(s.shipToMarketplaceAt)}</div>}
+            {s.completedAt && (
+              <div className="font-medium text-emerald-600">
+                Выполнен: {formatDate(s.completedAt)}
+              </div>
+            )}
+          </div>
+        ) : null}
       </button>
     ))}
   </div>

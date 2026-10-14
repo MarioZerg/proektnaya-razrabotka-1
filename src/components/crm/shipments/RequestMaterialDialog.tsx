@@ -40,6 +40,8 @@ interface RequestMaterialDialogProps {
   setReqWorkshopId?: (value: string) => void;
   reqShiftNumber?: string;
   setReqShiftNumber?: (value: string) => void;
+  /** Все выбранные материалы — упаковка: смена не нужна, пул на весь цех. */
+  isPackagingOnlyRequest?: boolean;
 }
 
 // Заявку на материал в цех создаёт сотрудник цеха (швея/закройщик/упаковщик) — цех и смена
@@ -63,6 +65,7 @@ const RequestMaterialDialog = ({
   setReqWorkshopId,
   reqShiftNumber = '',
   setReqShiftNumber,
+  isPackagingOnlyRequest = false,
 }: RequestMaterialDialogProps) => {
   const selectedWorkshop = workshops.find((w) => String(w.id) === reqWorkshopId);
   const shiftOptions = Array.from(
@@ -104,28 +107,36 @@ const RequestMaterialDialog = ({
                   </SelectContent>
                 </Select>
               </div>
-              <div className="space-y-1.5">
-                <Label>Смена</Label>
-                <Select
-                  value={reqShiftNumber}
-                  onValueChange={(v) => setReqShiftNumber?.(v)}
-                  disabled={!selectedWorkshop}
-                >
-                  <SelectTrigger>
-                    <SelectValue
-                      placeholder={selectedWorkshop ? 'Выберите смену' : 'Сначала выберите цех'}
-                    />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {shiftOptions.map((n) => (
-                      <SelectItem key={n} value={String(n)}>
-                        {selectedWorkshop?.shiftNames?.[n - 1] || `Смена № ${n}`}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
+              {!isPackagingOnlyRequest && (
+                <div className="space-y-1.5">
+                  <Label>Смена</Label>
+                  <Select
+                    value={reqShiftNumber}
+                    onValueChange={(v) => setReqShiftNumber?.(v)}
+                    disabled={!selectedWorkshop}
+                  >
+                    <SelectTrigger>
+                      <SelectValue
+                        placeholder={selectedWorkshop ? 'Выберите смену' : 'Сначала выберите цех'}
+                      />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {shiftOptions.map((n) => (
+                        <SelectItem key={n} value={String(n)}>
+                          {selectedWorkshop?.shiftNames?.[n - 1] || `Смена № ${n}`}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
             </>
+          )}
+
+          {isPackagingOnlyRequest && (
+            <p className="rounded-md bg-muted px-3 py-2 text-xs text-muted-foreground">
+              Пакеты и этикетки — общий материал цеха на все смены
+            </p>
           )}
 
           <div className="space-y-1.5">
@@ -186,8 +197,9 @@ const RequestMaterialDialog = ({
             </Button>
           </div>
           <p className="text-xs text-muted-foreground">
-            Можно несколько тканей сразу — Шифон, Лен и Бамбук уедут одной заявкой.
-            Кладовщик сам выберет рулоны.
+            {isPackagingOnlyRequest
+              ? 'Упаковка уедет в общий пул цеха — расход со всех смен с одних коробок.'
+              : 'Можно несколько тканей сразу — Шифон, Лен и Бамбук уедут одной заявкой. Кладовщик сам выберет рулоны.'}
           </p>
 
           <div className="space-y-1.5">

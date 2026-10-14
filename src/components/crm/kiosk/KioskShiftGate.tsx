@@ -38,9 +38,8 @@ interface KioskShiftGateProps {
 /** Первый экран после скана QR: открытие смены. В меню терминала пускаем только после того,
  * как сотрудник открыл смену и нажал «Войти в терминал».
  *
- * Цех и смену сотрудник выбирает сам: швея, закройщик и упаковщица работают гибко и могут
- * выйти в любой цех, а не только в свой. По умолчанию подставляем цех этого терминала —
- * в обычный день достаточно просто нажать «Открыть смену».
+ * Цех один — на экране его не выбираем и не показываем. Остаётся выбор смены
+ * (и должности, если админ разрешил несколько).
  */
 const KioskShiftGate = ({
   user,
@@ -73,15 +72,10 @@ const KioskShiftGate = ({
       .then((list) => {
         setWorkshopsError(null);
         setWorkshops(list);
-        // Цех НЕ выбирается: терминал стоит в конкретном цехе, и работать с него
-        // можно только в нём. Раньше на экран вываливался список всех цехов, и
-        // сотрудницы промахивались — открывали смену в чужом цехе, а потом не
-        // видели ни своего кроя, ни своих рулонов. Пришёл из другого цеха —
-        // просто открывает смену здесь, как обычно.
+        // Цех фиксируем с терминала (или единственный из списка) — выбора на экране нет.
         const fallback = Number(workshopId) || list[0]?.id || null;
         const current = list.find((w) => w.id === fallback) || list[0];
         setSelectedWorkshop(current?.id ?? null);
-        // Смену сотрудника подставляем, если она есть среди активных в этом цехе.
         const shifts = current?.shifts || [];
         setSelectedShift(
           user.shiftFromCode && shifts.includes(user.shiftFromCode)
@@ -90,7 +84,7 @@ const KioskShiftGate = ({
         );
       })
       .catch((e) => {
-        setWorkshopsError(e instanceof Error ? e.message : 'Не удалось загрузить цеха');
+        setWorkshopsError(e instanceof Error ? e.message : 'Не удалось загрузить смены');
       });
   };
 
@@ -102,20 +96,6 @@ const KioskShiftGate = ({
 
   const currentWorkshop = workshops.find((w) => w.id === selectedWorkshop);
   const availableShifts = currentWorkshop?.shifts || [];
-  // Смена открыта в одном цехе, а сотрудник стоит у терминала другого — значит перешёл
-  // работать сюда. Открывать смену заново не нужно: она одна на весь рабочий день.
-  const movedToAnotherWorkshop = !!(
-    shift?.isOpen &&
-    shift.workshopId &&
-    Number(workshopId) &&
-    shift.workshopId !== Number(workshopId)
-  );
-  const openedShiftWorkshop = workshops.find((w) => w.id === shift?.workshopId);
-  const isGuestChoice = !!(
-    user.homeWorkshopId &&
-    selectedWorkshop &&
-    user.homeWorkshopId !== selectedWorkshop
-  );
 
   return (
     <div className="kiosk-root flex min-h-screen flex-col items-center justify-center bg-background p-6">
@@ -123,9 +103,6 @@ const KioskShiftGate = ({
       <div className="w-full max-w-xl space-y-6">
         <div className="text-center">
           <h1 className="text-3xl font-bold">Приветствую, {user.name}!</h1>
-          <p className="mt-2 text-lg text-muted-foreground">
-            {currentWorkshop?.name || `Цех №${workshopId}`}
-          </p>
         </div>
 
         <div className="flex items-center justify-center gap-2">
@@ -144,39 +121,19 @@ const KioskShiftGate = ({
         {shift?.isOpen ? (
           // Закрытие смены доступно внутри терминала (плитка «Открытие / Закрытие смены»),
           // поэтому здесь только вход.
-          <>
-            {movedToAnotherWorkshop && (
-              <div className="flex items-start gap-2 rounded-md border border-emerald-300 bg-emerald-50 p-3 text-emerald-900">
-                <Icon name="CircleCheck" size={18} className="mt-0.5 shrink-0" />
-                <p className="text-base">
-                  Смена уже открыта
-                  {openedShiftWorkshop ? ` в ${openedShiftWorkshop.name}` : ''} — открывать
-                  заново не нужно. Работайте здесь как обычно, а закройте смену один раз в
-                  конце рабочего дня.
-                </p>
-              </div>
-            )}
-            <Button
-              size="lg"
-              className="h-20 w-full bg-blue-600 text-xl text-white hover:bg-blue-700"
-              onClick={onEnterMenu}
-            >
-              <Icon name="LayoutGrid" size={28} className="mr-2" />
-              Войти в терминал
-            </Button>
-          </>
+          <Button
+            size="lg"
+            className="h-20 w-full bg-blue-600 text-xl text-white hover:bg-blue-700"
+            onClick={onEnterMenu}
+          >
+            <Icon name="LayoutGrid" size={28} className="mr-2" />
+            Войти в терминал
+          </Button>
         ) : (
           <>
-            {currentWorkshop && (
-          <div className="rounded-lg border border-border bg-muted/40 p-4 text-center">
-            <p className="text-base text-muted-foreground">Цех</p>
-            <p className="text-2xl font-bold">{currentWorkshop.name}</p>
-          </div>
-        )}
-
             {workshopsError && (
               <WarehouseFetchError
-                title="Не удалось загрузить цеха"
+                title="Не удалось загрузить смены"
                 description={workshopsError}
                 onRetry={loadWorkshops}
               />
@@ -221,16 +178,6 @@ const KioskShiftGate = ({
                     </Button>
                   ))}
                 </div>
-              </div>
-            )}
-
-            {isGuestChoice && (
-              <div className="flex items-start gap-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-amber-900">
-                <Icon name="Info" size={18} className="mt-0.5 shrink-0" />
-                <p className="text-base">
-                  Вы выходите в чужой цех как гость. Работать можно как обычно, но списать
-                  брак здесь сможет только штатный сотрудник этого цеха.
-                </p>
               </div>
             )}
 

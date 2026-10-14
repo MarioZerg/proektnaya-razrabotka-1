@@ -1,7 +1,8 @@
 import type { RefObject } from 'react';
 import { Input } from '@/components/ui/input';
-import Icon from '@/components/ui/icon';
 import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
+import ScanErrorAlert from '@/components/crm/scan/ScanErrorAlert';
+import ScanInputCard from '@/components/crm/scan/ScanInputCard';
 import type { RepackItem } from '@/lib/kioskApi';
 
 interface RepackScanPanelProps {
@@ -45,23 +46,32 @@ const RepackScanPanel = ({
         onRetry={onRetryCount}
       />
     )}
-    <div className="space-y-3 rounded-xl border-2 border-violet-300 bg-violet-50 p-4">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <p className="text-xl font-bold text-violet-900">
-          {item ? 'Закончите с этой вещью' : 'Отсканируйте вещь'}
-        </p>
+    <ScanInputCard
+      touch
+      title={item ? 'Закончите с этой вещью' : 'Отсканируйте вещь'}
+      hint={
+        item
+          ? undefined
+          : 'Сканируйте наклейку возврата или ярлык отправления, с которым вещь ездила к покупателю — OZON, Wildberries, Яндекс Маркет'
+      }
+      headerRight={
         <div className="flex gap-2">
-          <span className="rounded-lg bg-violet-600 px-4 py-2 text-xl font-bold text-white">
+          <span className="rounded-lg bg-primary px-4 py-2 text-xl font-bold text-primary-foreground">
             {countError ? 'очередь неизвестна' : `${waiting} шт. за этот месяц`}
           </span>
           {doneCount > 0 && (
-            <span className="rounded-lg border border-emerald-400 bg-white px-4 py-2 text-xl font-bold text-emerald-700">
+            <span className="rounded-lg border border-emerald-400 bg-background px-4 py-2 text-xl font-bold text-emerald-700">
               {doneCount} готово
             </span>
           )}
         </div>
-      </div>
-
+      }
+      onBackgroundClick={(e) => {
+        if (!(e.target as HTMLElement).closest('input, button, a')) {
+          inputRef.current?.focus();
+        }
+      }}
+    >
       <Input
         ref={inputRef}
         autoFocus
@@ -72,25 +82,13 @@ const RepackScanPanel = ({
         placeholder={
           item ? 'Сначала завершите текущую вещь' : 'Поднесите ярлык к сканеру'
         }
-        className="h-16 font-mono-tech text-2xl"
+        className="h-14 bg-background font-mono-tech text-xl"
         autoComplete="off"
         disabled={scanning || !!item || clearAsk}
       />
 
-      {!item && (
-        <p className="text-base text-violet-800">
-          Сканируйте наклейку возврата или ярлык отправления, с которым вещь ездила к
-          покупателю — OZON, Wildberries, Яндекс Маркет
-        </p>
-      )}
-
-      {scanError && (
-        <div className="flex items-start gap-3 rounded-lg border border-destructive bg-destructive/10 p-3">
-          <Icon name="TriangleAlert" size={24} className="mt-0.5 shrink-0 text-destructive" />
-          <p className="text-lg font-medium text-destructive">{scanError}</p>
-        </div>
-      )}
-    </div>
+      {scanError && <ScanErrorAlert touch>{scanError}</ScanErrorAlert>}
+    </ScanInputCard>
   </>
 );
 

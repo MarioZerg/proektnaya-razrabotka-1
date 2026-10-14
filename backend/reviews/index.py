@@ -166,10 +166,19 @@ def fetch_wb_reviews(api_key, is_answered='false', skip=0, take=1000):
     reviews = []
     for f in feedbacks:
         prod = f.get('productDetails') or {}
+        # Буквенный ключ заказа WB: в отзыве это srid, у сборочного задания — rid.
+        # Без него заказ в нашей базе (где номер = цифровой id задания) не найти.
+        srid = (
+            f.get('srid')
+            or f.get('orderUid')
+            or prod.get('srid')
+            or prod.get('rid')
+            or ''
+        )
         reviews.append({
             'external_id': str(f.get('id') or ''),
-            'srid': (f.get('srid') or '').strip(),
-            'order_id': prod.get('orderId') or f.get('orderId'),
+            'srid': str(srid).strip(),
+            'order_id': prod.get('orderId') or f.get('orderId') or f.get('order_id'),
             'nm_id': str(prod.get('nmId') or f.get('nmId') or ''),
             'product_name': (prod.get('productName') or '').strip(),
             'rating': f.get('productValuation'),
@@ -205,7 +214,9 @@ def backfill_wb_rids(cur, api_key):
     date_from = int(datetime.now(timezone.utc).timestamp()) - 180 * 24 * 3600
     next_val = 0
     filled = 0
-    for _ in range(3):
+    # До 10 тыс. заданий: трёх страниц не хватало — у старых заказов rid
+    # оставался пустым, и отзывы с буквенным srid не находили швею.
+    for _ in range(10):
         st, data = wb_market_get(
             f'/api/v3/orders?limit=1000&next={next_val}&dateFrom={date_from}',
             api_key,
@@ -232,7 +243,7 @@ def backfill_wb_rids(cur, api_key):
 
 
 def resolve_wb_order(by_wb_order, by_rid, by_number, rv):
-    """Ищем наш FBS-заказ по полям отзыва WB: id задания, rid/srid, номер."""
+    """Ищем наш FBS-заказ по полям отзыва WB: id задания, буквенный rid/srid, номер."""
     if rv.get('order_id'):
         try:
             found = by_wb_order.get(int(rv['order_id']))
@@ -251,6 +262,43 @@ def resolve_wb_order(by_wb_order, by_rid, by_number, rv):
         if found:
             return found
     return None
+
+
+def rematch_wb_reviews(cur):
+    """Привязывает отзывы WB без заказа по сохранённому буквенному srid.
+
+    srid лежит в reviews.wb_srid, rid задания — в orders.wb_rid. После догрузки
+    rid в старые заказы (backfill) можно закрыть дыры без повторной выгрузки
+    всего архива отзывов с WB.
+    """
+    cur.execute(
+        "UPDATE reviews r SET order_id = o.id "
+        "FROM orders o "
+        "WHERE r.marketplace = 'WB' "
+        "  AND r.order_id IS NULL "
+        "  AND r.wb_srid IS NOT NULL AND r.wb_srid <> '' "
+        "  AND o.wb_rid = r.wb_srid"
+    )
+    linked = cur.rowcount or 0
+    cur.execute(
+        "UPDATE reviews r SET order_id = o.id "
+        "FROM orders o "
+        "WHERE r.marketplace = 'WB' "
+        "  AND r.order_id IS NULL "
+        "  AND r.wb_srid ~ '^[0-9]+$' "
+        "  AND o.wb_order_id = r.wb_srid::bigint"
+    )
+    linked += cur.rowcount or 0
+    cur.execute(
+        "UPDATE reviews r SET order_id = o.id "
+        "FROM orders o "
+        "WHERE r.marketplace = 'WB' "
+        "  AND r.order_id IS NULL "
+        "  AND r.wb_srid IS NOT NULL AND r.wb_srid <> '' "
+        "  AND o.order_number = r.wb_srid"
+    )
+    linked += cur.rowcount or 0
+    return linked
 
 
 # ---------- Сопоставление и сохранение ----------
@@ -277,16 +325,39 @@ def match_order_wb(cur, wb_order_id, order_number):
     return None
 
 
-def upsert_review(cur, marketplace, external_id, order_id, product_sku, product_name, rating, text, review_date):
+def upsert_review(
+    cur, marketplace, external_id, order_id, product_sku, product_name,
+    rating, text, review_date, wb_srid=None,
+):
     if not external_id:
         return 0
-    cur.execute("SELECT id FROM reviews WHERE marketplace = %s AND external_id = %s", (marketplace, external_id))
-    if cur.fetchone():
+    cur.execute(
+        "SELECT id, order_id, wb_srid FROM reviews "
+        "WHERE marketplace = %s AND external_id = %s",
+        (marketplace, external_id),
+    )
+    row = cur.fetchone()
+    if row:
+        rid, prev_order, prev_srid = row
+        # Дописываем буквенный srid и заказ, если раньше отзыв пришёл «пустым».
+        if (wb_srid and not prev_srid) or (order_id and not prev_order):
+            cur.execute(
+                "UPDATE reviews SET "
+                "  wb_srid = COALESCE(wb_srid, %s), "
+                "  order_id = COALESCE(order_id, %s) "
+                "WHERE id = %s",
+                (wb_srid or None, order_id, rid),
+            )
         return 0
     cur.execute(
-        "INSERT INTO reviews (marketplace, external_id, order_id, product_sku, product_name, rating, text, review_date) "
-        "VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
-        (marketplace, external_id, order_id, product_sku, (product_name or '')[:300], rating, text, review_date),
+        "INSERT INTO reviews (marketplace, external_id, order_id, product_sku, product_name, "
+        " rating, text, review_date, wb_srid) "
+        "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
+        (
+            marketplace, external_id, order_id, product_sku,
+            (product_name or '')[:300], rating, text, review_date,
+            wb_srid or None,
+        ),
     )
     return 1
 
@@ -349,16 +420,6 @@ def handle_sync(cur, body_data=None):
 
             reviews, got = fetch_wb_reviews(wb_key, wb_stage, wb_skip, page_size)
 
-            ext_ids = [r['external_id'] for r in reviews if r.get('external_id')]
-            existing = {}
-            if ext_ids:
-                cur.execute(
-                    "SELECT external_id, order_id FROM reviews WHERE marketplace = 'WB' "
-                    "AND external_id = ANY(%s)",
-                    (ext_ids,),
-                )
-                existing = {r[0]: r[1] for r in cur.fetchall()}
-
             # Если WB отдал и id задания, и srid — дописываем rid заказу сразу.
             for rv in reviews:
                 if not rv.get('order_id') or not rv.get('srid'):
@@ -366,8 +427,9 @@ def handle_sync(cur, body_data=None):
                 try:
                     cur.execute(
                         "UPDATE orders SET wb_rid = COALESCE(wb_rid, %s) "
-                        "WHERE wb_order_id = %s AND wb_rid IS NULL",
-                        (rv['srid'], int(rv['order_id'])),
+                        "WHERE wb_order_id = %s AND wb_rid IS NULL "
+                        "AND NOT EXISTS (SELECT 1 FROM orders x WHERE x.wb_rid = %s)",
+                        (rv['srid'], int(rv['order_id']), rv['srid']),
                     )
                 except (TypeError, ValueError):
                     pass
@@ -403,19 +465,18 @@ def handle_sync(cur, body_data=None):
                 if not rv['external_id']:
                     continue
                 order_id = resolve_wb_order(by_wb_order, by_rid, by_number, rv)
-                prev_order = existing.get(rv['external_id'], 'missing')
-                if prev_order != 'missing':
-                    if order_id and prev_order is None:
-                        cur.execute(
-                            "UPDATE reviews SET order_id = %s "
-                            "WHERE marketplace = 'WB' AND external_id = %s AND order_id IS NULL",
-                            (order_id, rv['external_id']),
-                        )
-                    continue
                 created += upsert_review(
                     cur, 'WB', rv['external_id'], order_id, rv['nm_id'],
                     rv['product_name'], rv['rating'], rv['text'], rv['review_date'],
+                    wb_srid=rv.get('srid') or None,
                 )
+
+            # Старые отзывы без заказа — по сохранённому srid после догрузки rid.
+            try:
+                rematch_wb_reviews(cur)
+            except Exception as e:
+                warnings.append(f'WB rematch: {e}')
+
             if got >= page_size:
                 wb_skip += page_size
                 done = False
@@ -429,6 +490,11 @@ def handle_sync(cur, body_data=None):
 
     cur.execute("SELECT COUNT(*) FROM reviews")
     total = cur.fetchone()[0]
+    cur.execute(
+        "SELECT COUNT(*) FROM reviews "
+        "WHERE marketplace = 'WB' AND order_id IS NULL"
+    )
+    unmatched_wb = cur.fetchone()[0]
 
     return _resp(200, {
         'created': created,
@@ -437,6 +503,7 @@ def handle_sync(cur, body_data=None):
         'wbStage': wb_stage,
         'wbSkip': wb_skip,
         'totalInDatabase': total,
+        'unmatchedWb': unmatched_wb,
     })
 
 
@@ -445,7 +512,9 @@ def handle_sync(cur, body_data=None):
 def handle_list(cur):
     cur.execute(
         "SELECT r.id, r.marketplace, r.rating, r.text, r.review_date, r.product_name, r.product_sku, "
+        "r.wb_srid, "
         "o.id, o.order_number, o.order_type, o.created_at, o.completed_at, o.sewing_status, "
+        "o.wb_rid, "
         "cu.full_name, su.full_name, pu.full_name "
         "FROM reviews r "
         "LEFT JOIN orders o ON o.id = r.order_id "
@@ -464,15 +533,18 @@ def handle_list(cur):
         'reviewDate': _iso(r[4]),
         'productName': r[5],
         'productSku': r[6],
-        'orderId': r[7],
-        'orderNumber': r[8],
-        'orderType': r[9],
-        'orderCreatedAt': _iso(r[10]),
-        'orderCompletedAt': _iso(r[11]),
-        'sewingStatus': r[12],
-        'cutterName': r[13],
-        'sewerName': r[14],
-        'packerName': r[15],
+        # Буквенный ключ WB — по нему ищем заказ и швею.
+        'wbSrid': r[7] or r[14],
+        'orderId': r[8],
+        'orderNumber': r[9],
+        'orderType': r[10],
+        'orderCreatedAt': _iso(r[11]),
+        'orderCompletedAt': _iso(r[12]),
+        'sewingStatus': r[13],
+        'wbRid': r[14],
+        'cutterName': r[15],
+        'sewerName': r[16],
+        'packerName': r[17],
     } for r in rows]
     return _resp(200, {'reviews': reviews})
 
@@ -543,6 +615,33 @@ def handler(event: dict, context) -> dict:
                     }
                 cur.execute("SELECT COUNT(*) FROM reviews WHERE marketplace = 'WB'")
                 out['inDatabase'] = cur.fetchone()[0]
+                cur.execute(
+                    "SELECT COUNT(*) FROM reviews "
+                    "WHERE marketplace = 'WB' AND order_id IS NULL"
+                )
+                out['unmatched'] = cur.fetchone()[0]
+                cur.execute(
+                    "SELECT COUNT(*) FROM reviews "
+                    "WHERE marketplace = 'WB' AND wb_srid IS NOT NULL AND wb_srid <> ''"
+                )
+                out['withSrid'] = cur.fetchone()[0]
+                # Какие поля реально отдаёт WB — без srid привязка к швее невозможна.
+                sample = []
+                for flag in ('false', 'true'):
+                    st, data = wb_get(
+                        f'/api/v1/feedbacks?isAnswered={flag}&take=1&skip=0', wb_key
+                    )
+                    fb = ((data or {}).get('data') or {}).get('feedbacks') or []
+                    if fb:
+                        sample.append({
+                            'isAnswered': flag,
+                            'keys': sorted(fb[0].keys()),
+                            'srid': fb[0].get('srid'),
+                            'orderId': (fb[0].get('productDetails') or {}).get('orderId')
+                            or fb[0].get('orderId'),
+                        })
+                        break
+                out['sampleFeedback'] = sample
                 return _resp(200, out)
             return handle_list(cur)
         if method == 'POST':

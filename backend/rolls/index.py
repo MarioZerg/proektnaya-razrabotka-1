@@ -110,6 +110,135 @@ def recalc_shipment_costs(cur, shipment_id):
     )
 
 
+def last_supplier_cost_for_material(cur, material_id):
+    """Последняя известная себестоимость материала у поставщика.
+
+    Рулон, который админ заводит вручную (без приёмки), иначе остаётся без цены и
+    выпадает из стоимости остатков. Берём себестоимость с самого свежего рулона
+    того же материала, у которого она уже посчитана — там уже лежат курс и
+    логистика конкретной закупки. Нет такого рулона — считаем из актуального
+    прайса поставщика (цена × курс).
+    """
+    mid = int(material_id)
+    cur.execute(
+        "SELECT supplier_id, purchase_price, purchase_currency, purchase_rate, "
+        "  COALESCE(logistics_per_unit, 0), cost_per_unit, shortage_norm_percent "
+        "FROM rolls "
+        "WHERE material_id = %s "
+        "  AND cost_per_unit IS NOT NULL "
+        "  AND removed_at IS NULL "
+        "ORDER BY COALESCE(accepted_at, created_at) DESC NULLS LAST, id DESC "
+        "LIMIT 1",
+        (mid,),
+    )
+    row = cur.fetchone()
+    if row:
+        return {
+            'supplier_id': row[0],
+            'purchase_price': float(row[1]) if row[1] is not None else None,
+            'purchase_currency': row[2],
+            'purchase_rate': float(row[3]) if row[3] is not None else None,
+            'logistics_per_unit': float(row[4] or 0),
+            'cost_per_unit': float(row[5]),
+            'shortage_norm_percent': float(row[6]) if row[6] is not None else None,
+        }
+
+    cur.execute(
+        "SELECT sp.supplier_id, sp.price, sp.currency, s.exchange_rate, "
+        "  s.shortage_norm_percent "
+        "FROM supplier_prices sp "
+        "JOIN suppliers s ON s.id = sp.supplier_id "
+        "WHERE sp.material_id = %s "
+        "ORDER BY sp.updated_at DESC NULLS LAST, sp.id DESC "
+        "LIMIT 1",
+        (mid,),
+    )
+    row = cur.fetchone()
+    if not row:
+        return None
+    price = float(row[1]) if row[1] is not None else None
+    if price is None:
+        return None
+    currency = (row[2] or 'RUB').upper()
+    rate = float(row[3]) if row[3] is not None else 1.0
+    if currency == 'RUB':
+        rate = 1.0
+    return {
+        'supplier_id': row[0],
+        'purchase_price': price,
+        'purchase_currency': currency,
+        'purchase_rate': rate,
+        'logistics_per_unit': 0.0,
+        'cost_per_unit': round(price * rate, 4),
+        'shortage_norm_percent': float(row[4]) if row[4] is not None else None,
+    }
+
+
+def apply_supplier_cost_to_roll(cur, roll_id, cost):
+    """Проставляет на рулон поля закупки и себестоимости из last_supplier_cost_for_material."""
+    if not cost:
+        return
+    cur.execute(
+        "UPDATE rolls SET "
+        "  supplier_id = COALESCE(%s, supplier_id), "
+        "  purchase_price = %s, "
+        "  purchase_currency = %s, "
+        "  purchase_rate = %s, "
+        "  logistics_per_unit = %s, "
+        "  cost_per_unit = %s, "
+        "  shortage_norm_percent = COALESCE(%s, shortage_norm_percent) "
+        "WHERE id = %s",
+        (
+            cost.get('supplier_id'),
+            cost.get('purchase_price'),
+            cost.get('purchase_currency'),
+            cost.get('purchase_rate'),
+            cost.get('logistics_per_unit') or 0,
+            cost.get('cost_per_unit'),
+            cost.get('shortage_norm_percent'),
+            int(roll_id),
+        ),
+    )
+
+
+def backfill_manual_rolls_without_cost(cur, material_id=None):
+    """Ручные рулоны без приёмки и без цены — подтянуть последнюю себестоимость.
+
+    material_id: только этот материал (после создания нового рулона).
+    Без параметра — все живые рулоны без себестоимости (починка остатков на складе).
+    """
+    where = [
+        "shipment_id IS NULL",
+        "cost_per_unit IS NULL",
+        "removed_at IS NULL",
+        "status IN ('in_storage', 'in_workshop')",
+        "remaining_quantity > 0",
+    ]
+    params = []
+    if material_id is not None:
+        where.append("material_id = %s")
+        params.append(int(material_id))
+    cur.execute(
+        "SELECT id, material_id FROM rolls WHERE " + " AND ".join(where),
+        tuple(params),
+    )
+    rows = cur.fetchall()
+    if not rows:
+        return 0
+    # Кэш на материал: у пакетов без цены обычно несколько рулонов подряд.
+    cache = {}
+    filled = 0
+    for roll_id, mid in rows:
+        if mid not in cache:
+            cache[mid] = last_supplier_cost_for_material(cur, mid)
+        cost = cache[mid]
+        if not cost:
+            continue
+        apply_supplier_cost_to_roll(cur, roll_id, cost)
+        filled += 1
+    return filled
+
+
 def notify_admin(cur, kind, title, message, actor_id, actor_name, link=None,
                  entity_type=None, entity_id=None):
     """Кладёт событие на панель администратора.
@@ -1170,6 +1299,11 @@ def handler(event: dict, context) -> dict:
             conn = psycopg2.connect(dsn)
             try:
                 cur = conn.cursor()
+                # Ручные рулоны без цены — подтянуть последнюю себестоимость поставщика,
+                # чтобы предупреждение «N рулонов без себестоимости» не висело вечно
+                # из‑за старых записей, заведённых до копирования цены.
+                if backfill_manual_rolls_without_cost(cur):
+                    conn.commit()
                 cur.execute(
                     "SELECT m.id, m.name, m.unit, mt.name, "
                     "COALESCE(SUM(r.remaining_quantity), 0), "
@@ -1582,6 +1716,7 @@ def handler(event: dict, context) -> dict:
             for_user_id = params.get('forUserId')
             session_shift = None
             session_workshop = None
+            actual_role = None
             if for_user_id:
                 cur.execute(
                     "SELECT ss.workshop_id, ss.shift_number, ss.role FROM shift_sessions ss "
@@ -1648,8 +1783,12 @@ def handler(event: dict, context) -> dict:
             # Смена без собственного материала (в ней одни швеи) работает материалом
             # соседних смен цеха — сужать выборку до её номера нельзя вообще, иначе
             # список рулонов всегда пуст и тесьму не выбрать.
+            #
+            # Упаковка (пакеты и этикетки) — общий пул цеха на все смены: фильтр по
+            # номеру смены для упаковщицы не применяем никогда.
+            packaging_role = actual_role in ('packer', 'packer_returns') if for_user_id else False
             shift_has_no_material = False
-            if for_user_id and session_shift is not None and session_workshop:
+            if for_user_id and session_shift is not None and session_workshop and not packaging_role:
                 cur.execute(
                     "SELECT COALESCE(material_free_shifts, '[]'::jsonb) FROM workshops WHERE id = %s",
                     (int(session_workshop),),
@@ -1659,7 +1798,12 @@ def handler(event: dict, context) -> dict:
                     mf = mf_row[0] if isinstance(mf_row[0], list) else json.loads(mf_row[0] or '[]')
                     shift_has_no_material = int(session_shift) in {int(x) for x in mf}
 
-            if for_user_id and session_shift is not None and not shift_has_no_material:
+            if (
+                for_user_id
+                and session_shift is not None
+                and not shift_has_no_material
+                and not packaging_role
+            ):
                 own_conditions = conditions + [f"r.shift_number = {int(session_shift)}"]
                 cur.execute(
                     "SELECT COUNT(*) FROM rolls r "
@@ -1863,16 +2007,36 @@ def handler(event: dict, context) -> dict:
                 # склада заявкой, кладовщик оформляет то, что уже лежит у смены в руках.
                 # Подтверждать нечего, и без отметки такой рулон навсегда остался бы
                 # «не принят» — его нельзя было бы ни использовать, ни закрыть.
+                #
+                # Себестоимость: у ручной записи нет накладной, поэтому берём последнюю
+                # известную цену этого материала у поставщика. Иначе рулон висит в
+                # остатках «бесплатным» и портит сумму склада.
+                cost = last_supplier_cost_for_material(cur, int(material_id))
                 cur.execute(
                     "INSERT INTO rolls (barcode, material_id, workshop_id, shift_number, "
-                    "initial_quantity, remaining_quantity, status, accepted_at) "
+                    "initial_quantity, remaining_quantity, status, accepted_at, "
+                    "supplier_id, purchase_price, purchase_currency, purchase_rate, "
+                    "logistics_per_unit, cost_per_unit, shortage_norm_percent) "
                     "VALUES (%s, %s, %s, %s, %s, %s, %s, "
-                    "        CASE WHEN %s = 'in_workshop' THEN now() ELSE NULL END) "
+                    "        CASE WHEN %s = 'in_workshop' THEN now() ELSE NULL END, "
+                    "        %s, %s, %s, %s, %s, %s, %s) "
                     "RETURNING id",
-                    (barcode, int(material_id), workshop_val, shift_val,
-                     float(initial_quantity), float(initial_quantity), status, status),
+                    (
+                        barcode, int(material_id), workshop_val, shift_val,
+                        float(initial_quantity), float(initial_quantity), status, status,
+                        cost.get('supplier_id') if cost else None,
+                        cost.get('purchase_price') if cost else None,
+                        cost.get('purchase_currency') if cost else None,
+                        cost.get('purchase_rate') if cost else None,
+                        (cost.get('logistics_per_unit') if cost else 0) or 0,
+                        cost.get('cost_per_unit') if cost else None,
+                        cost.get('shortage_norm_percent') if cost else None,
+                    ),
                 )
                 new_id = cur.fetchone()[0]
+                # Заодно подтянуть цену у других ручных рулонов этого материала без
+                # себестоимости — они появились раньше, когда цены ещё не копировали.
+                backfill_manual_rolls_without_cost(cur, int(material_id))
                 conn.commit()
                 return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'id': new_id})}
 

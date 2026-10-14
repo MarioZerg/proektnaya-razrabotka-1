@@ -736,6 +736,56 @@ export const fetchDefectHistory = async (params?: {
   };
 };
 
+/** Одна запись списания брака с терминала (журнал в CRM). */
+export interface DefectWriteoffRow {
+  id: number;
+  userRole: string | null;
+  userName: string | null;
+  userId: number | null;
+  rollId: number | null;
+  rollBarcode: string | null;
+  createdAt: string | null;
+  quantity: number;
+  materialName: string;
+  unit: string | null;
+  reasonLabel: string;
+}
+
+export interface DefectWriteoffsResult {
+  items: DefectWriteoffRow[];
+  totalCount: number;
+  page: number;
+  pageSize: number;
+  employees: { id: number; name: string }[];
+  roles: string[];
+}
+
+/** Журнал списаний брака: только чтение, новые списания — через терминал. */
+export const fetchDefectWriteoffs = async (params?: {
+  dateFrom?: string;
+  dateTo?: string;
+  role?: string;
+  userId?: number;
+  page?: number;
+  pageSize?: number;
+}): Promise<DefectWriteoffsResult> => {
+  const res = await fetch(KIOSK_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'defect_writeoffs_list', ...(params || {}) }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Не удалось загрузить списания брака');
+  return {
+    items: data.items || [],
+    totalCount: data.totalCount ?? 0,
+    page: data.page ?? 1,
+    pageSize: data.pageSize ?? 50,
+    employees: data.employees || [],
+    roles: data.roles || [],
+  };
+};
+
 /** Кусок брака не доехал до склада — кладовщик отправляет его администратору. */
 export const markDefectMissing = async (
   barcode: string,

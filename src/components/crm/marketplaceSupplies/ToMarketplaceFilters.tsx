@@ -54,11 +54,11 @@ const ToMarketplaceFilters = ({
   setSearch,
   onReset,
 }: ToMarketplaceFiltersProps) => (
-  <div className="grid grid-cols-2 items-end gap-3 rounded-md border border-border bg-muted/30 p-3 md:flex md:flex-wrap">
-    <div className="col-span-2 md:contents">
+  <div className="grid grid-cols-1 items-end gap-3 rounded-md border border-border bg-muted/30 p-3 sm:grid-cols-2 lg:flex lg:flex-wrap">
+    <div className="sm:col-span-2 lg:contents">
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
-          <Button disabled={creating} className="w-full md:w-auto">
+          <Button disabled={creating} className="w-full lg:w-auto">
             <Icon name="Plus" size={16} className="mr-2" />
             Создать поставку
           </Button>
@@ -76,7 +76,7 @@ const ToMarketplaceFilters = ({
     <div className="min-w-0 space-y-1.5">
       <Label className="text-xs">Статус</Label>
       <Select value={statusFilter} onValueChange={setStatusFilter}>
-        <SelectTrigger className="w-full md:w-[150px]">
+        <SelectTrigger className="w-full lg:w-[150px]">
           <SelectValue />
         </SelectTrigger>
         <SelectContent>
@@ -91,7 +91,7 @@ const ToMarketplaceFilters = ({
     <div className="min-w-0 space-y-1.5">
       <Label className="text-xs">Тип</Label>
       <Select value={typeFilter} onValueChange={setTypeFilter}>
-        <SelectTrigger className="w-full md:w-[130px]">
+        <SelectTrigger className="w-full lg:w-[130px]">
           <SelectValue />
         </SelectTrigger>
         <SelectContent>
@@ -101,10 +101,10 @@ const ToMarketplaceFilters = ({
         </SelectContent>
       </Select>
     </div>
-    <div className="col-span-2 min-w-0 space-y-1.5 md:col-span-1">
+    <div className="min-w-0 space-y-1.5 sm:col-span-2 lg:col-span-1">
       <Label className="text-xs">Маркетплейс</Label>
       <Select value={marketplaceFilter} onValueChange={setMarketplaceFilter}>
-        <SelectTrigger className="w-full md:w-[170px]">
+        <SelectTrigger className="w-full lg:w-[170px]">
           <SelectValue />
         </SelectTrigger>
         <SelectContent>
@@ -121,15 +121,15 @@ const ToMarketplaceFilters = ({
         места, чем обычное поле такой же ширины. */}
     <div className="min-w-0 space-y-1.5">
       <Label className="text-xs">Отгрузка от</Label>
-      <Input type="date" className="w-full md:w-[170px]" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} />
+      <Input type="date" className="w-full lg:w-[170px]" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} />
     </div>
     <div className="min-w-0 space-y-1.5">
       <Label className="text-xs">Отгрузка до</Label>
-      <Input type="date" className="w-full md:w-[170px]" value={dateTo} onChange={(e) => setDateTo(e.target.value)} />
+      <Input type="date" className="w-full lg:w-[170px]" value={dateTo} onChange={(e) => setDateTo(e.target.value)} />
     </div>
     {/* Ищем по ходу набора — кнопка больше не нужна. Раньше без нажатия на
         неё набранный запрос не применялся, и человек видел старый список. */}
-    <div className="col-span-2 min-w-0 space-y-1.5 md:col-span-1">
+    <div className="min-w-0 space-y-1.5 sm:col-span-2 lg:col-span-1">
       <Label className="text-xs">Поиск</Label>
       <div className="relative">
         <Icon
@@ -138,14 +138,14 @@ const ToMarketplaceFilters = ({
           className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground"
         />
         <Input
-          className="w-full pl-8 md:w-[180px]"
+          className="w-full pl-8 lg:w-[180px]"
           placeholder="Номер поставки"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
         />
       </div>
     </div>
-    <Button variant="ghost" size="sm" className="col-span-2 justify-start md:w-auto" onClick={onReset}>
+    <Button variant="ghost" size="sm" className="justify-start sm:col-span-2 lg:w-auto" onClick={onReset}>
       <Icon name="X" size={14} className="mr-1" />
       Сбросить
       <span className="hidden sm:inline">&nbsp;фильтр</span>

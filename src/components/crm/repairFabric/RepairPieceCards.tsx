@@ -2,8 +2,6 @@ import { Button } from '@/components/ui/button';
 import Icon from '@/components/ui/icon';
 import { formatDateTime } from '@/lib/dateUtils';
 import type { RepairPiece } from '@/lib/repairFabricApi';
-import { lifeFromRepairPiece } from '@/lib/goodsLifeTimeline';
-import GoodsLifeTimeline from '@/components/crm/goodsWarehouse/GoodsLifeTimeline';
 import StatusBadge from '@/components/crm/repairFabric/RepairStatusBadge';
 
 interface RepairPieceCardsProps {
@@ -13,6 +11,7 @@ interface RepairPieceCardsProps {
   deleting: number | null;
   handleWriteOff: (piece: RepairPiece) => void;
   handleDelete: (piece: RepairPiece) => void;
+  onOpen: (piece: RepairPiece) => void;
 }
 
 const RepairPieceCards = ({
@@ -22,26 +21,35 @@ const RepairPieceCards = ({
   deleting,
   handleWriteOff,
   handleDelete,
+  onOpen,
 }: RepairPieceCardsProps) => (
   <>
     {/* Мобильные карточки: в цехе смотрят с телефона, таблица там не читается. */}
     <div className="space-y-2 md:hidden">
       {visible.map((p) => (
-        <div key={p.id} className="rounded-lg border border-border p-3">
+        <div
+          key={p.id}
+          role="button"
+          tabIndex={0}
+          className="cursor-pointer rounded-lg border border-border p-3 transition-colors hover:bg-muted/40 active:bg-muted/60"
+          onClick={() => onOpen(p)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault();
+              onOpen(p);
+            }
+          }}
+        >
           <div className="flex items-start justify-between gap-2">
-            <div>
+            <div className="min-w-0">
               {p.barcode && (
-                <p className="font-mono-tech font-bold text-violet-900">
-                  {p.barcode}
-                </p>
+                <p className="font-mono-tech font-bold text-violet-900">{p.barcode}</p>
               )}
               <p className="font-semibold">
                 {p.material} {p.width}×{p.height}
               </p>
               {p.reasonLabel && (
-                <p className="text-xs font-medium text-amber-800">
-                  {p.reasonLabel}
-                </p>
+                <p className="text-xs font-medium text-amber-800">{p.reasonLabel}</p>
               )}
               {(p.addedByRole === 'storekeeper' || p.addedByRole === 'admin') && (
                 <p className="text-xs font-medium text-violet-800">
@@ -55,10 +63,13 @@ const RepairPieceCards = ({
                 {p.createdByName || '—'} · {formatDateTime(p.createdAt)}
               </p>
             </div>
-            <StatusBadge status={p.status} />
-          </div>
-          <div className="mt-2">
-            <GoodsLifeTimeline events={lifeFromRepairPiece(p)} compact />
+            <div className="flex shrink-0 flex-col items-end gap-1">
+              <StatusBadge status={p.status} />
+              <span className="inline-flex items-center gap-0.5 text-[11px] text-muted-foreground">
+                История
+                <Icon name="ChevronRight" size={12} />
+              </span>
+            </div>
           </div>
           {p.usedOrderNumber && (
             <p className="mt-1 text-xs text-muted-foreground">
@@ -66,10 +77,12 @@ const RepairPieceCards = ({
               {p.usedOrderNumber}
             </p>
           )}
-          {/* Удаление доступно и с телефона: админ чаще всего замечает
-              ошибочную строку, стоя в цехе, а не за компьютером. */}
           {isAdmin && p.status !== 'used' && (
-            <div className="mt-2 flex gap-2">
+            <div
+              className="mt-2 flex gap-2"
+              onClick={(e) => e.stopPropagation()}
+              onKeyDown={(e) => e.stopPropagation()}
+            >
               {p.status !== 'written_off' && (
                 <Button
                   variant="outline"

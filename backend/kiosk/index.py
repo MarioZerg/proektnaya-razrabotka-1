@@ -184,9 +184,10 @@ def write_off_packaging(cur, order_id: int, workshop_id=None) -> str | None:
     """Списывает упаковку заказа (пакет, этикетка на пакет) в момент стикеровки.
 
     Упаковка физически расходуется именно здесь, на терминале упаковщика, а не при
-    раскрое. Берём нужные материалы типа «Упаковка» из состава товара и списываем по
-    FIFO — сначала самые старые рулоны. Повторное закрытие заказа ничего не спишет
-    второй раз. Возвращает текст ошибки при нехватке, иначе None.
+    раскрое. Материалы типа «Упаковка» берём из состава товара (пакет — по размеру
+    карточки). Пул общий на весь цех, без привязки к смене: сначала добиваем
+    начатую коробку, потом следующую по дате выдачи. Повторное закрытие заказа
+    ничего не спишет второй раз. Возвращает текст ошибки при нехватке, иначе None.
 
     СПИСЫВАЕМ ИЗ ЦЕХА УПАКОВЩИЦЫ, А НЕ СО СКЛАДА.
     Раньше FIFO шёл по всем рулонам подряд, и самым старым почти всегда оказывался
@@ -258,8 +259,11 @@ def write_off_packaging(cur, order_id: int, workshop_id=None) -> str | None:
         "AND defect_flagged_at IS NULL "
         "AND status = 'in_workshop' AND accepted_at IS NOT NULL "
         "AND (%s IS NULL OR workshop_id = %s) "
-        # FIFO внутри цеха: сначала начатая коробка, потом свежая.
-        "ORDER BY material_id, created_at ASC",
+        # Общий пул цеха (смена не важна). Сначала добиваем начатую коробку,
+        # потом более раннюю по выдаче — две коробки этикеток уходят по очереди.
+        "ORDER BY material_id, "
+        "CASE WHEN remaining_quantity < initial_quantity THEN 0 ELSE 1 END, "
+        "created_at ASC, id ASC",
         (workshop_id, workshop_id),
     )
     rolls_by_material = {}
@@ -3226,6 +3230,102 @@ def handler(event: dict, context) -> dict:
                         'totalQuantity': round(total_qty, 2),
                         'totalCount': len(items),
                     }, ensure_ascii=False),
+                }
+
+            if action == 'defect_writeoffs_list':
+                # Журнал списаний брака с терминала. Новые списания здесь не заводят —
+                # только смотрят, кто и когда списал кусок со сканера в цехе.
+                date_from = (body_data.get('dateFrom') or '').strip()
+                date_to = (body_data.get('dateTo') or '').strip()
+                role = (body_data.get('role') or '').strip()
+                user_id = body_data.get('userId')
+                try:
+                    page = max(1, int(body_data.get('page') or 1))
+                except (TypeError, ValueError):
+                    page = 1
+                try:
+                    page_size = int(body_data.get('pageSize') or 50)
+                except (TypeError, ValueError):
+                    page_size = 50
+                page_size = max(1, min(page_size, 100))
+
+                conds = ["TRUE"]
+                params = []
+                if date_from:
+                    conds.append("d.created_at >= %s::date")
+                    params.append(date_from)
+                if date_to:
+                    # Включительно по конец указанного дня.
+                    conds.append("d.created_at < %s::date + interval '1 day'")
+                    params.append(date_to)
+                if role:
+                    conds.append("d.user_role = %s")
+                    params.append(role)
+                if user_id not in (None, '', 0, '0'):
+                    conds.append("d.user_id = %s")
+                    params.append(int(user_id))
+                where_sql = " AND ".join(conds)
+
+                cur.execute(
+                    f"SELECT COUNT(*) FROM material_defects d WHERE {where_sql}",
+                    tuple(params),
+                )
+                total_count = int(cur.fetchone()[0] or 0)
+
+                cur.execute(
+                    "SELECT d.id, d.user_role, d.user_name, d.user_id, d.roll_id, r.barcode, "
+                    "d.created_at, d.quantity, m.name, m.unit, d.reason_label "
+                    "FROM material_defects d "
+                    "JOIN materials m ON m.id = d.material_id "
+                    "LEFT JOIN rolls r ON r.id = d.roll_id "
+                    f"WHERE {where_sql} "
+                    "ORDER BY d.created_at DESC, d.id DESC "
+                    "LIMIT %s OFFSET %s",
+                    tuple(params) + [page_size, (page - 1) * page_size],
+                )
+                items = [
+                    {
+                        'id': row[0],
+                        'userRole': row[1],
+                        'userName': row[2],
+                        'userId': row[3],
+                        'rollId': row[4],
+                        'rollBarcode': row[5],
+                        'createdAt': row[6].isoformat() + 'Z' if row[6] else None,
+                        'quantity': float(row[7]),
+                        'materialName': row[8],
+                        'unit': row[9],
+                        'reasonLabel': row[10],
+                    }
+                    for row in cur.fetchall()
+                ]
+
+                # Справочники фильтров — только те, кто реально списывал брак.
+                cur.execute(
+                    "SELECT DISTINCT user_id, user_name FROM material_defects "
+                    "WHERE user_id IS NOT NULL AND COALESCE(user_name, '') <> '' "
+                    "ORDER BY user_name"
+                )
+                employees = [
+                    {'id': row[0], 'name': row[1]} for row in cur.fetchall()
+                ]
+                cur.execute(
+                    "SELECT DISTINCT user_role FROM material_defects "
+                    "WHERE COALESCE(user_role, '') <> '' ORDER BY user_role"
+                )
+                roles = [row[0] for row in cur.fetchall()]
+
+                return {
+                    'statusCode': 200,
+                    'headers': headers,
+                    'body': json.dumps({
+                        'items': items,
+                        'totalCount': total_count,
+                        'page': page,
+                        'pageSize': page_size,
+                        'employees': employees,
+                        'roles': roles,
+                    }, ensure_ascii=False, default=str),
                 }
 
             if action == 'defect_missing_list':

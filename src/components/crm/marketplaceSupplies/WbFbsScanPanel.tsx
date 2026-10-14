@@ -53,7 +53,7 @@ const WbFbsScanPanel = ({
             if (!(e.target as HTMLElement).closest('input, button, a')) scanRef.current?.focus();
           }}
         >
-          <div className="flex items-start gap-2 text-sm font-medium leading-snug text-muted-foreground">
+          <div className="flex items-start gap-2 text-sm font-medium leading-snug text-foreground">
             <Icon name="ScanLine" size={18} className="mt-0.5 shrink-0" />
             Сканируйте стикер заказа WB
           </div>

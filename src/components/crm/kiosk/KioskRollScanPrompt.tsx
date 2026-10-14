@@ -37,7 +37,7 @@ const KioskRollScanPrompt = ({
   onOpenList,
 }: KioskRollScanPromptProps) => (
   <div className="space-y-4">
-    <Card className="border-2 border-dashed border-primary/40 shadow-none">
+    <Card className="border-2 border-dashed border-primary/40 bg-primary/5 shadow-none">
       <CardContent className="flex flex-col items-center gap-4 py-12 text-center">
         <div className="rounded-full bg-primary/10 p-6">
           <Icon name="ScanLine" size={80} className="text-primary" />

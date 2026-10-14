@@ -31,6 +31,8 @@ export const useToWorkshopState = () => {
   const [shipments, setShipments] = useState<Shipment[]>([]);
   const [workshops, setWorkshops] = useState<Workshop[]>([]);
   const [materials, setMaterials] = useState<Material[]>([]);
+  /** id типа «Упаковка» — пакеты и этикетки заказывают на все смены цеха. */
+  const [packagingTypeId, setPackagingTypeId] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [listError, setListError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<TabValue>('new');
@@ -67,7 +69,11 @@ export const useToWorkshopState = () => {
       // Фильтр по цеху можно выбрать позже, если справочник не дошёл.
     });
     fetchMaterialsData()
-      .then((materialsData) => setMaterials(materialsData.materials))
+      .then((materialsData) => {
+        setMaterials(materialsData.materials);
+        const packType = materialsData.types.find((t) => t.name === 'Упаковка');
+        setPackagingTypeId(packType?.id ?? null);
+      })
       .catch(() => {
         // Фильтр по материалу не критичен для списка заявок.
       });
@@ -155,7 +161,14 @@ export const useToWorkshopState = () => {
       if (String(s.materialId) !== materialFilter && !inNames) return false;
     }
     if (workshopFilter !== 'all' && String(s.workshopId) !== workshopFilter) return false;
-    if (shiftFilter !== 'all' && String(s.shiftNumber) !== shiftFilter) return false;
+    // Общие заявки (смена null — упаковка на весь цех) видны при любом фильтре смены.
+    if (
+      shiftFilter !== 'all' &&
+      s.shiftNumber != null &&
+      String(s.shiftNumber) !== shiftFilter
+    ) {
+      return false;
+    }
     return true;
   });
 
@@ -213,6 +226,17 @@ export const useToWorkshopState = () => {
   // Цех и смена в заявке: у сотрудника из открытой смены, у админа — выбранные в диалоге.
   const requestWorkshopId = isAdmin ? Number(reqWorkshopId) || null : effectiveWorkshopId;
   const requestShiftNumber = isAdmin ? Number(reqShiftNumber) || null : effectiveShiftNumber;
+
+  // Пакеты и этикетки — общий материал цеха: смену в заявке не указываем.
+  const selectedMaterials = reqMaterialIds
+    .map(Number)
+    .filter((id) => id > 0)
+    .map((id) => materials.find((m) => m.id === id))
+    .filter((m): m is Material => !!m);
+  const isPackagingOnlyRequest =
+    selectedMaterials.length > 0 &&
+    packagingTypeId != null &&
+    selectedMaterials.every((m) => m.typeId === packagingTypeId);
 
   // Сменили цех — выбранные смена и материал могли остаться от прошлого цеха.
   useEffect(() => {
@@ -282,6 +306,8 @@ export const useToWorkshopState = () => {
     resetFilters,
     openCreate,
     dialogMaterials,
+    packagingTypeId,
+    isPackagingOnlyRequest,
     requestWorkshopId,
     requestShiftNumber,
   };

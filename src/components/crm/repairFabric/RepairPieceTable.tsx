@@ -10,8 +10,6 @@ import {
 import Icon from '@/components/ui/icon';
 import { formatDateTime } from '@/lib/dateUtils';
 import type { RepairPiece } from '@/lib/repairFabricApi';
-import { lifeFromRepairPiece } from '@/lib/goodsLifeTimeline';
-import GoodsLifeTimeline from '@/components/crm/goodsWarehouse/GoodsLifeTimeline';
 import StatusBadge from '@/components/crm/repairFabric/RepairStatusBadge';
 
 interface RepairPieceTableProps {
@@ -21,6 +19,7 @@ interface RepairPieceTableProps {
   deleting: number | null;
   handleWriteOff: (piece: RepairPiece) => void;
   handleDelete: (piece: RepairPiece) => void;
+  onOpen: (piece: RepairPiece) => void;
 }
 
 const RepairPieceTable = ({
@@ -30,6 +29,7 @@ const RepairPieceTable = ({
   deleting,
   handleWriteOff,
   handleDelete,
+  onOpen,
 }: RepairPieceTableProps) => (
   <div className="hidden overflow-x-auto md:block">
     <Table>
@@ -46,12 +46,17 @@ const RepairPieceTable = ({
           {isAdmin && <TableHead>Цех / смена</TableHead>}
           <TableHead>Когда</TableHead>
           {isAdmin && <TableHead>Куда ушёл</TableHead>}
+          <TableHead className="w-10" />
           {isAdmin && <TableHead />}
         </TableRow>
       </TableHeader>
       <TableBody>
         {visible.map((p) => (
-          <TableRow key={p.id}>
+          <TableRow
+            key={p.id}
+            className="cursor-pointer"
+            onClick={() => onOpen(p)}
+          >
             <TableCell className="font-mono-tech font-bold text-violet-900">
               {p.barcode || '—'}
             </TableCell>
@@ -80,11 +85,8 @@ const RepairPieceTable = ({
                 {p.shiftNumber ? ` · смена ${p.shiftNumber}` : ''}
               </TableCell>
             )}
-            <TableCell className="text-sm text-muted-foreground">
+            <TableCell className="text-sm text-muted-foreground whitespace-nowrap">
               {formatDateTime(p.createdAt)}
-              <div className="mt-1">
-                <GoodsLifeTimeline events={lifeFromRepairPiece(p)} compact />
-              </div>
             </TableCell>
             {isAdmin && (
               <TableCell className="text-sm">
@@ -94,17 +96,16 @@ const RepairPieceTable = ({
                   <span className="text-muted-foreground">—</span>
                 )}
                 {p.usedByName && (
-                  <span className="block text-xs text-muted-foreground">
-                    {p.usedByName}
-                  </span>
+                  <span className="block text-xs text-muted-foreground">{p.usedByName}</span>
                 )}
               </TableCell>
             )}
+            <TableCell className="text-muted-foreground">
+              <Icon name="ChevronRight" size={16} title="Открыть историю" />
+            </TableCell>
             {isAdmin && (
-              <TableCell className="text-right">
+              <TableCell className="text-right" onClick={(e) => e.stopPropagation()}>
                 <div className="flex justify-end gap-1">
-                  {/* СПИСАТЬ — кусок был и испортился, след остаётся.
-                      Раскроенный списывать нечего: ткань уже в вещи. */}
                   {(p.status === 'available' || p.status === 'reserved') && (
                     <Button
                       variant="ghost"
@@ -120,10 +121,6 @@ const RepairPieceTable = ({
                       />
                     </Button>
                   )}
-                  {/* УДАЛИТЬ СТРОКУ — для мусора: ошибочная отправка,
-                      дубль, неверные размеры. Израсходованный кусок не
-                      трогаем: он уже вшит в заказ, и без него расход
-                      этого заказа перестанет сходиться. */}
                   {p.status !== 'used' && (
                     <Button
                       variant="ghost"

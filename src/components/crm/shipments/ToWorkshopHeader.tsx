@@ -22,6 +22,7 @@ interface ToWorkshopHeaderProps {
   setReqWorkshopId: (value: string) => void;
   reqShiftNumber: string;
   setReqShiftNumber: (value: string) => void;
+  isPackagingOnlyRequest?: boolean;
   activeTab: TabValue;
   setActiveTab: (tab: TabValue) => void;
   newCount: number;
@@ -50,6 +51,7 @@ const ToWorkshopHeader = ({
   setReqWorkshopId,
   reqShiftNumber,
   setReqShiftNumber,
+  isPackagingOnlyRequest = false,
   activeTab,
   setActiveTab,
   newCount,
@@ -86,6 +88,7 @@ const ToWorkshopHeader = ({
             setReqWorkshopId={setReqWorkshopId}
             reqShiftNumber={reqShiftNumber}
             setReqShiftNumber={setReqShiftNumber}
+            isPackagingOnlyRequest={isPackagingOnlyRequest}
           />
         )}
       </div>

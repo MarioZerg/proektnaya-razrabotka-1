@@ -39,8 +39,7 @@ interface MaterialsTableProps {
   filtered?: boolean;
 }
 
-/** Справочник материалов: на телефоне карточки, на широком экране компактная
- *  таблица без горизонтальной прокрутки. */
+/** Справочник материалов: на узком экране карточки, на широком — таблица в ширину. */
 const MaterialsTable = ({
   loading,
   error = null,
@@ -77,7 +76,8 @@ const MaterialsTable = ({
 
   return (
     <>
-      <div className="md:hidden">
+      {/* До lg — карточки: с боковым меню ERP таблица на md уже не влезает. */}
+      <div className="lg:hidden">
         <MaterialsCards
           materials={pagedMaterials}
           typeById={typeById}
@@ -87,73 +87,70 @@ const MaterialsTable = ({
         />
       </div>
 
-      {/* Восемь колонок уезжали за край вместе с кнопками правки. Связанные поля
-          собраны в ячейки, таблица table-fixed занимает ширину экрана. */}
-      <div className="hidden min-w-0 overflow-hidden rounded-md border border-border md:block">
-        <Table className="min-w-0 table-fixed">
+      <div className="hidden min-w-0 rounded-md border border-border lg:block">
+        {/* min-w-0 table-fixed — без min-w-max из Table, иначе правые колонки
+            уезжают за край, а overflow-hidden родителя их обрезает. */}
+        <Table className="w-full min-w-0 table-fixed">
           <TableHeader>
             <TableRow className="bg-primary hover:bg-primary">
-              <TableHead className="w-[32%] whitespace-normal text-primary-foreground">
+              <TableHead className="w-[34%] whitespace-normal text-primary-foreground">
                 Материал
               </TableHead>
               <TableHead className="w-[28%] whitespace-normal text-primary-foreground">
                 Магазины
               </TableHead>
-              <TableHead className="w-[16%] whitespace-normal text-primary-foreground">
+              <TableHead className="w-[14%] whitespace-normal text-primary-foreground">
                 Цена
               </TableHead>
-              <TableHead className="w-[12%] whitespace-normal text-primary-foreground">
+              <TableHead className="w-[24%] whitespace-normal text-right text-primary-foreground">
                 Статус
               </TableHead>
-              <TableHead className="w-[12%] whitespace-normal text-primary-foreground" />
             </TableRow>
           </TableHeader>
           <TableBody>
             {pagedMaterials.map((m) => (
               <TableRow key={m.id}>
-                <TableCell className="whitespace-normal break-words align-top">
+                <TableCell className="min-w-0 whitespace-normal break-words align-top">
                   <div className="font-medium">
                     {m.name}
                     {isTulleTypeName(typeById.get(m.typeId)) &&
                       m.requiresOverlock &&
                       !(m.shops && m.shops.length > 0) && (
-                      <Badge
-                        variant="outline"
-                        className="ml-2 gap-1 border-fuchsia-300 bg-fuchsia-50 font-normal text-fuchsia-700"
-                      >
-                        <Icon name="Scissors" size={11} />
-                        Оверлок
-                      </Badge>
-                    )}
+                        <Badge
+                          variant="outline"
+                          className="ml-2 gap-1 border-fuchsia-300 bg-fuchsia-50 font-normal text-fuchsia-700"
+                        >
+                          <Icon name="Scissors" size={11} />
+                          Оверлок
+                        </Badge>
+                      )}
                   </div>
                   <div className="text-xs text-muted-foreground">
                     {typeById.get(m.typeId) || '—'} · #{m.id}
                   </div>
                 </TableCell>
-                <TableCell className="whitespace-normal align-top">
+                <TableCell className="min-w-0 whitespace-normal align-top">
                   <MaterialShopsBadges
                     material={m}
                     shopById={shopById}
                     typeName={typeById.get(m.typeId)}
                   />
                 </TableCell>
-                <TableCell className="whitespace-normal break-words align-top">
+                <TableCell className="min-w-0 whitespace-normal break-words align-top">
                   {m.avgCost > 0 ? (
                     <div>
-                      {m.avgCost.toFixed(2)} ₽
+                      <span className="tabular-nums">{m.avgCost.toFixed(2)} ₽</span>
                       <div className="text-xs text-muted-foreground">за {m.unit}</div>
                     </div>
                   ) : (
                     <span className="text-muted-foreground">— / {m.unit}</span>
                   )}
                 </TableCell>
-                <TableCell className="align-top">
-                  <Badge variant={m.status === 'active' ? 'secondary' : 'outline'}>
-                    {m.status === 'active' ? 'Активен' : 'Архив'}
-                  </Badge>
-                </TableCell>
-                <TableCell className="align-top">
-                  <div className="flex justify-end gap-2">
+                <TableCell className="min-w-0 align-top">
+                  <div className="flex flex-wrap items-center justify-end gap-2">
+                    <Badge variant={m.status === 'active' ? 'secondary' : 'outline'}>
+                      {m.status === 'active' ? 'Активен' : 'Архив'}
+                    </Badge>
                     <Button size="icon" variant="secondary" onClick={() => onEdit(m)}>
                       <Icon name="Pencil" size={14} />
                     </Button>
@@ -187,36 +184,36 @@ const MaterialsTable = ({
         </Table>
       </div>
 
-    {totalPages > 1 && (
-      <div className="flex flex-wrap items-center justify-center gap-2">
-        <Button
-          size="icon"
-          variant="outline"
-          disabled={page === 1}
-          onClick={() => setPage((p) => Math.max(1, p - 1))}
-        >
-          <Icon name="ChevronLeft" size={16} />
-        </Button>
-        {Array.from({ length: totalPages }, (_, i) => i + 1).map((p) => (
+      {totalPages > 1 && (
+        <div className="flex flex-wrap items-center justify-center gap-2">
           <Button
-            key={p}
             size="icon"
-            variant={p === page ? 'default' : 'outline'}
-            onClick={() => setPage(p)}
+            variant="outline"
+            disabled={page === 1}
+            onClick={() => setPage((p) => Math.max(1, p - 1))}
           >
-            {p}
+            <Icon name="ChevronLeft" size={16} />
           </Button>
-        ))}
-        <Button
-          size="icon"
-          variant="outline"
-          disabled={page === totalPages}
-          onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-        >
-          <Icon name="ChevronRight" size={16} />
-        </Button>
-      </div>
-    )}
+          {Array.from({ length: totalPages }, (_, i) => i + 1).map((p) => (
+            <Button
+              key={p}
+              size="icon"
+              variant={p === page ? 'default' : 'outline'}
+              onClick={() => setPage(p)}
+            >
+              {p}
+            </Button>
+          ))}
+          <Button
+            size="icon"
+            variant="outline"
+            disabled={page === totalPages}
+            onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+          >
+            <Icon name="ChevronRight" size={16} />
+          </Button>
+        </div>
+      )}
     </>
   );
 };

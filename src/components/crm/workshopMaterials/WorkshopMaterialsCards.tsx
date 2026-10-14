@@ -3,10 +3,11 @@ import Icon from '@/components/ui/icon';
 import { formatQuantity } from '@/lib/formatQuantity';
 import { getStockLevel, stockCellClass } from '@/lib/stockLevels';
 import WorkshopMaterialRolls from '@/components/crm/workshopMaterials/WorkshopMaterialRolls';
-import type {
-  WorkshopMaterialColumn,
-  WorkshopMaterialRow,
-  WorkshopMaterialType,
+import {
+  packagingColumns,
+  type WorkshopMaterialColumn,
+  type WorkshopMaterialRow,
+  type WorkshopMaterialType,
 } from '@/lib/workshopMaterialsApi';
 
 interface WorkshopMaterialsCardsProps {
@@ -37,7 +38,12 @@ const WorkshopMaterialsCards = ({
 
   return (
   <div className="space-y-4">
-    {types.map((type) => (
+    {types.map((type) => {
+      // Упаковка — общий пул: одна плашка на цех, без колонок «Смена 1 / Смена 2».
+      const typeColumns =
+        type.name === 'Упаковка' ? packagingColumns(visibleColumns) : visibleColumns;
+      const hideTypeTotal = type.name === 'Упаковка' || !showTotal;
+      return (
       <div key={type.id} className="min-w-0 overflow-hidden rounded-md border border-border">
         <div className="flex min-w-0 items-baseline justify-between gap-2 border-b border-border bg-muted/50 px-3 py-2">
           <span className="text-sm font-semibold">{type.name}</span>
@@ -46,7 +52,7 @@ const WorkshopMaterialsCards = ({
         <div className="divide-y divide-border">
           {type.materials.map((m) => {
             const total = totalFor(m);
-            const cells = visibleColumns.length + (showTotal ? 1 : 0);
+            const cells = typeColumns.length + (hideTypeTotal ? 0 : 1);
             return (
               <div key={m.materialId} className="px-3 py-2.5">
                 <button
@@ -80,10 +86,11 @@ const WorkshopMaterialsCards = ({
                         : 'grid-cols-2 lg:grid-cols-3 xl:grid-cols-4'
                   }`}
                 >
-                  {visibleColumns.map((col) => {
+                  {typeColumns.map((col) => {
                     const cell = m.cells.find(
                       (c) =>
-                        c.workshopId === col.workshopId && c.shiftNumber === col.shiftNumber,
+                        c.workshopId === col.workshopId &&
+                        (col.shiftNumber === null || c.shiftNumber === col.shiftNumber),
                     );
                     const level = cell ? getStockLevel(cell.quantity, m.unit) : null;
                     return (
@@ -115,7 +122,7 @@ const WorkshopMaterialsCards = ({
                       </div>
                     );
                   })}
-                  {showTotal && (
+                  {!hideTypeTotal && (
                     <div
                       className={`min-w-0 rounded-md px-2 py-1.5 ${(() => {
                         const lvl = getStockLevel(total.quantity, m.unit);
@@ -138,7 +145,7 @@ const WorkshopMaterialsCards = ({
                   <WorkshopMaterialRolls
                     material={m}
                     typeName={type.name}
-                    columns={visibleColumns}
+                    columns={typeColumns}
                     showWorkshopName={showWorkshopName}
                   />
                 )}
@@ -147,7 +154,8 @@ const WorkshopMaterialsCards = ({
           })}
         </div>
       </div>
-    ))}
+      );
+    })}
   </div>
   );
 };

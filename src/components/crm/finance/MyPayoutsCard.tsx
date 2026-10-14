@@ -25,9 +25,16 @@ const MyPayoutsCard = ({ payouts, loading }: MyPayoutsCardProps) => {
           <p className="text-sm text-muted-foreground">Выплат пока не было</p>
         ) : (
           visible.map((p) => (
-            <div key={p.id} className="flex items-center justify-between border-b border-border pb-2 text-sm last:border-0">
-              <span className="text-muted-foreground">{formatDateTime(p.paidAt)}</span>
-              <span className="font-semibold text-emerald-600">{formatMoney(p.amount)} ₽</span>
+            <div
+              key={p.id}
+              className="flex min-w-0 items-baseline justify-between gap-2 border-b border-border pb-2 text-sm last:border-0"
+            >
+              <span className="min-w-0 truncate text-muted-foreground">
+                {formatDateTime(p.paidAt)}
+              </span>
+              <span className="shrink-0 font-semibold tabular-nums text-emerald-600">
+                {formatMoney(p.amount)} ₽
+              </span>
             </div>
           ))
         )}

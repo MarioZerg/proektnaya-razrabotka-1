@@ -232,50 +232,53 @@ const Stocktakes = () => {
           </div>
         ) : (
           <>
-            {/* ИДЁТ ПЕРЕСЧЁТ — рабочий экран кладовщика. */}
+            {/* ИДЁТ ПЕРЕСЧЁТ — рабочий экран: сканер, цифры, кнопки. Без истории. */}
             {active && canCount && (
-              <div className="space-y-4 rounded-lg border border-primary/40 bg-primary/5 p-4">
-                <div className="flex flex-wrap items-center gap-2">
-                  <Badge>Инвентаризация №{active.id}</Badge>
-                  <span className="text-sm text-muted-foreground">
-                    начал {active.startedByName || '—'},{' '}
-                    {active.startedAt ? formatDateTime(active.startedAt) : ''}
-                  </span>
+              <div className="space-y-3 rounded-lg border border-primary/40 bg-primary/5 p-4">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Badge>№{active.id}</Badge>
+                    <span className="text-sm text-muted-foreground">
+                      {active.startedByName || '—'}
+                      {active.startedAt ? ` · ${formatDateTime(active.startedAt)}` : ''}
+                    </span>
+                  </div>
                 </div>
 
                 {active.status === 'rejected' && active.rejectReason && (
-                  <div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
-                    Администратор вернул на пересчёт: {active.rejectReason}
+                  <div className="rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+                    Вернули на пересчёт: {active.rejectReason}
                   </div>
                 )}
 
                 <StocktakeScanner stocktake={active} onScanned={reloadActive} />
 
-                {active.report && <StocktakeReportView report={active.report} />}
+                {active.report && <StocktakeReportView report={active.report} compact />}
 
-                <div className="space-y-2">
-                  <Textarea
-                    placeholder="Комментарий для администратора (необязательно): что смотрели, где расхождения"
-                    value={note}
-                    onChange={(e) => setNote(e.target.value)}
-                    rows={2}
-                  />
-                  <Button size="lg" className="w-full" onClick={handleClose} disabled={saving}>
-                    <Icon name={saving ? 'Loader2' : 'Send'} size={18} className={`mr-2 ${saving ? 'animate-spin' : ''}`} />
-                    Закрыть инвентаризацию и отправить администратору
+                <Textarea
+                  placeholder="Комментарий админу (необязательно)"
+                  value={note}
+                  onChange={(e) => setNote(e.target.value)}
+                  rows={1}
+                  className="min-h-9 resize-none"
+                />
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                  <Button className="sm:flex-1" onClick={handleClose} disabled={saving}>
+                    <Icon
+                      name={saving ? 'Loader2' : 'Send'}
+                      size={16}
+                      className={`mr-1.5 ${saving ? 'animate-spin' : ''}`}
+                    />
+                    Закрыть и отправить админу
                   </Button>
-                  <p className="text-xs text-muted-foreground">
-                    После закрытия сканировать будет нельзя. Ненайденные вещи спишет
-                    администратор
-                  </p>
                   <Button
                     variant="ghost"
-                    className="w-full text-muted-foreground"
+                    className="text-muted-foreground sm:shrink-0"
                     onClick={() => handleCancel(active.id)}
                     disabled={saving}
                   >
                     <Icon name="Trash2" size={15} className="mr-1.5" />
-                    Отменить инвентаризацию — открыл по ошибке
+                    Отменить
                   </Button>
                 </div>
               </div>
@@ -327,41 +330,45 @@ const Stocktakes = () => {
                 )}
 
                 {isAdmin ? (
-                  <div className="space-y-3 border-t border-amber-200 pt-3">
+                  <div className="space-y-2 border-t border-amber-200 pt-3">
                     <Button
-                      size="lg"
                       variant="destructive"
                       className="w-full"
                       onClick={handleApprove}
                       disabled={saving}
                     >
-                      <Icon name={saving ? 'Loader2' : 'Check'} size={18} className={`mr-2 ${saving ? 'animate-spin' : ''}`} />
-                      Подтвердить и списать ненайденное ({pending.report?.missingCount ?? 0})
-                    </Button>
-                    <div className="space-y-2">
-                      <Textarea
-                        placeholder="Причина возврата на пересчёт (если что-то не сходится)"
-                        value={rejectReason}
-                        onChange={(e) => setRejectReason(e.target.value)}
-                        rows={2}
+                      <Icon
+                        name={saving ? 'Loader2' : 'Check'}
+                        size={16}
+                        className={`mr-1.5 ${saving ? 'animate-spin' : ''}`}
                       />
+                      Подтвердить и списать ({pending.report?.missingCount ?? 0})
+                    </Button>
+                    <Textarea
+                      placeholder="Причина возврата на пересчёт"
+                      value={rejectReason}
+                      onChange={(e) => setRejectReason(e.target.value)}
+                      rows={1}
+                      className="min-h-9 resize-none"
+                    />
+                    <div className="flex flex-col gap-2 sm:flex-row">
                       <Button
                         variant="outline"
-                        className="w-full"
+                        className="sm:flex-1"
                         onClick={handleReject}
                         disabled={saving || !rejectReason.trim()}
                       >
                         <Icon name="Undo2" size={16} className="mr-1.5" />
-                        Вернуть кладовщику на пересчёт
+                        Вернуть на пересчёт
                       </Button>
                       <Button
                         variant="ghost"
-                        className="w-full text-muted-foreground"
+                        className="text-muted-foreground sm:shrink-0"
                         onClick={() => handleCancel(pending.id)}
                         disabled={saving}
                       >
                         <Icon name="Trash2" size={15} className="mr-1.5" />
-                        Отменить инвентаризацию — ничего не списывать
+                        Отменить без списания
                       </Button>
                     </div>
                   </div>
@@ -374,62 +381,63 @@ const Stocktakes = () => {
               </div>
             )}
 
-            {/* ИСТОРИЯ. */}
-            <div className="rounded-md border border-border">
-              <div className="border-b border-border bg-muted/50 px-4 py-2 text-sm font-semibold">
-                История инвентаризаций
-              </div>
-              {history.length === 0 ? (
-                <p className="p-4 text-sm text-muted-foreground">Инвентаризаций пока не было</p>
-              ) : (
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>№</TableHead>
-                      <TableHead>Статус</TableHead>
-                      <TableHead>Кладовщик</TableHead>
-                      <TableHead>Начата</TableHead>
-                      <TableHead className="text-center">Числилось</TableHead>
-                      <TableHead className="text-center">Найдено</TableHead>
-                      <TableHead className="text-center">Списано</TableHead>
-                      <TableHead>Подтвердил</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {history.map((s) => (
-                      <TableRow key={s.id}>
-                        <TableCell className="font-medium">{s.id}</TableCell>
-                        <TableCell>
-                          <Badge
-                            variant={
-                              s.status === 'approved'
-                                ? 'default'
-                                : s.status === 'pending_approval'
-                                  ? 'secondary'
-                                  : s.status === 'rejected'
-                                    ? 'destructive'
-                                    : 'outline'
-                            }
-                          >
-                            {STOCKTAKE_STATUS_LABEL[s.status]}
-                          </Badge>
-                        </TableCell>
-                        <TableCell>{s.startedByName || '—'}</TableCell>
-                        <TableCell className="text-sm text-muted-foreground">
-                          {s.startedAt ? formatDateTime(s.startedAt) : '—'}
-                        </TableCell>
-                        <TableCell className="text-center">{s.expectedCount}</TableCell>
-                        <TableCell className="text-center">{s.foundCount}</TableCell>
-                        <TableCell className="text-center font-medium">
-                          {s.status === 'approved' ? s.missingCount : '—'}
-                        </TableCell>
-                        <TableCell>{s.approvedByName || '—'}</TableCell>
+            {/* История — только когда пересчёт не идёт: во время работы не отвлекает. */}
+            {!active && (
+              <div className="rounded-md border border-border">
+                <div className="border-b border-border bg-muted/50 px-3 py-1.5 text-sm font-semibold">
+                  История
+                </div>
+                {history.length === 0 ? (
+                  <p className="p-3 text-sm text-muted-foreground">Инвентаризаций пока не было</p>
+                ) : (
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead className="h-8 w-12">№</TableHead>
+                        <TableHead className="h-8">Статус</TableHead>
+                        <TableHead className="h-8">Кто</TableHead>
+                        <TableHead className="h-8">Когда</TableHead>
+                        <TableHead className="h-8 text-center">Найдено</TableHead>
+                        <TableHead className="h-8 text-center">Списано</TableHead>
                       </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              )}
-            </div>
+                    </TableHeader>
+                    <TableBody>
+                      {history.map((s) => (
+                        <TableRow key={s.id}>
+                          <TableCell className="py-1.5 font-medium">{s.id}</TableCell>
+                          <TableCell className="py-1.5">
+                            <Badge
+                              variant={
+                                s.status === 'approved'
+                                  ? 'default'
+                                  : s.status === 'pending_approval'
+                                    ? 'secondary'
+                                    : s.status === 'rejected'
+                                      ? 'destructive'
+                                      : 'outline'
+                              }
+                            >
+                              {STOCKTAKE_STATUS_LABEL[s.status]}
+                            </Badge>
+                          </TableCell>
+                          <TableCell className="py-1.5">{s.startedByName || '—'}</TableCell>
+                          <TableCell className="py-1.5 text-sm text-muted-foreground">
+                            {s.startedAt ? formatDateTime(s.startedAt) : '—'}
+                          </TableCell>
+                          <TableCell className="py-1.5 text-center tabular-nums">
+                            {s.foundCount}
+                            <span className="text-muted-foreground">/{s.expectedCount}</span>
+                          </TableCell>
+                          <TableCell className="py-1.5 text-center font-medium tabular-nums">
+                            {s.status === 'approved' ? s.missingCount : '—'}
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                )}
+              </div>
+            )}
           </>
         )}
       </div>

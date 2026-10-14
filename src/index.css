@@ -34,21 +34,21 @@
 
     --radius: 0.6rem;
 
-    --sidebar-background: 90 18% 7%;
+    --sidebar-background: 95 16% 8%;
 
-    --sidebar-foreground: 60 15% 92%;
+    --sidebar-foreground: 60 12% 94%;
 
-    --sidebar-primary: 90 16% 26%;
+    --sidebar-primary: 145 35% 32%;
 
     --sidebar-primary-foreground: 60 20% 98%;
 
-    --sidebar-accent: 90 14% 15%;
+    --sidebar-accent: 95 12% 14%;
 
     --sidebar-accent-foreground: 60 20% 98%;
 
-    --sidebar-border: 90 12% 15%;
+    --sidebar-border: 95 10% 16%;
 
-    --sidebar-ring: 90 16% 26%;
+    --sidebar-ring: 145 30% 40%;
   }
 
   .dark {
@@ -147,11 +147,27 @@ html {
 .prod-flow-photo {
   width: 100%;
   aspect-ratio: 16 / 9;
-  max-height: 11.5rem;
+  /* На телефоне плитки в две колонки — фото ниже, иначе экран одна сцена. */
+  max-height: 5.75rem;
+}
+/* «Новые задания» на всю ширину — чуть выше, чтобы было видно стол. */
+.prod-flow-photo-spotlight {
+  max-height: 9.5rem;
+}
+@container prodflow (min-width: 20rem) {
+  .prod-flow-photo {
+    max-height: 8.5rem;
+  }
+  .prod-flow-photo-spotlight {
+    max-height: 11rem;
+  }
 }
 @container prodflow (min-width: 26rem) {
   .prod-flow-photo {
-    max-height: 16rem;
+    max-height: 14rem;
+  }
+  .prod-flow-photo-spotlight {
+    max-height: 14rem;
   }
 }
 /* Шапка главной. Две кнопки стоят столбиком, пока полоса узкая
@@ -198,25 +214,56 @@ html {
   }
 }
 
-/* БОКОВОЕ МЕНЮ.
+/* БОКОВОЕ МЕНЮ ERP.
  *
  * Пункты меню жёстко ограничены по высоте (h-8) в базовом компоненте, поэтому от
  * увеличения шрифта они не выросли бы, а текст в них стал бы тесным. Задаём меню
  * собственный размер: и подпись крупнее, и попасть мышью проще. */
 [data-sidebar="menu-button"] {
   height: auto;
-  min-height: 2.4rem;
+  min-height: 2.55rem;
   font-size: 0.95rem;
 }
 
 [data-sidebar="menu-sub-button"] {
   height: auto;
-  min-height: 2.2rem;
+  min-height: 2.35rem;
   font-size: 0.9rem;
 }
 
 [data-sidebar="group-label"] {
   font-size: 0.85rem;
+}
+
+/* Активный пункт — мягкая заливка и полоска слева, чтобы сразу видно «где ты». */
+.crm-nav-item[data-active="true"],
+.crm-nav-sub-item[data-active="true"] {
+  background: hsl(145 28% 18% / 0.72) !important;
+  color: hsl(60 20% 98%) !important;
+  box-shadow: inset 3px 0 0 hsl(145 45% 48%);
+}
+
+.crm-nav-item:hover,
+.crm-nav-sub-item:hover {
+  background: hsl(var(--sidebar-accent) / 0.9);
+}
+
+.crm-sidebar-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: hsl(var(--sidebar-border)) transparent;
+}
+
+.crm-sidebar-scroll::-webkit-scrollbar {
+  width: 5px;
+}
+
+.crm-sidebar-scroll::-webkit-scrollbar-thumb {
+  background: hsl(var(--sidebar-border));
+  border-radius: 999px;
+}
+
+.crm-sidebar-scroll::-webkit-scrollbar-track {
+  background: transparent;
 }
 
 /* УСТАНОВЛЕННОЕ ПРИЛОЖЕНИЕ НА IPHONE (PWA).
@@ -267,6 +314,18 @@ body {
 [data-sidebar="sidebar"][data-mobile="true"] {
   padding-top: env(safe-area-inset-top);
   padding-bottom: env(safe-area-inset-bottom);
+}
+
+@media (max-width: 767px) {
+  [data-sidebar="menu-button"],
+  [data-sidebar="menu-sub-button"] {
+    min-height: 2.75rem;
+  }
+
+  .crm-nav-item,
+  .crm-nav-sub-item {
+    border-radius: 0.85rem;
+  }
 }
 
 /* Мобильная адаптация: на телефонах увеличиваем базовый шрифт и удобство нажатий,

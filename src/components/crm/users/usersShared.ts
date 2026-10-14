@@ -13,18 +13,20 @@ export const initials = (name: string) =>
     .toUpperCase();
 
 /**
- * «Привезенцева Елена Александровна» -> «Привезенцева Елена А.»
+ * «Коротаева Наталья Александровна» → «Коротаева Н.А.»
  *
- * Раньше в списке оставляли только «Е. А.», и по одной букве не отличить Елену
- * от Екатерины. Имя показываем целиком, отчество — инициалом: строка короче
- * полного ФИО, но человека всё ещё узнают. Фамилию и имя можно перенести,
- * а «Елена А.» держим вместе неразрывным пробелом.
+ * На телефоне полное ФИО обрезалось или ломалось по буквам. Фамилия + инициалы
+ * имени и отчества помещаются в строку у всех сотрудников; полное ФИО — в title.
  */
 export const shortName = (fullName: string) => {
   const parts = (fullName || '').trim().split(/\s+/).filter(Boolean);
-  if (parts.length <= 2) return fullName || '';
-  const patronymicInitial = `${parts[2][0].toUpperCase()}.`;
-  return `${parts[0]} ${parts[1]}\u00a0${patronymicInitial}`;
+  if (parts.length === 0) return '';
+  const [last, first, middle] = parts;
+  const fioInitials = [first, middle]
+    .filter(Boolean)
+    .map((p) => `${p[0].toUpperCase()}.`)
+    .join('');
+  return fioInitials ? `${last} ${fioInitials}` : last;
 };
 
 export { formatDateTime } from '@/lib/dateUtils';

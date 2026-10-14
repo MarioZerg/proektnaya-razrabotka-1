@@ -1,5 +1,5 @@
-import Icon from '@/components/ui/icon';
 import KioskManualSearch from '@/components/crm/kiosk/KioskManualSearch';
+import ScanPromptHero from '@/components/crm/scan/ScanPromptHero';
 import type { KioskOrder } from '@/lib/kioskApi';
 
 interface KioskScanPromptProps {
@@ -23,22 +23,16 @@ const KioskScanPrompt = ({
   role,
   onSelect,
 }: KioskScanPromptProps) => (
-  <div className="flex flex-col items-center gap-6 py-10">
-    <Icon
-      name={searching ? 'Loader2' : 'ScanLine'}
-      size={72}
-      className={`text-muted-foreground ${searching ? 'animate-spin' : ''}`}
+  <div className="space-y-4">
+    <ScanPromptHero
+      title={searching ? 'Ищем заказ…' : 'Отсканируйте QR-код с листка закройщика'}
+      subtitle="Сканируются только заказы на стикеровке"
+      loading={searching}
     />
-    <p className="text-center text-2xl font-semibold">
-      {searching ? 'Ищем заказ…' : 'Отсканируйте QR-код с листка закройщика'}
-    </p>
-    <p className="text-center text-muted-foreground">
-      Сканируются только заказы на стикеровке
-    </p>
     {/* Запасной путь, если сканер сломался или QR затёрт: найти заказ по размеру.
         Включается настройкой цеха «Ручной поиск заказа на терминале». */}
     {manualSearchAllowed && (
-      <div className="w-full max-w-md">
+      <div className="mx-auto w-full max-w-md">
         <KioskManualSearch workshopId={workshopId} role={role} onSelect={onSelect} />
       </div>
     )}

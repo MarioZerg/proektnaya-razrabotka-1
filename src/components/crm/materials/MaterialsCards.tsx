@@ -28,8 +28,8 @@ const MaterialsCards = ({
         key={m.id}
         className="min-w-0 overflow-hidden rounded-lg border border-border bg-card p-3"
       >
-        <div className="flex items-start justify-between gap-2">
-          <div className="min-w-0">
+        <div className="flex min-w-0 items-start justify-between gap-2">
+          <div className="min-w-0 flex-1">
             <div className="break-words font-semibold">{m.name}</div>
             <div className="text-xs text-muted-foreground">
               {typeById.get(m.typeId) || '—'} · #{m.id}
@@ -37,7 +37,7 @@ const MaterialsCards = ({
           </div>
           <Badge
             variant={m.status === 'active' ? 'secondary' : 'outline'}
-            className="shrink-0"
+            className="max-w-[40%] shrink-0 truncate"
           >
             {m.status === 'active' ? 'Активен' : 'Архив'}
           </Badge>

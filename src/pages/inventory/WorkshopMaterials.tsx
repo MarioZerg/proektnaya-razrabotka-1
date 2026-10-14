@@ -4,6 +4,7 @@ import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import Icon from '@/components/ui/icon';
 import {
   fetchWorkshopMaterials,
+  mergePackagingCellsByWorkshop,
   type WorkshopMaterialType,
   type WorkshopMaterialColumn,
 } from '@/lib/workshopMaterialsApi';
@@ -11,21 +12,9 @@ import { STOCK_LOW_LIMIT, STOCK_MEDIUM_LIMIT } from '@/lib/stockLevels';
 import { useAuth } from '@/context/AuthContext';
 import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
 import WorkshopMaterialsCards from '@/components/crm/workshopMaterials/WorkshopMaterialsCards';
-import { Button } from '@/components/ui/button';
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu';
-import { useToast } from '@/hooks/use-toast';
 
 const WorkshopMaterials = () => {
   const { user } = useAuth();
-  const { toast } = useToast();
-  const [printing, setPrinting] = useState(false);
   const [types, setTypes] = useState<WorkshopMaterialType[]>([]);
   const [columns, setColumns] = useState<WorkshopMaterialColumn[]>([]);
   const [activeColumn, setActiveColumn] = useState<{ workshopId: number; shiftNumber: number | null } | null>(null);
@@ -38,7 +27,7 @@ const WorkshopMaterials = () => {
     fetchWorkshopMaterials()
       .then((materialsResp) => {
         setListError(null);
-        setTypes(materialsResp.types);
+        setTypes(mergePackagingCellsByWorkshop(materialsResp.types));
         setColumns(materialsResp.columns);
         setActiveColumn(materialsResp.activeColumn);
         setMaterialFreeShifts(materialsResp.materialFreeShifts || {});
@@ -154,72 +143,13 @@ const WorkshopMaterials = () => {
     };
   };
 
-  // PDF о простое рулонов: на каждую смену — свой файл.
-  const handlePrint = async (cols: WorkshopMaterialColumn[], kind: 'idle' | 'unrecorded' = 'idle') => {
-    if (cols.length === 0) return;
-    setPrinting(true);
-    try {
-      const single = new Set(cols.map((c) => c.workshopId)).size === 1;
-      const wid = single ? cols[0].workshopId : undefined;
-      const made =
-        kind === 'idle'
-          ? await (await import('@/lib/printWorkshopRollsReport')).printWorkshopRollsReport(cols, wid)
-          : await (await import('@/lib/printUnrecordedCutReport')).printUnrecordedCutReport(cols, wid);
-      toast({ title: made === 1 ? 'PDF сформирован' : `Сформировано файлов: ${made}`, description: 'По одному на смену' });
-    } catch (e) {
-      toast({
-        title: 'Не удалось сформировать PDF',
-        description: e instanceof Error ? e.message : undefined,
-        variant: 'destructive',
-      });
-    } finally {
-      setPrinting(false);
-    }
-  };
-
   return (
     <CrmLayout>
       <div className="min-w-0 space-y-4 overflow-x-hidden sm:space-y-6">
         <div>
-          <div className="flex flex-wrap items-start justify-between gap-2">
           <h1 className="text-xl font-bold">Материал на производстве</h1>
-          {visibleColumns.length > 0 && (
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button variant="outline" size="sm" disabled={printing}>
-                  <Icon name={printing ? 'Loader2' : 'FileDown'} size={16} className={`mr-1.5 ${printing ? 'animate-spin' : ''}`} />
-                  PDF по сменам
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-72">
-                {(['idle', 'unrecorded'] as const).map((kind, idx) => (
-                  <div key={kind}>
-                    {idx > 0 && <DropdownMenuSeparator />}
-                    <DropdownMenuLabel className="flex items-center gap-2">
-                      <Icon name={kind === 'idle' ? 'Timer' : 'Scissors'} size={16} />
-                      {kind === 'idle' ? 'Простой рулонов' : 'Резка без записи'}
-                    </DropdownMenuLabel>
-                    {visibleColumns.length > 1 && (
-                      <DropdownMenuItem onClick={() => handlePrint(visibleColumns, kind)}>
-                        <Icon name="Files" size={16} className="mr-2" />
-                        Все смены — каждая отдельным файлом
-                      </DropdownMenuItem>
-                    )}
-                    {visibleColumns.map((c) => (
-                      <DropdownMenuItem key={`${kind}-${c.workshopId}-${c.shiftNumber}`} onClick={() => handlePrint([c], kind)}>
-                        <Icon name="FileText" size={16} className="mr-2" />
-                        {new Set(visibleColumns.map((v) => v.workshopId)).size > 1 ? `${c.workshopName} · ` : ''}
-                        {c.shiftLabel}
-                      </DropdownMenuItem>
-                    ))}
-                  </div>
-                ))}
-              </DropdownMenuContent>
-            </DropdownMenu>
-          )}
-          </div>
           <p className="mt-1 text-sm text-muted-foreground">
-            Остатки материалов в цехах по сменам (рулоны со статусом «в цехе»)
+            Остатки в цехах: ткань и тесьма по сменам, пакеты и этикетки — общий пул
           </p>
           {isMaterialFreeShift && (
             <p className="mt-1 text-sm text-muted-foreground">

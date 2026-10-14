@@ -34,7 +34,8 @@ export const shiftLabel = (
   workshopId?: number | null,
   shiftNumber?: number | null
 ) => {
-  if (!shiftNumber) return '—';
+  // null — общий материал цеха (пакеты и этикетки) на все смены.
+  if (shiftNumber == null) return 'Все смены';
   const w = workshops.find((wk) => wk.id === workshopId);
   return w?.shiftNames?.[shiftNumber - 1] || `Смена № ${shiftNumber}`;
 };

@@ -10,6 +10,9 @@ export interface Review {
   reviewDate: string | null;
   productName: string | null;
   productSku: string | null;
+  /** Буквенный srid/rid WB — по нему отзыв цепляется к заказу и швее. */
+  wbSrid?: string | null;
+  wbRid?: string | null;
   orderId: number | null;
   orderNumber: string | null;
   orderType: string | null;

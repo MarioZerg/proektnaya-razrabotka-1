@@ -21,13 +21,15 @@ import {
 } from '@/lib/kioskApi';
 import { roleLabels, formatQty } from './defectShared';
 import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
+import ScanInputCard from '@/components/crm/scan/ScanInputCard';
 
 /**
  * Приёмка брака сканером.
  *
  * Поля ручного ввода здесь нет намеренно: каждый кусок должен пройти по своему
- * стикеру. Иначе кладовщик мог бы «принять» брак, набрав номер с потолка, и
- * подмешать к сданным кускам лишний материал.
+ * стикеру. Иначе кладовщик мог бы «принять» брак, вставив номер из списка без
+ * куска на руках, и закрыть очередь впустую. На экране — кнопка «готов к скану»,
+ * само поле скрыто.
  *
  * Если куска в контейнере нет — его не удаляют и не забывают: кладовщик жмёт
  * «Не найден» и отправляет запись администратору. Тот решает, удержать стоимость
@@ -63,7 +65,7 @@ const DefectScanTab = () => {
 
   const handleScan = (value: string) => {
     const code = value.trim().toUpperCase();
-    if (!code) return;
+    if (!code || saving) return;
     void run(async () => {
       try {
         const res = await receiveDefect(code, user?.id, user?.name);
@@ -86,7 +88,7 @@ const DefectScanTab = () => {
   };
 
   // Держим фокус на скрытом поле: планшет или мышь могут его увести, и тогда
-  // сканер печатает «мимо», а терминал молчит на скан.
+  // сканер печатает «мимо», а приёмка молчит на скан.
   useEffect(() => {
     const t = setInterval(() => {
       if (document.activeElement !== hiddenRef.current && !missingTarget) {
@@ -124,47 +126,56 @@ const DefectScanTab = () => {
     });
   };
 
+  const focusHidden = () => setTimeout(() => hiddenRef.current?.focus(), 0);
+
   const totalPending = pending.reduce((sum, p) => sum + p.quantity, 0);
   const largeCount = pending.filter((p) => p.isLarge).length;
 
   return (
-    <div className="space-y-6">
-      {/* Приглашение сканировать. Поля ввода нет — только сканер: каждый кусок
-          обязан пройти по своему стикеру, вручную «принять» брак нельзя. */}
-      <Card className="border-2 border-dashed border-primary/40 bg-primary/5 shadow-none">
-        <CardContent className="flex flex-col items-center gap-3 py-10 text-center">
-          <div className="rounded-full bg-primary/10 p-5">
-            <Icon
-              name={saving ? 'Loader2' : 'ScanLine'}
-              size={56}
-              className={`text-primary ${saving ? 'animate-spin' : ''}`}
-            />
-          </div>
-          <p className="text-2xl font-bold">
-            {saving ? 'Принимаем…' : 'Отсканируйте стикер на куске брака'}
-          </p>
-          <p className="text-base text-muted-foreground">
-            Сканируйте куски подряд — каждый проходит по своему стикеру
-          </p>
-          {lastReceived.length > 0 && (
-            <p className="text-sm text-muted-foreground">
-              Принято за сеанс: {lastReceived.length} — {lastReceived.slice(0, 5).join(', ')}
-            </p>
+    <div className="space-y-4">
+      <ScanInputCard
+        title="Отсканируйте стикер на куске брака"
+        hint={
+          lastReceived.length > 0
+            ? `Принято за сеанс: ${lastReceived.length} — ${lastReceived.slice(0, 5).join(', ')}`
+            : undefined
+        }
+        onBackgroundClick={(e) => {
+          if (!(e.target as HTMLElement).closest('button, a, textarea')) {
+            focusHidden();
+          }
+        }}
+      >
+        <Button
+          type="button"
+          className="w-full sm:w-auto"
+          disabled={saving || !!missingTarget}
+          onClick={focusHidden}
+        >
+          {saving ? (
+            <>
+              <Icon name="Loader2" size={16} className="mr-2 animate-spin" />
+              Принимаем…
+            </>
+          ) : (
+            <>
+              <Icon name="ScanLine" size={16} className="mr-2" />
+              Сканируйте!
+            </>
           )}
-        </CardContent>
-      </Card>
+        </Button>
+      </ScanInputCard>
 
       {/* Крупные куски: из них ещё может получиться изделие, поэтому осматриваем
           внимательно, а не отправляем в утиль не глядя. */}
       {largeCount > 0 && (
         <Card className="border-amber-300 bg-amber-50 shadow-none">
-          <CardContent className="flex items-start gap-3 py-4">
-            <Icon name="TriangleAlert" size={22} className="mt-0.5 shrink-0 text-amber-600" />
+          <CardContent className="flex items-start gap-3 py-3">
+            <Icon name="TriangleAlert" size={20} className="mt-0.5 shrink-0 text-amber-600" />
             <div>
-              <p className="font-bold text-amber-900">Крупных кусков: {largeCount} шт.</p>
+              <p className="text-sm font-bold text-amber-900">Крупных кусков: {largeCount} шт.</p>
               <p className="text-sm text-amber-900">
-                Куски от 2 пог.м отмечены в списке. Осмотрите их тщательно — возможно,
-                материал ещё годится в работу
+                От 2 пог.м — осмотрите внимательно, материал может ещё годиться
               </p>
             </div>
           </CardContent>
@@ -172,7 +183,7 @@ const DefectScanTab = () => {
       )}
 
       <div className="flex flex-wrap items-center gap-2">
-        <span className="text-base font-bold">Ждёт приёмки</span>
+        <span className="text-sm font-semibold">Ждёт приёмки</span>
         <Badge variant={pending.length ? 'destructive' : 'secondary'}>
           {pending.length} шт. · {formatQty(totalPending)}
         </Badge>
@@ -188,10 +199,10 @@ const DefectScanTab = () => {
 
       {pending.length === 0 ? (
         listError ? null : (
-        <div className="flex flex-col items-center gap-3 py-10">
-          <Icon name="PackageCheck" size={48} className="text-muted-foreground" />
-          <p className="text-base font-semibold">Весь брак принят на склад</p>
-        </div>
+          <div className="flex flex-col items-center gap-2 py-8 text-muted-foreground">
+            <Icon name="PackageCheck" size={36} />
+            <p className="text-sm font-medium">Весь брак принят на склад</p>
+          </div>
         )
       ) : (
         <div className="space-y-2">
@@ -221,7 +232,6 @@ const DefectScanTab = () => {
                   </Badge>
                 </div>
 
-                {/* Рулон и поставщик — то, ради чего копится статистика. */}
                 <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
                   {p.rollBarcode && <span>Рулон: {p.rollBarcode}</span>}
                   {p.supplierName && <span>Поставщик: {p.supplierName}</span>}
@@ -229,8 +239,6 @@ const DefectScanTab = () => {
                 </div>
                 {p.comment && <p className="text-xs text-muted-foreground">{p.comment}</p>}
 
-                {/* Куска нет в контейнере — отправляем администратору, а не удаляем.
-                    Сам кладовщик вопрос не закрывает: иначе пропажу можно скрыть. */}
                 <Button
                   variant="outline"
                   size="sm"
@@ -305,8 +313,8 @@ const DefectScanTab = () => {
         </DialogContent>
       </Dialog>
 
-      {/* Скрытое поле для сканера: кладовщик его не видит и набрать номер руками
-          не может — брак принимается только по реальному стикеру. */}
+      {/* Скрытое поле: кладовщик его не видит и набрать номер руками не может —
+          брак принимается только по реальному стикеру со сканера. */}
       <input
         ref={hiddenRef}
         autoFocus

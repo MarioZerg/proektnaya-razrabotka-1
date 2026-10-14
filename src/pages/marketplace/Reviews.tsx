@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import CrmLayout from '@/components/crm/CrmLayout';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import { Input } from '@/components/ui/input';
 import {
   Select,
   SelectContent,
@@ -36,6 +37,7 @@ const Reviews = () => {
   const [syncing, setSyncing] = useState(false);
   const [marketplace, setMarketplace] = useState<'all' | 'OZON' | 'WB'>('all');
   const [ratingFilter, setRatingFilter] = useState<'all' | 'high' | 'low'>('all');
+  const [search, setSearch] = useState('');
 
   const load = () => {
     setLoading(true);
@@ -78,16 +80,27 @@ const Reviews = () => {
     }
   };
 
-  const filtered = useMemo(
-    () =>
-      reviews.filter((r) => {
-        if (marketplace !== 'all' && r.marketplace !== marketplace) return false;
-        if (ratingFilter === 'high' && (r.rating == null || r.rating < 4)) return false;
-        if (ratingFilter === 'low' && (r.rating == null || r.rating > 3)) return false;
-        return true;
-      }),
-    [reviews, marketplace, ratingFilter]
-  );
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return reviews.filter((r) => {
+      if (marketplace !== 'all' && r.marketplace !== marketplace) return false;
+      if (ratingFilter === 'high' && (r.rating == null || r.rating < 4)) return false;
+      if (ratingFilter === 'low' && (r.rating == null || r.rating > 3)) return false;
+      if (!q) return true;
+      // Ищем и по буквенному srid WB — без него отзыв к швее не привязать.
+      return (
+        (r.wbSrid || '').toLowerCase().includes(q) ||
+        (r.wbRid || '').toLowerCase().includes(q) ||
+        (r.orderNumber || '').toLowerCase().includes(q) ||
+        (r.productName || '').toLowerCase().includes(q) ||
+        (r.productSku || '').toLowerCase().includes(q) ||
+        (r.sewerName || '').toLowerCase().includes(q) ||
+        (r.cutterName || '').toLowerCase().includes(q) ||
+        (r.packerName || '').toLowerCase().includes(q) ||
+        (r.text || '').toLowerCase().includes(q)
+      );
+    });
+  }, [reviews, marketplace, ratingFilter, search]);
 
   const avgAll = useMemo(() => {
     const rated = reviews.filter((r) => r.rating != null);
@@ -150,6 +163,19 @@ const Reviews = () => {
               <SelectItem value="low">Плохие (1–3)</SelectItem>
             </SelectContent>
           </Select>
+          <div className="relative w-full sm:max-w-xs sm:flex-1">
+            <Icon
+              name="Search"
+              size={14}
+              className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground"
+            />
+            <Input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Поиск: srid, заказ, швея…"
+              className="pl-8"
+            />
+          </div>
           <p className="ml-auto text-sm text-muted-foreground">Показано: {filtered.length}</p>
         </div>
 

@@ -147,11 +147,11 @@ const ReturnScanCard = ({ onProcessed }: ReturnScanCardProps) => {
   return (
     <Card className="border-primary/30 bg-primary/5 shadow-none">
       <CardContent className="space-y-4 pt-6">
-        <div className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
+        <div className="flex items-center gap-2 text-sm font-medium text-foreground">
           <Icon name="ScanLine" size={18} />
           Сканируйте пакет с товаром: наклейку возврата или наш стикер внутри
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-col gap-2 sm:flex-row">
           <Input
             ref={inputRef}
             autoFocus
@@ -162,7 +162,7 @@ const ReturnScanCard = ({ onProcessed }: ReturnScanCardProps) => {
             disabled={scanning}
             className="font-mono-tech"
           />
-          <Button onClick={handleScan} disabled={scanning || !code.trim()}>
+          <Button className="shrink-0" onClick={handleScan} disabled={scanning || !code.trim()}>
             {scanning ? <Icon name="Loader2" size={16} className="animate-spin" /> : 'Найти'}
           </Button>
         </div>
