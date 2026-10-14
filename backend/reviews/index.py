@@ -178,7 +178,14 @@ def fetch_wb_reviews(api_key, is_answered='false', skip=0, take=1000):
         )
         # buyout — выкуплен (у клиента), returned — вернули, rejected — отказ.
         order_status = (f.get('orderStatus') or '').strip() or None
+        # ШК последнего заказа = номер стикера сборочного задания (orders.wb_sticker_number).
+        # Внутренний ключ привязки, наружу не отдаём.
+        try:
+            shk_id = int(f.get('lastOrderShkId')) if f.get('lastOrderShkId') else None
+        except (TypeError, ValueError):
+            shk_id = None
         reviews.append({
+            'shk_id': shk_id,
             'external_id': str(f.get('id') or ''),
             'srid': str(srid).strip(),
             'order_id': prod.get('orderId') or f.get('orderId') or f.get('order_id'),
@@ -334,6 +341,16 @@ def rematch_wb_reviews(cur):
         "  AND r.wb_srid = o.wb_order_id::text"
     )
     linked += cur.rowcount or 0
+    # Главный путь: ШК последнего заказа из отзыва = номер стикера задания WB.
+    cur.execute(
+        "UPDATE reviews r SET order_id = o.id "
+        "FROM orders o "
+        "WHERE r.marketplace = 'WB' "
+        "  AND r.order_id IS NULL "
+        "  AND r.wb_shk_id IS NOT NULL "
+        "  AND o.wb_sticker_number = r.wb_shk_id"
+    )
+    linked += cur.rowcount or 0
     return linked
 
 
@@ -401,7 +418,7 @@ def upsert_review(
 def upsert_reviews_bulk(cur, marketplace, rows):
     """Пакетная запись отзывов: один запрос на всю порцию вместо 2–3 на отзыв.
 
-    rows — кортежи (external_id, order_id, sku, name, rating, text, date, srid, status).
+    rows — кортежи (external_id, order_id, sku, name, rating, text, date, srid, status, shk).
     Возвращает число новых отзывов.
     """
     uniq = {}
@@ -411,17 +428,18 @@ def upsert_reviews_bulk(cur, marketplace, rows):
     if not uniq:
         return 0
     values = [
-        (marketplace, ext, oid, sku, (name or '')[:300], rating, text, dt, srid or None, status)
-        for ext, oid, sku, name, rating, text, dt, srid, status in uniq.values()
+        (marketplace, ext, oid, sku, (name or '')[:300], rating, text, dt, srid or None, status, shk)
+        for ext, oid, sku, name, rating, text, dt, srid, status, shk in uniq.values()
     ]
     inserted = execute_values(
         cur,
         "INSERT INTO reviews (marketplace, external_id, order_id, product_sku, product_name, "
-        " rating, text, review_date, wb_srid, wb_order_status) VALUES %s "
+        " rating, text, review_date, wb_srid, wb_order_status, wb_shk_id) VALUES %s "
         "ON CONFLICT (marketplace, external_id) DO UPDATE SET "
         "  wb_srid = COALESCE(reviews.wb_srid, EXCLUDED.wb_srid), "
         "  order_id = COALESCE(reviews.order_id, EXCLUDED.order_id), "
-        "  wb_order_status = COALESCE(EXCLUDED.wb_order_status, reviews.wb_order_status) "
+        "  wb_order_status = COALESCE(EXCLUDED.wb_order_status, reviews.wb_order_status), "
+        "  wb_shk_id = COALESCE(EXCLUDED.wb_shk_id, reviews.wb_shk_id) "
         "RETURNING (xmax = 0)",
         values,
         page_size=len(values),
@@ -473,7 +491,7 @@ def handle_sync(cur, body_data=None):
                     by_posting = {r[0]: r[1] for r in cur.fetchall()}
                 created += upsert_reviews_bulk(cur, 'OZON', [
                     (rv['external_id'], by_posting.get(rv.get('posting_number')), rv['sku'],
-                     rv['product_name'], rv['rating'], rv['text'], rv['review_date'], None, None)
+                     rv['product_name'], rv['rating'], rv['text'], rv['review_date'], None, None, None)
                     for rv in ozon_reviews
                 ])
             except Exception as e:
@@ -539,7 +557,7 @@ def handle_sync(cur, body_data=None):
             created += upsert_reviews_bulk(cur, 'WB', [
                 (rv['external_id'], resolve_wb_order(by_wb_order, by_rid, by_number, rv),
                  rv['nm_id'], rv['product_name'], rv['rating'], rv['text'], rv['review_date'],
-                 rv.get('srid'), rv.get('order_status'))
+                 rv.get('srid'), rv.get('order_status'), rv.get('shk_id'))
                 for rv in reviews if rv['external_id']
             ])
 
