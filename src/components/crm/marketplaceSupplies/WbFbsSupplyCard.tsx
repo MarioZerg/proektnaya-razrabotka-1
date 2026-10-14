@@ -60,11 +60,10 @@ const WbFbsSupplyCard = ({ supply, supplyId, onReload, onScanned }: WbFbsSupplyC
     (a) => !a.orderNumber || !scannedOrders.has(a.orderNumber),
   );
   // ЗАКАЗЫ ЮРЛИЦ (B2B). WB не принимает поставку, где они смешаны с обычными.
-  // Тип поставки задаёт первый отсканированный заказ: дальше в чек-листе
-  // показываем только подходящие вещи, остальные ждут своей поставки.
-  const supplyIsB2b = supply.wbOrders.length > 0 ? !!supply.isB2b : null;
-  const wbAwaiting =
-    supplyIsB2b === null ? allAwaiting : allAwaiting.filter((a) => !!a.isB2b === supplyIsB2b);
+  // Тип поставки кладовщик выбрал при создании: в чек-листе показываем только
+  // подходящие вещи, остальные ждут своей поставки.
+  const supplyIsB2b = !!supply.isB2b;
+  const wbAwaiting = allAwaiting.filter((a) => !!a.isB2b === supplyIsB2b);
   const otherKindCount = allAwaiting.length - wbAwaiting.length;
   const canRemove = supply.status === 'Открытая' || supply.status === 'На сборке';
 
@@ -357,7 +356,7 @@ const WbFbsSupplyCard = ({ supply, supplyId, onReload, onScanned }: WbFbsSupplyC
           <p>
             {supplyIsB2b
               ? `Ещё ${otherKindCount} обычных заказов ждут обычной поставки — в эту их положить нельзя.`
-              : `Ещё ${otherKindCount} заказов юрлиц (B2B) ждут отдельной поставки — с обычными WB их не примет. Создайте для них новую поставку и отсканируйте первым заказ B2B.`}
+              : `Ещё ${otherKindCount} заказов юрлиц (B2B) ждут отдельной поставки — с обычными WB их не примет. Создайте для них поставку с типом «B2B».`}
           </p>
         </div>
       )}

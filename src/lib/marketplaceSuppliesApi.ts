@@ -396,6 +396,8 @@ export const createSupply = (payload: {
   createdBy?: number;
   goodsWarehouseIds?: number[];
   ozonDeliveryMethod?: OzonDeliveryMethod;
+  /** WB FBS: поставка для заказов юрлиц — WB не смешивает их с обычными. */
+  isB2b?: boolean;
 }) => postAction({ action: 'create', ...payload });
 
 

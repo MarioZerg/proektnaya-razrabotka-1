@@ -180,6 +180,9 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
             # Магазин обязателен: МЕГАТЮЛЬ и ДЮНА — разные кабинеты на площадке,
             # и вещь одного магазина в поставку другого на приёмке не примут.
             shop_id = body_data.get('shopId')
+            # Поставка WB для заказов юрлиц (B2B): WB не смешивает их с обычными,
+            # поэтому кладовщик выбирает тип поставки при создании.
+            is_b2b = bool(body_data.get('isB2b')) and marketplace == 'WB' and supply_type == 'FBS'
 
             if not marketplace:
                 return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите маркетплейс'})}
@@ -210,17 +213,18 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                     "SELECT id FROM marketplace_supplies "
                     f"WHERE marketplace = '{marketplace_esc}' AND type = 'FBS' "
                     "AND COALESCE(is_accumulator, false) = false "
-                    "AND shop_id = %s "
+                    "AND shop_id = %s AND COALESCE(is_b2b, false) = %s "
                     "AND status IN ('Открытая', 'На сборке') LIMIT 1",
-                    (int(shop_id),),
+                    (int(shop_id), is_b2b),
                 )
                 active = cur.fetchone()
                 if active:
+                    kind = ' B2B' if is_b2b else ''
                     return {
                         'statusCode': 409,
                         'headers': headers,
                         'body': json.dumps({
-                            'error': f'Сборка #{active[0]} этого магазина ещё не завершена. '
+                            'error': f'Сборка{kind} #{active[0]} этого магазина ещё не завершена. '
                                      f'Передайте её в доставку — потом создавайте новую',
                             'activeSupplyId': active[0],
                         }, ensure_ascii=False),
@@ -234,9 +238,10 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
 
             cur.execute(
                 f"INSERT INTO marketplace_supplies (marketplace, type, status, comment, created_by, "
-                f"ozon_delivery_method, ozon_status, shop_id) "
+                f"ozon_delivery_method, ozon_status, shop_id, is_b2b) "
                 f"VALUES ('{marketplace_esc}', '{type_esc}', 'Открытая', '{comment_esc}', {created_by_sql}, "
-                f"{ozon_delivery_method_sql}, {ozon_status_sql}, {int(shop_id)}) RETURNING id"
+                f"{ozon_delivery_method_sql}, {ozon_status_sql}, {int(shop_id)}, "
+                f"{'true' if is_b2b else 'false'}) RETURNING id"
             )
             supply_id = cur.fetchone()[0]
 

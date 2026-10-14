@@ -17,7 +17,9 @@ import CreateOzonFboDialog from '@/components/crm/marketplaceSupplies/CreateOzon
 import SupplyTypeWidgets from '@/components/crm/marketplaceSupplies/SupplyTypeWidgets';
 import ToMarketplaceFilters from '@/components/crm/marketplaceSupplies/ToMarketplaceFilters';
 import ToMarketplaceTable from '@/components/crm/marketplaceSupplies/ToMarketplaceTable';
-import ConfirmFbsSupplyDialog from '@/components/crm/marketplaceSupplies/ConfirmFbsSupplyDialog';
+import ConfirmFbsSupplyDialog, {
+  type PendingFbs,
+} from '@/components/crm/marketplaceSupplies/ConfirmFbsSupplyDialog';
 import { createOptions } from '@/components/crm/marketplaceSupplies/toMarketplaceConstants';
 import { importOzonFboComposition } from '@/lib/ozonFboApi';
 import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
@@ -33,10 +35,8 @@ const ToMarketplace = () => {
   const [creating, setCreating] = useState(false);
   // Поставка FBS, которую кладовщик собирается создать: ждём подтверждения, что
   // он понимает — до её отгрузки смену закрыть не получится.
-  const [pendingFbs, setPendingFbs] = useState<{
-    marketplace: string;
-    type: SupplyType;
-  } | null>(null);
+  // Для WB FBS здесь же выбирают тип поставки: обычная или B2B (юрлица).
+  const [pendingFbs, setPendingFbs] = useState<PendingFbs | null>(null);
   const [ozonFboDialogOpen, setOzonFboDialogOpen] = useState(false);
   // FBS-поставки создаёт и собирает кладовщик — товар он отбирает со своих полок. Менеджер
   // ведёт FBO-поставки и только наблюдает за сборкой FBS в реальном времени.
@@ -139,20 +139,25 @@ const ToMarketplace = () => {
     // Предупреждаем заранее: человек должен понимать, что берёт работу на сегодня,
     // а не оставляет её на завтра. Менеджера и админа это не касается — смену
     // держат только задания кладовщика.
-    if (type === 'FBS' && isStorekeeperRole(user?.role)) {
-      setPendingFbs({ marketplace, type });
+    const shiftWarning = type === 'FBS' && isStorekeeperRole(user?.role);
+    // WB FBS: заказы юрлиц (B2B) WB не смешивает с обычными — тип выбирают сразу.
+    if (shiftWarning || (marketplace === 'WB' && type === 'FBS')) {
+      setPendingFbs({ marketplace, type, shiftWarning });
       return;
     }
-    await createSupplyNow(marketplace, type);
+    await createSupplyNow(marketplace, type, false);
   };
 
-  const createSupplyNow = async (marketplace: string, type: SupplyType) => {
+  const createSupplyNow = async (marketplace: string, type: SupplyType, isB2b: boolean) => {
     // Поставка всегда заводится в тот магазин, чья вкладка открыта.
     if (!shopId) return;
     setCreating(true);
     try {
-      const res = await createSupply({ marketplace, type, shopId, createdBy: user?.id });
-      toast({ title: 'Поставка создана', description: `#${res.id} — заполните товары на карточке` });
+      const res = await createSupply({ marketplace, type, shopId, createdBy: user?.id, isB2b });
+      toast({
+        title: isB2b ? 'Поставка B2B создана' : 'Поставка создана',
+        description: `#${res.id} — заполните товары на карточке`,
+      });
       navigate(`/crm/shipments/to-marketplace/${res.id}`);
     } catch (e) {
       toast({ title: 'Ошибка', description: e instanceof Error ? e.message : undefined, variant: 'destructive' });

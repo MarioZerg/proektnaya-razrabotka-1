@@ -478,19 +478,21 @@ def handle_create_supply(cur, conn, body_data, api_key, use_sandbox):
         return _resp(400, {'error': 'Укажите supplyId'})
 
     cur.execute(
-        "SELECT marketplace, type, wb_supply_id, supply_number FROM marketplace_supplies WHERE id = %s",
+        "SELECT marketplace, type, wb_supply_id, supply_number, COALESCE(is_b2b, false) "
+        "FROM marketplace_supplies WHERE id = %s",
         (int(supply_id),),
     )
     row = cur.fetchone()
     if not row:
         return _resp(404, {'error': 'Поставка не найдена'})
-    marketplace, supply_type, wb_supply_id, supply_number = row
+    marketplace, supply_type, wb_supply_id, supply_number, supply_b2b = row
     if marketplace != 'WB' or supply_type != 'FBS':
         return _resp(400, {'error': 'Действие доступно только для поставок WB FBS'})
     if wb_supply_id:
         return _resp(200, {'wbSupplyId': wb_supply_id, 'alreadyCreated': True})
 
-    name = (supply_number or f'Поставка #{supply_id}')[:128]
+    # В кабинете WB поставку юрлиц должно быть видно по названию.
+    name = (supply_number or (f'Поставка B2B #{supply_id}' if supply_b2b else f'Поставка #{supply_id}'))[:128]
     status_code, data = wb_request('POST', '/api/v3/supplies', api_key, use_sandbox, {'name': name})
     if status_code not in (200, 201):
         return _resp(502, {'error': f'WB не создал поставку ({status_code}): {wb_error_text(status_code, data)}'})
@@ -557,32 +559,23 @@ def check_b2b_mix(cur, supply_id, order_id):
     """Не даёт смешать в одной поставке заказы юрлиц (B2B) и обычных покупателей.
 
     WB такую поставку не принимает и отвечает невнятным 409 «FailedToAddSupplyOrder».
-    Тип поставки задаёт ПЕРВЫЙ заказ: пустая поставка становится B2B или обычной,
+    Тип поставки кладовщик выбирает при создании («обычная» или «B2B»), и
     дальше в неё пускаем только такие же заказы. Возвращает текст ошибки или None.
     """
     is_b2b = order_is_b2b(cur, order_id)
     cur.execute(
-        "SELECT COALESCE(s.is_b2b, false), "
-        "       (SELECT COUNT(*) FROM wb_supply_orders w WHERE w.supply_id = s.id) "
-        "FROM marketplace_supplies s WHERE s.id = %s",
+        "SELECT COALESCE(s.is_b2b, false) FROM marketplace_supplies s WHERE s.id = %s",
         (int(supply_id),),
     )
     row = cur.fetchone()
     if not row:
         return 'Поставка не найдена'
-    supply_b2b, count = bool(row[0]), int(row[1] or 0)
-    if count == 0:
-        if supply_b2b != is_b2b:
-            cur.execute(
-                "UPDATE marketplace_supplies SET is_b2b = %s WHERE id = %s",
-                (is_b2b, int(supply_id)),
-            )
-        return None
+    supply_b2b = bool(row[0])
     if supply_b2b == is_b2b:
         return None
     if is_b2b:
         return ('Это заказ юрлица (B2B) — WB не разрешает класть его в обычную поставку. '
-                'Отложите вещь в поставку B2B')
+                'Отложите вещь: её отгружают отдельной поставкой B2B')
     return ('Это поставка для юрлиц (B2B) — обычный заказ в неё положить нельзя. '
             'Отложите вещь в обычную поставку')
 
