@@ -1,23 +1,8 @@
-import B2bBadge from './B2bBadge';
 import { useEffect, useRef, useState } from 'react';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Card, CardContent } from '@/components/ui/card';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table';
-import Icon from '@/components/ui/icon';
-import printHtmlInIframe from '@/lib/printInIframe';
-import { printStorageSticker } from '@/lib/printStorageSticker';
-import { printLabelFromUrl } from '@/lib/printMarketplaceLabel';
 import { useToast } from '@/hooks/use-toast';
 import { useScannerAutoSubmit } from '@/hooks/useScannerAutoSubmit';
 import { playScanSound, playScanErrorSound } from '@/lib/scanSound';
+import { printStorageSticker } from '@/lib/printStorageSticker';
 import type { SupplyDetail, WbSupplyOrder } from '@/lib/marketplaceSuppliesApi';
 import {
   createWbSupply,
@@ -26,6 +11,10 @@ import {
   removeWbOrderFromSupply,
   shelfCancelledOrder,
 } from '@/lib/wbFbsApi';
+import WbFbsSupplyToolbar from './WbFbsSupplyToolbar';
+import WbFbsScanPanel from './WbFbsScanPanel';
+import WbFbsB2bNotices from './WbFbsB2bNotices';
+import WbFbsOrdersTable from './WbFbsOrdersTable';
 
 interface WbFbsSupplyCardProps {
   supply: SupplyDetail;
@@ -206,294 +195,41 @@ const WbFbsSupplyCard = ({ supply, supplyId, onReload, onScanned }: WbFbsSupplyC
     }
   };
 
-  // Уникальные стикеры коробов (один trbx-стикер может относиться к нескольким заказам).
-  const boxStickers = Array.from(
-    new Map(
-      supply.wbOrders
-        .filter((o) => o.stickerUrl)
-        .map((o) => [o.wbTrbxId || o.stickerUrl!, { url: o.stickerUrl!, label: o.wbTrbxId || '' }])
-    ).values()
-  );
-
-  /**
-   * Печать стикеров коробов WB на этикеточном принтере 58×40 мм.
-   *
-   * Раньше страница печати открывалась во всплывающем окне без указания размера листа:
-   * браузер брал A4 и книжную ориентацию, а в настройках принтера размер уже не менялся —
-   * кладовщик получал стикер на четверть листа. Теперь лист жёстко задан как 58×40, поля
-   * нулевые, а картинка растягивается на всю наклейку, и принтер печатает как надо.
-   *
-   * Печатаем через скрытый iframe, а не новым окном: всплывающие окна блокирует браузер,
-   * и на терминале склада кладовщик просто не видел диалога печати.
-   */
-  const handlePrintStickers = () => {
-    if (!boxStickers.length) return;
-    const pages = boxStickers
-      .map((s) => `<div class="label"><img src="${s.url}" alt="Стикер короба" /></div>`)
-      .join('');
-    printHtmlInIframe(
-      `<!doctype html><html><head><meta charset="utf-8"><title>Стикеры коробов WB</title>
-      <style>
-        @page { size: 58mm 40mm; margin: 0; }
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        html, body { width: 58mm; }
-        body { font-family: Arial, Helvetica, sans-serif; }
-        .label {
-          width: 58mm; height: 40mm;
-          display: flex; align-items: center; justify-content: center;
-          overflow: hidden;
-          /* Каждый стикер — свой лист: рулонный принтер отрежет по границе наклейки. */
-          page-break-after: always;
-          break-after: page;
-        }
-        .label:last-child { page-break-after: auto; break-after: auto; }
-        /* Картинка от WB уже в пропорции наклейки — вписываем её целиком, без обрезки. */
-        .label img { max-width: 58mm; max-height: 40mm; width: auto; height: auto; }
-      </style></head><body>${pages}</body></html>`,
-    );
-  };
-
   useScannerAutoSubmit(scanValue, handleScan, !scanning && canScan);
 
   return (
     <div className="space-y-3">
-      <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
-        <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm">
-          {/* Сколько заказов лежит в резервной поставке на WB: туда упаковщицы
-              переносят всё, что застикеровали на конвейере. Это и есть объём работы —
-              столько кладовщику предстоит отсканировать в свою поставку.
-              Не успел забрать всё — остаток так и останется в резерве и попадёт
-              в счётчик следующей поставки, как только он её создаст. */}
-          <span>
-            Ожидают отгрузки: <b>{supply.wbReadyCount}</b>
-          </span>
-          <span>
-            Отсканировано в поставку: <b>{supply.wbOrders.length}</b>
-          </span>
-          {supply.wbSupplyId && (
-            <span className="text-muted-foreground">
-              WB: <b className="font-mono-tech">{supply.wbSupplyId}</b>
-            </span>
-          )}
-        </div>
-        <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
-          {boxStickers.length > 0 && (
-            <Button variant="outline" className="w-full sm:w-auto" onClick={handlePrintStickers}>
-              <Icon name="Printer" size={16} className="mr-1.5" />
-              Стикеры ({boxStickers.length})
-            </Button>
-          )}
-          {canDeliver && (
-            <Button onClick={handleDeliver} disabled={delivering} className="w-full bg-emerald-600 hover:bg-emerald-700 sm:w-auto">
-              <Icon name={delivering ? 'Loader2' : 'Truck'} size={16} className={`mr-1.5 ${delivering ? 'animate-spin' : ''}`} />
-              В доставку
-            </Button>
-          )}
-        </div>
-      </div>
+      <WbFbsSupplyToolbar
+        supply={supply}
+        canDeliver={canDeliver}
+        delivering={delivering}
+        onDeliver={handleDeliver}
+      />
 
-      {!wbCreated && (
-        <Card className="border-primary/30 bg-primary/5 shadow-none">
-          <CardContent className="flex flex-col gap-3 pt-6 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
-            <div className="text-sm leading-snug text-muted-foreground">
-              {creatingSupply
-                ? 'Создаём поставку на WB — сканер откроется сам'
-                : 'Не удалось создать поставку на WB. Нажмите, чтобы повторить.'}
-            </div>
-            <Button className="w-full sm:w-auto" onClick={handleCreateSupply} disabled={creatingSupply}>
-              <Icon name={creatingSupply ? 'Loader2' : 'PackagePlus'} size={16} className={`mr-1.5 ${creatingSupply ? 'animate-spin' : ''}`} />
-              Создать на WB
-            </Button>
-          </CardContent>
-        </Card>
-      )}
-
-      {canScan && (
-        <Card className="border-primary/30 bg-primary/5 shadow-none">
-          <CardContent
-            className="space-y-2 pt-6"
-            onClick={(e) => {
-              if (!(e.target as HTMLElement).closest('input, button, a')) scanRef.current?.focus();
-            }}
-          >
-            <div className="flex items-start gap-2 text-sm font-medium leading-snug text-muted-foreground">
-              <Icon name="ScanLine" size={18} className="mt-0.5 shrink-0" />
-              Сканируйте стикер заказа WB
-            </div>
-            <div className="flex flex-col gap-2 sm:flex-row">
-              <Input
-                ref={scanRef}
-                autoFocus
-                placeholder="Номер заказа WB"
-                value={scanValue}
-                onChange={(e) => setScanValue(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && handleScan()}
-                disabled={scanning}
-                className="min-w-0 font-mono-tech"
-              />
-              <Button className="w-full sm:w-auto" onClick={handleScan} disabled={scanning || !scanValue.trim()}>
-                {scanning ? <Icon name="Loader2" size={16} className="animate-spin" /> : 'Добавить'}
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
-      )}
+      <WbFbsScanPanel
+        wbCreated={wbCreated}
+        creatingSupply={creatingSupply}
+        onCreateSupply={handleCreateSupply}
+        canScan={canScan}
+        scanRef={scanRef}
+        scanValue={scanValue}
+        setScanValue={setScanValue}
+        scanning={scanning}
+        onScan={handleScan}
+      />
 
       {/* Чек-лист сборки: сверху зелёным то, что уже отсканировано, ниже — что ещё
           лежит в резерве и ждёт кладовщика. Пикнул ярлык — строка позеленела. */}
-      {supplyIsB2b && (
-        <div className="flex items-start gap-2 rounded-md border border-indigo-300 bg-indigo-50 p-3 text-sm text-indigo-900">
-          <Icon name="Building2" size={18} className="mt-0.5 shrink-0" />
-          <p>
-            <b>Поставка для юрлиц (B2B).</b> Сюда можно класть только заказы юрлиц —
-            обычные WB в эту поставку не примет.
-          </p>
-        </div>
-      )}
-      {otherKindCount > 0 && (
-        <div className="flex items-start gap-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
-          <Icon name="Info" size={18} className="mt-0.5 shrink-0" />
-          <p>
-            {supplyIsB2b
-              ? `Ещё ${otherKindCount} обычных заказов ждут обычной поставки — в эту их положить нельзя.`
-              : `Ещё ${otherKindCount} заказов юрлиц (B2B) ждут отдельной поставки — с обычными WB их не примет. Создайте для них поставку с типом «B2B».`}
-          </p>
-        </div>
-      )}
-      <h3 className="pt-2 text-sm font-semibold">
-        Собрано {supply.wbOrders.length} из {supply.wbOrders.length + wbAwaiting.length}
-      </h3>
-      {supply.wbOrders.length === 0 && wbAwaiting.length === 0 ? (
-        <p className="text-sm text-muted-foreground">Заказов в поставке пока нет</p>
-      ) : (
-        <div className="overflow-x-auto rounded-md border border-border">
-          <Table>
-            <TableHeader>
-              <TableRow className="bg-primary hover:bg-primary">
-                <TableHead className="w-10 text-primary-foreground"></TableHead>
-                <TableHead className="text-primary-foreground">Заказ</TableHead>
-                <TableHead className="text-primary-foreground">Товар</TableHead>
-                <TableHead className="text-primary-foreground">Материал</TableHead>
-                <TableHead className="text-primary-foreground">Размер</TableHead>
-                <TableHead className="text-primary-foreground">Стикеровал</TableHead>
-                <TableHead className="text-primary-foreground">Короб WB</TableHead>
-                <TableHead className="text-primary-foreground">Стикер короба</TableHead>
-                {canRemove && <TableHead className="text-primary-foreground"></TableHead>}
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {supply.wbOrders.map((o) => (
-                <TableRow
-                  key={o.id}
-                  className={o.isCancelled ? 'bg-destructive/5' : 'bg-emerald-50 hover:bg-emerald-100'}
-                >
-                  <TableCell>
-                    <Icon
-                      name="CircleCheck"
-                      size={18}
-                      className={o.isCancelled ? 'text-destructive' : 'text-emerald-600'}
-                    />
-                  </TableCell>
-                  <TableCell className="font-medium">
-                    {o.orderNumber}
-                    {o.isB2b && <B2bBadge className="ml-2" />}
-                    {o.isCancelled && (
-                      <span className="ml-2 rounded bg-destructive/10 px-1.5 py-0.5 text-xs font-medium text-destructive">
-                        отменён
-                      </span>
-                    )}
-                  </TableCell>
-                  <TableCell>{o.product || '—'}</TableCell>
-                  <TableCell>{o.material || '—'}</TableCell>
-                  <TableCell>
-                    {o.width && o.height ? `${o.width}×${o.height}` : '—'}
-                  </TableCell>
-                  <TableCell className="text-sm">{o.labeledByName || '—'}</TableCell>
-                  <TableCell className="font-mono-tech">{o.wbTrbxId || '—'}</TableCell>
-                  <TableCell>
-                    {o.stickerUrl ? (
-                      // Печать на наклейке 58×40. Открытие ссылкой оставляем рядом:
-                      // из просмотрщика браузера стикер печатался на A4 с полями.
-                      <button
-                        type="button"
-                        onClick={() =>
-                          printLabelFromUrl(o.stickerUrl!, 'Стикер короба WB')
-                        }
-                        className="inline-flex items-center gap-1 text-primary hover:underline"
-                      >
-                        <Icon name="Printer" size={16} />
-                        Печать
-                      </button>
-                    ) : (
-                      '—'
-                    )}
-                  </TableCell>
-                  {canRemove && (
-                    <TableCell className="whitespace-nowrap">
-                      {/* Отменённый заказ везти нельзя: кладовщик убирает его прямо
-                          отсюда — вещь уходит на полку, а с WB задание снимается. */}
-                      {o.isCancelled && (
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          className="mr-1"
-                          onClick={() => handleShelf(o.orderId, o.orderNumber)}
-                          disabled={shelvingId === o.orderId}
-                          title="Убрать из поставки и положить на полку"
-                        >
-                          <Icon
-                            name={shelvingId === o.orderId ? 'Loader2' : 'PackageOpen'}
-                            size={14}
-                            className={`mr-1 ${shelvingId === o.orderId ? 'animate-spin' : ''}`}
-                          />
-                          На полку
-                        </Button>
-                      )}
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        onClick={() => handleRemove(o.orderId, o.orderNumber)}
-                        disabled={removingId === o.orderId}
-                        title="Убрать заказ из поставки"
-                      >
-                        <Icon name={removingId === o.orderId ? 'Loader2' : 'Trash2'} size={14} className={removingId === o.orderId ? 'animate-spin' : ''} />
-                      </Button>
-                    </TableCell>
-                  )}
-                </TableRow>
-              ))}
-
-              {/* Ещё не отсканированные: лежат в резервной поставке WB и ждут, когда
-                  кладовщик принесёт их и пикнет ярлык. */}
-              {wbAwaiting.map((a) => (
-                <TableRow key={`wait-${a.id}`} className="hover:bg-muted/60">
-                  <TableCell>
-                    <Icon name="Circle" size={18} className="text-muted-foreground/40" />
-                  </TableCell>
-                  <TableCell className="font-medium">
-                    <span className="break-all">{a.orderNumber || '—'}</span>
-                    {a.isB2b && <B2bBadge className="ml-2" />}
-                    {a.shelfName && (
-                      <div className="text-xs text-muted-foreground">Полка «{a.shelfName}»</div>
-                    )}
-                  </TableCell>
-                  <TableCell>{a.product || '—'}</TableCell>
-                  <TableCell>{a.material || '—'}</TableCell>
-                  <TableCell>
-                    {a.width && a.height ? `${a.width}×${a.height}` : '—'}
-                  </TableCell>
-                  <TableCell className="text-sm">{a.labeledByName || '—'}</TableCell>
-                  <TableCell className="text-sm text-muted-foreground">—</TableCell>
-                  <TableCell className="text-sm text-muted-foreground">
-                    Ждёт сканирования
-                  </TableCell>
-                  {canRemove && <TableCell />}
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        </div>
-      )}
+      <WbFbsB2bNotices supplyIsB2b={supplyIsB2b} otherKindCount={otherKindCount} />
+      <WbFbsOrdersTable
+        wbOrders={supply.wbOrders}
+        wbAwaiting={wbAwaiting}
+        canRemove={canRemove}
+        removingId={removingId}
+        shelvingId={shelvingId}
+        onRemove={handleRemove}
+        onShelf={handleShelf}
+      />
     </div>
   );
 };
