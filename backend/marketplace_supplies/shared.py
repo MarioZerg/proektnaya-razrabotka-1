@@ -920,7 +920,7 @@ def return_wb_order_to_accumulator(cur, goods_id):
     cur.execute(
         "SELECT id FROM marketplace_supplies "
         "WHERE marketplace = 'WB' AND type = 'FBS' AND is_accumulator = true "
-        "  AND status IN ('Открытая', 'На сборке') "
+        "  AND status IN ('Открытая', 'На сборке') AND COALESCE(is_b2b, false) = false "
         "  AND shop_id = %s ORDER BY id DESC LIMIT 1",
         (order_shop_id,),
     )

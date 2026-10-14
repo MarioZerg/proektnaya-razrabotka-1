@@ -1,0 +1,1 @@
+ALTER TABLE marketplace_supplies ADD COLUMN IF NOT EXISTS is_b2b BOOLEAN NOT NULL DEFAULT false;

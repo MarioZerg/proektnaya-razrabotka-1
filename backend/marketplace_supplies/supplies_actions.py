@@ -3269,6 +3269,7 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
             cur.execute(
                 "SELECT id FROM marketplace_supplies "
                 "WHERE marketplace = 'WB' AND type = 'FBS' AND is_accumulator = true "
+                "AND COALESCE(is_b2b, false) = false "
                 "AND status IN ('Открытая', 'На сборке') ORDER BY id DESC LIMIT 1"
             )
             acc_row = cur.fetchone()

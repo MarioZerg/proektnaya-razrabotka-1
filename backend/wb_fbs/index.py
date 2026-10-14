@@ -1469,6 +1469,7 @@ def drop_stale_accumulator(cur, conn, api_key, use_sandbox, shop_id=None):
         "SELECT id, wb_supply_id FROM marketplace_supplies "
         "WHERE marketplace = 'WB' AND type = 'FBS' AND is_accumulator = true "
         "AND status IN ('Открытая', 'На сборке') AND wb_supply_id IS NOT NULL "
+        "AND COALESCE(is_b2b, false) = false "
         "AND (%s IS NULL OR shop_id = %s) "
         "ORDER BY id DESC LIMIT 1",
         (shop_id, shop_id),
@@ -1498,7 +1499,7 @@ def drop_stale_accumulator(cur, conn, api_key, use_sandbox, shop_id=None):
     return True
 
 
-def ensure_open_supply(cur, conn, api_key, use_sandbox, shop_id=None):
+def ensure_open_supply(cur, conn, api_key, use_sandbox, shop_id=None, is_b2b=False):
     """Находит свободную поставку WB FBS, а если её нет — заводит новую.
 
     Упаковщица печатает стикеры весь день и не должна думать о поставках. Поэтому
@@ -1518,9 +1519,9 @@ def ensure_open_supply(cur, conn, api_key, use_sandbox, shop_id=None):
         "SELECT id, wb_supply_id FROM marketplace_supplies "
         "WHERE marketplace = 'WB' AND type = 'FBS' AND is_accumulator = true "
         "AND status IN ('Открытая', 'На сборке') "
-        "AND shop_id = %s "
+        "AND shop_id = %s AND COALESCE(is_b2b, false) = %s "
         "ORDER BY id DESC LIMIT 1",
-        (shop_id,),
+        (shop_id, bool(is_b2b)),
     )
     row = cur.fetchone()
     supply_id = row[0] if row else None
@@ -1528,14 +1529,18 @@ def ensure_open_supply(cur, conn, api_key, use_sandbox, shop_id=None):
 
     if not supply_id:
         cur.execute(
-            "INSERT INTO marketplace_supplies (marketplace, type, status, comment, is_accumulator, shop_id) "
-            "VALUES ('WB', 'FBS', 'Открытая', %s, true, %s) RETURNING id",
-            ('Накопительная поставка: заказы добавляются при стикеровке', shop_id),
+            "INSERT INTO marketplace_supplies (marketplace, type, status, comment, is_accumulator, shop_id, is_b2b) "
+            "VALUES ('WB', 'FBS', 'Открытая', %s, true, %s, %s) RETURNING id",
+            (
+                'Накопительная поставка для заказов юрлиц (B2B)' if is_b2b
+                else 'Накопительная поставка: заказы добавляются при стикеровке',
+                shop_id, bool(is_b2b),
+            ),
         )
         supply_id = cur.fetchone()[0]
 
     if not wb_supply_id:
-        name = f'Поставка #{supply_id}'[:128]
+        name = (f'Поставка B2B #{supply_id}' if is_b2b else f'Поставка #{supply_id}')[:128]
         status_code, data = wb_request(
             'POST', '/api/v3/supplies', api_key, use_sandbox, {'name': name}
         )
@@ -1554,6 +1559,18 @@ def ensure_open_supply(cur, conn, api_key, use_sandbox, shop_id=None):
         conn.commit()
 
     return None, supply_id, wb_supply_id
+
+
+def wb_order_is_b2b(api_key, use_sandbox, wb_order_id):
+    """Заказ юрлица (B2B)? Признак WB отдаёт только в списке новых заданий."""
+    code, data = wb_request('GET', '/api/v3/orders/new', api_key, use_sandbox)
+    if code != 200:
+        return False
+    for o in (data or {}).get('orders') or []:
+        if int(o.get('id') or 0) == int(wb_order_id):
+            opts = o.get('options') or {}
+            return bool(opts.get('isB2B') or opts.get('isB2b'))
+    return False
 
 
 def wb_add_orders_to_supply(api_key, use_sandbox, wb_supply_id, wb_order_ids):
@@ -1690,6 +1707,24 @@ def add_order_to_open_supply(cur, conn, api_key, use_sandbox, order_number, shop
     # Раньше киоск показывал ей стену текста про «assembly task requirements», и
     # стикеровка вставала — хотя печатать было можно. Проверяем у WB, в поставке ли
     # задание, и если да — спокойно продолжаем.
+    # ЗАКАЗ ЮРЛИЦА (B2B). WB не разрешает класть в одну поставку заказы юрлиц и
+    # обычных покупателей и отвечает тем же 409 «FailedToAddSupplyOrder» без пояснений.
+    # Упаковщица упиралась в ошибку и не могла закрыть заказ. Для таких заказов держим
+    # отдельную накопительную поставку B2B и кладём заказ туда.
+    if status_code == 409 and wb_order_is_b2b(api_key, use_sandbox, wb_order_id):
+        err, b2b_supply_id, b2b_wb_supply_id = ensure_open_supply(
+            cur, conn, api_key, use_sandbox, shop_id, is_b2b=True
+        )
+        if err:
+            return err
+        if b2b_supply_id != supply_id:
+            supply_id, wb_supply_id = b2b_supply_id, b2b_wb_supply_id
+            status_code, data = wb_add_orders_to_supply(
+                api_key, use_sandbox, wb_supply_id, [wb_order_id]
+            )
+            print(f'WB задание {wb_order_id} — заказ юрлица, кладём в B2B-поставку '
+                  f'{wb_supply_id}: ответ {status_code}')
+
     if status_code == 409:
         st_code, st_data = wb_request(
             'POST', '/api/v3/orders/status', api_key, use_sandbox, {'orders': [wb_order_id]}
@@ -1707,7 +1742,8 @@ def add_order_to_open_supply(cur, conn, api_key, use_sandbox, order_number, shop
             for o in (st_data or {}).get('orders') or []:
                 if int(o.get('id') or 0) == int(wb_order_id):
                     wb_st = f"{(o.get('supplierStatus') or '').strip()}/{(o.get('wbStatus') or '').strip()}"
-        print(f'WB 409 для задания {wb_order_id}: статус на WB = {wb_st or "неизвестен"}')
+        print(f'WB 409 для задания {wb_order_id}: статус на WB = {wb_st or "неизвестен"}; '
+              f'ответ WB: {json.dumps(data, ensure_ascii=False)[:800]}')
 
         # Покупатель отменил заказ, пока вещь шла по конвейеру. WB такое задание в
         # поставку не примет никогда — и это НЕ поломка, а обычная ситуация.
