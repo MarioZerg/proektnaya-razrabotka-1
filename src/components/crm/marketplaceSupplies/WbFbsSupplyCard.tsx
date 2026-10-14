@@ -1,3 +1,4 @@
+import B2bBadge from './B2bBadge';
 import { useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -55,9 +56,16 @@ const WbFbsSupplyCard = ({ supply, supplyId, onReload, onScanned }: WbFbsSupplyC
   // Что ещё лежит в резервной поставке WB и ждёт сканирования. Список приходит с сервера
   // тем же условием, что и счётчик «Ожидают отгрузки», поэтому числа сходятся.
   const scannedOrders = new Set(supply.wbOrders.map((o) => o.orderNumber));
-  const wbAwaiting = (supply.wbAwaitingItems || []).filter(
+  const allAwaiting = (supply.wbAwaitingItems || []).filter(
     (a) => !a.orderNumber || !scannedOrders.has(a.orderNumber),
   );
+  // ЗАКАЗЫ ЮРЛИЦ (B2B). WB не принимает поставку, где они смешаны с обычными.
+  // Тип поставки задаёт первый отсканированный заказ: дальше в чек-листе
+  // показываем только подходящие вещи, остальные ждут своей поставки.
+  const supplyIsB2b = supply.wbOrders.length > 0 ? !!supply.isB2b : null;
+  const wbAwaiting =
+    supplyIsB2b === null ? allAwaiting : allAwaiting.filter((a) => !!a.isB2b === supplyIsB2b);
+  const otherKindCount = allAwaiting.length - wbAwaiting.length;
   const canRemove = supply.status === 'Открытая' || supply.status === 'На сборке';
 
   const handleRemove = async (orderId: number, orderNumber: string) => {
@@ -334,6 +342,25 @@ const WbFbsSupplyCard = ({ supply, supplyId, onReload, onScanned }: WbFbsSupplyC
 
       {/* Чек-лист сборки: сверху зелёным то, что уже отсканировано, ниже — что ещё
           лежит в резерве и ждёт кладовщика. Пикнул ярлык — строка позеленела. */}
+      {supplyIsB2b && (
+        <div className="flex items-start gap-2 rounded-md border border-indigo-300 bg-indigo-50 p-3 text-sm text-indigo-900">
+          <Icon name="Building2" size={18} className="mt-0.5 shrink-0" />
+          <p>
+            <b>Поставка для юрлиц (B2B).</b> Сюда можно класть только заказы юрлиц —
+            обычные WB в эту поставку не примет.
+          </p>
+        </div>
+      )}
+      {otherKindCount > 0 && (
+        <div className="flex items-start gap-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
+          <Icon name="Info" size={18} className="mt-0.5 shrink-0" />
+          <p>
+            {supplyIsB2b
+              ? `Ещё ${otherKindCount} обычных заказов ждут обычной поставки — в эту их положить нельзя.`
+              : `Ещё ${otherKindCount} заказов юрлиц (B2B) ждут отдельной поставки — с обычными WB их не примет. Создайте для них новую поставку и отсканируйте первым заказ B2B.`}
+          </p>
+        </div>
+      )}
       <h3 className="pt-2 text-sm font-semibold">
         Собрано {supply.wbOrders.length} из {supply.wbOrders.length + wbAwaiting.length}
       </h3>
@@ -370,6 +397,7 @@ const WbFbsSupplyCard = ({ supply, supplyId, onReload, onScanned }: WbFbsSupplyC
                   </TableCell>
                   <TableCell className="font-medium">
                     {o.orderNumber}
+                    {o.isB2b && <B2bBadge className="ml-2" />}
                     {o.isCancelled && (
                       <span className="ml-2 rounded bg-destructive/10 px-1.5 py-0.5 text-xs font-medium text-destructive">
                         отменён
@@ -445,6 +473,7 @@ const WbFbsSupplyCard = ({ supply, supplyId, onReload, onScanned }: WbFbsSupplyC
                   </TableCell>
                   <TableCell className="font-medium">
                     <span className="break-all">{a.orderNumber || '—'}</span>
+                    {a.isB2b && <B2bBadge className="ml-2" />}
                     {a.shelfName && (
                       <div className="text-xs text-muted-foreground">Полка «{a.shelfName}»</div>
                     )}

@@ -553,6 +553,40 @@ def fill_missing_stickers(cur, conn, api_key, use_sandbox):
     return filled
 
 
+def check_b2b_mix(cur, supply_id, order_id):
+    """Не даёт смешать в одной поставке заказы юрлиц (B2B) и обычных покупателей.
+
+    WB такую поставку не принимает и отвечает невнятным 409 «FailedToAddSupplyOrder».
+    Тип поставки задаёт ПЕРВЫЙ заказ: пустая поставка становится B2B или обычной,
+    дальше в неё пускаем только такие же заказы. Возвращает текст ошибки или None.
+    """
+    is_b2b = order_is_b2b(cur, order_id)
+    cur.execute(
+        "SELECT COALESCE(s.is_b2b, false), "
+        "       (SELECT COUNT(*) FROM wb_supply_orders w WHERE w.supply_id = s.id) "
+        "FROM marketplace_supplies s WHERE s.id = %s",
+        (int(supply_id),),
+    )
+    row = cur.fetchone()
+    if not row:
+        return 'Поставка не найдена'
+    supply_b2b, count = bool(row[0]), int(row[1] or 0)
+    if count == 0:
+        if supply_b2b != is_b2b:
+            cur.execute(
+                "UPDATE marketplace_supplies SET is_b2b = %s WHERE id = %s",
+                (is_b2b, int(supply_id)),
+            )
+        return None
+    if supply_b2b == is_b2b:
+        return None
+    if is_b2b:
+        return ('Это заказ юрлица (B2B) — WB не разрешает класть его в обычную поставку. '
+                'Отложите вещь в поставку B2B')
+    return ('Это поставка для юрлиц (B2B) — обычный заказ в неё положить нельзя. '
+            'Отложите вещь в обычную поставку')
+
+
 def handle_scan_order(cur, conn, body_data, api_key, use_sandbox):
     """Сканирование готового FBS-заказа WB в поставку: добавляет сборочное задание в
     WB-поставку (PATCH /api/marketplace/v3/supplies/{sid}/orders) и фиксирует связь у нас."""
@@ -670,10 +704,16 @@ def handle_scan_order(cur, conn, body_data, api_key, use_sandbox):
             (order_id,),
         )
 
+    mix_err = check_b2b_mix(cur, supply_id, order_id)
+    if mix_err:
+        conn.rollback()
+        return _resp(409, {'error': f'Заказ {order_number}: {mix_err}', 'b2bMismatch': True})
+
     status_code, data = wb_add_orders_to_supply(
         api_key, use_sandbox, wb_supply_id, [wb_order_id]
     )
     if status_code not in (200, 204):
+        conn.rollback()
         return _resp(502, {'error': f'WB не принял заказ в поставку ({status_code}): {wb_error_text(status_code, data)}'})
 
     if move_from_accumulator:
@@ -1113,7 +1153,7 @@ def handle_list_pending(cur, body_data):
     exclude = f"AND wso.supply_id <> {int(supply_id)}" if supply_id else ""
     cur.execute(
         "SELECT wso.order_id, o.order_number, o.product, o.material, o.width, o.height, "
-        "wso.supply_id, s.supply_number "
+        "wso.supply_id, s.supply_number, COALESCE(o.is_legal_entity, false) "
         "FROM wb_supply_orders wso "
         "JOIN orders o ON o.id = wso.order_id "
         "JOIN marketplace_supplies s ON s.id = wso.supply_id "
@@ -1131,6 +1171,7 @@ def handle_list_pending(cur, body_data):
             'height': float(r[5]) if r[5] is not None else None,
             'fromSupplyId': r[6],
             'fromSupplyNumber': r[7],
+            'isB2b': bool(r[8]),
         }
         for r in cur.fetchall()
     ]
@@ -1179,6 +1220,11 @@ def handle_move_orders(cur, conn, body_data, api_key, use_sandbox):
             continue
         order_number, wb_order_id, from_supply_id = row
         if from_supply_id == int(supply_id):
+            continue
+
+        mix_err = check_b2b_mix(cur, supply_id, int(oid))
+        if mix_err:
+            errors.append(f'{order_number}: {mix_err}')
             continue
 
         status_code, data = wb_add_orders_to_supply(
@@ -1561,6 +1607,19 @@ def ensure_open_supply(cur, conn, api_key, use_sandbox, shop_id=None, is_b2b=Fal
     return None, supply_id, wb_supply_id
 
 
+def _wb_b2b_flag(wb_order):
+    """Признак заказа юрлица в ответе WB (options.isB2B)."""
+    opts = (wb_order or {}).get('options') or {}
+    return bool(opts.get('isB2B') or opts.get('isB2b'))
+
+
+def order_is_b2b(cur, order_id):
+    """Заказ юрлица по нашим данным (признак сохраняется при загрузке заказов)."""
+    cur.execute("SELECT COALESCE(is_legal_entity, false) FROM orders WHERE id = %s", (int(order_id),))
+    row = cur.fetchone()
+    return bool(row and row[0])
+
+
 def wb_order_is_b2b(api_key, use_sandbox, wb_order_id):
     """Заказ юрлица (B2B)? Признак WB отдаёт только в списке новых заданий."""
     code, data = wb_request('GET', '/api/v3/orders/new', api_key, use_sandbox)
@@ -1568,8 +1627,7 @@ def wb_order_is_b2b(api_key, use_sandbox, wb_order_id):
         return False
     for o in (data or {}).get('orders') or []:
         if int(o.get('id') or 0) == int(wb_order_id):
-            opts = o.get('options') or {}
-            return bool(opts.get('isB2B') or opts.get('isB2b'))
+            return _wb_b2b_flag(o)
     return False
 
 
@@ -1647,7 +1705,10 @@ def add_order_to_open_supply(cur, conn, api_key, use_sandbox, order_number, shop
         (order_id,),
     )
 
-    err, supply_id, wb_supply_id = ensure_open_supply(cur, conn, api_key, use_sandbox, shop_id)
+    is_b2b = order_is_b2b(cur, order_id)
+    err, supply_id, wb_supply_id = ensure_open_supply(
+        cur, conn, api_key, use_sandbox, shop_id, is_b2b=is_b2b
+    )
     if err:
         return err
 
@@ -1680,7 +1741,9 @@ def add_order_to_open_supply(cur, conn, api_key, use_sandbox, order_number, shop
             (supply_id,),
         )
         conn.commit()
-        err, supply_id, wb_supply_id = ensure_open_supply(cur, conn, api_key, use_sandbox, shop_id)
+        err, supply_id, wb_supply_id = ensure_open_supply(
+            cur, conn, api_key, use_sandbox, shop_id, is_b2b=is_b2b
+        )
         if err:
             return err
         status_code, data = wb_add_orders_to_supply(
@@ -1711,7 +1774,10 @@ def add_order_to_open_supply(cur, conn, api_key, use_sandbox, order_number, shop
     # обычных покупателей и отвечает тем же 409 «FailedToAddSupplyOrder» без пояснений.
     # Упаковщица упиралась в ошибку и не могла закрыть заказ. Для таких заказов держим
     # отдельную накопительную поставку B2B и кладём заказ туда.
-    if status_code == 409 and wb_order_is_b2b(api_key, use_sandbox, wb_order_id):
+    # Признак мог ещё не сохраниться (заказ загружен до доработки) — спрашиваем WB.
+    if status_code == 409 and not is_b2b and wb_order_is_b2b(api_key, use_sandbox, wb_order_id):
+        cur.execute("UPDATE orders SET is_legal_entity = true WHERE id = %s", (order_id,))
+        is_b2b = True
         err, b2b_supply_id, b2b_wb_supply_id = ensure_open_supply(
             cur, conn, api_key, use_sandbox, shop_id, is_b2b=True
         )
@@ -2100,7 +2166,17 @@ def _handler_impl(event: dict, context) -> dict:
                 (int(wb_order_id), str(wb_order_id)),
             )
             existing_order = cur.fetchone()
+            # Заказ юрлица (B2B): WB не даёт класть такие задания в одну поставку с
+            # обычными. Признак пишем и в старые заказы — они могли загрузиться раньше,
+            # чем мы начали его сохранять.
+            wb_is_b2b = _wb_b2b_flag(wb)
             if existing_order:
+                if wb_is_b2b:
+                    cur.execute(
+                        "UPDATE orders SET is_legal_entity = true "
+                        "WHERE id = %s AND COALESCE(is_legal_entity, false) = false",
+                        (existing_order[0],),
+                    )
                 if wb.get('rid'):
                     cur.execute(
                         "UPDATE orders SET wb_rid = COALESCE(wb_rid, %s) "
@@ -2140,8 +2216,8 @@ def _handler_impl(event: dict, context) -> dict:
             cur.execute(
                 "INSERT INTO orders (order_number, marketplace, order_type, status, product, "
                 "quantity, source, material, width, height, wb_order_id, marketplace_created_at, "
-                "marketplace_item_id, shop_id, wb_rid) "
-                "VALUES (%s, 'WB', 'FBS', 'Новый', %s, 1, 'api', %s, %s, %s, %s, %s, %s, %s, %s) "
+                "marketplace_item_id, shop_id, wb_rid, is_legal_entity) "
+                "VALUES (%s, 'WB', 'FBS', 'Новый', %s, 1, 'api', %s, %s, %s, %s, %s, %s, %s, %s, %s) "
                 "ON CONFLICT (order_number) DO NOTHING RETURNING id",
                 (
                     order_number,
@@ -2154,6 +2230,7 @@ def _handler_impl(event: dict, context) -> dict:
                     int(item_id) if item_id else None,
                     shop_id,
                     wb_rid,
+                    wb_is_b2b,
                 ),
             )
             row_new = cur.fetchone()

@@ -147,7 +147,7 @@ def handle_get(event: dict, headers: dict, dsn: str) -> dict:
                 "s.locked_by, lu.full_name, s.locked_at, "
                 # Магазин поставки: кладовщик должен видеть в шапке, чей это
                 # кабинет — МЕГАТЮЛЬ или ДЮНА.
-                "s.shop_id, shp.name, shp.color "
+                "s.shop_id, shp.name, shp.color, COALESCE(s.is_b2b, false) "
                 "FROM marketplace_supplies s "
                 "LEFT JOIN users u ON u.id = s.created_by "
                 "LEFT JOIN users lu ON lu.id = s.locked_by "
@@ -410,7 +410,7 @@ def handle_get(event: dict, headers: dict, dsn: str) -> dict:
                     "SELECT wso.id, wso.order_id, o.order_number, o.product, "
                     "wso.wb_trbx_id, wso.sticker_url, wso.sticker_name, wso.scanned_at, "
                     "COALESCE(o.status, ''), o.material, o.width, o.height, "
-                    "gw.shipping_labeled_by_name "
+                    "gw.shipping_labeled_by_name, COALESCE(o.is_legal_entity, false) "
                     "FROM wb_supply_orders wso JOIN orders o ON o.id = wso.order_id "
                     "LEFT JOIN goods_warehouse gw ON gw.reserved_order_id = o.id "
                     "     AND gw.shipped_at IS NULL "
@@ -435,6 +435,7 @@ def handle_get(event: dict, headers: dict, dsn: str) -> dict:
                         'height': r[11],
                         # Кто наклеил ярлык отправления на эту вещь.
                         'labeledByName': r[12],
+                        'isB2b': bool(r[13]),
                     }
                     for r in cur.fetchall()
                 ]
@@ -462,7 +463,7 @@ def handle_get(event: dict, headers: dict, dsn: str) -> dict:
                 cur.execute(
                     "SELECT wso.id, o.order_number, o.product, o.material, "
                     "       o.width, o.height, gw.shipping_labeled_by_name, "
-                    "       gw.storage_barcode, sh.name "
+                    "       gw.storage_barcode, sh.name, COALESCE(o.is_legal_entity, false) "
                     "FROM wb_supply_orders wso "
                     "JOIN marketplace_supplies acc ON acc.id = wso.supply_id "
                     "JOIN orders o ON o.id = wso.order_id "
@@ -487,6 +488,7 @@ def handle_get(event: dict, headers: dict, dsn: str) -> dict:
                         'storageBarcode': r[7],
                         'shelfName': r[8],
                         'labeledAt': None,
+                        'isB2b': bool(r[9]),
                     }
                     for r in cur.fetchall()
                 ]
@@ -689,6 +691,8 @@ def handle_get(event: dict, headers: dict, dsn: str) -> dict:
                 'shopId': row[35],
                 'shopName': row[36],
                 'shopColor': row[37],
+                # Поставка для заказов юрлиц (B2B): обычные заказы в неё не кладём.
+                'isB2b': bool(row[38]),
             }
             # Реквизиты клиента для упаковочного листа Газельки — общие настройки.
             cur.execute(
@@ -821,7 +825,9 @@ def handle_get(event: dict, headers: dict, dsn: str) -> dict:
             f"   AND NOT EXISTS (SELECT 1 FROM marketplace_supply_items msi2 "
             f"                   JOIN marketplace_supplies s2 ON s2.id = msi2.supply_id "
             f"                   WHERE msi2.goods_warehouse_id = gw.id "
-            f"                     AND COALESCE(s2.status, '') NOT IN ('Выполнена', 'Отменена'))) END) "
+            f"                     AND COALESCE(s2.status, '') NOT IN ('Выполнена', 'Отменена'))) END), "
+            # Поставка для заказов юрлиц: WB не смешивает их с обычными.
+            f"COALESCE(s.is_b2b, false) "
             f"FROM marketplace_supplies s "
             f"LEFT JOIN users u ON u.id = s.created_by "
             f"LEFT JOIN users lu ON lu.id = s.locked_by "
@@ -861,6 +867,7 @@ def handle_get(event: dict, headers: dict, dsn: str) -> dict:
                 # План по заявке маркетплейса — для FBO это то количество,
                 # без которого поставку не выпустят в отгрузку.
                 'plannedQuantity': r[23],
+                'isB2b': bool(r[25]),
             }
             for r in cur.fetchall()
         ]

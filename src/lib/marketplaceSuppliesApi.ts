@@ -48,6 +48,8 @@ export interface Supply {
   /** Кто сейчас собирает поставку — показываем занятость прямо в списке. */
   lockedBy?: number | null;
   lockedByName?: string | null;
+  /** Поставка WB для заказов юрлиц: WB не разрешает смешивать их с обычными. */
+  isB2b?: boolean;
 }
 
 export interface SupplyItem {
@@ -78,6 +80,8 @@ export interface SupplyItem {
   shelfId?: number | null;
   /** Кто наклеил ярлык отправления на эту вещь. */
   labeledByName?: string | null;
+  /** Заказ юрлица (B2B). */
+  isB2b?: boolean;
 }
 
 /**
@@ -98,6 +102,8 @@ export interface SupplyAwaitingItem {
   labeledByName: string | null;
   labeledAt: string | null;
   shelfName: string | null;
+  /** Заказ юрлица (B2B) — едет только в поставке B2B. */
+  isB2b?: boolean;
   /** Кто делал вещь — печатается в листе недостачи, чтобы искать пропажу по людям. */
   cutterName?: string | null;
   sewerName?: string | null;
@@ -179,6 +185,8 @@ export interface WbSupplyOrder {
   height?: number | null;
   /** Кто наклеил ярлык отправления на эту вещь. */
   labeledByName?: string | null;
+  /** Заказ юрлица (B2B). */
+  isB2b?: boolean;
 }
 
 

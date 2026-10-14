@@ -137,6 +137,8 @@ export interface WbPendingOrder {
   height: number | null;
   fromSupplyId: number;
   fromSupplyNumber: string | null;
+  /** Заказ юрлица (B2B) — в обычную поставку его не положить. */
+  isB2b?: boolean;
 }
 
 /** Заказы, накопленные упаковщицами при печати стикеров, — их можно забрать в поставку. */

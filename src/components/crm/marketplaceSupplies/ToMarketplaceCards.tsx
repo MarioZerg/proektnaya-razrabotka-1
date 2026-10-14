@@ -1,3 +1,4 @@
+import B2bBadge from './B2bBadge';
 import { Badge } from '@/components/ui/badge';
 import Icon from '@/components/ui/icon';
 import type { Supply } from '@/lib/marketplaceSuppliesApi';
@@ -28,6 +29,7 @@ const ToMarketplaceCards = ({ supplies, onOpen }: ToMarketplaceCardsProps) => (
           <div className="min-w-0">
             <div className="break-words font-semibold leading-snug">
               {s.supplyNumber || `Поставка №${s.id}`}
+              {s.isB2b && <B2bBadge className="ml-2 align-middle" />}
             </div>
             <div className="mt-0.5 text-xs text-muted-foreground">
               #{s.id}

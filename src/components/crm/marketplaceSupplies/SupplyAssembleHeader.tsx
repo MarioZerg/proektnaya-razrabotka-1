@@ -1,3 +1,4 @@
+import B2bBadge from './B2bBadge';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import Icon from '@/components/ui/icon';
@@ -41,6 +42,7 @@ const SupplyAssembleHeader = ({
         {marketplaceLogo[supply.marketplace]?.label || supply.marketplace}
       </span>
       <Badge variant="outline">{supply.type}</Badge>
+      {supply.isB2b && supply.marketplace === 'WB' && <B2bBadge />}
     </div>
     <p className="mt-1 text-sm leading-snug text-muted-foreground">
       {supply.supplyNumber || 'без номера'} · {formatDateTime(supply.createdAt)}

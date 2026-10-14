@@ -1,3 +1,4 @@
+import B2bBadge from './B2bBadge';
 import {
   Table,
   TableBody,
@@ -78,6 +79,7 @@ const ToMarketplaceTable = ({ loading, error = null, supplies, onOpen }: ToMarke
               <TableCell className="whitespace-normal break-words align-top">
                 <div className="font-semibold">
                   {s.supplyNumber || `Поставка №${s.id}`}
+                  {s.isB2b && <B2bBadge className="ml-2 align-middle" />}
                 </div>
                 <div className="text-xs text-muted-foreground">
                   #{s.id}

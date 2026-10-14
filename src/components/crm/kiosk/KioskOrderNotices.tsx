@@ -103,6 +103,8 @@ const KioskOrderNotices = ({ order }: { order: KioskOrder }) => (
           <p className="text-lg">
             {order.legalCompanyName || 'Покупатель — компания'}. Собирается как обычный
             заказ, ярлык отправления печатается так же
+            {order.marketplace === 'WB' &&
+              '. Положите вещь в отдельный короб B2B — с обычными заказами WB её не примет'}
           </p>
         </div>
       </div>
