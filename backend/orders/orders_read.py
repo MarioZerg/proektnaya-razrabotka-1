@@ -411,6 +411,34 @@ def _handle_live_floor(cur, conn, headers: dict) -> dict:
             max_pairs.append((r[0], str(r[9]), bool(r[7])))
     _maybe_sync_shift_avatars(cur, conn, people, max_pairs)
 
+    # ПОСЛЕДНЕЕ ДЕЙСТВИЕ КАЖДОГО — ОТДЕЛЬНО ОТ ЛЕНТЫ.
+    #
+    # Раньше простой считался по ленте переходов, а в ней только 80 последних
+    # событий на весь цех. В час пик швея за 40 минут «выпадала» из ленты, и
+    # простой отсчитывался от открытия смены: при 41 сшитом заказе карточка
+    # показывала «простой 10 часов». Берём сутки, а не окно ленты в 3 часа:
+    # иначе после долгой паузы простой снова считался бы от начала смены.
+    if people:
+        cur.execute(
+            "SELECT uid, MAX(ts) FROM ("
+            "  SELECT cutter_user_id AS uid, cut_at AS ts FROM orders "
+            "   WHERE cut_at >= now() - interval '24 hours' "
+            "  UNION ALL SELECT overlock_user_id, overlocked_at FROM orders "
+            "   WHERE overlocked_at >= now() - interval '24 hours' "
+            "  UNION ALL SELECT COALESCE(sewer_user_id, assigned_user_id), taken_at FROM orders "
+            "   WHERE taken_at >= now() - interval '24 hours' "
+            "     AND sewing_status IN ('В работе', 'Стикеровка', 'Готовые') "
+            "  UNION ALL SELECT sewer_user_id, sewn_at FROM orders "
+            "   WHERE sewn_at >= now() - interval '24 hours' "
+            "  UNION ALL SELECT packer_user_id, packed_at FROM orders "
+            "   WHERE packed_at >= now() - interval '24 hours' "
+            ") t WHERE uid = ANY(%s) GROUP BY uid",
+            ([p['id'] for p in people],),
+        )
+        last_by_user = {r[0]: _iso(r[1]) for r in cur.fetchall()}
+        for p in people:
+            p['lastActionAt'] = last_by_user.get(p['id'])
+
     # Вещи, которые сейчас движутся. Длинную очередь «крой готов» целиком не
     # везём — только то, что раскроили недавно или держат на оверлоке.
     cur.execute(

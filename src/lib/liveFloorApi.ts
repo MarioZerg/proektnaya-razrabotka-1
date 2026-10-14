@@ -15,6 +15,8 @@ export interface LivePerson {
   bubbleHat?: string | null;
   /** До этой отметки швея держит 3 заказа вместо 2. */
   hatBoostUntil?: string | null;
+  /** Последнее действие за сутки — считается сервером, не зависит от ленты. */
+  lastActionAt?: string | null;
 }
 
 export interface LiveOrder {

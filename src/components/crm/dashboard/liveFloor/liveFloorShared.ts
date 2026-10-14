@@ -187,7 +187,16 @@ export const personState = (
   nowMs: number,
 ): PersonState => {
   const hands = ordersInHands(person, orders);
-  const lastAt = events.find((e) => e.userId === person.id)?.at || null;
+  // Лента — только 80 последних событий на весь цех, активную швею она быстро
+  // теряет. Берём более позднее из ленты и серверной отметки последнего действия.
+  const fromFeed = events.find((e) => e.userId === person.id)?.at || null;
+  const fromServer = person.lastActionAt || null;
+  const lastAt =
+    fromFeed && fromServer
+      ? new Date(fromFeed).getTime() >= new Date(fromServer).getTime()
+        ? fromFeed
+        : fromServer
+      : fromFeed || fromServer;
   const lastMs = lastAt ? nowMs - new Date(lastAt).getTime() : null;
   // У упаковки вещей «в руках» нет — она закрывает их на терминале. Работает,
   // если что-то упаковала за последние 10 минут.
