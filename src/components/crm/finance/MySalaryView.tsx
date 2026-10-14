@@ -90,8 +90,8 @@ const MySalaryView = ({
           </p>
         </div>
       ) : (
-        {/* До xl — одной колонкой: при открытом меню ERP на ~1024px правая
-            колонка 1/4 сжималась до ~170px, календарь и выплаты «уплывали». */}
+        // До xl — одной колонкой: при открытом меню ERP на ~1024px правая
+        // колонка 1/4 сжималась до ~170px, календарь и выплаты «уплывали».
         <div className="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(16.5rem,19rem)]">
           <div className="order-2 min-w-0 space-y-4 xl:order-1">
             <MyAccrualsFilter
