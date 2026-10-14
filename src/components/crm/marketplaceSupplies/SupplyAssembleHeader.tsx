@@ -1,3 +1,4 @@
+import SupplyTypeBadge from './SupplyTypeBadge';
 import B2bBadge from './B2bBadge';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -41,7 +42,7 @@ const SupplyAssembleHeader = ({
       <span className={marketplaceLogo[supply.marketplace]?.className}>
         {marketplaceLogo[supply.marketplace]?.label || supply.marketplace}
       </span>
-      <Badge variant="outline">{supply.type}</Badge>
+      <SupplyTypeBadge type={supply.type} className="px-2 py-1 text-xs" />
       {supply.isB2b && supply.marketplace === 'WB' && <B2bBadge />}
     </div>
     <p className="mt-1 text-sm leading-snug text-muted-foreground">

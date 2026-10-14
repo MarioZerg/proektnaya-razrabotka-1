@@ -1,3 +1,4 @@
+import SupplyTypeBadge from './SupplyTypeBadge';
 import B2bBadge from './B2bBadge';
 import { Badge } from '@/components/ui/badge';
 import Icon from '@/components/ui/icon';
@@ -28,13 +29,14 @@ const ToMarketplaceCards = ({ supplies, onOpen }: ToMarketplaceCardsProps) => (
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0">
             <div className="break-words font-semibold leading-snug">
+              <SupplyTypeBadge type={s.type} className="mr-2 align-middle" />
               {s.supplyNumber || `Поставка №${s.id}`}
               {s.isB2b && <B2bBadge className="ml-2 align-middle" />}
             </div>
             <div className="mt-0.5 text-xs text-muted-foreground">
               #{s.id}
-              {s.type ? ` · ${s.type}` : ''}
-              {s.gazelkaId ? ` · Газелька ${s.gazelkaId}` : ''}
+              {/* Газелька возит только FBO — у FBS эта строка лишняя. */}
+              {s.type !== 'FBS' && s.gazelkaId ? ` · Газелька ${s.gazelkaId}` : ''}
             </div>
           </div>
           <Badge className={`shrink-0 ${statusVariant[s.status]?.className || ''}`}>
@@ -83,7 +85,7 @@ const ToMarketplaceCards = ({ supplies, onOpen }: ToMarketplaceCardsProps) => (
 
         <div className="mt-2 space-y-0.5 text-xs text-muted-foreground">
           <div>Создан: {formatDate(s.createdAt)}</div>
-          {s.shipToGazelkaAt && <div>В Газельку: {formatDate(s.shipToGazelkaAt)}</div>}
+          {s.type !== 'FBS' && s.shipToGazelkaAt && <div>В Газельку: {formatDate(s.shipToGazelkaAt)}</div>}
           {s.shipToMarketplaceAt && <div>В маркет: {formatDate(s.shipToMarketplaceAt)}</div>}
           {s.completedAt && (
             <div className="font-medium text-emerald-600">Выполнен: {formatDate(s.completedAt)}</div>

@@ -1,3 +1,4 @@
+import SupplyTypeBadge from './SupplyTypeBadge';
 import B2bBadge from './B2bBadge';
 import {
   Table,
@@ -78,13 +79,14 @@ const ToMarketplaceTable = ({ loading, error = null, supplies, onOpen }: ToMarke
             >
               <TableCell className="whitespace-normal break-words align-top">
                 <div className="font-semibold">
+                  <SupplyTypeBadge type={s.type} className="mr-2 align-middle" />
                   {s.supplyNumber || `Поставка №${s.id}`}
                   {s.isB2b && <B2bBadge className="ml-2 align-middle" />}
                 </div>
                 <div className="text-xs text-muted-foreground">
                   #{s.id}
-                  {s.type ? ` · ${s.type}` : ''}
-                  {s.gazelkaId ? ` · Газелька ${s.gazelkaId}` : ''}
+                  {/* Газелька возит только FBO — у FBS эта строка лишняя. */}
+                  {s.type !== 'FBS' && s.gazelkaId ? ` · Газелька ${s.gazelkaId}` : ''}
                 </div>
                 {s.supplyBarcode && (
                   <div className="text-xs text-muted-foreground">{s.supplyBarcode}</div>
@@ -151,7 +153,7 @@ const ToMarketplaceTable = ({ loading, error = null, supplies, onOpen }: ToMarke
                 <div className="text-muted-foreground">
                   Создан: {formatDateTime(s.createdAt)}
                 </div>
-                {s.shipToGazelkaAt && (
+                {s.type !== 'FBS' && s.shipToGazelkaAt && (
                   <div className="text-muted-foreground">
                     В Газельку: {formatDate(s.shipToGazelkaAt)}
                   </div>
