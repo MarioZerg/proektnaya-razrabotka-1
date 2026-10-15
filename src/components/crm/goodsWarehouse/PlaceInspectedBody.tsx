@@ -10,6 +10,7 @@ import { fetchInspection, placeInspectedBatch } from '@/lib/goodsWarehouseApi';
 import { playScanSound, playScanErrorSound, primeScanSounds } from '@/lib/scanSound';
 import { shortProductName } from '@/lib/shortProductName';
 import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
+import { fixScanLayout } from '@/lib/keyboardLayout';
 
 interface PlaceInspectedBodyProps {
   /** Вкладка открыта: по этому признаку перезагружаем список и ставим фокус. */
@@ -112,7 +113,7 @@ const PlaceInspectedBody = ({ active, onClose, onDone }: PlaceInspectedBodyProps
   }, [active]);
 
   const handleScan = () => {
-    const code = barcode.trim();
+    const code = fixScanLayout(barcode.trim());
     if (!code) return;
     setBarcode('');
     setError(null);

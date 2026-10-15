@@ -22,6 +22,7 @@ import { useAuth } from '@/context/AuthContext';
 import { useScannerAutoSubmit } from '@/hooks/useScannerAutoSubmit';
 import { fetchGoodsByBarcode, moveGoodsShelfBatch } from '@/lib/goodsWarehouseApi';
 import { playScanSound, playScanErrorSound, primeScanSounds } from '@/lib/scanSound';
+import { fixScanLayout } from '@/lib/keyboardLayout';
 interface MoveShelfDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -86,7 +87,7 @@ const MoveShelfDialog = ({
   }, [toShelfId]);
   const toShelfName = shelves.find((s) => String(s.id) === toShelfId)?.name || '';
   const handleScan = async () => {
-    const code = barcode.trim();
+    const code = fixScanLayout(barcode.trim());
     if (!code || !toShelfId) return;
     setBarcode('');
     setBusy(true);

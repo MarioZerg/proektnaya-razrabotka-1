@@ -30,6 +30,7 @@ import {
   primeScanSounds,
 } from '@/lib/scanSound';
 import type { CancelledScanInfo } from '@/components/crm/marketplaceSupplies/CancelledScanDialog';
+import { fixScanLayout } from '@/lib/keyboardLayout';
 
 interface UseSupplyActionsArgs {
   supplyId: number;
@@ -141,7 +142,7 @@ export const useSupplyActions = ({
   };
 
   const handleScanOrder = async () => {
-    const orderNumber = scanOrderNumber.trim();
+    const orderNumber = fixScanLayout(scanOrderNumber.trim());
     if (!orderNumber) return;
     // Поле очищаем сразу, до ответа сервера — чтобы не было повторных отправок того же
     // номера при ошибке (автосканирование иначе попыталось бы отправить его снова).

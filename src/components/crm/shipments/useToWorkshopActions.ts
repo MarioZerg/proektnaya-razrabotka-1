@@ -11,6 +11,7 @@ import {
 } from '@/lib/shipmentsApi';
 import { playScanSound, playScanErrorSound } from '@/lib/scanSound';
 import type { ToWorkshopState } from './useToWorkshopState';
+import { fixScanLayout } from '@/lib/keyboardLayout';
 
 /**
  * Обработчики страницы "Отгрузка в цех": создание заявки, сканирование рулонов,
@@ -103,7 +104,7 @@ export const useToWorkshopActions = (state: ToWorkshopState) => {
   };
 
   const handleScan = async () => {
-    const code = scanCode.trim();
+    const code = fixScanLayout(scanCode.trim());
     if (!code || !activeShipment) return;
     // Поле очищаем сразу, до ответа сервера — чтобы кладовщик не мог повторно нажать
     // "Добавить" с тем же значением, пока идёт запрос, и чтобы строка ввода не оставалась

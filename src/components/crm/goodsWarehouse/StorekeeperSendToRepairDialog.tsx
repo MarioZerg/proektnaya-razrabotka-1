@@ -21,6 +21,7 @@ import {
   type RepairReason,
 } from '@/lib/repairFabricApi';
 import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
+import { fixScanLayout } from '@/lib/keyboardLayout';
 
 interface IncomingPiece {
   barcode: string;
@@ -114,7 +115,7 @@ const StorekeeperSendToRepairDialog = ({
   }, [reasons]);
 
   const handleLookup = async () => {
-    const code = barcode.trim();
+    const code = fixScanLayout(barcode.trim());
     if (!code || scanning) return;
     if (code.toUpperCase().startsWith('GW-')) {
       setLookup(null);

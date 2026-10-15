@@ -33,6 +33,7 @@ import { playScanSound, playScanErrorSound, primeScanSounds } from '@/lib/scanSo
 import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
 import ReturnToSupplierScanner from '@/components/crm/shipments/ReturnToSupplierScanner';
 import ReturnConfirmDialog from '@/components/crm/shipments/ReturnConfirmDialog';
+import { fixScanLayout } from '@/lib/keyboardLayout';
 
 const itemPrice = (item: ShipmentItem) =>
   item.price ?? item.rollPurchasePrice ?? null;
@@ -92,7 +93,7 @@ const ReturnToSupplier = () => {
   const activeDraft = drafts[0] || null;
 
   const handleScan = async () => {
-    const code = scanCode.trim();
+    const code = fixScanLayout(scanCode.trim());
     if (!code || scanning || !canScan) return;
     setScanCode('');
     setScanning(true);

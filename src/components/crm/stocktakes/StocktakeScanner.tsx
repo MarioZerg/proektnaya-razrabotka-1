@@ -19,6 +19,7 @@ import { scanStocktake, undoStocktakeScan, type Stocktake } from '@/lib/stocktak
 import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
 import ScanErrorAlert from '@/components/crm/scan/ScanErrorAlert';
 import ScanInputCard from '@/components/crm/scan/ScanInputCard';
+import { fixScanLayout } from '@/lib/keyboardLayout';
 
 interface StocktakeScannerProps {
   stocktake: Stocktake;
@@ -68,7 +69,7 @@ const StocktakeScanner = ({ stocktake, onScanned }: StocktakeScannerProps) => {
   }, []);
 
   const handleScan = async () => {
-    const code = barcode.trim();
+    const code = fixScanLayout(barcode.trim());
     if (!code || saving) return;
     setBarcode('');
     setError(null);

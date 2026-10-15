@@ -14,6 +14,7 @@ import { useToast } from '@/hooks/use-toast';
 import { useScannerAutoSubmit } from '@/hooks/useScannerAutoSubmit';
 import { scanPickupReturn, markPvzSubstitution } from '@/lib/marketplaceReturnsApi';
 import { playScanSound, playScanErrorSound, primeScanSounds } from '@/lib/scanSound';
+import { fixScanLayout } from '@/lib/keyboardLayout';
 
 interface PickupReturnsDialogProps {
   open: boolean;
@@ -73,7 +74,7 @@ const PickupReturnsDialog = ({ open, onOpenChange, onDone }: PickupReturnsDialog
   }, [open]);
 
   const handleScan = async () => {
-    const code = barcode.trim();
+    const code = fixScanLayout(barcode.trim());
     if (!code || busy) return;
     setBusy(true);
     setBarcode('');

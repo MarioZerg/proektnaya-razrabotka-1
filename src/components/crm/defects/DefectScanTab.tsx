@@ -22,6 +22,7 @@ import {
 import { roleLabels, formatQty } from './defectShared';
 import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
 import ScanInputCard from '@/components/crm/scan/ScanInputCard';
+import { fixScanLayout } from '@/lib/keyboardLayout';
 
 /**
  * Приёмка брака сканером.
@@ -64,7 +65,7 @@ const DefectScanTab = () => {
   useEffect(load, []);
 
   const handleScan = (value: string) => {
-    const code = value.trim().toUpperCase();
+    const code = fixScanLayout(value.trim()).toUpperCase();
     if (!code || saving) return;
     void run(async () => {
       try {

@@ -14,6 +14,7 @@ import KioskSpareItemCard from '@/components/crm/kiosk/KioskSpareItemCard';
 import KioskOrderCard from '@/components/crm/kiosk/KioskOrderCard';
 import KioskScannerInput from '@/components/crm/kiosk/KioskScannerInput';
 import { useKioskOrderActions } from '@/components/crm/kiosk/useKioskOrderActions';
+import { fixScanLayout } from '@/lib/keyboardLayout';
 
 interface KioskOrdersScreenProps {
   packerId: number;
@@ -99,7 +100,7 @@ const KioskOrdersScreen = ({ packerId, packerName, workshopId, role }: KioskOrde
   }, [workshopId, privilegedSearch]);
 
   const handleSearch = async () => {
-    const value = (inputRef.current?.value || code).trim();
+    const value = fixScanLayout((inputRef.current?.value || code).trim());
     if (!value) return;
     // Один скан приходит сюда двумя путями сразу: через Enter в скрытом поле и через
     // глобальный перехватчик клавиатуры. Плюс сканер иногда «пикает» дважды. Состояние

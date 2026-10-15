@@ -27,6 +27,7 @@ import {
   type CatalogHit,
   type Step,
 } from '@/components/crm/goodsWarehouse/adminReceive/adminReceiveShared';
+import { fixScanLayout } from '@/lib/keyboardLayout';
 
 interface AdminReceiveDialogProps {
   open: boolean;
@@ -266,7 +267,7 @@ const AdminReceiveDialog = ({ open, onOpenChange, shelves, onDone }: AdminReceiv
   };
 
   const handleScan = async () => {
-    const code = scan.trim();
+    const code = fixScanLayout(scan.trim());
     if (!code || scanning || saving || confirmed) return;
     setScanning(true);
     try {

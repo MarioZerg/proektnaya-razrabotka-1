@@ -15,6 +15,7 @@ import WbFbsSupplyToolbar from './WbFbsSupplyToolbar';
 import WbFbsScanPanel from './WbFbsScanPanel';
 import WbFbsB2bNotices from './WbFbsB2bNotices';
 import WbFbsOrdersTable from './WbFbsOrdersTable';
+import { fixScanLayout } from '@/lib/keyboardLayout';
 
 interface WbFbsSupplyCardProps {
   supply: SupplyDetail;
@@ -137,7 +138,7 @@ const WbFbsSupplyCard = ({ supply, supplyId, onReload, onScanned }: WbFbsSupplyC
   };
 
   const handleScan = async () => {
-    const orderNumber = scanValue.trim();
+    const orderNumber = fixScanLayout(scanValue.trim());
     if (!orderNumber) return;
     setScanValue('');
     setScanning(true);

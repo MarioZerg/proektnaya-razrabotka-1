@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react';
+import { fixScanLayout } from '@/lib/keyboardLayout';
 
 /**
  * Ловит ввод сканера штрихкодов на уровне всей страницы, независимо от фокуса.
@@ -38,7 +39,7 @@ export function useGlobalScanner(
     }
 
     const flush = () => {
-      const code = bufRef.current.trim();
+      const code = fixScanLayout(bufRef.current.trim());
       bufRef.current = '';
       if (code.length >= minLength) onScanRef.current(code);
     };

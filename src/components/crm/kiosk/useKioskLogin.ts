@@ -4,6 +4,7 @@ import { moveShiftToWorkshop } from '@/lib/shiftSessionsApi';
 import { playScanSound, playScanErrorSound } from '@/lib/scanSound';
 import { useScannerAutoSubmit } from '@/hooks/useScannerAutoSubmit';
 import { useGlobalScanner } from '@/hooks/useGlobalScanner';
+import { fixScanLayout } from '@/lib/keyboardLayout';
 
 type Toast = (opts: {
   title: string;
@@ -44,7 +45,7 @@ export const useKioskLogin = ({
   // ("barcode=" → "ифксцщву="), а цифры остаются целыми. Поэтому ищем в строке сам код по
   // шаблону "{id}-{смена}-{дата}" — это работает при любой раскладке и формате ввода.
   const extractCode = (raw: string): string => {
-    const value = raw.trim();
+    const value = fixScanLayout(raw.trim());
     const byPattern = value.match(/(\d{1,6}-\d{1,3}-\d{6,8})/);
     if (byPattern) return byPattern[1];
     const byParam = value.match(/barcode=([^&\s]+)/i);

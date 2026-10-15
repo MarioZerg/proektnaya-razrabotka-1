@@ -12,6 +12,7 @@ import { useToast } from '@/hooks/use-toast';
 import { useScannerAutoSubmit } from '@/hooks/useScannerAutoSubmit';
 import { placeOnShelf, type GoodsWarehouseItem } from '@/lib/goodsWarehouseApi';
 import { unplacedReasonLabel } from '@/components/crm/goodsWarehouse/goodsWarehouseShared';
+import { fixScanLayout } from '@/lib/keyboardLayout';
 
 interface PlaceOnShelfDialogProps {
   open: boolean;
@@ -55,7 +56,7 @@ const PlaceOnShelfDialog = ({
     if (!barcode.trim()) return;
     setSaving(true);
     try {
-      const scanned = barcode.trim();
+      const scanned = fixScanLayout(barcode.trim());
       const res = await placeOnShelf(scanned);
       // Подписываем положенную вещь тканью и размером — по названию товара их не
       // различить, а кладовщику важно видеть, что именно он сейчас убрал на полку.

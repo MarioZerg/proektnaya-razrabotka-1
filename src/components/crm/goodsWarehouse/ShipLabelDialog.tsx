@@ -18,6 +18,7 @@ import {
 } from '@/lib/goodsWarehouseApi';
 import { printOrderMarketplaceLabel } from '@/lib/printOrderMarketplaceLabel';
 import { playScanSound, playScanErrorSound } from '@/lib/scanSound';
+import { fixScanLayout } from '@/lib/keyboardLayout';
 
 interface ShipLabelDialogProps {
   open: boolean;
@@ -69,7 +70,7 @@ const ShipLabelDialog = ({ open, onOpenChange, matched, onDone }: ShipLabelDialo
   }, [open]);
 
   const handleScan = async () => {
-    const code = barcode.trim();
+    const code = fixScanLayout(barcode.trim());
     if (!code) return;
     setBarcode('');
     setSaving(true);

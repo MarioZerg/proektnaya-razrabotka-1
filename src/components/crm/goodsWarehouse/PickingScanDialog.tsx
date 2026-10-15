@@ -12,6 +12,7 @@ import { useScannerAutoSubmit } from '@/hooks/useScannerAutoSubmit';
 import { scanPickingByBarcode } from '@/lib/goodsWarehouseApi';
 import { useAuth } from '@/context/AuthContext';
 import { playScanSound, playScanErrorSound, primeScanSounds } from '@/lib/scanSound';
+import { fixScanLayout } from '@/lib/keyboardLayout';
 
 interface PickingScanDialogProps {
   open: boolean;
@@ -104,7 +105,7 @@ const PickingScanDialog = ({ open, onOpenChange, onOpenCard }: PickingScanDialog
   }, [open]);
 
   const handleScan = async () => {
-    const code = barcode.trim();
+    const code = fixScanLayout(barcode.trim());
     if (!code) return;
     setBarcode('');
 

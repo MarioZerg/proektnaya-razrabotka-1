@@ -7,6 +7,7 @@ import { playScanSound, playScanErrorSound, primeScanSounds } from '@/lib/scanSo
 import { acceptRepairPiece } from '@/lib/repairFabricApi';
 import ScanErrorAlert from '@/components/crm/scan/ScanErrorAlert';
 import ScanInputCard from '@/components/crm/scan/ScanInputCard';
+import { fixScanLayout } from '@/lib/keyboardLayout';
 
 interface RepairPieceBatchScannerProps {
   /** Кусок лёг в цех — обновить список. */
@@ -51,7 +52,7 @@ const RepairPieceBatchScanner = ({ onAccepted }: RepairPieceBatchScannerProps) =
   };
 
   const handleScan = async () => {
-    const code = barcode.trim().toUpperCase();
+    const code = fixScanLayout(barcode.trim()).toUpperCase();
     if (!code || busy) return;
     setBarcode('');
     setError(null);

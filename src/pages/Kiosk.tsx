@@ -11,6 +11,7 @@ import { fetchKioskOrder, closeKioskOrder, type KioskOrder } from '@/lib/kioskAp
 import { playScanSound, playScanErrorSound } from '@/lib/scanSound';
 import { useScannerAutoSubmit } from '@/hooks/useScannerAutoSubmit';
 import KioskManualSearch from '@/components/crm/kiosk/KioskManualSearch';
+import { fixScanLayout } from '@/lib/keyboardLayout';
 
 const Kiosk = () => {
   const { toast } = useToast();
@@ -23,7 +24,7 @@ const Kiosk = () => {
   const inputRef = useRef<HTMLInputElement>(null);
 
   const handleSearch = async () => {
-    const value = orderNumber.trim();
+    const value = fixScanLayout(orderNumber.trim());
     if (!value) return;
     // Поле очищаем сразу, до ответа сервера — чтобы не было повторных отправок того же
     // номера при ошибке (автосканирование иначе попыталось бы отправить его снова).

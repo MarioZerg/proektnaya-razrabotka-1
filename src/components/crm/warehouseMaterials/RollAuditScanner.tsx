@@ -15,6 +15,7 @@ import {
   type RollAudit,
   type RollAuditMissing,
 } from '@/lib/rollAuditsApi';
+import { fixScanLayout } from '@/lib/keyboardLayout';
 
 interface RollAuditScannerProps {
   open: boolean;
@@ -110,7 +111,7 @@ const RollAuditScanner = ({ open, onOpenChange, onFinished }: RollAuditScannerPr
   const foundSet = useMemo(() => new Set(found), [found]);
 
   const scan = () => {
-    const v = code.trim().toUpperCase();
+    const v = fixScanLayout(code.trim()).toUpperCase();
     setCode('');
     focusScan();
     if (!v) return;

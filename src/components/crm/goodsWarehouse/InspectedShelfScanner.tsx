@@ -8,6 +8,7 @@ import { playScanSound, playScanErrorSound, primeScanSounds, speakText } from '@
 import { scanInspectedToShelf } from '@/lib/goodsWarehouseApi';
 import ScanErrorAlert from '@/components/crm/scan/ScanErrorAlert';
 import ScanInputCard from '@/components/crm/scan/ScanInputCard';
+import { fixScanLayout } from '@/lib/keyboardLayout';
 
 interface InspectedShelfScannerProps {
   /** Вещь легла на полку — обновить список и счётчики. */
@@ -44,7 +45,7 @@ const InspectedShelfScanner = ({ onPlaced }: InspectedShelfScannerProps) => {
   }, []);
 
   const handleScan = async () => {
-    const code = barcode.trim().toUpperCase();
+    const code = fixScanLayout(barcode.trim()).toUpperCase();
     if (!code || busy) return;
     setBarcode('');
     setError(null);

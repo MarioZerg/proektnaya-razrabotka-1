@@ -7,6 +7,7 @@ import { useScannerAutoSubmit } from '@/hooks/useScannerAutoSubmit';
 import { printWbBoxLabel } from '@/lib/wbBoxLabel';
 import { printBoxLabelFromUrl } from '@/lib/printMarketplaceLabel';
 import { boxPackedCount } from '@/components/crm/marketplaceSupplies/marketplaceSuppliesShared';
+import { fixScanLayout } from '@/lib/keyboardLayout';
 
 /** Строка списка: одинаковые вещи короба, схлопнутые в одну позицию. */
 export interface GroupedBoxItem {
@@ -147,7 +148,7 @@ export const useSupplyBoxCard = ({
    * Так же сделано в FBS — там сканируют подряд без пауз.
    */
   const handleAdd = async () => {
-    const value = orderNumber.trim();
+    const value = fixScanLayout(orderNumber.trim());
     if (!value) return;
     setOrderNumber('');
     setScanning(true);
