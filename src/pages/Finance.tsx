@@ -26,7 +26,6 @@ import {
 import ManagerFinanceView from '@/components/crm/finance/ManagerFinanceView';
 import MySalaryView from '@/components/crm/finance/MySalaryView';
 import AdminFinanceView from '@/components/crm/finance/AdminFinanceView';
-import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
 
 const Finance = () => {
   const { user } = useAuth();

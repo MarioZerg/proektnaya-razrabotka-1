@@ -121,7 +121,8 @@ const fetchLiveFloorRaw = async (): Promise<LiveFloorData> => {
     );
   }
   const raw = await res.text();
-  let data: Record<string, unknown> = {};
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let data: Record<string, any> = {};
   try {
     data = raw ? JSON.parse(raw) : {};
   } catch {
