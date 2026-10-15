@@ -91,6 +91,7 @@ const AwardCard = ({ userId }: AwardCardProps) => {
 
   const left = splitLeft(new Date(award.payAt).getTime() - now);
   const arrived = left.days + left.hours + left.minutes + left.seconds === 0;
+  const festive = award.title.startsWith('Новогод');
 
   const cells = [
     { value: left.days, label: 'дн' },
@@ -100,7 +101,13 @@ const AwardCard = ({ userId }: AwardCardProps) => {
   ];
 
   return (
-    <Card className="overflow-hidden border-0 bg-gradient-to-br from-amber-500 via-orange-500 to-rose-500 text-white shadow-lg">
+    <Card
+      className={`overflow-hidden border-0 text-white shadow-lg ${
+        festive
+          ? 'bg-gradient-to-br from-[#0f3d2e] via-[#14532d] to-[#7f1d1d]'
+          : 'bg-gradient-to-br from-amber-500 via-orange-500 to-rose-500'
+      }`}
+    >
       <CardContent className="space-y-4 p-4 sm:p-6">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
@@ -112,13 +119,45 @@ const AwardCard = ({ userId }: AwardCardProps) => {
               {formatMoney(award.amount)}
             </p>
             <p className="mt-1.5 text-sm text-white/90">
-              Начислится на ваш баланс {formatDay(award.payOn)}
+              {festive
+                ? `Начислится автоматически ${formatDay(award.payOn)}`
+                : `Начислится на ваш баланс ${formatDay(award.payOn)}`}
             </p>
+            {festive && (
+              <p className="mt-1 text-sm text-white/90">Выплату получите 10 января 2027</p>
+            )}
           </div>
 
-          <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-full bg-white/20">
-            <Icon name="Trophy" size={28} className="text-white" />
-          </div>
+          {festive ? (
+            <svg
+              viewBox="0 0 88 108"
+              className="h-24 w-20 shrink-0"
+              aria-hidden
+            >
+              <polygon points="44,4 50,16 38,16" fill="#fde68a" />
+              <polygon points="44,14 68,46 20,46" fill="#166534" />
+              <polygon points="44,32 74,68 14,68" fill="#15803d" />
+              <polygon points="44,50 80,90 8,90" fill="#22c55e" />
+              <rect x="38" y="90" width="12" height="8" rx="1" fill="#92400e" />
+              <circle cx="36" cy="38" r="2.2" fill="#fde68a" />
+              <circle cx="52" cy="58" r="2.2" fill="#fecaca" />
+              <circle cx="32" cy="74" r="2.2" fill="#fde68a" />
+              <circle cx="58" cy="78" r="2.2" fill="#bfdbfe" />
+              <rect x="8" y="96" width="18" height="12" rx="1.5" fill="#dc2626" />
+              <rect x="15.5" y="96" width="3" height="12" fill="#fde68a" />
+              <rect x="8" y="100.5" width="18" height="3" fill="#fde68a" />
+              <rect x="35" y="94" width="18" height="14" rx="1.5" fill="#eab308" />
+              <rect x="42.5" y="94" width="3" height="14" fill="#fef3c7" />
+              <rect x="35" y="99.5" width="18" height="3" fill="#fef3c7" />
+              <rect x="62" y="98" width="18" height="10" rx="1.5" fill="#1d4ed8" />
+              <rect x="69.5" y="98" width="3" height="10" fill="#fecaca" />
+              <rect x="62" y="101.5" width="18" height="3" fill="#fecaca" />
+            </svg>
+          ) : (
+            <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-full bg-white/20">
+              <Icon name="Trophy" size={28} className="text-white" />
+            </div>
+          )}
         </div>
 
         {/* Таймер: ожидание — часть награды. Видно, что до денег осталось
@@ -126,7 +165,11 @@ const AwardCard = ({ userId }: AwardCardProps) => {
         <div>
           <p className="mb-1.5 flex items-center gap-1.5 text-xs font-medium text-white/80">
             <Icon name="Timer" size={13} />
-            {arrived ? 'Премия начисляется прямо сейчас' : 'До начисления осталось'}
+            {arrived
+              ? 'Премия начисляется прямо сейчас'
+              : festive
+                ? 'До начисления премии осталось'
+                : 'До начисления осталось'}
           </p>
           <div className="flex gap-2">
             {cells.map((c) => (
@@ -162,7 +205,9 @@ const AwardCard = ({ userId }: AwardCardProps) => {
         )}
 
         <p className="text-xs text-white/80">
-          Спасибо за работу — цех держится на вашем темпе. Так держать!
+          {festive
+            ? 'С наступающим.'
+            : 'Спасибо за работу — цех держится на вашем темпе. Так держать!'}
         </p>
       </CardContent>
     </Card>
