@@ -875,6 +875,13 @@ def handler(event: dict, context) -> dict:
             if status_filter:
                 status_esc = status_filter.replace("'", "''")
                 conditions.append(f"s.status = '{status_esc}'")
+            # Вкладки «Новые» и «Завершённые» грузим раздельно: открытых заявок единицы,
+            # а закрытых — вся история, и раньше страница каждый раз тянула её целиком.
+            open_filter = params.get('open')
+            if open_filter == '1':
+                conditions.append("s.status NOT IN ('Получено', 'Выполнена')")
+            elif open_filter == '0':
+                conditions.append("s.status IN ('Получено', 'Выполнена')")
             if date_from:
                 date_from_esc = date_from.replace("'", "''")
                 conditions.append(f"s.created_at >= '{date_from_esc}'::date")

@@ -77,16 +77,24 @@ export const useToWorkshopState = () => {
       .catch(() => {
         // Фильтр по материалу не критичен для списка заявок.
       });
-    // Кружок загрузки снимаем по главному запросу страницы.
-    fetchShipments('to_workshop')
-      .then((list) => {
+    // Сначала — открытые заявки: их единицы, и с ними работают прямо сейчас.
+    // Завершённые (вся история) догружаем следом, не держа страницу на кружке.
+    fetchShipments({ type: 'to_workshop', open: true })
+      .then((openList) => {
         setListError(null);
-        setShipments(list);
+        setShipments((prev) => [...openList, ...prev.filter((s) => isCompletedStatus(s.status))]);
       })
       .catch((e) => {
         setListError(e instanceof Error ? e.message : 'Не удалось загрузить заявки');
       })
       .finally(() => setLoading(false));
+    fetchShipments({ type: 'to_workshop', open: false })
+      .then((doneList) => {
+        setShipments((prev) => [...prev.filter((s) => !isCompletedStatus(s.status)), ...doneList]);
+      })
+      .catch(() => {
+        // Вкладка «Завершённые» подтянется при следующем обновлении.
+      });
   };
 
   useEffect(() => {

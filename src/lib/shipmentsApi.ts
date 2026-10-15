@@ -138,6 +138,8 @@ export interface ShipmentFilters {
   accountantStatus?: 'pending' | 'confirmed' | 'correction';
   dateFrom?: string;
   dateTo?: string;
+  /** true — только незакрытые заявки, false — только завершённые. */
+  open?: boolean;
 }
 
 export const fetchShipments = async (filters?: ShipmentType | ShipmentFilters): Promise<Shipment[]> => {
@@ -149,6 +151,7 @@ export const fetchShipments = async (filters?: ShipmentType | ShipmentFilters): 
   if (f.accountantStatus) params.set('accountant_status', f.accountantStatus);
   if (f.dateFrom) params.set('date_from', f.dateFrom);
   if (f.dateTo) params.set('date_to', f.dateTo);
+  if (f.open !== undefined) params.set('open', f.open ? '1' : '0');
   const qs = params.toString();
   const res = await fetch(qs ? `${SHIPMENTS_URL}?${qs}` : SHIPMENTS_URL);
   const data = await res.json();
