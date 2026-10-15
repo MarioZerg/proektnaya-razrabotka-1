@@ -22,6 +22,7 @@ from shared import (
     CANCELLED_SQL,
     CLOSED_ORDERS_LIMIT,
     _fit_orders_body,
+    gzip_response,
     conveyor_issue_enabled,
     cut_queue_order_sql,
     expand_material_names,
@@ -1207,4 +1208,4 @@ def handle_get(event: dict, headers: dict, dsn: str) -> dict:
         conn.close()
 
     body = _fit_orders_body(orders)
-    return {'statusCode': 200, 'headers': headers, 'body': body}
+    return gzip_response(event, headers, body)

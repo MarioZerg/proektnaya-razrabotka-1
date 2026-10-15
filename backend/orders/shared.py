@@ -5,6 +5,8 @@
 листать его целиком. Код перенесён КАК ЕСТЬ, логика не менялась.
 """
 
+import base64
+import gzip
 import json
 import random
 import re
@@ -182,7 +184,11 @@ def _fit_orders_body(orders):
     начале и остаются на месте при любой обрезке: конвейер обязан открыться,
     даже если истории не хватило места.
     """
-    body = json.dumps({'orders': orders})
+    # Компактный JSON с русскими буквами как есть: \uXXXX раздувал ответ на ~30%.
+    def dump(items):
+        return json.dumps({'orders': items}, ensure_ascii=False, separators=(',', ':'))
+
+    body = dump(orders)
     if len(body.encode('utf-8')) <= RESPONSE_SAFE_BYTES:
         return body
 
@@ -195,8 +201,26 @@ def _fit_orders_body(orders):
         if keep_count >= len(kept):
             keep_count = len(kept) - 1
         kept = kept[:keep_count]
-        body = json.dumps({'orders': kept})
+        body = dump(kept)
     return body
+
+
+def gzip_response(event, headers, body):
+    """Сжимает большой ответ, если браузер это умеет (умеют все).
+
+    Список конвейера — 1.5–2 МБ текста. На планшете в цехе это секунды загрузки;
+    в сжатом виде — ~150 КБ.
+    """
+    req_headers = {k.lower(): v for k, v in (event.get('headers') or {}).items()}
+    if 'gzip' not in (req_headers.get('accept-encoding') or '').lower() or len(body) < 20000:
+        return {'statusCode': 200, 'headers': headers, 'body': body}
+    packed = gzip.compress(body.encode('utf-8'), compresslevel=5)
+    return {
+        'statusCode': 200,
+        'headers': {**headers, 'Content-Encoding': 'gzip'},
+        'body': base64.b64encode(packed).decode('ascii'),
+        'isBase64Encoded': True,
+    }
 
 
 def award_variki(cur, user_id):
