@@ -2,6 +2,7 @@
 -- Деньги падают на баланс зарплаты в этот день (one_time_awards).
 -- 25 декабря попадает в период «с 20-го по конец месяца», его выплачивают 10 января.
 -- Повторно начислить нельзя: уникальный ключ (user_id, award_key) и paid_at.
+-- Имена в базе записаны и как «Фамилия Имя», и как «Имя Фамилия» — ищем оба варианта.
 
 INSERT INTO one_time_awards (user_id, award_key, title, amount, pay_on, highlights)
 SELECT u.id,
@@ -19,7 +20,9 @@ WHERE u.is_active = true
   AND u.role IN ('storekeeper', 'senior_storekeeper')
   AND (
     u.full_name ILIKE 'Коротков Кирилл%'
+    OR u.full_name ILIKE 'Кирилл Коротков%'
     OR u.full_name ILIKE 'Мальцев Егор%'
+    OR u.full_name ILIKE 'Егор Мальцев%'
   )
 ON CONFLICT (user_id, award_key) DO UPDATE
 SET amount = EXCLUDED.amount,
