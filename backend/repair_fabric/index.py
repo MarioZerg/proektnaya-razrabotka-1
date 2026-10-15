@@ -897,6 +897,88 @@ def accept_piece(cur, conn, event, body):
     })
 
 
+def manual_add_piece(cur, conn, event, body):
+    """Кладовщик заводит кусок вручную — без стикера RS.
+
+    В цех попадают отрезы, у которых нет нашей наклейки: остатки после раскроя,
+    вещи без стикера, куски с другого склада. По скану их не принять, поэтому
+    кладовщик выбирает ткань, ширину и высоту кнопками. Кусок сразу встаёт в цех
+    со своим номером RS — терминал печатает на него стикер.
+    """
+    user = current_user(cur, event)
+    actor_id = user['id'] if user else body.get('userId')
+    actor_name = user['name'] if user else body.get('userName')
+    actor_role = user['role'] if user else None
+    if not actor_role and actor_id:
+        cur.execute("SELECT role FROM users WHERE id = %s", (int(actor_id),))
+        role_row = cur.fetchone()
+        actor_role = role_row[0] if role_row else None
+    if actor_role not in ('storekeeper', 'senior_storekeeper', 'admin'):
+        return _resp(403, {'error': 'Добавить кусок в цех может кладовщик'})
+
+    material = (body.get('material') or '').strip()
+    if not material:
+        return _resp(400, {'error': 'Выберите ткань'})
+    try:
+        width = int(body.get('width'))
+        height = int(body.get('height'))
+    except (TypeError, ValueError):
+        return _resp(400, {'error': 'Укажите ширину и высоту куска'})
+    if width <= 0 or height <= 0 or width > 2000 or height > 2000:
+        return _resp(400, {'error': 'Ширина и высота должны быть от 1 до 2000'})
+
+    reason_code = (body.get('reasonCode') or '').strip()
+    reason_label = (body.get('reasonLabel') or '').strip()
+    if reason_code and reason_code in REPAIR_REASON_LABELS and reason_code != 'other':
+        reason_label = REPAIR_REASON_LABELS[reason_code]
+    if not reason_label:
+        return _resp(400, {'error': 'Укажите, что с куском не так'})
+    reason_label = reason_label[:200]
+
+    workshop_id, shift_number = None, None
+    if actor_id:
+        cur.execute(
+            "SELECT workshop_id, shift_number FROM shift_sessions "
+            "WHERE user_id = %s AND closed_at IS NULL ORDER BY opened_at DESC LIMIT 1",
+            (int(actor_id),),
+        )
+        s_row = cur.fetchone()
+        if s_row:
+            workshop_id, shift_number = s_row
+
+    cur.execute("SELECT id FROM materials WHERE name = %s", (material,))
+    m_row = cur.fetchone()
+    material_id = m_row[0] if m_row else None
+
+    added_by_role = 'admin' if actor_role == 'admin' else 'storekeeper'
+    who = 'администратор' if added_by_role == 'admin' else 'кладовщик'
+    barcode = next_repair_barcode(cur)
+    cur.execute(
+        "INSERT INTO repair_fabric_pieces "
+        "  (material_id, material, width, height, workshop_id, shift_number, "
+        "   created_by, created_by_name, comment, barcode, reason_code, reason_label, "
+        "   added_by_role, status) "
+        "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'available') RETURNING id",
+        (
+            material_id, material, width, height, workshop_id, shift_number,
+            int(actor_id) if actor_id else None, actor_name,
+            f'Принят вручную без стикера ({who})',
+            barcode, reason_code or None, reason_label, added_by_role,
+        ),
+    )
+    piece_id = cur.fetchone()[0]
+    log_action(
+        cur, actor_id, actor_name, 'repair_piece_manual_add', piece_id,
+        f'Кусок принят вручную {barcode}: {material} {width}x{height} — {reason_label}',
+    )
+    conn.commit()
+    return _resp(200, {
+        'success': True, 'pieceId': piece_id, 'barcode': barcode,
+        'material': material, 'width': width, 'height': height,
+        'reasonLabel': reason_label,
+    })
+
+
 def handler(event: dict, context) -> dict:
     """Склад кусков ткани на перешив — отрезы, лежащие в цехе.
 
@@ -977,6 +1059,8 @@ def _route(event, method):
                 return send_to_repair(cur, conn, event, body)
             if action == 'accept':
                 return accept_piece(cur, conn, event, body)
+            if action == 'manual_add':
+                return manual_add_piece(cur, conn, event, body)
             if action == 'use':
                 return use_piece(cur, conn, event, body)
             if action == 'release':

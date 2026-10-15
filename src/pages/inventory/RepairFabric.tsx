@@ -17,6 +17,7 @@ import RepairFabricFilters from '@/components/crm/repairFabric/RepairFabricFilte
 import RepairPieceCards from '@/components/crm/repairFabric/RepairPieceCards';
 import RepairPieceDetailDialog from '@/components/crm/repairFabric/RepairPieceDetailDialog';
 import RepairPieceTable from '@/components/crm/repairFabric/RepairPieceTable';
+import RepairPieceManualDialog from '@/components/crm/repairFabric/RepairPieceManualDialog';
 
 /**
  * КУСКИ НА ПЕРЕШИВ — остатки ткани в цехе.
@@ -55,6 +56,7 @@ const RepairFabric = () => {
   const [deleting, setDeleting] = useState<number | null>(null);
   const [search, setSearch] = useState('');
   const [addOpen, setAddOpen] = useState(false);
+  const [manualOpen, setManualOpen] = useState(false);
   const [selected, setSelected] = useState<RepairPiece | null>(null);
 
   const load = () => {
@@ -176,17 +178,27 @@ const RepairFabric = () => {
             </p>
           </div>
           {canAddPiece && (
-            <Button
-              className="bg-violet-600 hover:bg-violet-700"
-              onClick={() => setAddOpen((v) => !v)}
-            >
-              <Icon name={addOpen ? 'X' : 'ScanLine'} size={16} className="mr-2" />
-              {addOpen ? 'Закрыть сканер' : 'Добавить куски сканером'}
-            </Button>
+            <div className="flex flex-wrap gap-2">
+              <Button variant="outline" onClick={() => setManualOpen(true)}>
+                <Icon name="PencilLine" size={16} className="mr-2" />
+                Принять вручную
+              </Button>
+              <Button
+                className="bg-violet-600 hover:bg-violet-700"
+                onClick={() => setAddOpen((v) => !v)}
+              >
+                <Icon name={addOpen ? 'X' : 'ScanLine'} size={16} className="mr-2" />
+                {addOpen ? 'Закрыть сканер' : 'Добавить куски сканером'}
+              </Button>
+            </div>
           )}
         </div>
 
         {canAddPiece && addOpen && <RepairPieceBatchScanner onAccepted={load} />}
+
+        {canAddPiece && (
+          <RepairPieceManualDialog open={manualOpen} onOpenChange={setManualOpen} onAdded={load} />
+        )}
 
         {listError && (
           <WarehouseFetchError

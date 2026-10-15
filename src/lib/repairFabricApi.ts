@@ -225,6 +225,35 @@ export const acceptRepairPiece = (
   }>;
 
 /**
+ * Кладовщик заводит кусок вручную — без стикера RS: ткань, ширина, высота
+ * и причина. Сервер выдаёт новый номер RS, кусок сразу лежит в цехе.
+ */
+export const manualAddRepairPiece = (
+  data: {
+    material: string;
+    width: number;
+    height: number;
+    reasonCode: string;
+    reasonLabel?: string;
+  },
+  actor?: { id?: number | null; name?: string | null },
+) =>
+  post({
+    action: 'manual_add',
+    ...data,
+    userId: actor?.id,
+    userName: actor?.name,
+  }) as Promise<{
+    success: boolean;
+    pieceId: number;
+    barcode: string;
+    material: string;
+    width: number;
+    height: number;
+    reasonLabel: string;
+  }>;
+
+/**
  * Закройщик закрепляет кусок за заказом.
  *
  * Кусок НЕ списывается — он переходит в reserved: из общего списка пропадает
