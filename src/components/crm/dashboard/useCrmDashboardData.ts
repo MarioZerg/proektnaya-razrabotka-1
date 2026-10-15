@@ -168,8 +168,11 @@ export const useCrmDashboardData = () => {
   // Синхронизируем AuthContext с фактическим цехом/сменой уже открытой сессии — важно
   // после перезагрузки страницы, когда смена была открыта раньше (в т.ч. гостем).
   useEffect(() => {
-    if (myShiftStatus?.isOpen) {
+    if (!myShiftStatus) return;
+    if (myShiftStatus.isOpen) {
       setActiveShift(myShiftStatus.sessionWorkshopId, myShiftStatus.sessionShiftNumber);
+    } else {
+      setActiveShift(null, null);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [myShiftStatus?.isOpen, myShiftStatus?.sessionWorkshopId, myShiftStatus?.sessionShiftNumber]);

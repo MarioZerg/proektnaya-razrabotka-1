@@ -2569,15 +2569,23 @@ def handler(event: dict, context) -> dict:
                     # непонятно, в какой цех класть общий пул.
                     if actor_row and actor_row[0] != 'admin':
                         cur.execute(
-                            "SELECT id FROM shift_sessions WHERE user_id = %s AND closed_at IS NULL LIMIT 1",
+                            "SELECT id, workshop_id, shift_number FROM shift_sessions "
+                            "WHERE user_id = %s AND closed_at IS NULL ORDER BY opened_at DESC LIMIT 1",
                             (int(actor_id),),
                         )
-                        if not cur.fetchone():
+                        open_session = cur.fetchone()
+                        if not open_session:
                             return {
                                 'statusCode': 409,
                                 'headers': headers,
                                 'body': json.dumps({'error': 'Смена не открыта — откройте смену на терминале в цехе'}),
                             }
+                        # Цех и смену берём из открытой сессии, а не из браузера: там может
+                        # остаться смена с прошлого выхода, и заявка уходила не той смене.
+                        if open_session[1]:
+                            workshop_id = open_session[1]
+                        if not shared_packaging and open_session[2]:
+                            shift_number = open_session[2]
 
                 # По каждому материалу — не больше одной незакрытой заявки.
                 # Упаковка: уникальность по цеху (без смены). Остальное — по цеху+смене.
@@ -3607,6 +3615,7 @@ def handler(event: dict, context) -> dict:
                 # Удаление документа движения материала — только администратор,
                 # кроме черновика возврата: его может убрать и кладовщик, рулоны
                 # ещё не списаны.
+                require_auth(cur, event)
                 item_id = body_data.get('id')
                 if not item_id:
                     return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите id'})}
