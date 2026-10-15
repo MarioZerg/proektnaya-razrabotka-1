@@ -10,6 +10,7 @@ import { printStorageSticker } from '@/lib/printStorageSticker';
 import { printDisposeSticker } from '@/lib/printDisposeSticker';
 import { useScannerAutoSubmit } from '@/hooks/useScannerAutoSubmit';
 import { playScanSound, playScanErrorSound, primeScanSounds } from '@/lib/scanSound';
+import { fixScanLayout } from '@/lib/keyboardLayout';
 import {
   fetchRepackCount,
   scanRepackItem,
@@ -110,7 +111,7 @@ const KioskRepackScreen = ({
   }, [workshopId]);
 
   const handleScan = async () => {
-    const code = barcode.trim();
+    const code = fixScanLayout(barcode.trim());
     if (!code || scanning) return;
     setBarcode('');
     setScanning(true);
