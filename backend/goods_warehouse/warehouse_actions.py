@@ -3533,7 +3533,8 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                 "  AND EXISTS (SELECT 1 FROM goods_warehouse gw "
                 "              WHERE gw.id = si.goods_warehouse_id "
                 "                AND gw.shipped_at IS NULL "
-                "                AND gw.status NOT IN ('lost', 'shipped') "
+                "                AND gw.status NOT IN ('lost', 'shipped', 'picking', 'awaiting_supply') "
+                "                AND gw.shipping_labeled_at IS NULL "
                 # Бронь на уехавший заказ не трогаем: эту вещь закрывают как
                 # отгруженную, а не освобождают.
                 "                AND NOT EXISTS (SELECT 1 FROM orders ro "
@@ -3572,7 +3573,9 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                 f"  AND gw.id IN ({ids_csv}) "
                 "  AND COALESCE(s.status, '') IN ('Выполнена', 'Отменена') "
                 "  AND gw.shipped_at IS NULL "
-                "  AND gw.status NOT IN ('lost', 'shipped') "
+                "  AND gw.status NOT IN ('lost', 'shipped', 'picking', 'awaiting_supply') "
+                # Ярлык наклеен — вещь ждёт короба или поставки FBS, бронь живая.
+                "  AND gw.shipping_labeled_at IS NULL "
                 "  AND NOT EXISTS (SELECT 1 FROM marketplace_supply_items si2 "
                 "                  JOIN marketplace_supply_boxes b "
                 "                    ON b.id = si2.box_id "

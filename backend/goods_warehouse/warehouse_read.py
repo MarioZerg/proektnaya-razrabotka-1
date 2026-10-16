@@ -221,6 +221,10 @@ def handle_get(event: dict, headers: dict, dsn: str) -> dict:
                 # Бронь на уехавший заказ — вещь не на складе, а у покупателя.
                 # Её место в панели «Уехало к клиенту», а не здесь.
                 f"  AND NOT (ro.id IS NOT NULL AND {order_left_sql('ro')}) "
+                # Застикерованную вещь не трогаем: кладовщик наклеил ярлык и
+                # ещё не донёс её в короб или поставку FBS. Это живая работа.
+                "  AND gw.shipping_labeled_at IS NULL "
+                "  AND gw.status NOT IN ('picking', 'awaiting_supply') "
                 "  AND NOT EXISTS (SELECT 1 FROM marketplace_supply_boxes b "
                 "                  WHERE b.id = si.box_id "
                 "                    AND b.closed_at IS NOT NULL) "
