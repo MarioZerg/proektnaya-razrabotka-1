@@ -71,27 +71,37 @@ _PLATE = re.compile(r'[A-ZА-ЯЁ]\d{3}[A-ZА-ЯЁ]{2}\d{2,3}', re.I)
 _PLATE_KEYS = re.compile(r'car|auto|vehicle|plate|gos|номер|driver|transport', re.I)
 
 
-def _find_plate(obj, depth=0):
-    """Госномер в заявке Газельки. Пока водителя нет, там стоит запасная машина."""
-    if depth > 4 or obj is None:
+def _find_plate(obj, depth=0, inside=False):
+    """Госномер в заявке Газельки. Пока водителя нет, там стоит запасная машина
+    (P303PE797) — её тоже отдаём, экран сам помечает её как запасную.
+
+    Строку проверяем только внутри полей «про машину» (car, vehicle, plate, gos,
+    driver, номер…), чтобы не принять за номер кусок адреса или комментария.
+    Вложенные объекты обходим всегда: номер может лежать в route.car_number."""
+    if depth > 5 or obj is None:
         return None
     if isinstance(obj, str):
+        if not inside:
+            return None
         compact = re.sub(r'[\s-]', '', obj)
         found = _PLATE.search(compact)
-        return found.group(0) if found else None
+        return found.group(0).upper() if found else None
     if isinstance(obj, dict):
         for key, value in obj.items():
-            if _PLATE_KEYS.search(str(key)):
-                found = _find_plate(value, depth + 1)
+            if inside or _PLATE_KEYS.search(str(key)):
+                found = _find_plate(value, depth + 1, True)
                 if found:
                     return found
-        for value in obj.values():
-            found = _find_plate(value, depth + 1)
-            if found:
-                return found
+        if not inside:
+            for key, value in obj.items():
+                if isinstance(value, (dict, list)):
+                    found = _find_plate(value, depth + 1, False)
+                    if found:
+                        return found
+        return None
     if isinstance(obj, list):
         for value in obj[:30]:
-            found = _find_plate(value, depth + 1)
+            found = _find_plate(value, depth + 1, inside)
             if found:
                 return found
     return None
