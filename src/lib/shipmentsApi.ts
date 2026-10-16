@@ -62,6 +62,16 @@ export interface Shipment {
   onecError?: string | null;
   /** Для возврата: приёмка, с которой эти рулоны завели на склад. */
   originShipmentId?: number | null;
+  /**
+   * Состав приёмки: поставщик, материал и метраж.
+   * В списке показываем строками, когда поставщиков и материалов больше одного.
+   */
+  composition?: {
+    supplier: string;
+    material: string;
+    quantity: number;
+    unit: string;
+  }[];
 }
 
 export interface ShipmentItem {

@@ -148,7 +148,6 @@ const WaybillCard = ({ supply, isManager }: WaybillCardProps) => {
   const [listError, setListError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [creating, setCreating] = useState(false);
-  const [generating, setGenerating] = useState(false);
   const [form, setForm] = useState<Record<string, string>>({});
 
   const fillForm = (d: WaybillDocument | null) => {
@@ -215,7 +214,7 @@ const WaybillCard = ({ supply, isManager }: WaybillCardProps) => {
       fillForm(d);
       toast({
         title: 'Накладная сохранена',
-        description: 'Сформируйте файл заново — правки в старый не попали',
+        description: 'Откройте печать ещё раз — в PDF попадут эти правки',
       });
     } catch (e) {
       toast({
@@ -228,25 +227,26 @@ const WaybillCard = ({ supply, isManager }: WaybillCardProps) => {
     }
   };
 
-  const handleGenerate = async () => {
-    setGenerating(true);
-    try {
-      const d = await generateWaybill(supply.id);
-      setDoc(d);
-      toast({ title: 'PDF накладной готов', description: 'Можно скачивать и подтверждать' });
-    } catch (e) {
-      toast({
-        title: 'Не удалось сформировать',
-        description: e instanceof Error ? e.message : undefined,
-        variant: 'destructive',
-      });
-    } finally {
-      setGenerating(false);
-    }
+  const openPdf = () => {
+    window.open(
+      `${window.location.origin}/crm/shipments/to-marketplace/${supply.id}/waybill`,
+      '_blank',
+      'noopener',
+    );
+  };
+
+  const handleGenerate = () => {
+    openPdf();
   };
 
   const handleReady = async (ready: boolean) => {
     try {
+      // Сервер не ставит готовность без файла. Старый файл — Excel на чужом
+      // адресе, его не открываем: печатаем PDF на yarplan.ru.
+      if (ready && !doc?.fileUrl) {
+        const made = await generateWaybill(supply.id);
+        setDoc(made);
+      }
       const d = await setWaybillReady(supply.id, ready);
       setDoc(d);
       toast({
@@ -288,18 +288,11 @@ const WaybillCard = ({ supply, isManager }: WaybillCardProps) => {
   const filled = !!doc && isFilled(doc);
   // Кладовщик печатает только подтверждённый файл. Менеджер видит иконку,
   // как только в накладной есть номер, места или даты.
-  const showPrint = filled && (isManager || !!(doc?.isReady && doc.fileUrl));
-  // Файл собран до последней правки — значит в нём старые данные.
-  const fileStale =
-    !!doc?.fileGeneratedAt && !!doc.updatedAt && new Date(doc.fileGeneratedAt) < new Date(doc.updatedAt);
+  const showPrint = filled && (isManager || !!doc?.isReady);
 
   const printWaybill = (event: MouseEvent) => {
     event.stopPropagation();
-    if (doc?.fileUrl && (isManager || doc.isReady)) {
-      window.open(doc.fileUrl, '_blank', 'noopener,noreferrer');
-      return;
-    }
-    if (isManager) setOpen(true);
+    openPdf();
   };
 
   return (
@@ -340,7 +333,7 @@ const WaybillCard = ({ supply, isManager }: WaybillCardProps) => {
           <button
             type="button"
             className="flex shrink-0 items-center border-l border-border px-3 text-primary hover:bg-muted/50"
-            title={doc?.fileUrl ? 'Печать накладной' : 'Файл ещё не сформирован'}
+            title="Печать накладной"
             onClick={printWaybill}
           >
             <Icon name="Printer" size={18} />
@@ -374,30 +367,16 @@ const WaybillCard = ({ supply, isManager }: WaybillCardProps) => {
             <div className="space-y-4">
               <p className="rounded-md bg-muted/40 p-3 text-xs text-muted-foreground">
                 Форма по Приложению № 4 к Правилам перевозок грузов автомобильным
-                транспортом. Файл собирается в PDF. После сохранения на полоске
-                обновятся дата, число коробов и даты доставки в Газельку и на маркетплейс.
+                транспортом. PDF открывается на yarplan.ru, длинный текст остаётся
+                внутри рамки. После сохранения на полоске обновятся дата, число коробов
+                и даты доставки в Газельку и на маркетплейс.
               </p>
-              {doc.fileName?.toLowerCase().endsWith('.xlsx') && (
-                <p className="flex items-start gap-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
-                  <Icon name="TriangleAlert" size={15} className="mt-0.5 shrink-0" />
-                  Сейчас скачивается Excel, в нём длинный текст обрезается. Сформируйте
-                  PDF заново — накладная соберётся на листах А4, текст останется в рамках.
-                </p>
-              )}
 
               {supply.boxes?.length > 0 && doc.loadingPlaces !== String(supply.boxes.length) && (
                 <p className="flex items-start gap-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
                   <Icon name="TriangleAlert" size={15} className="mt-0.5 shrink-0" />
                   В накладной мест: {doc.loadingPlaces || '—'}, а коробов собрано:{' '}
                   {supply.boxes.length}. Проверьте разделы «Груз» и «Приём груза».
-                </p>
-              )}
-
-              {fileStale && (
-                <p className="flex items-start gap-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
-                  <Icon name="RefreshCw" size={15} className="mt-0.5 shrink-0" />
-                  Накладную правили после того, как собрали файл. Сформируйте файл заново,
-                  иначе водителю уедет старая версия.
                 </p>
               )}
 
@@ -421,22 +400,10 @@ const WaybillCard = ({ supply, isManager }: WaybillCardProps) => {
               {isManager && (
                 <>
                   <div className="flex flex-wrap gap-2">
-                    <Button variant="outline" size="sm" className="w-full sm:w-auto" onClick={handleGenerate} disabled={generating}>
-                      <Icon
-                        name={generating ? 'Loader2' : 'FileText'}
-                        size={14}
-                        className={`mr-1.5 ${generating ? 'animate-spin' : ''}`}
-                      />
+                    <Button variant="outline" size="sm" className="w-full sm:w-auto" onClick={handleGenerate}>
+                      <Icon name="FileText" size={14} className="mr-1.5" />
                       Сформировать PDF
                     </Button>
-                    {doc.fileUrl && (
-                      <Button variant="outline" size="sm" asChild>
-                        <a href={doc.fileUrl} target="_blank" rel="noreferrer">
-                          <Icon name="Download" size={14} className="mr-1.5" />
-                          Скачать
-                        </a>
-                      </Button>
-                    )}
                     {doc.isReady ? (
                       <Button variant="outline" size="sm" onClick={() => handleReady(false)}>
                         <Icon name="Undo2" size={14} className="mr-1.5" />

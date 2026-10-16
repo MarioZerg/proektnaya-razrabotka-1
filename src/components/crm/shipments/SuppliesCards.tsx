@@ -43,6 +43,9 @@ const SuppliesCards = ({
       {shipments.map((s) => {
         const isPending = s.status === 'Новый';
         const supplier = s.itemSuppliers || s.supplierName || '—';
+        const lines = s.composition || [];
+        const severalSuppliers = new Set(lines.map((l) => l.supplier)).size > 1;
+        const severalMaterials = new Set(lines.map((l) => l.material)).size > 1;
         return (
           <article key={s.id} className="rounded-xl border border-border bg-card p-4 sm:p-5">
             <div className="space-y-3">
@@ -57,7 +60,18 @@ const SuppliesCards = ({
                   </Badge>
                 )}
               </div>
-              <p className="text-sm text-foreground">{supplier}</p>
+              {severalSuppliers && severalMaterials ? (
+                <ul className="space-y-0.5 text-sm text-foreground">
+                  {lines.map((line) => (
+                    <li key={`${line.supplier}-${line.material}`}>
+                      {line.supplier} — {line.material} — {formatQuantity(line.quantity)}{' '}
+                      {line.unit}
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="text-sm text-foreground">{supplier}</p>
+              )}
               <p className="text-sm text-muted-foreground">
                 {s.itemsCount} поз. · {formatQuantity(s.totalQuantity)} метр/шт
                 {s.createdByName ? ` · ${s.createdByName}` : ''}

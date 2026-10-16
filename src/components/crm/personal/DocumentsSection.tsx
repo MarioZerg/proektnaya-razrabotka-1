@@ -12,6 +12,7 @@ import {
   type DocType,
   type PersonalData,
 } from '@/lib/personalDataApi';
+import { openOwnFile } from '@/lib/openOwnFile';
 
 interface DocumentsSectionProps {
   data: PersonalData;
@@ -177,11 +178,22 @@ const DocumentsSection = ({
               />
               <div className={isAdmin && doc?.fileUrl ? 'grid grid-cols-2 gap-2' : ''}>
                 {isAdmin && doc?.fileUrl && (
-                  <Button variant="outline" size="sm" className="h-11 w-full sm:h-9" asChild>
-                    <a href={doc.fileUrl} target="_blank" rel="noreferrer">
-                      <Icon name="Eye" size={14} className="mr-1.5" />
-                      Открыть
-                    </a>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-11 w-full sm:h-9"
+                    onClick={() =>
+                      openOwnFile(doc.fileUrl!, 'document').catch((e) =>
+                        toast({
+                          title: 'Не удалось открыть документ',
+                          description: e instanceof Error ? e.message : undefined,
+                          variant: 'destructive',
+                        }),
+                      )
+                    }
+                  >
+                    <Icon name="Eye" size={14} className="mr-1.5" />
+                    Открыть
                   </Button>
                 )}
                 <Button

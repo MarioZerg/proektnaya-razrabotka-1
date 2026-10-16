@@ -1,10 +1,11 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useToast } from '@/hooks/use-toast';
 import {
   fetchShipments,
   fetchShipmentDetail,
   deleteShipment,
   type Shipment,
+  type ShipmentDetail,
 } from '@/lib/shipmentsApi';
 import { fetchSuppliers, type Supplier } from '@/lib/suppliersApi';
 import { fetchMaterialsData, type Material } from '@/lib/materialsApi';
@@ -13,10 +14,32 @@ import { printAcceptanceSheet as printAcceptanceSheetHtml } from '@/lib/printAcc
 import { formatQuantity } from '@/lib/formatQuantity';
 
 /**
+ * Сводит позиции приёмки к строкам «поставщик — материал — метраж».
+ * Одинаковые пары складываются: десять рулонов одной ткани — одна строка.
+ */
+const compositionOf = (detail: ShipmentDetail): NonNullable<Shipment['composition']> => {
+  const grouped = new Map<string, NonNullable<Shipment['composition']>[number]>();
+  for (const item of detail.items) {
+    if (item.removedAt) continue;
+    const supplier = item.supplierName || detail.supplierName || '—';
+    const material = item.materialName || '—';
+    const key = `${supplier}\0${material}`;
+    const prev = grouped.get(key);
+    const qty = Number(item.quantity) || 0;
+    if (prev) prev.quantity += qty;
+    else grouped.set(key, { supplier, material, quantity: qty, unit: item.unit || '' });
+  }
+  return [...grouped.values()].sort(
+    (a, b) => a.supplier.localeCompare(b.supplier, 'ru') || a.material.localeCompare(b.material, 'ru'),
+  );
+};
+
+/** В списке имена через запятую — по ним видно, что приёмка смешанная, ещё до карточки. */
+const looksMixed = (s: Shipment) =>
+  (s.itemSuppliers || '').includes(',') && (s.materialNames || '').includes(',');
+
+/**
  * Список приёмок от поставщика: загрузка, фильтры, удаление и печать стикеров.
- *
- * Вынесено из страницы 1:1 — те же запросы, те же условия и тот же порядок
- * вызовов. Логика намеренно не менялась.
  */
 export const useFromSupplierList = () => {
   const { toast } = useToast();
@@ -36,8 +59,10 @@ export const useFromSupplierList = () => {
   /** Приёмка, которой дописывают стоимость перевозки. */
   const [logisticsShipmentId, setLogisticsShipmentId] = useState<number | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const loadSeq = useRef(0);
 
   const load = () => {
+    const seq = ++loadSeq.current;
     setLoading(true);
     // Справочники запрашиваем каждый сам по себе: если связь моргнула и один не дошёл,
     // список поставок всё равно покажется. Раньше один сбой оставлял страницу пустой.
@@ -58,8 +83,22 @@ export const useFromSupplierList = () => {
       dateTo: dateTo || undefined,
     })
       .then((list) => {
+        if (seq !== loadSeq.current) return;
         setListError(null);
         setShipments(list);
+        // Состав «поставщик — материал — количество» в списке не приходит.
+        // Для смешанных приёмок берём его из карточки, которую сервер уже отдаёт.
+        const mixed = list.filter(looksMixed);
+        if (!mixed.length) return;
+        Promise.all(mixed.map((s) => fetchShipmentDetail(s.id).catch(() => null))).then((details) => {
+          if (seq !== loadSeq.current) return;
+          const byId = new Map(
+            details.filter((d): d is ShipmentDetail => !!d).map((d) => [d.id, compositionOf(d)]),
+          );
+          setShipments((prev) =>
+            prev.map((s) => (byId.has(s.id) ? { ...s, composition: byId.get(s.id) } : s)),
+          );
+        });
       })
       .catch((e) => {
         setListError(e instanceof Error ? e.message : 'Не удалось загрузить приёмки');

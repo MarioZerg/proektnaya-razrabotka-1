@@ -9,6 +9,7 @@ import { Badge } from '@/components/ui/badge';
 import { Textarea } from '@/components/ui/textarea';
 import Icon from '@/components/ui/icon';
 import { useToast } from '@/hooks/use-toast';
+import { openOwnFile } from '@/lib/openOwnFile';
 import { formatDateTime } from '@/lib/dateUtils';
 import {
   fetchEtrn,
@@ -312,11 +313,22 @@ const EtrnCard = ({ supply, isManager }: EtrnCardProps) => {
       {isManager && <div className="mb-3"><KonturStatus /></div>}
       <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:justify-end">
           {doc.signedFileUrl && (
-            <Button size="sm" variant="outline" className="w-full sm:w-auto" asChild>
-              <a href={doc.signedFileUrl} target="_blank" rel="noreferrer">
-                <Icon name="FileCheck2" size={14} className="mr-1.5" />
-                Подписанный файл
-              </a>
+            <Button
+              size="sm"
+              variant="outline"
+              className="w-full sm:w-auto"
+              onClick={() =>
+                openOwnFile(doc.signedFileUrl!, 'etrn.pdf').catch((e) =>
+                  toast({
+                    title: 'Не удалось открыть файл',
+                    description: e instanceof Error ? e.message : undefined,
+                    variant: 'destructive',
+                  }),
+                )
+              }
+            >
+              <Icon name="FileCheck2" size={14} className="mr-1.5" />
+              Подписанный файл
             </Button>
           )}
           {isManager && !locked && (

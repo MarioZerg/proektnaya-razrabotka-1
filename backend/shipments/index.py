@@ -18,6 +18,23 @@ from authz import (
 
 VALID_TYPES = {'from_supplier', 'to_workshop', 'return_to_supplier', 'defect_writeoff', 'workshop_writeoff'}
 
+
+def composition_lines(raw):
+    """Пары «поставщик + материал» из json_agg списка приёмок."""
+    if not raw:
+        return []
+    rows = json.loads(raw) if isinstance(raw, str) else raw
+    lines = []
+    for row in rows or []:
+        qty = row.get('quantity')
+        lines.append({
+            'supplier': row.get('supplier') or '—',
+            'material': row.get('material') or '—',
+            'quantity': float(qty) if qty is not None else 0.0,
+            'unit': row.get('unit') or '',
+        })
+    return lines
+
 CLOSED_WORKSHOP_NAMES = ('Цех №2', 'Тестовый цех (QA)')
 KEEP_WORKSHOP_NAME = 'Цех №1'
 
@@ -913,7 +930,22 @@ def handler(event: dict, context) -> dict:
                 f"u.role, "
                 # Для возврата: из какой приёмки эти рулоны. Цена и претензия привязаны к ней.
                 f"(SELECT MIN(r.shipment_id) FROM shipment_items si "
-                f" JOIN rolls r ON r.id = si.roll_id WHERE si.shipment_id = s.id) "
+                f" JOIN rolls r ON r.id = si.roll_id WHERE si.shipment_id = s.id), "
+                # Состав приёмки по парам «поставщик + материал»: в одной машине
+                # бывают разные поставщики и разные ткани, и в списке их надо
+                # видеть вместе с метражом, а не двумя отдельными перечнями.
+                f"(SELECT json_agg(json_build_object("
+                f"'supplier', x.supplier, 'material', x.material, "
+                f"'quantity', x.quantity, 'unit', x.unit"
+                f") ORDER BY x.supplier, x.material) FROM ("
+                f"SELECT COALESCE(isup.name, sup.name, '—') AS supplier, "
+                f"m.name AS material, SUM(si.quantity) AS quantity, MAX(m.unit) AS unit "
+                f"FROM shipment_items si "
+                f"JOIN materials m ON m.id = si.material_id "
+                f"LEFT JOIN suppliers isup ON isup.id = si.supplier_id "
+                f"WHERE si.shipment_id = s.id "
+                f"GROUP BY COALESCE(isup.name, sup.name, '—'), m.name"
+                f") x) "
                 f"FROM shipments s "
                 f"LEFT JOIN suppliers sup ON sup.id = s.supplier_id "
                 f"LEFT JOIN workshops w ON w.id = s.workshop_id "
@@ -950,6 +982,7 @@ def handler(event: dict, context) -> dict:
                     # Заявку оформил администратор за цех, а не сотрудник смены.
                     'requestedByAdmin': r[21] == 'admin',
                     'originShipmentId': int(r[22]) if r[22] is not None else None,
+                    'composition': composition_lines(r[23]),
                 }
                 for r in cur.fetchall()
             ]

@@ -7,6 +7,7 @@ import Icon from '@/components/ui/icon';
 import { useToast } from '@/hooks/use-toast';
 import { formatDateTime } from '@/lib/dateUtils';
 import { savePassport, type PersonalData } from '@/lib/personalDataApi';
+import { openOwnFile } from '@/lib/openOwnFile';
 
 interface PassportSectionProps {
   data: PersonalData;
@@ -109,11 +110,24 @@ const PassportSection = ({ data, userId, actorId, onChanged }: PassportSectionPr
       {scans.length > 0 ? (
         <div className="grid grid-cols-1 gap-2">
           {scans.map((d) => (
-            <Button key={d.docType} variant="outline" size="sm" className="h-11 w-full justify-start sm:h-9" asChild>
-              <a href={d.fileUrl || '#'} target="_blank" rel="noreferrer">
-                <Icon name="Eye" size={14} className="mr-1.5 shrink-0" />
-                <span className="truncate">{d.label}</span>
-              </a>
+            <Button
+              key={d.docType}
+              variant="outline"
+              size="sm"
+              className="h-11 w-full justify-start sm:h-9"
+              onClick={() =>
+                d.fileUrl &&
+                openOwnFile(d.fileUrl, d.label).catch((e) =>
+                  toast({
+                    title: 'Не удалось открыть документ',
+                    description: e instanceof Error ? e.message : undefined,
+                    variant: 'destructive',
+                  }),
+                )
+              }
+            >
+              <Icon name="Eye" size={14} className="mr-1.5 shrink-0" />
+              <span className="truncate">{d.label}</span>
             </Button>
           ))}
         </div>

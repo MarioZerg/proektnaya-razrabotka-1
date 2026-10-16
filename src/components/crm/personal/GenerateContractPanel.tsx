@@ -7,6 +7,7 @@ import {
   sendGeneratedContract,
   ROLES_WITH_TEMPLATE,
 } from '@/lib/contractsApi';
+import { openOwnFile } from '@/lib/openOwnFile';
 import type { PersonalData } from '@/lib/personalDataApi';
 import { roleLabels, type Role } from '@/lib/roles';
 
@@ -49,7 +50,7 @@ const GenerateContractPanel = ({
     try {
       const res = await previewGeneratedContract(userId, actorId, role);
       setPreviewUrl(res.fileUrl);
-      window.open(res.fileUrl, '_blank', 'noopener');
+      await openOwnFile(res.fileUrl, 'dogovor.pdf');
     } catch (e) {
       toast({
         title: 'Не удалось собрать договор',
