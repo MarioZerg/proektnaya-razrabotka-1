@@ -1413,7 +1413,13 @@ def seal_closed_box(cur, box_id):
         "  shipped_at = COALESCE(gw.shipped_at, now()) "
         "FROM marketplace_supply_items msi "
         "WHERE msi.goods_warehouse_id = gw.id AND msi.box_id = %s "
-        "  AND gw.status IN ('picking', 'awaiting_supply')",
+        "  AND (gw.status IN ('picking', 'awaiting_supply') "
+        "       OR (gw.status = 'reserved' AND NOT EXISTS ("
+        "         SELECT 1 FROM marketplace_supply_items o_si "
+        "         JOIN marketplace_supplies o_s ON o_s.id = o_si.supply_id "
+        "         WHERE o_si.goods_warehouse_id = gw.id "
+        "           AND o_si.supply_id <> msi.supply_id "
+        "           AND COALESCE(o_s.status, '') NOT IN ('Выполнена', 'Отменена'))))",
         (int(box_id),),
     )
 
@@ -1452,4 +1458,27 @@ def drop_stale_completed_supply_row(cur, goods_id):
         "  AND NOT EXISTS (SELECT 1 FROM marketplace_supply_boxes b "
         "                  WHERE b.id = si.box_id AND b.closed_at IS NOT NULL)",
         (int(goods_id),),
+    )
+
+def shippable_in_supply_sql(supply_id) -> str:
+    """Какие вещи поставки считать уехавшими при её отгрузке.
+
+    Скан вещи в поставку FBS ставит ей статус 'reserved' («в поставке»).
+    Отгрузка же раньше закрывала только 'picking' и 'awaiting_supply' —
+    и с 14.10 все вещи уехавших FBS-поставок оставались «в поставке»
+    навсегда: висели в подборе и в «хвостах», хотя давно у покупателя.
+
+    'reserved' берём, только если вещь не лежит в другой, живой поставке:
+    после возврата её могли снова положить в новую сборку, а старая строка
+    состава осталась как история.
+    """
+    sid = int(supply_id)
+    return (
+        "(status IN ('picking', 'awaiting_supply') "
+        " OR (status = 'reserved' AND NOT EXISTS ("
+        "   SELECT 1 FROM marketplace_supply_items o_si "
+        "   JOIN marketplace_supplies o_s ON o_s.id = o_si.supply_id "
+        "   WHERE o_si.goods_warehouse_id = goods_warehouse.id "
+        f"    AND o_si.supply_id <> {sid} "
+        "     AND COALESCE(o_s.status, '') NOT IN ('Выполнена', 'Отменена'))))"
     )

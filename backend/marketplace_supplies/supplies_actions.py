@@ -14,6 +14,7 @@ import psycopg2
 from authz import AuthError, auth_error_response, require_role
 
 from shared import (
+    shippable_in_supply_sql,
     OZON_DEAD_STATUSES,
     OZON_SHIP_BATCH,
     OZON_SHIP_WINDOW_SEC,
@@ -2584,7 +2585,7 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                     cur.execute(
                         f"UPDATE goods_warehouse SET status = 'shipped', "
                         f"shipped_at = now() WHERE id IN ({ids_csv}) "
-                        f"AND status IN ('picking', 'awaiting_supply')"
+                        f"AND {shippable_in_supply_sql(supply_id)}"
                     )
 
                 # Сами ЗАКАЗЫ тоже закрываем: вещь уехала к покупателю, ждать её
@@ -2663,7 +2664,7 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                         f"UPDATE goods_warehouse SET status = 'shipped', "
                         f"shipped_at = COALESCE(shipped_at, now()) "
                         f"WHERE id IN ({leftover_csv}) "
-                        f"AND status IN ('picking', 'awaiting_supply')"
+                        f"AND {shippable_in_supply_sql(supply_id)}"
                     )
 
                 # И заказы поставки дожимаем так же, от orders.supply_id, а не
@@ -2838,7 +2839,7 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                     f"UPDATE goods_warehouse SET status = 'shipped', "
                     f"shipped_at = COALESCE(shipped_at, now()) "
                     f"WHERE id IN ({ids_csv}) "
-                    f"AND status IN ('picking', 'awaiting_supply')"
+                    f"AND {shippable_in_supply_sql(supply_id)}"
                 )
 
             # Заказы тоже закрываем — вещь уехала, производству она больше не нужна.

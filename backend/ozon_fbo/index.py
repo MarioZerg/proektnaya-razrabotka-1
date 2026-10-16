@@ -63,7 +63,13 @@ def seal_closed_box(cur, box_id):
         "  shipped_at = COALESCE(gw.shipped_at, now()) "
         "FROM marketplace_supply_items msi "
         "WHERE msi.goods_warehouse_id = gw.id AND msi.box_id = %s "
-        "  AND gw.status IN ('picking', 'awaiting_supply')",
+        "  AND (gw.status IN ('picking', 'awaiting_supply') "
+        "       OR (gw.status = 'reserved' AND NOT EXISTS ("
+        "         SELECT 1 FROM marketplace_supply_items o_si "
+        "         JOIN marketplace_supplies o_s ON o_s.id = o_si.supply_id "
+        "         WHERE o_si.goods_warehouse_id = gw.id "
+        "           AND o_si.supply_id <> msi.supply_id "
+        "           AND COALESCE(o_s.status, '') NOT IN ('Выполнена', 'Отменена'))))",
         (int(box_id),),
     )
 
