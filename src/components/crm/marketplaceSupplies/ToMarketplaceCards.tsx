@@ -211,7 +211,7 @@ const ToMarketplaceCards = ({ supplies, onOpen }: ToMarketplaceCardsProps) => (
                 )
               )}
               {s.supplyDate && (
-                <span className="ml-auto shrink-0 whitespace-nowrap text-xs font-medium text-black">
+                <span className="-ml-1 shrink-0 whitespace-nowrap text-xs font-medium text-black">
                   на маркетплейс {formatDate(s.supplyDate)}
                   {s.timeslot ? `, ${s.timeslot}` : ''}
                 </span>
