@@ -3,24 +3,18 @@ import { useNavigate } from 'react-router-dom';
 import type { SupplyDetail, SupplyStatus, WbSupplyOrder } from '@/lib/marketplaceSuppliesApi';
 import type { GoodsWarehouseItem } from '@/lib/goodsWarehouseApi';
 import type { MarketplaceItem, Shop } from '@/lib/marketplaceItemsApi';
-import OzonFboApplicationCard from '@/components/crm/marketplaceSupplies/OzonFboApplicationCard';
-import GazelkaShippingCard from '@/components/crm/marketplaceSupplies/GazelkaShippingCard';
 import SupplyHeader from '@/components/crm/marketplaceSupplies/SupplyHeader';
-import SupplyFboFieldsCard from '@/components/crm/marketplaceSupplies/SupplyFboFieldsCard';
 import SupplyItemsSection from '@/components/crm/marketplaceSupplies/SupplyItemsSection';
-import SupplySewingSection from '@/components/crm/marketplaceSupplies/SupplySewingSection';
 import CancelledScanDialog, {
   type CancelledScanInfo,
 } from '@/components/crm/marketplaceSupplies/CancelledScanDialog';
 import AddSewingOrdersDialog from '@/components/crm/marketplaceSupplies/AddSewingOrdersDialog';
 import SupplyGroupsPanel from '@/components/crm/marketplaceSupplies/SupplyGroupsPanel';
 import WbFbsSupplyCard from '@/components/crm/marketplaceSupplies/WbFbsSupplyCard';
-import WbFboSupplyCard from '@/components/crm/marketplaceSupplies/WbFboSupplyCard';
-import WaybillCard from '@/components/crm/marketplaceSupplies/WaybillCard';
 import SupplyAcceptanceCard from '@/components/crm/marketplaceSupplies/SupplyAcceptanceCard';
-import FboArticlesCheck from '@/components/crm/marketplaceSupplies/FboArticlesCheck';
+import FboSupplyStages from '@/components/crm/marketplaceSupplies/FboSupplyStages';
 
-interface SupplyShowContentProps {
+export interface SupplyShowContentProps {
   supply: SupplyDetail;
   supplyId: number;
   now: Date;
@@ -86,9 +80,10 @@ interface SupplyShowContentProps {
 }
 
 /**
- * Разметка карточки поставки: шапка, блоки маркетплейсов, пошив, связки и товарный состав.
+ * Разметка карточки поставки.
  *
- * Перенесено из страницы 1:1 — порядок блоков и условия их показа не менялись.
+ * FBO идёт по шагам: заявка, пошив, сборка, отгрузка — у менеджера и кладовщика
+ * свой текущий шаг. FBS остаётся одной лентой: там работа короче и вся на складе.
  */
 const SupplyShowContent = ({
   supply,
@@ -125,109 +120,66 @@ const SupplyShowContent = ({
         onLoadQr={actions.handleLoadQr}
       />
 
-      {/* Итог после отгрузки: «Отгружено»/недостача FBS, приёмка OZON FBO. */}
-      <SupplyAcceptanceCard
-        supply={supply}
-        now={now}
-        isManager={flags.isManager}
-        onReload={() => load(true)}
-      />
-
-      {flags.isOzonFbo && (
-        <OzonFboApplicationCard
-          supply={supply}
-          onImportComposition={flags.isManager ? actions.handleImportFboComposition : undefined}
-          importing={actions.importingFbo}
-        />
-      )}
-
-      {flags.isWbFbo && (
-        <WbFboSupplyCard supply={supply} onReload={load} isManager={flags.isManager} />
-      )}
-
-      {supply.type === 'FBO' && !flags.isOzonFbo && !flags.isWbFbo && (
-        <SupplyFboFieldsCard
-          supply={supply}
-          supplyNumber={fields.supplyNumber}
-          setSupplyNumber={fields.setSupplyNumber}
-          supplyBarcode={fields.supplyBarcode}
-          setSupplyBarcode={fields.setSupplyBarcode}
-          cluster={fields.cluster}
-          setCluster={fields.setCluster}
-          gazelkaId={fields.gazelkaId}
-          setGazelkaId={fields.setGazelkaId}
-          comment={fields.comment}
-          setComment={fields.setComment}
-          saving={actions.saving}
-          onSave={actions.handleSaveFields}
-        />
-      )}
-
-      {(flags.isOzonFbo || flags.isWbFbo) && (
-        <GazelkaShippingCard
-          supply={supply}
-          onReload={load}
-          isManager={flags.isManager}
-          gazelkaReady={flags.gazelkaReady}
-        />
-      )}
-
-      {/* Транспортная накладная: единственный документ перевозки по FBO.
-          Ставим сразу под перевозкой — водитель, машина и сдача груза к одному выезду.
-          Менеджер заполняет и подтверждает, кладовщик скачивает файл и отгружает. */}
-      {supply.type === 'FBO' && <WaybillCard supply={supply} isManager={flags.isManager} />}
-
-      {/* Пошив по поставке: менеджер видит, что уже сшито, и догружает недостающее.
-          Показываем НАД товарным составом — сначала производство, потом сборка. */}
-      {supply.type === 'FBO' && (
-        <SupplySewingSection
-          orders={supply.sewingOrders || []}
-          canAdd={
-            flags.isManager && ['Открытая', 'На сборке'].includes(supply.status)
-          }
-          onAdd={() => actions.setAddOrdersOpen(true)}
-          canRemove={
-            flags.isManager && ['Открытая', 'На сборке'].includes(supply.status)
-          }
-          onRemove={actions.handleRemoveSewingOrder}
-        />
-      )}
-
-      {supply.type === 'FBO' && <FboArticlesCheck rows={supply.fboArticles || []} />}
-
-      {/* Связки заказов Яндекса: показываем НАД списком товаров, чтобы кладовщик увидел
-          незакрытые связки сразу, а не после прокрутки всей поставки. */}
-      <SupplyGroupsPanel
-        groups={supply.groups || []}
-        cancelledCount={supply.items.filter((i) => i.isCancelled).length}
-      />
-
-      {flags.isWbFbs ? (
-        <WbFbsSupplyCard
+      {supply.type === 'FBO' ? (
+        <FboSupplyStages
           supply={supply}
           supplyId={supplyId}
-          onReload={load}
-          onScanned={actions.handleWbScanned}
-        />
-      ) : (
-        <SupplyItemsSection
-          supply={supply}
-          supplyId={supplyId}
-          canEditItems={flags.canEditItems}
-          canRemoveItems={flags.canRemoveItems}
+          now={now}
           readyGoods={readyGoods}
-          scanOrderNumber={actions.scanOrderNumber}
-          setScanOrderNumber={actions.setScanOrderNumber}
-          scanning={actions.scanning}
-          scanInputRef={actions.scanInputRef}
-          onScanOrder={actions.handleScanOrder}
-          onRemoveItem={actions.handleRemoveItem}
+          load={load}
+          fields={fields}
+          flags={flags}
+          actions={actions}
           onNavigateAssemble={() =>
             navigate(`/crm/shipments/to-marketplace/${supplyId}/assemble`)
           }
-          onReload={load}
         />
+      ) : (
+        <>
+          {/* Итог после отгрузки FBS: всё отсканировано или есть недостача. */}
+          <SupplyAcceptanceCard
+            supply={supply}
+            now={now}
+            isManager={flags.isManager}
+            onReload={() => load(true)}
+          />
+
+          {/* Связки заказов Яндекса: показываем НАД списком товаров, чтобы кладовщик увидел
+              незакрытые связки сразу, а не после прокрутки всей поставки. */}
+          <SupplyGroupsPanel
+            groups={supply.groups || []}
+            cancelledCount={supply.items.filter((i) => i.isCancelled).length}
+          />
+        </>
       )}
+
+      {supply.type !== 'FBO' &&
+        (flags.isWbFbs ? (
+          <WbFbsSupplyCard
+            supply={supply}
+            supplyId={supplyId}
+            onReload={load}
+            onScanned={actions.handleWbScanned}
+          />
+        ) : (
+          <SupplyItemsSection
+            supply={supply}
+            supplyId={supplyId}
+            canEditItems={flags.canEditItems}
+            canRemoveItems={flags.canRemoveItems}
+            readyGoods={readyGoods}
+            scanOrderNumber={actions.scanOrderNumber}
+            setScanOrderNumber={actions.setScanOrderNumber}
+            scanning={actions.scanning}
+            scanInputRef={actions.scanInputRef}
+            onScanOrder={actions.handleScanOrder}
+            onRemoveItem={actions.handleRemoveItem}
+            onNavigateAssemble={() =>
+              navigate(`/crm/shipments/to-marketplace/${supplyId}/assemble`)
+            }
+            onReload={load}
+          />
+        ))}
 
       <AddSewingOrdersDialog
         open={actions.addOrdersOpen}

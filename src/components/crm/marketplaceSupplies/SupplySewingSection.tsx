@@ -38,6 +38,8 @@ interface SupplySewingSectionProps {
    */
   canRemove?: boolean;
   onRemove?: (order: SupplySewingOrder) => void;
+  /** На шаге «Пошив» список и есть работа шага — открываем сразу. */
+  defaultOpen?: boolean;
 }
 
 /** Прогресс производства по поставке: сколько изделий сшито, сколько ещё в работе,
@@ -48,6 +50,7 @@ const SupplySewingSection = ({
   onAdd,
   canRemove = false,
   onRemove,
+  defaultOpen = false,
 }: SupplySewingSectionProps) => {
   const active = orders.filter((o) => !o.isCancelled);
   const done = active.filter((o) => o.sewingStatus === 'Готовые' || o.sewingStatus === 'Со склада');
@@ -64,6 +67,7 @@ const SupplySewingSection = ({
           </span>
         ) : undefined
       }
+      defaultOpen={defaultOpen}
     >
       <div className="space-y-2">
       {canAdd && (

@@ -16,9 +16,16 @@ interface OzonFboApplicationCardProps {
   /** Загрузка товарного состава в пошив — доступна только менеджеру (передаётся, если разрешено). */
   onImportComposition?: () => void;
   importing?: boolean;
+  /** На шаге «Заявка» блок и есть вся работа шага — открываем сразу. */
+  defaultOpen?: boolean;
 }
 
-const OzonFboApplicationCard = ({ supply, onImportComposition, importing }: OzonFboApplicationCardProps) => {
+const OzonFboApplicationCard = ({
+  supply,
+  onImportComposition,
+  importing,
+  defaultOpen = false,
+}: OzonFboApplicationCardProps) => {
   const closedBoxes = supply.boxes.filter((b) => b.closedAt).length;
 
   // Сводка в свёрнутом виде: номер заявки и дата поставки — то, по чему
@@ -31,7 +38,7 @@ const OzonFboApplicationCard = ({ supply, onImportComposition, importing }: Ozon
   );
 
   return (
-    <SupplySection title="Данные OZON FBO" summary={summary}>
+    <SupplySection title="Данные OZON FBO" summary={summary} defaultOpen={defaultOpen}>
       {supply.ozonSupplyOrderId && onImportComposition && (
         <div className="mb-3">
           <Button size="sm" className="w-full sm:w-auto" onClick={onImportComposition} disabled={importing}>

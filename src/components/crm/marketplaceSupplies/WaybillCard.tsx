@@ -25,6 +25,8 @@ interface WaybillCardProps {
   supply: SupplyDetail;
   /** Менеджер или админ: заполняет накладную и подтверждает готовность. */
   isManager: boolean;
+  /** На шаге «Отгрузка» накладная и есть работа шага — открываем сразу. */
+  defaultOpen?: boolean;
 }
 
 type FieldType = 'text' | 'date' | 'number' | 'datetime-local';
@@ -110,7 +112,7 @@ const toInput = (v: unknown, type?: FieldType): string => {
  * подтверждения: иначе он повёз бы водителю недозаполненный документ. Любая
  * правка снимает готовность, чтобы на руках не оказалось устаревшей версии.
  */
-const WaybillCard = ({ supply, isManager }: WaybillCardProps) => {
+const WaybillCard = ({ supply, isManager, defaultOpen = false }: WaybillCardProps) => {
   const { toast } = useToast();
   const [doc, setDoc] = useState<WaybillDocument | null>(null);
   const [loading, setLoading] = useState(true);
@@ -261,6 +263,7 @@ const WaybillCard = ({ supply, isManager }: WaybillCardProps) => {
       <SupplySection
         title="Транспортная накладная"
         summary={<Badge variant="destructive">Не заведена</Badge>}
+        defaultOpen={defaultOpen}
       >
         <div className="space-y-3">
           <p className="text-sm text-muted-foreground">
@@ -301,6 +304,7 @@ const WaybillCard = ({ supply, isManager }: WaybillCardProps) => {
             <Badge variant="secondary">Заполняет менеджер</Badge>
           )
         }
+        defaultOpen={defaultOpen}
       >
         {doc.isReady && doc.fileUrl ? (
           <div className="space-y-3">
@@ -349,6 +353,7 @@ const WaybillCard = ({ supply, isManager }: WaybillCardProps) => {
           {doc.number && <span className="font-mono-tech">№ {doc.number}</span>}
         </>
       }
+      defaultOpen={defaultOpen}
     >
       <div className="space-y-4">
         <p className="rounded-md bg-muted/40 p-3 text-xs text-muted-foreground">
