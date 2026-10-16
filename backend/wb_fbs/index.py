@@ -677,7 +677,7 @@ def handle_scan_order(cur, conn, body_data, api_key, use_sandbox):
         "FROM wb_supply_orders wso "
         "JOIN marketplace_supplies s ON s.id = wso.supply_id "
         "WHERE wso.order_id = %s "
-        "  AND s.status IN ('Открытая', 'На сборке', 'Отгрузка')",
+        "  AND s.status IN ('Открытая', 'На сборке', 'Отгрузка', 'Отгружено')",
         (order_id,),
     )
     ex = cur.fetchone()
@@ -693,7 +693,7 @@ def handle_scan_order(cur, conn, body_data, api_key, use_sandbox):
         cur.execute(
             "DELETE FROM wb_supply_orders w USING marketplace_supplies s "
             "WHERE s.id = w.supply_id AND w.order_id = %s "
-            "  AND s.status NOT IN ('Открытая', 'На сборке', 'Отгрузка')",
+            "  AND s.status NOT IN ('Открытая', 'На сборке', 'Отгрузка', 'Отгружено')",
             (order_id,),
         )
 
@@ -937,11 +937,27 @@ def _close_finished_supplies(cur, conn, api_key, use_sandbox, shop_id=None):
                 f"            ELSE order_id IN ({ids_csv}) END)"
             )
 
+        # Не закрываем сразу: всё отсканировано — «Отгружено», и через 12 часов
+        # поставка закроется сама. Пропущенный заказ — остаётся «Отгрузка»
+        # с пометкой о недостаче, чтобы её увидел человек.
         cur.execute(
-            "UPDATE marketplace_supplies SET status = 'Выполнена', "
-            "  completed_at = COALESCE(completed_at, now()) WHERE id = %s",
+            "SELECT COUNT(*) FROM wb_supply_orders WHERE supply_id = %s AND scanned_at IS NULL",
             (int(supply_id),),
         )
+        missing = int(cur.fetchone()[0] or 0)
+        if missing == 0:
+            cur.execute(
+                "UPDATE marketplace_supplies SET status = 'Отгружено', auto_status_at = now(), "
+                "  fbs_missing_count = 0, "
+                "  ship_to_marketplace_at = COALESCE(ship_to_marketplace_at, now()) WHERE id = %s",
+                (int(supply_id),),
+            )
+        else:
+            cur.execute(
+                "UPDATE marketplace_supplies SET status = 'Отгрузка', fbs_missing_count = %s, "
+                "  ship_to_marketplace_at = COALESCE(ship_to_marketplace_at, now()) WHERE id = %s",
+                (missing, int(supply_id)),
+            )
 
     return closed_orders
 
@@ -986,7 +1002,7 @@ def handle_check_statuses(cur, conn, api_key, use_sandbox, actor_id=None,
         "  SELECT 1 FROM wb_supply_orders w "
         "  JOIN marketplace_supplies s ON s.id = w.supply_id "
         "  WHERE w.order_id = orders.id AND COALESCE(s.is_accumulator, false) = false "
-        "    AND s.status IN ('Открытая', 'На сборке', 'Отгрузка')"
+        "    AND s.status IN ('Открытая', 'На сборке', 'Отгрузка', 'Отгружено')"
         ")"
     )
     # ВАЖНО: список забираем СРАЗУ. Ниже вызывается _close_finished_supplies, который
@@ -1061,7 +1077,7 @@ def handle_check_statuses(cur, conn, api_key, use_sandbox, actor_id=None,
             cur.execute(
                 "DELETE FROM wb_supply_orders w USING marketplace_supplies s "
                 "WHERE s.id = w.supply_id AND w.order_id = %s "
-                "  AND s.status NOT IN ('Открытая', 'На сборке', 'Отгрузка')",
+                "  AND s.status NOT IN ('Открытая', 'На сборке', 'Отгрузка', 'Отгружено')",
                 (order_id,),
             )
             released_links += cur.rowcount if cur.rowcount and cur.rowcount > 0 else 0
@@ -1682,7 +1698,7 @@ def add_order_to_open_supply(cur, conn, api_key, use_sandbox, order_number, shop
     cur.execute(
         "SELECT w.supply_id FROM wb_supply_orders w "
         "JOIN marketplace_supplies s ON s.id = w.supply_id "
-        "WHERE w.order_id = %s AND s.status IN ('Открытая', 'На сборке', 'Отгрузка')",
+        "WHERE w.order_id = %s AND s.status IN ('Открытая', 'На сборке', 'Отгрузка', 'Отгружено')",
         (order_id,),
     )
     if cur.fetchone():
@@ -1694,7 +1710,7 @@ def add_order_to_open_supply(cur, conn, api_key, use_sandbox, order_number, shop
     cur.execute(
         "DELETE FROM wb_supply_orders w USING marketplace_supplies s "
         "WHERE s.id = w.supply_id AND w.order_id = %s "
-        "  AND s.status NOT IN ('Открытая', 'На сборке', 'Отгрузка')",
+        "  AND s.status NOT IN ('Открытая', 'На сборке', 'Отгрузка', 'Отгружено')",
         (order_id,),
     )
 

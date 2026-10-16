@@ -761,6 +761,10 @@ def resolve_ozon_barcode(cur, barcode):
 
 VALID_STATUSES = ['Открытая', 'На сборке', 'Отгрузка', 'Выполнена']
 
+# Промежуточные статусы, которые ставит система сама (см. run_auto_statuses):
+# из них поставку можно вручную закрыть «Выполнена».
+AUTO_STATUS_NAMES = ('Отгружено', 'Принята')
+
 # Черновые (незавершённые) этапы пошива — заказ ещё "в работе" на производстве.
 IN_PROGRESS_SEWING_STATUSES = ('На раскрое', 'Раскроено', 'В работе', 'Стикеровка')
 
@@ -1482,3 +1486,234 @@ def shippable_in_supply_sql(supply_id) -> str:
         f"    AND o_si.supply_id <> {sid} "
         "     AND COALESCE(o_s.status, '') NOT IN ('Выполнена', 'Отменена'))))"
     )
+
+
+# ---------------------------------------------------------------------------
+# АВТОМАТИЧЕСКИЕ СТАТУСЫ ПОСТАВОК: «Отгружено» (FBS) и «Принята» (FBO).
+#
+# FBS: кладовщик передал поставку в доставку («Отгрузка»). Если всё, что было
+# застикеровано к этому моменту, отсканировано в поставку, она получает статус
+# «Отгружено» и через 12 часов закрывается сама. Пропустили хоть одну вещь —
+# поставка остаётся в «Отгрузке» с пометкой, сколько не хватает, и сама не
+# закрывается: недостачу должен увидеть человек.
+#
+# FBO OZON: как только OZON закончил приёмку (согласование актов, спор или
+# «завершена»), поставка получает статус «Принята» и через 24 часа закрывается
+# сама — даже при расхождении: оно остаётся видно внутри поставки.
+# ---------------------------------------------------------------------------
+
+AUTO_STATUSES = ('Отгружено', 'Принята')
+FBS_AUTO_CLOSE_HOURS = 12
+FBO_AUTO_CLOSE_HOURS = 24
+
+# Состояния заявки OZON, при которых склад уже пересчитал товар.
+OZON_ACCEPTED_STATES = ('REPORTS_CONFIRMATION_AWAITING', 'REPORT_REJECTED', 'COMPLETED')
+
+OZON_STATE_RU = {
+    'DATA_FILLING': 'Заполнение данных',
+    'READY_TO_SUPPLY': 'Готова к отгрузке',
+    'ACCEPTED_AT_SUPPLY_WAREHOUSE': 'Принята на точке отгрузки',
+    'IN_TRANSIT': 'В пути',
+    'ACCEPTANCE_AT_STORAGE_WAREHOUSE': 'Приёмка на складе',
+    'REPORTS_CONFIRMATION_AWAITING': 'Согласование актов',
+    'REPORT_REJECTED': 'Спор по акту',
+    'COMPLETED': 'Завершена',
+    'REJECTED_AT_SUPPLY_WAREHOUSE': 'Отказано в приёмке',
+    'CANCELLED': 'Отменена',
+    'OVERDUE': 'Просрочена',
+}
+
+
+def _ozon_quick(path, client_id, api_key, payload, timeout=3):
+    """Короткий запрос к OZON: у фонового задания всего несколько секунд."""
+    req = urllib.request.Request(
+        'https://api-seller.ozon.ru' + path, method='POST',
+        data=json.dumps(payload).encode('utf-8'),
+    )
+    req.add_header('Client-Id', client_id)
+    req.add_header('Api-Key', api_key)
+    req.add_header('Content-Type', 'application/json')
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            return json.loads(r.read().decode('utf-8') or '{}')
+    except Exception:
+        return None
+
+
+def fbs_missing_count(cur, supply_id):
+    """Сколько вещей должно было уехать с этой FBS-поставкой, но не отсканировано.
+
+    WB: заказы поставки без отметки скана.
+    OZON и Яндекс: вещи той же площадки и магазина, застикерованные ДО передачи
+    поставки в доставку, но не попавшие ни в одну поставку. Плюс неполные
+    связки Яндекса (общий ярлык на несколько вещей).
+    """
+    cur.execute(
+        "SELECT marketplace, type, shop_id, COALESCE(ship_to_marketplace_at, now()) "
+        "FROM marketplace_supplies WHERE id = %s",
+        (int(supply_id),),
+    )
+    row = cur.fetchone()
+    if not row:
+        return 0
+    marketplace, s_type, shop_id, shipped_at = row
+    if marketplace == 'WB':
+        cur.execute(
+            "SELECT COUNT(*) FROM wb_supply_orders WHERE supply_id = %s AND scanned_at IS NULL",
+            (int(supply_id),),
+        )
+        return int(cur.fetchone()[0] or 0)
+
+    cur.execute(
+        "SELECT COUNT(*) FROM goods_warehouse gw "
+        "LEFT JOIN orders ro ON ro.id = gw.reserved_order_id "
+        "LEFT JOIN orders so ON so.id = gw.order_id "
+        "WHERE gw.status IN ('picking', 'awaiting_supply') "
+        "  AND gw.shipping_labeled_at IS NOT NULL "
+        "  AND gw.shipping_labeled_at <= %s "
+        "  AND gw.shipped_at IS NULL "
+        "  AND COALESCE(ro.marketplace, so.marketplace) = %s "
+        "  AND COALESCE(ro.order_type, so.order_type) = %s "
+        "  AND COALESCE(ro.shop_id, so.shop_id) = %s "
+        f"  AND {GOODS_READY_FOR_SUPPLY_SQL} "
+        "  AND NOT EXISTS (SELECT 1 FROM marketplace_supply_items msi2 "
+        "                  JOIN marketplace_supplies s2 ON s2.id = msi2.supply_id "
+        "                  WHERE msi2.goods_warehouse_id = gw.id "
+        "                    AND COALESCE(s2.status, '') NOT IN ('Выполнена', 'Отменена'))",
+        (shipped_at, marketplace, s_type, shop_id),
+    )
+    missing = int(cur.fetchone()[0] or 0)
+    for g in check_incomplete_groups(cur, supply_id):
+        missing += max(0, g['total'] - g['inSupply'])
+    return missing
+
+
+def finish_supply(cur, supply_id):
+    """Закрывает поставку («Выполнена») — то же, что ручное «Отметить выполненной»."""
+    sid = int(supply_id)
+    cur.execute("SELECT goods_warehouse_id FROM marketplace_supply_items WHERE supply_id = %s", (sid,))
+    ids = [r[0] for r in cur.fetchall()]
+    if ids:
+        ids_csv = ','.join(str(int(g)) for g in ids)
+        cur.execute(
+            f"UPDATE goods_warehouse SET status = 'shipped', "
+            f"shipped_at = COALESCE(shipped_at, now()) "
+            f"WHERE id IN ({ids_csv}) AND {shippable_in_supply_sql(sid)}"
+        )
+    cur.execute(
+        "UPDATE orders SET status = 'Отгружен', completed_at = COALESCE(completed_at, now()) "
+        "WHERE (supply_id = %s OR id IN (SELECT order_id FROM wb_supply_orders WHERE supply_id = %s)) "
+        "  AND COALESCE(status, '') NOT IN ('Отгружен', 'Доставлен', 'Отменён')",
+        (sid, sid),
+    )
+    cur.execute(
+        "UPDATE marketplace_supplies SET status = 'Выполнена', completed_at = now(), "
+        "ship_to_marketplace_at = COALESCE(ship_to_marketplace_at, now()), "
+        "locked_by = NULL, locked_at = NULL WHERE id = %s",
+        (sid,),
+    )
+
+
+def run_auto_statuses(cur, conn, deadline):
+    """Один проход фонового задания. Возвращает сводку для журнала."""
+    import time as _t
+    summary = {'shipped': 0, 'missing': 0, 'accepted': 0, 'closed': 0, 'ozonChecked': 0}
+
+    # 1. Закрываем то, у чего вышло время.
+    cur.execute(
+        "SELECT id FROM marketplace_supplies "
+        "WHERE (status = 'Отгружено' AND auto_status_at < now() - %s * interval '1 hour') "
+        "   OR (status = 'Принята' AND auto_status_at < now() - %s * interval '1 hour') "
+        "ORDER BY id LIMIT 30",
+        (FBS_AUTO_CLOSE_HOURS, FBO_AUTO_CLOSE_HOURS),
+    )
+    for (sid,) in cur.fetchall():
+        finish_supply(cur, sid)
+        log_action(cur, None, 'Планировщик', 'supply_auto_close', 'marketplace_supply', sid,
+                   'Поставка закрыта автоматически')
+        summary['closed'] += 1
+    conn.commit()
+
+    # 2. FBS в «Отгрузке»: всё отсканировано — «Отгружено».
+    cur.execute(
+        "SELECT id FROM marketplace_supplies "
+        "WHERE type = 'FBS' AND status = 'Отгрузка' "
+        "  AND COALESCE(is_accumulator, false) = false "
+        "ORDER BY id LIMIT 30"
+    )
+    for (sid,) in cur.fetchall():
+        if _t.time() > deadline:
+            break
+        missing = fbs_missing_count(cur, sid)
+        if missing == 0:
+            cur.execute(
+                "UPDATE marketplace_supplies SET status = 'Отгружено', auto_status_at = now(), "
+                "fbs_missing_count = 0, locked_by = NULL, locked_at = NULL WHERE id = %s",
+                (int(sid),),
+            )
+            log_action(cur, None, 'Планировщик', 'supply_auto_shipped', 'marketplace_supply', sid,
+                       f'Всё отсканировано — «Отгружено», закроется через {FBS_AUTO_CLOSE_HOURS} ч')
+            summary['shipped'] += 1
+        else:
+            cur.execute(
+                "UPDATE marketplace_supplies SET fbs_missing_count = %s WHERE id = %s",
+                (missing, int(sid)),
+            )
+            summary['missing'] += 1
+    conn.commit()
+
+    # 3. FBO OZON: спрашиваем OZON, закончил ли он приёмку.
+    if _t.time() < deadline:
+        cur.execute(
+            "SELECT id, ozon_supply_order_id, ozon_internal_supply_id FROM marketplace_supplies "
+            "WHERE marketplace = 'OZON' AND type = 'FBO' AND status = 'Отгрузка' "
+            "  AND ozon_supply_order_id IS NOT NULL "
+            "ORDER BY ozon_checked_at NULLS FIRST, id LIMIT 50"
+        )
+        rows = cur.fetchall()
+        client_id, api_key = _ozon_creds(cur)
+        if rows and client_id and api_key:
+            data = _ozon_quick('/v3/supply-order/get', client_id, api_key,
+                               {'order_ids': [int(r[1]) for r in rows]})
+            states = {}
+            for o in ((data or {}).get('orders') or []):
+                states[int(o.get('order_id') or 0)] = o.get('state') or ''
+            accepted = []
+            for sid, order_id, internal_id in rows:
+                state = states.get(int(order_id))
+                if not state:
+                    continue
+                summary['ozonChecked'] += 1
+                cur.execute(
+                    "UPDATE marketplace_supplies SET ozon_state = %s, ozon_status = %s, "
+                    "ozon_checked_at = now() WHERE id = %s",
+                    (state, OZON_STATE_RU.get(state, state), int(sid)),
+                )
+                if state in OZON_ACCEPTED_STATES:
+                    accepted.append((sid, internal_id))
+
+            # Сколько коробов склад OZON обработал — подсказка рядом с актом.
+            box_stats = {}
+            internal_ids = [str(int(i)) for _, i in accepted if i]
+            if internal_ids and _t.time() < deadline:
+                cg = _ozon_quick('/v1/cargoes/get', client_id, api_key, {'supply_ids': internal_ids})
+                for sup in ((cg or {}).get('supply') or []):
+                    cargoes = sup.get('cargoes') or []
+                    done = sum(1 for c in cargoes
+                               if ((c.get('tracking_info') or {}).get('status') or '') == 'PROCESSED')
+                    box_stats[int(sup.get('supply_id') or 0)] = (len(cargoes), done)
+
+            for sid, internal_id in accepted:
+                total, done = box_stats.get(int(internal_id or 0), (None, None))
+                cur.execute(
+                    "UPDATE marketplace_supplies SET status = 'Принята', auto_status_at = now(), "
+                    "ozon_boxes_total = %s, ozon_boxes_accepted = %s, "
+                    "locked_by = NULL, locked_at = NULL WHERE id = %s",
+                    (total, done, int(sid)),
+                )
+                log_action(cur, None, 'Планировщик', 'supply_auto_accepted', 'marketplace_supply', sid,
+                           f'OZON закончил приёмку — «Принята», закроется через {FBO_AUTO_CLOSE_HOURS} ч')
+                summary['accepted'] += 1
+            conn.commit()
+
+    return summary

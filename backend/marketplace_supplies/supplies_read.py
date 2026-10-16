@@ -147,7 +147,13 @@ def handle_get(event: dict, headers: dict, dsn: str) -> dict:
                 "s.locked_by, lu.full_name, s.locked_at, "
                 # Магазин поставки: кладовщик должен видеть в шапке, чей это
                 # кабинет — МЕГАТЮЛЬ или ДЮНА.
-                "s.shop_id, shp.name, shp.color, COALESCE(s.is_b2b, false) "
+                "s.shop_id, shp.name, shp.color, COALESCE(s.is_b2b, false), "
+                "s.auto_status_at, s.fbs_missing_count, s.ozon_state, s.ozon_checked_at, "
+                "s.ozon_boxes_total, s.ozon_boxes_accepted, s.ozon_declared_qty, s.ozon_accepted_qty, "
+                "(SELECT COALESCE(SUM(b.packed_qty), 0) FROM marketplace_supply_boxes b "
+                "  WHERE b.supply_id = s.id AND b.closed_at IS NOT NULL), "
+                "(SELECT COUNT(*) FROM marketplace_supply_boxes b "
+                "  WHERE b.supply_id = s.id AND b.closed_at IS NOT NULL) "
                 "FROM marketplace_supplies s "
                 "LEFT JOIN users u ON u.id = s.created_by "
                 "LEFT JOIN users lu ON lu.id = s.locked_by "
@@ -693,6 +699,20 @@ def handle_get(event: dict, headers: dict, dsn: str) -> dict:
                 'shopColor': row[37],
                 # Поставка для заказов юрлиц (B2B): обычные заказы в неё не кладём.
                 'isB2b': bool(row[38]),
+                # Автостатусы: когда поставка стала «Отгружено»/«Принята» —
+                # от этой отметки идёт таймер автозакрытия (12 ч / 24 ч).
+                'autoStatusAt': (row[39].isoformat() + 'Z') if row[39] else None,
+                # FBS: сколько вещей не отсканировано в поставку.
+                'fbsMissingCount': row[40],
+                # OZON FBO: статус заявки на OZON и итоги приёмки.
+                'ozonState': row[41],
+                'ozonCheckedAt': (row[42].isoformat() + 'Z') if row[42] else None,
+                'ozonBoxesTotal': row[43],
+                'ozonBoxesAccepted': row[44],
+                'ozonDeclaredQty': row[45],
+                'ozonAcceptedQty': row[46],
+                'sentQty': int(row[47] or 0),
+                'sentBoxes': int(row[48] or 0),
             }
             # Реквизиты клиента для упаковочного листа Газельки — общие настройки.
             cur.execute(
@@ -827,7 +847,8 @@ def handle_get(event: dict, headers: dict, dsn: str) -> dict:
             f"                   WHERE msi2.goods_warehouse_id = gw.id "
             f"                     AND COALESCE(s2.status, '') NOT IN ('Выполнена', 'Отменена'))) END), "
             # Поставка для заказов юрлиц: WB не смешивает их с обычными.
-            f"COALESCE(s.is_b2b, false) "
+            f"COALESCE(s.is_b2b, false), "
+            f"s.auto_status_at, s.fbs_missing_count, s.ozon_accepted_qty "
             f"FROM marketplace_supplies s "
             f"LEFT JOIN users u ON u.id = s.created_by "
             f"LEFT JOIN users lu ON lu.id = s.locked_by "
@@ -868,6 +889,9 @@ def handle_get(event: dict, headers: dict, dsn: str) -> dict:
                 # без которого поставку не выпустят в отгрузку.
                 'plannedQuantity': r[23],
                 'isB2b': bool(r[25]),
+                'autoStatusAt': (r[26].isoformat() + 'Z') if r[26] else None,
+                'fbsMissingCount': r[27],
+                'ozonAcceptedQty': r[28],
             }
             for r in cur.fetchall()
         ]

@@ -19,6 +19,8 @@ from shared import (
     OZON_SHIP_BATCH,
     OZON_SHIP_WINDOW_SEC,
     VALID_STATUSES,
+    AUTO_STATUS_NAMES,
+    fbs_missing_count,
     cancelled_item_info,
     check_fbo_underfilled,
     check_incomplete_groups,
@@ -2406,6 +2408,10 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
             current_status = row[0]
             supply_type = row[1]
             current_idx = VALID_STATUSES.index(current_status) if current_status in VALID_STATUSES else -1
+            # «Отгружено» и «Принята» ставит система сама — это этап между
+            # «Отгрузкой» и «Выполнена». Закрыть вручную раньше таймера можно.
+            if current_status in AUTO_STATUS_NAMES:
+                current_idx = VALID_STATUSES.index('Отгрузка')
             new_idx = VALID_STATUSES.index(new_status)
             if new_idx != current_idx + 1:
                 return {
@@ -2687,6 +2693,25 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
 
             cur.execute(f"UPDATE marketplace_supplies SET status = '{new_status}'{extra_sql} WHERE id = {int(supply_id)}")
 
+            # FBS передали в доставку: всё застикерованное отсканировано —
+            # сразу «Отгружено», через 12 часов поставка закроется сама.
+            # Не хватает хоть одной вещи — остаётся «Отгрузка» с пометкой.
+            final_status = new_status
+            if new_status == 'Отгрузка' and (supply_type or '').upper() == 'FBS':
+                missing = fbs_missing_count(cur, supply_id)
+                if missing == 0:
+                    final_status = 'Отгружено'
+                    cur.execute(
+                        "UPDATE marketplace_supplies SET status = 'Отгружено', auto_status_at = now(), "
+                        "fbs_missing_count = 0 WHERE id = %s",
+                        (int(supply_id),),
+                    )
+                else:
+                    cur.execute(
+                        "UPDATE marketplace_supplies SET fbs_missing_count = %s WHERE id = %s",
+                        (missing, int(supply_id)),
+                    )
+
             # Кладовщик получает оклад за смену, если он открыл смену И довёл хотя бы одну
             # поставку FBS/FBO до статуса "На сборке" или "Отгрузка" (salary_rates,
             # role='storekeeper'). Разово за смену — привязывается к его открытой shift_session.
@@ -2778,6 +2803,7 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                 'headers': headers,
                 'body': json.dumps({
                     'success': True,
+                    'status': final_status,
                     # Сколько отправлений ушло в доставку на OZON и что не получилось —
                     # кладовщик должен видеть, если площадка часть не приняла.
                     'ozonShipped': ozon_shipped,
@@ -2791,6 +2817,35 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                     'underfillCleanup': underfill_cleanup,
                 }, ensure_ascii=False),
             }
+
+        # Сколько штук принял склад OZON — по акту приёмки. OZON не отдаёт это
+        # через API, поэтому число вносит менеджер, а система сверяет его с
+        # отправленным в закрытых коробах.
+        if action == 'set_ozon_accepted':
+            supply_id = body_data.get('supplyId')
+            qty = body_data.get('acceptedQty')
+            if not supply_id:
+                return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите поставку'})}
+            actor = require_role(cur, event, 'admin', 'manager')
+            if qty in (None, ''):
+                qty_val = None
+            else:
+                try:
+                    qty_val = int(qty)
+                except (TypeError, ValueError):
+                    qty_val = -1
+                if qty_val < 0:
+                    return {'statusCode': 400, 'headers': headers,
+                            'body': json.dumps({'error': 'Укажите целое число штук'}, ensure_ascii=False)}
+            cur.execute(
+                "UPDATE marketplace_supplies SET ozon_accepted_qty = %s WHERE id = %s AND type = 'FBO'",
+                (qty_val, int(supply_id)),
+            )
+            log_action(cur, actor['realUserId'], actor['name'], 'supply_ozon_accepted',
+                       'marketplace_supply', int(supply_id),
+                       f'Принято складом по акту: {qty_val if qty_val is not None else "—"} шт.')
+            conn.commit()
+            return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True})}
 
         if action == 'force_complete':
             supply_id = body_data.get('supplyId')
@@ -2919,7 +2974,7 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                 return {'statusCode': 409, 'headers': headers,
                         'body': json.dumps({'error': 'Этот товар не привязан к поставке'},
                                            ensure_ascii=False)}
-            if s_status in ('Отгрузка', 'Выполнена'):
+            if s_status in ('Отгрузка', 'Отгружено', 'Принята', 'Выполнена'):
                 return {'statusCode': 409, 'headers': headers,
                         'body': json.dumps(
                             {'error': 'Поставка уже уехала — менять её состав нельзя'},
@@ -3004,7 +3059,7 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
             if not s_row:
                 return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': 'Поставка не найдена'})}
             s_status, s_marketplace, s_type, s_cluster = s_row
-            if s_status in ('Отгрузка', 'Выполнена'):
+            if s_status in ('Отгрузка', 'Отгружено', 'Принята', 'Выполнена'):
                 return {
                     'statusCode': 409,
                     'headers': headers,

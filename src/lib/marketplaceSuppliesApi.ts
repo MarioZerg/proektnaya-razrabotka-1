@@ -7,7 +7,11 @@ const SUPPLIES_URL = 'https://functions.poehali.dev/d0a75e82-2c63-440c-8eae-dd03
  * FRONTEND-ONLY: ошибка загрузки — не писать «поставок пока нет».
  */
 
-export type SupplyStatus = 'Открытая' | 'На сборке' | 'Отгрузка' | 'Выполнена';
+/**
+ * «Отгружено» (FBS) и «Принята» (FBO OZON) ставит система сама — между
+ * «Отгрузкой» и «Выполнена». Через 12/24 часа поставка закрывается сама.
+ */
+export type SupplyStatus = 'Открытая' | 'На сборке' | 'Отгрузка' | 'Отгружено' | 'Принята' | 'Выполнена';
 export type SupplyType = 'FBO' | 'FBS';
 export type OzonDeliveryMethod = 'direct' | 'cross_docking';
 export type PackagingType = 'boxes' | 'pallets';
@@ -50,6 +54,12 @@ export interface Supply {
   lockedByName?: string | null;
   /** Поставка WB для заказов юрлиц: WB не разрешает смешивать их с обычными. */
   isB2b?: boolean;
+  /** Когда поставка стала «Отгружено»/«Принята» — от этого идёт таймер автозакрытия. */
+  autoStatusAt?: string | null;
+  /** FBS: сколько вещей не отсканировано в поставку — из-за них она не закроется сама. */
+  fbsMissingCount?: number | null;
+  /** OZON FBO: сколько штук принял склад по акту. */
+  ozonAcceptedQty?: number | null;
 }
 
 export interface SupplyItem {
@@ -207,6 +217,15 @@ export interface SupplyDetail extends Supply {
   /** Полки склада — для отправки отменённых заказов на хранение прямо из поставки. */
   shelves?: SupplyShelf[];
   boxes: SupplyBox[];
+  /** OZON FBO: код статуса заявки на OZON. */
+  ozonState?: string | null;
+  ozonCheckedAt?: string | null;
+  /** Сколько коробов OZON обработал на приёмке из скольких. */
+  ozonBoxesTotal?: number | null;
+  ozonBoxesAccepted?: number | null;
+  /** Сколько штук и коробов мы отправили (закрытые короба). */
+  sentQty?: number;
+  sentBoxes?: number;
   createdBy: number | null;
   totalQuantityMarketplace: number | null;
   passStickerUrl: string | null;
@@ -604,6 +623,10 @@ export interface OzonShipResult {
     total: number;
   } | null;
 }
+
+/** Сколько штук принял склад OZON по акту приёмки (вносит менеджер). */
+export const setOzonAcceptedQty = (supplyId: number, acceptedQty: number | null) =>
+  postAction({ action: 'set_ozon_accepted', supplyId, acceptedQty });
 
 export const moveSupplyStatus = (
   supplyId: number,

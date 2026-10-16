@@ -15,7 +15,10 @@ export const useSupplyFlags = (supply: SupplyDetail) => {
   // Для WB FBS сборка и передача в доставку выполняются кнопками на карточке WB (они
   // синхронизируются с WildBerries), поэтому ручной переход статуса в шапке скрыт —
   // остаётся только финальное «Отметить выполненной» после отгрузки.
-  const rawNextStatus = supplyStatusFlow[supplyStatusFlow.indexOf(supply.status) + 1];
+  // «Отгружено»/«Принята» — этап после «Отгрузки»: дальше только «Выполнена».
+  const flowStatus =
+    supply.status === 'Отгружено' || supply.status === 'Принята' ? 'Отгрузка' : supply.status;
+  const rawNextStatus = supplyStatusFlow[supplyStatusFlow.indexOf(flowStatus) + 1];
   const nextStatus = isWbFbs && rawNextStatus !== 'Выполнена' ? undefined : rawNextStatus;
   // FBS-поставку собирает кладовщик — он сканирует товары со своих полок. Менеджер такую
   // поставку только НАБЛЮДАЕТ в реальном времени: сборка идёт на складе, а не за его столом,

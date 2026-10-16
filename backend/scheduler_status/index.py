@@ -198,6 +198,18 @@ JOBS = [
         'optional': True,
     },
     {
+        'key': 'supplies_auto_statuses',
+        'title': 'Статусы поставок',
+        'func': 'marketplace_supplies',
+        'urlAction': 'auto_statuses',
+        'method': 'POST',
+        'purpose': 'Ставит «Отгружено» FBS и «Принята» FBO после приёмки OZON, '
+                   'закрывает их через 12/24 часа',
+        'group': 'service',
+        'everyMin': 30,
+        'lateAfter': 120,
+    },
+    {
         'key': 'shifts_auto_close',
         'title': 'Автозакрытие смен',
         'func': 'shift_sessions',
@@ -228,6 +240,7 @@ FUNC_IDS = {
     'price_robot': 'd117616e-e8d0-49de-b551-740097f74141',
     'ad_spend': '29442dba-b5a9-4e15-b9ba-5fdc52eef574',
     'manager_finance': '406daf92-dd75-4e27-946d-e90aa720fe70',
+    'marketplace_supplies': 'd0a75e82-2c63-440c-8eae-dd036df61fac',
 }
 
 # Разделы страницы: заголовок и пояснение, чем грозит молчание.

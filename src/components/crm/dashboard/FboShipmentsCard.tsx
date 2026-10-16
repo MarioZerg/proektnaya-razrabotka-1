@@ -35,7 +35,7 @@ const fmtDateTime = (iso: string | null) => {
 };
 
 const statusVariant = (status: string): 'secondary' | 'default' | 'outline' => {
-  if (status === 'Отгрузка') return 'default';
+  if (status === 'Отгрузка' || status === 'Принята') return 'default';
   if (status === 'На сборке') return 'secondary';
   return 'outline';
 };

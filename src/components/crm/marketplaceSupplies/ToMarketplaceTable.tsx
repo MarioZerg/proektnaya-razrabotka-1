@@ -134,6 +134,12 @@ const ToMarketplaceTable = ({ loading, error = null, supplies, onOpen }: ToMarke
                 <TableCell className="whitespace-normal align-top">
                   <div className="flex flex-col items-start gap-1">
                     <Badge className={statusVariant[s.status]?.className}>{s.status}</Badge>
+                    {s.status === 'Отгрузка' && !!s.fbsMissingCount && (
+                      <span className="inline-flex items-center gap-1 rounded-sm bg-destructive/10 px-1.5 py-0.5 text-[11px] font-medium text-destructive">
+                        <Icon name="TriangleAlert" size={11} className="shrink-0" />
+                        Не отсканировано: {s.fbsMissingCount}
+                      </span>
+                    )}
                     {/* Поставку уже собирает другой кладовщик — видно сразу в списке,
                         чтобы человек не заходил внутрь впустую. */}
                     {s.lockedByName && (

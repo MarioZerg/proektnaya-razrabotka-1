@@ -17,6 +17,7 @@ import SupplyGroupsPanel from '@/components/crm/marketplaceSupplies/SupplyGroups
 import WbFbsSupplyCard from '@/components/crm/marketplaceSupplies/WbFbsSupplyCard';
 import WbFboSupplyCard from '@/components/crm/marketplaceSupplies/WbFboSupplyCard';
 import WaybillCard from '@/components/crm/marketplaceSupplies/WaybillCard';
+import SupplyAcceptanceCard from '@/components/crm/marketplaceSupplies/SupplyAcceptanceCard';
 
 interface SupplyShowContentProps {
   supply: SupplyDetail;
@@ -123,6 +124,14 @@ const SupplyShowContent = ({
         onLoadQr={actions.handleLoadQr}
       />
 
+      {/* Итог после отгрузки: «Отгружено»/недостача FBS, приёмка OZON FBO. */}
+      <SupplyAcceptanceCard
+        supply={supply}
+        now={now}
+        isManager={flags.isManager}
+        onReload={() => load(true)}
+      />
+
       {flags.isOzonFbo && (
         <OzonFboApplicationCard
           supply={supply}
@@ -173,11 +182,11 @@ const SupplyShowContent = ({
         <SupplySewingSection
           orders={supply.sewingOrders || []}
           canAdd={
-            flags.isManager && supply.status !== 'Отгрузка' && supply.status !== 'Выполнена'
+            flags.isManager && ['Открытая', 'На сборке'].includes(supply.status)
           }
           onAdd={() => actions.setAddOrdersOpen(true)}
           canRemove={
-            flags.isManager && supply.status !== 'Отгрузка' && supply.status !== 'Выполнена'
+            flags.isManager && ['Открытая', 'На сборке'].includes(supply.status)
           }
           onRemove={actions.handleRemoveSewingOrder}
         />

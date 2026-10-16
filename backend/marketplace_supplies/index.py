@@ -11,6 +11,11 @@
 
 import json
 import os
+import time
+
+import psycopg2
+
+from shared import log_action, run_auto_statuses
 
 from supplies_read import handle_get
 from supplies_actions import handle_post
@@ -20,7 +25,11 @@ def handler(event: dict, context) -> dict:
     """Поставки готового товара на маркетплейс (полный цикл, как на физическом складе):
 
     Жизненный цикл поставки:
-      Открытая -> На сборке -> Отгрузка (в Газельку) -> Выполнена (принято маркетплейсом)
+      Открытая -> На сборке -> Отгрузка -> [Отгружено (FBS) | Принята (FBO OZON)] -> Выполнена
+
+    POST { action: 'auto_statuses', cronSecret } — фоновое задание: ставит «Отгружено»
+      FBS-поставкам, где всё отсканировано, «Принята» — FBO, которые OZON
+      принял, и закрывает их через 12/24 часа.
 
     Товар берётся со склада готового товара (goods_warehouse, статус in_stock).
     При добавлении в поставку товар резервируется (status='reserved'), при переводе
@@ -66,6 +75,24 @@ def handler(event: dict, context) -> dict:
         return handle_get(event, headers, dsn)
 
     if method == 'POST':
+        body = json.loads(event.get('body') or '{}')
+        # Фоновое задание: «Отгружено» / «Принята» и автозакрытие по таймеру.
+        if body.get('action') == 'auto_statuses':
+            secret = os.environ.get('CRON_SECRET', '')
+            if not secret or body.get('cronSecret') != secret:
+                return {'statusCode': 403, 'headers': headers,
+                        'body': json.dumps({'error': 'Неверный ключ планировщика'}, ensure_ascii=False)}
+            conn = psycopg2.connect(dsn)
+            try:
+                cur = conn.cursor()
+                summary = run_auto_statuses(cur, conn, time.time() + 3.0)
+                log_action(cur, None, 'Планировщик', 'supplies_auto_statuses', 'marketplace_supply', None,
+                           f"Отгружено: {summary['shipped']}, с недостачей: {summary['missing']}, "
+                           f"принято OZON: {summary['accepted']}, закрыто: {summary['closed']}")
+                conn.commit()
+            finally:
+                conn.close()
+            return {'statusCode': 200, 'headers': headers, 'body': json.dumps(summary)}
         return handle_post(event, headers, dsn)
 
     return {'statusCode': 405, 'headers': headers, 'body': json.dumps({'error': 'Method not allowed'})}

@@ -215,6 +215,26 @@
         "action": "unlock_supply"
       },
       "expectedStatus": 400
+    },
+    {
+      "name": "Auto statuses without cron key is rejected",
+      "method": "POST",
+      "path": "/",
+      "body": {
+        "action": "auto_statuses"
+      },
+      "expectedStatus": 403
+    },
+    {
+      "name": "Set OZON accepted without auth is rejected",
+      "method": "POST",
+      "path": "/",
+      "body": {
+        "action": "set_ozon_accepted",
+        "supplyId": 1,
+        "acceptedQty": 1
+      },
+      "expectedStatus": 401
     }
   ]
 }

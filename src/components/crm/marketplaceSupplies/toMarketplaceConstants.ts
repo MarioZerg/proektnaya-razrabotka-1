@@ -10,6 +10,8 @@ export const statusVariant: Record<string, { className: string }> = {
   Открытая: { className: 'bg-slate-500 text-white hover:bg-slate-500' },
   'На сборке': { className: 'bg-sky-500 text-white hover:bg-sky-500' },
   Отгрузка: { className: 'bg-amber-500 text-white hover:bg-amber-500' },
+  Отгружено: { className: 'bg-teal-600 text-white hover:bg-teal-600' },
+  Принята: { className: 'bg-indigo-600 text-white hover:bg-indigo-600' },
   Выполнена: { className: 'bg-emerald-600 text-white hover:bg-emerald-600' },
 };
 

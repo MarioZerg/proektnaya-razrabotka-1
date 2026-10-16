@@ -120,13 +120,15 @@ const suppliesForShift = (person: PersonOnShift, supplies: Supply[]): SupplyLine
     .filter((supply) => supply.type === 'FBS' || supply.type === 'FBO')
     .filter((supply) => {
       if (supply.status === 'На сборке' || supply.status === 'Отгрузка') return true;
+      // «Отгружено» — поставка уже уехала целиком и ждёт автозакрытия.
+      if (supply.status === 'Отгружено') return afterOpen(person, supply.autoStatusAt);
       return supply.status === 'Выполнена' && afterOpen(person, supply.completedAt);
     })
     .map((supply) => ({
       id: supply.id,
       type: supply.type,
       title: supply.supplyNumber || supply.cluster || `№${supply.id}`,
-      done: supply.status === 'Выполнена',
+      done: supply.status === 'Выполнена' || supply.status === 'Отгружено',
     }));
 
 /** Что показать в карточке — зависит от должности и только от этой смены. */
@@ -365,7 +367,7 @@ const ShiftAvatarRail = ({ hostRef }: { hostRef: RefObject<HTMLDivElement | null
         open.some((person) => new Date(person.openedAt).getTime() > cached.at);
       let fresh = cached;
       if (stale) {
-        const [sewn, cut, packed, assembling, shipping, finished] = await Promise.all([
+        const [sewn, cut, packed, assembling, shipping, finished, shippedFbs] = await Promise.all([
           pullToday('sewing').catch(() => [] as LogEvent[]),
           pullToday('cutting').catch(() => [] as LogEvent[]),
           pullToday('stickering').catch(() => [] as LogEvent[]),
@@ -374,6 +376,7 @@ const ShiftAvatarRail = ({ hostRef }: { hostRef: RefObject<HTMLDivElement | null
           needsSupplies
             ? fetchSupplies({ status: 'Выполнена', dateFrom: moscowDay() }).catch(() => [] as Supply[])
             : Promise.resolve([] as Supply[]),
+          needsSupplies ? fetchSupplies({ status: 'Отгружено' }).catch(() => [] as Supply[]) : Promise.resolve([] as Supply[]),
         ]);
         fresh = {
           at: Date.now(),
@@ -382,7 +385,7 @@ const ShiftAvatarRail = ({ hostRef }: { hostRef: RefObject<HTMLDivElement | null
           sewn,
           cut,
           packed,
-          supplies: [...assembling, ...shipping, ...finished],
+          supplies: [...assembling, ...shipping, ...finished, ...shippedFbs],
         };
         work.current = fresh;
       }

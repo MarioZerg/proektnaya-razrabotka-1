@@ -48,6 +48,13 @@ const ToMarketplaceCards = ({ supplies, onOpen }: ToMarketplaceCardsProps) => (
           </Badge>
         </div>
 
+        {s.status === 'Отгрузка' && !!s.fbsMissingCount && (
+          <span className="mt-2 mr-1 inline-flex items-center gap-1 rounded-sm bg-destructive/10 px-1.5 py-0.5 text-[11px] font-medium text-destructive">
+            <Icon name="TriangleAlert" size={11} className="shrink-0" />
+            Не отсканировано: {s.fbsMissingCount}
+          </span>
+        )}
+
         {s.lockedByName && (
           <span className="mt-2 inline-flex max-w-full items-center gap-1 rounded-sm bg-amber-100 px-1.5 py-0.5 text-[11px] font-medium text-amber-900">
             <Icon name="Lock" size={11} className="shrink-0" />

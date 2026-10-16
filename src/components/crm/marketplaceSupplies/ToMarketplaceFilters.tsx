@@ -84,6 +84,8 @@ const ToMarketplaceFilters = ({
           <SelectItem value="Открытая">Открытая</SelectItem>
           <SelectItem value="На сборке">На сборке</SelectItem>
           <SelectItem value="Отгрузка">Отгрузка</SelectItem>
+          <SelectItem value="Отгружено">Отгружено</SelectItem>
+          <SelectItem value="Принята">Принята</SelectItem>
           <SelectItem value="Выполнена">Выполнена</SelectItem>
         </SelectContent>
       </Select>
