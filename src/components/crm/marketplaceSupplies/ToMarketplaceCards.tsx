@@ -68,8 +68,8 @@ const driverAssigned = (plate?: string | null) => {
 const fboIncomplete = (s: Supply) => {
   if (s.type !== 'FBO') return false;
   if (['Отгружено', 'Принята', 'Выполнена'].includes(s.status)) return false;
-  if (!s.cluster || !s.gazelkaId || !s.shipToGazelkaAt) return true;
-  return 'supplyDate' in s && !s.supplyDate;
+  // Даты слота и номера плана в списке может ещё не быть: отсутствие поля — та же дыра, что и пустое значение.
+  return !s.cluster || !s.gazelkaId || !s.gazelkaPlanId || !s.shipToGazelkaAt || !s.supplyDate;
 };
 
 const RoadTruck = () => (

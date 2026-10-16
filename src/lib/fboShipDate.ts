@@ -75,17 +75,24 @@ export const marketplaceSlotHold = (
 ): string | null => {
   const gazelka = shipDay(gazelkaDay);
   if (gazelka) noteOverdueSupply(supplyId, gazelka, today);
-  if (!gazelka || gazelka < today) return null;
+  if (!gazelka) return null;
   let wasOverdue = false;
   try {
     wasOverdue = !!localStorage.getItem(overdueMark(supplyId));
   } catch {
     wasOverdue = false;
   }
-  if (!wasOverdue) return null;
+  // Просроченная дата тоже обязана пройти эту проверку: отметка о просрочке
+  // уже стоит, и без актуального слота маркетплейса печать и отгрузка закрыты.
+  if (gazelka >= today && !wasOverdue) return null;
   const market = shipDay(supplyDate);
   const slot = (timeslot || '').trim();
-  if (market && market >= today && slot) return null;
+  const slotReady = !!(market && market >= today && slot);
+  if (gazelka >= today && slotReady) return null;
+  if (gazelka < today && slotReady) return null;
+  if (gazelka < today) {
+    return 'Отгрузка в Газельку просрочена. Менеджер обновляет дату отгрузки в Газельку и дату таймслота на маркетплейсе — обе должны быть актуальными.';
+  }
   return 'Дата отгрузки в Газельку уже новая. Осталось проставить в системе актуальную дату и таймслот отгрузки на маркетплейс.';
 };
 

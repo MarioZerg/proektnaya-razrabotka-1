@@ -121,7 +121,8 @@ const ToMarketplace = () => {
               timeslot: 'timeslot' in s ? s.timeslot : old.timeslot,
               gazelkaPickup: 'gazelkaPickup' in s ? s.gazelkaPickup : old.gazelkaPickup,
               gazelkaPlanId: 'gazelkaPlanId' in s ? s.gazelkaPlanId : old.gazelkaPlanId,
-              gazelkaVehicleNumber: old.gazelkaVehicleNumber,
+              gazelkaVehicleNumber:
+                'gazelkaVehicleNumber' in s ? s.gazelkaVehicleNumber : old.gazelkaVehicleNumber,
             };
           });
         });
@@ -254,7 +255,6 @@ const ToMarketplace = () => {
   const closeReadyAndCreate = async () => {
     if (!closeToCreate) return;
     const prev = closeToCreate;
-    setCloseToCreate(null);
     setCreating(true);
     try {
       await moveSupplyStatus(prev.id, 'Выполнена');
@@ -267,6 +267,7 @@ const ToMarketplace = () => {
       setCreating(false);
       return;
     }
+    setCloseToCreate(null);
     await createSupplyNow('OZON', 'FBS', false);
   };
 
