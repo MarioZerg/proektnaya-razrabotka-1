@@ -15,6 +15,7 @@ import Icon from '@/components/ui/icon';
 import { useToast } from '@/hooks/use-toast';
 import { formatDate } from '@/lib/dateUtils';
 import { fetchGazelkaPlansForSupply, type GazelkaPlan } from '@/lib/gazelkaApi';
+import { driverAssigned, plateLabel } from '@/lib/gazelkaPlate';
 import { updateSupply, type SupplyDetail } from '@/lib/marketplaceSuppliesApi';
 import { printGazelkaLabels } from '@/lib/gazelkaPackingLabel';
 import { gazelkaLabelsHold, gazelkaShipDay, marketplaceSlotHold, noteOverdueSupply } from '@/lib/fboShipDate';
@@ -232,7 +233,7 @@ const GazelkaShippingCard = ({ supply, onReload, isManager, gazelkaReady }: Gaze
                     plans.map((p) => (
                       <SelectItem key={p.id} value={String(p.id)}>
                         №{p.id} · {p.deliveryAddress || '—'} · {p.deliveryDate ? formatDate(p.deliveryDate) : ''} ·{' '}
-                        {p.boxes ?? 0} кор.
+                        {p.boxes ?? 0} кор. · {plateLabel(p.vehicleNumber)}
                       </SelectItem>
                     ))
                   )}
@@ -285,6 +286,16 @@ const GazelkaShippingCard = ({ supply, onReload, isManager, gazelkaReady }: Gaze
                 <span className="font-medium">
                   {linkedPlan.deliveryDate ? formatDate(linkedPlan.deliveryDate) : '—'}
                 </span>
+              </div>
+              <div className="flex justify-between gap-2">
+                <span className="text-muted-foreground">Машина</span>
+                {driverAssigned(linkedPlan.vehicleNumber) ? (
+                  <span className="rounded border border-foreground px-1.5 font-mono font-bold">
+                    {plateLabel(linkedPlan.vehicleNumber)}
+                  </span>
+                ) : (
+                  <span className="font-medium text-amber-700">Водитель не назначен</span>
+                )}
               </div>
               <div className="flex justify-between gap-2">
                 <span className="text-muted-foreground">Коробов / паллет</span>

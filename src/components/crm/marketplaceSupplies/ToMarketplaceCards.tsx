@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { driverAssigned } from '@/lib/gazelkaPlate';
 import SupplyTypeBadge from './SupplyTypeBadge';
 import B2bBadge from './B2bBadge';
 import { Badge } from '@/components/ui/badge';
@@ -47,21 +48,6 @@ const pieceStats = (s: Supply): PieceStat[] => {
     });
   }
   return stats;
-};
-
-const PLACEHOLDER_PLATE = 'P303PE797';
-const CYR_TO_LAT: Record<string, string> = {
-  А: 'A', В: 'B', Е: 'E', К: 'K', М: 'M', Н: 'H', О: 'O', Р: 'P', С: 'C', Т: 'T', У: 'Y', Х: 'X',
-};
-
-/** Водитель назначен, только если номер машины уже не запасной P303PE797. */
-const driverAssigned = (plate?: string | null) => {
-  if (!plate || !plate.trim()) return false;
-  const key = plate
-    .toUpperCase()
-    .replace(/[\s-]/g, '')
-    .replace(/[АВЕКМНОРСТУХ]/g, (ch) => CYR_TO_LAT[ch] || ch);
-  return key !== PLACEHOLDER_PLATE;
 };
 
 /** FBO без кластера, Газельки или даты на маркетплейс ещё не заполнена. */
@@ -182,14 +168,23 @@ const ToMarketplaceCards = ({ supplies, onOpen }: ToMarketplaceCardsProps) => (
               {s.type !== 'FBS' && s.gazelkaPickup && (
                 driverAssigned(s.gazelkaVehicleNumber) ? (
                   <span
-                    className="inline-flex h-[26px] w-[26px] shrink-0 items-center justify-center text-emerald-600"
+                    className="inline-flex shrink-0 items-center gap-1 text-emerald-600"
                     title="Водитель назначен, поставка уедет"
                   >
                     <Icon name="CircleCheck" size={26} />
+                    <span className="whitespace-nowrap rounded border border-black px-1.5 py-0.5 font-mono text-xs font-bold leading-none text-black">
+                      {s.gazelkaVehicleNumber?.toUpperCase()}
+                    </span>
                   </span>
                 ) : (
-                  <span title="Номер авто не сменили — водитель ещё не назначен">
+                  <span
+                    className="inline-flex shrink-0 items-center gap-1"
+                    title="Номер авто не сменили — водитель ещё не назначен"
+                  >
                     <RoadTruck />
+                    <span className="whitespace-nowrap text-xs font-medium text-amber-700">
+                      водитель не назначен
+                    </span>
                   </span>
                 )
               )}
