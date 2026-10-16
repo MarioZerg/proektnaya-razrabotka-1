@@ -12,6 +12,9 @@ import { useAuth } from '@/context/AuthContext';
 /** Вещь в подборе без полки — отдельная кнопка фильтра, не смешиваем с именованными. */
 const NO_SHELF = '__none__';
 
+/** Ярлык наклеен, а в короб или поставку FBS вещь ещё не добавлена. */
+const isLabeled = (o: PickingOrder) => o.status === 'awaiting_supply' || !!o.shippingLabeledAt;
+
 export type PickingShelfStat = {
   key: string;
   name: string;
@@ -38,6 +41,8 @@ export const useGoodsPicking = () => {
   /** Какую полку смотрим: null — все, иначе ключ полки или «без полки». */
   const [shelfFilter, setShelfFilter] = useState<string | null>(null);
   const [scanOpen, setScanOpen] = useState(false);
+  /** Показать только застикерованные вещи, которые ещё не в поставке. */
+  const [labeledOnly, setLabeledOnly] = useState(false);
   const [rematching, setRematching] = useState(false);
 
   // Списать ненайденную вещь может только старший кладовщик и админ: за этим стоят
@@ -144,10 +149,19 @@ export const useGoodsPicking = () => {
   // надо отсканировать в поставку. Поэтому вещь остаётся в общем списке до тех пор,
   // пока её не отправят на поставку кнопкой в карточке. Печать стикера сама по себе
   // из списка ничего не убирает.
-  const labeledCount = useMemo(
-    () => orders.filter((o) => o.status === 'awaiting_supply' && !o.extraForSupply).length,
+  // Застикеровано, но ещё не добавлено в короб или поставку FBS. Считаем и
+  // вещи с наклеенным ярлыком, по которым не нажали «На поставку»: работа по
+  // ним тоже не закончена, и освобождать их нельзя.
+  const labeledItems = useMemo(
+    () => orders.filter((o) => isLabeled(o) && !o.extraForSupply),
     [orders]
   );
+  const labeledCount = labeledItems.length;
+  const labeledFbs = labeledItems.filter((o) => (o.orderType || '').toUpperCase() === 'FBS').length;
+  const labeledFbo = labeledItems.filter((o) => (o.orderType || '').toUpperCase() === 'FBO').length;
+  useEffect(() => {
+    if (labeledOnly && labeledCount === 0) setLabeledOnly(false);
+  }, [labeledOnly, labeledCount]);
 
   /**
    * Лишние вещи FBO: заявка по этому размеру уже закрыта коробами.
@@ -162,8 +176,9 @@ export const useGoodsPicking = () => {
 
   const searchFiltered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    if (!q) return workOrders;
-    return workOrders.filter(
+    const base = labeledOnly ? workOrders.filter(isLabeled) : workOrders;
+    if (!q) return base;
+    return base.filter(
       (o) =>
         o.product?.toLowerCase().includes(q) ||
         o.orderNumber?.toLowerCase().includes(q) ||
@@ -175,7 +190,7 @@ export const useGoodsPicking = () => {
         o.marketplace?.toLowerCase().includes(q) ||
         o.orderType?.toLowerCase().includes(q)
     );
-  }, [workOrders, search]);
+  }, [workOrders, search, labeledOnly]);
 
   /** Сколько штук к подбору на каждой полке — по текущему поиску/FBS/FBO. */
   const shelfStats = useMemo<PickingShelfStat[]>(() => {
@@ -251,6 +266,10 @@ export const useGoodsPicking = () => {
     load,
     handleRematch,
     labeledCount,
+    labeledFbs,
+    labeledFbo,
+    labeledOnly,
+    setLabeledOnly,
     extraItems,
     workOrders,
     filtered,

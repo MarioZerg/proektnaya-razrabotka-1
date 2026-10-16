@@ -1,6 +1,7 @@
 import { useNavigate } from 'react-router-dom';
 import CrmLayout from '@/components/crm/CrmLayout';
 import Icon from '@/components/ui/icon';
+import { Button } from '@/components/ui/button';
 import PickingScanDialog from '@/components/crm/goodsWarehouse/PickingScanDialog';
 import ShippedStuckPanel from '@/components/crm/goodsWarehouse/ShippedStuckPanel';
 import SupplyTailsPanel from '@/components/crm/goodsWarehouse/SupplyTailsPanel';
@@ -31,6 +32,10 @@ const GoodsPicking = () => {
     load,
     handleRematch,
     labeledCount,
+    labeledFbs,
+    labeledFbo,
+    labeledOnly,
+    setLabeledOnly,
     extraItems,
     workOrders,
     filtered,
@@ -91,13 +96,35 @@ const GoodsPicking = () => {
             такие строки помечены в таблице, и по ним осталось одно действие —
             отправить на поставку из карточки. */}
         {labeledCount > 0 && (
-          <div className="flex gap-2 rounded-md border border-sky-300 bg-sky-50 p-3 text-sm text-sky-900">
-            <Icon name="Info" size={18} className="mt-0.5 shrink-0" />
-            <div>
-              Со стикером: {labeledCount}. Такие вещи помечены в списке — найдите их на
-              полке и отправьте на поставку кнопкой в карточке. До этого они никуда
-              не едут и из списка не пропадают.
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-sky-300 bg-sky-50 p-3 text-sky-900">
+            <div className="flex items-start gap-2">
+              <Icon name="Tag" size={20} className="mt-0.5 shrink-0 text-sky-600" />
+              <div>
+                <p className="text-sm font-semibold">
+                  Застикеровано, но не добавлено в поставку: {labeledCount}
+                  {(labeledFbs > 0 || labeledFbo > 0) && (
+                    <span className="font-normal">
+                      {' '}
+                      ({[labeledFbs > 0 && `FBS ${labeledFbs}`, labeledFbo > 0 && `FBO ${labeledFbo}`]
+                        .filter(Boolean)
+                        .join(', ')})
+                    </span>
+                  )}
+                </p>
+                <p className="text-xs text-sky-800">
+                  Ярлык уже наклеен — осталось отсканировать вещь в короб или поставку FBS.
+                  Эти вещи закреплены за заказами, освободить их нельзя
+                </p>
+              </div>
             </div>
+            <Button
+              size="sm"
+              variant={labeledOnly ? 'default' : 'outline'}
+              onClick={() => setLabeledOnly(!labeledOnly)}
+            >
+              <Icon name={labeledOnly ? 'X' : 'Filter'} size={14} className="mr-1.5" />
+              {labeledOnly ? 'Показать все' : 'Показать только их'}
+            </Button>
           </div>
         )}
 
