@@ -1,12 +1,21 @@
+import base64
+import io
 import json
 import os
 from datetime import date, datetime
 
 import boto3
 import psycopg2
-from openpyxl import Workbook
-from openpyxl.styles import Alignment, Border, Font, Side
-from openpyxl.worksheet.page import PageMargins
+from reportlab.lib import colors
+from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
+from reportlab.lib.pagesizes import A4
+from reportlab.lib.styles import ParagraphStyle
+from reportlab.lib.units import mm
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.ttfonts import TTFont
+from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+
+from fonts_data import BOLD_B64, REGULAR_B64
 
 CORS_HEADERS = {
     'Access-Control-Allow-Origin': '*',
@@ -195,12 +204,20 @@ def _defaults(cur, supply_id):
     }
 
 
-# ---------------------------------------------------------------- XLSX
+# ---------------------------------------------------------------- PDF
 
-THIN = Side(style='thin', color='000000')
-BOX = Border(left=THIN, right=THIN, top=THIN, bottom=THIN)
-WRAP = Alignment(horizontal='left', vertical='center', wrap_text=True)
-CENTER = Alignment(horizontal='center', vertical='center', wrap_text=True)
+_fonts_ready = False
+
+
+def _ensure_fonts():
+    """Шрифт с кириллицей вшит в fonts_data: в PDF свои шрифты кириллицу не знают,
+    а отдельный .ttf в облачную функцию не попадает."""
+    global _fonts_ready
+    if _fonts_ready:
+        return
+    pdfmetrics.registerFont(TTFont('OS', io.BytesIO(base64.b64decode(REGULAR_B64))))
+    pdfmetrics.registerFont(TTFont('OS-B', io.BytesIO(base64.b64decode(BOLD_B64))))
+    _fonts_ready = True
 
 
 def _fmt_date(v):
@@ -228,95 +245,92 @@ def _fmt_dt(v):
     return _fmt_date(v)
 
 
-def _build_xlsx(doc, path):
-    """Собирает транспортную накладную по форме Приложения № 4.
+def _esc(value):
+    """Текст для PDF: пустое — прочерк, разметка не ломает вёрстку."""
+    if value is None or str(value).strip() == '':
+        return '—'
+    return (str(value)
+            .replace('&', '&amp;')
+            .replace('<', '&lt;')
+            .replace('>', '&gt;')
+            .replace('\n', '<br/>'))
 
-    Формируем файл сами, а не правим присланный образец: в образце данные
-    размазаны по объединённым ячейкам на 95 колонок, и любое изменение формы
-    ломало бы привязку. Здесь же структура читается сверху вниз — раздел,
-    значение, пояснение под ним мелким шрифтом, как в бумажной форме.
 
-    Печать: лист А4, масштаб по ширине на 1 страницу, по высоте — сколько
-    нужно (fitToHeight=0). Раньше fitToPage без нулевой высоты сжимал весь
-    документ на одну страницу — шрифт становился нечитаемым.
+def _build_pdf(doc, path):
+    """Собирает транспортную накладную в PDF по форме Приложения № 4.
+
+    Раньше это был Excel с фиксированной высотой строки. Длинные реквизиты
+    переносились, но за нижнюю границу ячейки не помещались — на печати
+    низ строки просто обрезался. В PDF высота блока считается по тексту:
+    рамка растёт вместе со строками, ничего не уезжает за край.
     """
-    wb = Workbook()
-    ws = wb.active
-    ws.title = 'Транспортная накладная'
+    _ensure_fonts()
+    usable = A4[0] - 24 * mm
+    half = usable / 2
 
-    # Две колонки под поля формы; ширина подобрана под печать А4 с полями ~1 см.
-    ws.column_dimensions['A'].width = 48
-    ws.column_dimensions['B'].width = 48
-    ws.page_setup.paperSize = 9  # A4
-    ws.page_setup.orientation = 'portrait'
-    ws.page_setup.fitToPage = True
-    ws.page_setup.fitToWidth = 1
-    # 0 = не ограничивать число страниц по высоте — иначе Excel втискивает
-    # всю накладную на один лист и уменьшает шрифт до нечитаемого.
-    ws.page_setup.fitToHeight = 0
-    ws.sheet_properties.pageSetUpPr.fitToPage = True
-    ws.page_margins = PageMargins(
-        left=0.4, right=0.4, top=0.5, bottom=0.5, header=0.2, footer=0.2,
+    title = ParagraphStyle(
+        'tnTitle', fontName='OS-B', fontSize=14, leading=18,
+        alignment=TA_CENTER, textColor=colors.black,
     )
-    ws.print_options.horizontalCentered = True
+    right = ParagraphStyle(
+        'tnRight', fontName='OS', fontSize=8, leading=11,
+        alignment=TA_RIGHT, textColor=colors.black,
+    )
+    section_style = ParagraphStyle(
+        'tnSection', fontName='OS-B', fontSize=11, leading=14,
+        alignment=TA_LEFT, spaceBefore=8, spaceAfter=3,
+    )
+    value_style = ParagraphStyle(
+        'tnValue', fontName='OS', fontSize=9, leading=12,
+        alignment=TA_LEFT, textColor=colors.black, wordWrap='CJK',
+    )
+    caption_style = ParagraphStyle(
+        'tnCaption', fontName='OS', fontSize=7, leading=9,
+        alignment=TA_LEFT, textColor=colors.HexColor('#555555'), wordWrap='CJK',
+    )
 
-    row = 1
+    story = []
 
-    def head(text, size=10, bold=False, align=CENTER):
-        nonlocal row
-        ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=2)
-        c = ws.cell(row=row, column=1, value=text)
-        c.font = Font(name='Arial', size=size, bold=bold)
-        c.alignment = align
-        ws.row_dimensions[row].height = max(18, size + 8)
-        row += 1
+    def head(text, style):
+        story.append(Paragraph(_esc(text), style))
 
-    def section(title):
-        nonlocal row
-        ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=2)
-        c = ws.cell(row=row, column=1, value=title)
-        c.font = Font(name='Arial', size=12, bold=True)
-        c.alignment = Alignment(horizontal='left', vertical='center')
-        ws.row_dimensions[row].height = 22
-        row += 1
+    def section(text):
+        story.append(Paragraph(_esc(text), section_style))
+
+    def block(value, caption):
+        parts = [Paragraph(_esc(value), value_style)]
+        if caption:
+            parts.append(Spacer(1, 1.5 * mm))
+            parts.append(Paragraph(_esc(caption), caption_style))
+        return parts
 
     def field(value, caption, value2=None, caption2=None):
-        """Значение крупно, пояснение формы под ним мелко — как в бумаге."""
-        nonlocal row
-        left = ws.cell(row=row, column=1, value=value or '-')
-        left.font = Font(name='Arial', size=12)
-        left.alignment = WRAP
-        left.border = BOX
+        """Значение, под ним пояснение формы — оба внутри рамки, которая растёт."""
+        grid = TableStyle([
+            ('GRID', (0, 0), (-1, -1), 0.4, colors.black),
+            ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+            ('LEFTPADDING', (0, 0), (-1, -1), 4),
+            ('RIGHTPADDING', (0, 0), (-1, -1), 4),
+            ('TOPPADDING', (0, 0), (-1, -1), 3),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
+        ])
         if caption2 is not None or value2 is not None:
-            right = ws.cell(row=row, column=2, value=value2 or '-')
-            right.font = Font(name='Arial', size=12)
-            right.alignment = WRAP
-            right.border = BOX
+            table = Table(
+                [[block(value, caption), block(value2, caption2)]],
+                colWidths=[half, half],
+            )
         else:
-            ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=2)
-        ws.row_dimensions[row].height = 36
-        row += 1
+            table = Table([[block(value, caption)]], colWidths=[usable])
+        table.setStyle(grid)
+        story.append(table)
+        story.append(Spacer(1, 1.2 * mm))
 
-        cl = ws.cell(row=row, column=1, value=caption)
-        cl.font = Font(name='Arial', size=9, italic=True, color='555555')
-        cl.alignment = WRAP
-        if caption2 is not None:
-            cr = ws.cell(row=row, column=2, value=caption2)
-            cr.font = Font(name='Arial', size=9, italic=True, color='555555')
-            cr.alignment = WRAP
-        else:
-            ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=2)
-        ws.row_dimensions[row].height = 26
-        row += 1
-
-    head('Приложение № 4', size=9, align=Alignment(horizontal='right'))
-    head('к Правилам перевозок грузов автомобильным транспортом',
-         size=9, align=Alignment(horizontal='right'))
-    head('(в ред. Постановления Правительства РФ от 30.11.2021 № 2116)',
-         size=9, align=Alignment(horizontal='right'))
-    row += 1
-
-    head('ТРАНСПОРТНАЯ НАКЛАДНАЯ', size=16, bold=True)
+    head('Приложение № 4', right)
+    head('к Правилам перевозок грузов автомобильным транспортом', right)
+    head('(в ред. Постановления Правительства РФ от 30.11.2021 № 2116)', right)
+    story.append(Spacer(1, 3 * mm))
+    head('ТРАНСПОРТНАЯ НАКЛАДНАЯ', title)
+    story.append(Spacer(1, 2 * mm))
     field(
         f"№ {doc.get('number') or '—'}   от {_fmt_date(doc.get('docDate'))}",
         'Дата и номер транспортной накладной',
@@ -441,7 +455,22 @@ def _build_xlsx(doc, path):
         section('Комментарий')
         field(doc.get('comment'), '')
 
-    wb.save(path)
+    def _page(canvas, doc_):
+        canvas.saveState()
+        canvas.setFont('OS', 8)
+        canvas.drawRightString(A4[0] - 12 * mm, 8 * mm, f'Стр. {doc_.page}')
+        canvas.restoreState()
+
+    pdf = SimpleDocTemplate(
+        path,
+        pagesize=A4,
+        leftMargin=12 * mm,
+        rightMargin=12 * mm,
+        topMargin=12 * mm,
+        bottomMargin=14 * mm,
+        title='Транспортная накладная',
+    )
+    pdf.build(story, onFirstPage=_page, onLaterPages=_page)
 
 
 def _upload(path, filename):
@@ -457,7 +486,7 @@ def _upload(path, filename):
             Bucket='files',
             Key=key,
             Body=f.read(),
-            ContentType='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            ContentType='application/pdf',
         )
     return f"https://cdn.poehali.dev/projects/{os.environ['AWS_ACCESS_KEY_ID']}/bucket/{key}"
 
@@ -467,7 +496,7 @@ def handler(event: dict, context) -> dict:
 
     Форма Приложения № 4 к Правилам перевозок грузов автомобильным транспортом
     (в ред. ПП РФ от 30.11.2021 № 2116). Порядок работы: менеджер заполняет
-    карточку и подтверждает готовность, система собирает файл XLSX, кладовщик
+    карточку и подтверждает готовность, система собирает файл PDF, кладовщик
     скачивает его, отдаёт водителю и отгружает поставку.
 
     GET  /?supplyId=12               - накладная поставки (null, если не заводили)
@@ -476,7 +505,7 @@ def handler(event: dict, context) -> dict:
     POST /  { action: 'update', supplyId, ...поля }
         - сохранить поля накладной
     POST /  { action: 'generate', supplyId }
-        - собрать файл XLSX и положить в хранилище
+        - собрать файл PDF и положить в хранилище
     POST /  { action: 'set_ready', supplyId, ready, actorId }
         - подтвердить готовность: кладовщик увидит кнопку скачивания
 
@@ -567,9 +596,9 @@ def handler(event: dict, context) -> dict:
             return _resp(200, {'document': _get_doc(cur, supply_id)})
 
         if action == 'generate':
-            fname = f"TN-{doc.get('number') or supply_id}-{int(datetime.now().timestamp())}.xlsx"
+            fname = f"TN-{doc.get('number') or supply_id}-{int(datetime.now().timestamp())}.pdf"
             path = f'/tmp/{fname}'
-            _build_xlsx(doc, path)
+            _build_pdf(doc, path)
             url = _upload(path, fname)
             os.remove(path)
             cur.execute(

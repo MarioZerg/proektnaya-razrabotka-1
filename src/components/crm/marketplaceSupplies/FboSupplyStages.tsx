@@ -108,39 +108,6 @@ const stageFacts = (supply: SupplyDetail) => {
   };
 };
 
-const hintFor = (stage: StageId, isManager: boolean, supply: SupplyDetail): string => {
-  const gazelkaReady = !!supply.gazelkaPlanId && !!supply.gazelkaId;
-  const shipped = SHIPPED.includes(supply.status);
-
-  if (stage === 'request') {
-    return isManager
-      ? 'Укажите данные заявки и загрузите товарный состав в пошив. Пока состава нет, кладовщику собирать нечего.'
-      : 'Номер заявки, склад и состав заполняет менеджер. Ваша работа начнётся на сборке.';
-  }
-  if (stage === 'sewing') {
-    return isManager
-      ? 'Смотрите, что уже сшито. Догрузите недостающее или уберите лишнее, пока поставка не уехала.'
-      : 'Цех ещё шьёт эту поставку. На сборку берите готовые вещи — кнопка «Собрать поставку» на следующем шаге.';
-  }
-  if (stage === 'assemble') {
-    if (shipped) return 'Короба уже собраны. Дальше работа на шаге «Отгрузка».';
-    return isManager
-      ? 'Короба набивает кладовщик. Следите за сверкой: лишняя штука одного артикула не закрывает недостачу другого.'
-      : 'Откройте сборку, разложите вещи по коробам и закройте их. Отметить поставку собранной можно, когда уложено всё по заявке.';
-  }
-  if (supply.status === 'Принята' || supply.status === 'Выполнена') {
-    return 'Поставка закрыта. Здесь остаются приёмка и документы — если нужно сверить, что уехало и что приняли.';
-  }
-  if (gazelkaReady) {
-    return isManager
-      ? 'Рейс привязан. Проверьте, что накладная подтверждена: кладовщик скачает её и отдаст груз водителю.'
-      : 'Наклейте листы на короба, скачайте накладную и отдайте её водителю вместе с грузом.';
-  }
-  return isManager
-    ? 'Привяжите рейс Газельки и подтвердите транспортную накладную. После этого кладовщик скачает документ и отдаст груз водителю.'
-    : 'Наклейте листы на короба и отдайте груз водителю. Пока менеджер не подтвердил накладную, машину не выпускайте.';
-};
-
 interface FboSupplyStagesProps {
   supply: SupplyDetail;
   supplyId: number;
@@ -192,9 +159,7 @@ const FboSupplyStages = ({
   return (
     <div className="space-y-4">
       <div className="space-y-2">
-        <p className="text-sm text-muted-foreground">
-          Четыре шага. Открыт тот, где сейчас ваша работа.
-        </p>
+        <p className="text-sm text-muted-foreground">Четыре шага.</p>
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
           {STAGES.map((item, index) => {
             const selected = item.id === stage;
@@ -237,10 +202,6 @@ const FboSupplyStages = ({
           })}
         </div>
       </div>
-
-      <p className="rounded-lg border border-border bg-muted/40 px-3 py-2.5 text-sm leading-snug">
-        {hintFor(stage, flags.isManager, supply)}
-      </p>
 
       {stage === 'request' && (
         <div className="space-y-4">
@@ -327,7 +288,7 @@ const FboSupplyStages = ({
               gazelkaReady={flags.gazelkaReady}
             />
           )}
-          <WaybillCard supply={supply} isManager={flags.isManager} defaultOpen />
+          <WaybillCard supply={supply} isManager={flags.isManager} />
         </div>
       )}
 

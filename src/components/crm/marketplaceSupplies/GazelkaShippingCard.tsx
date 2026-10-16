@@ -16,12 +16,12 @@ import { useToast } from '@/hooks/use-toast';
 import { formatDate } from '@/lib/dateUtils';
 import { fetchGazelkaPlansForSupply, type GazelkaPlan } from '@/lib/gazelkaApi';
 import { updateSupply, type SupplyDetail } from '@/lib/marketplaceSuppliesApi';
-import { printGazelkaLabels, missingLabelFields } from '@/lib/gazelkaPackingLabel';
+import { printGazelkaLabels } from '@/lib/gazelkaPackingLabel';
 
 interface GazelkaShippingCardProps {
   supply: SupplyDetail;
   onReload: () => void;
-  /** Менеджер (или админ): может выбирать заявку Газельки, синхронизировать данные, вводить коды. */
+  /** Менеджер (или админ): может выбирать заявку Газельки и синхронизировать данные. */
   isManager: boolean;
   /** Данные Газельки заполнены менеджером (выбрана заявка + синхронизирован ID отгрузки) —
    * только тогда кладовщику доступна печать стикеров. */
@@ -40,9 +40,6 @@ const GazelkaShippingCard = ({ supply, onReload, isManager, gazelkaReady }: Gaze
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState(supply.gazelkaPlanId ? String(supply.gazelkaPlanId) : '');
   const [saving, setSaving] = useState(false);
-  const [ids, setIds] = useState(String(supply.gazelkaIds ?? 0));
-  const [idm, setIdm] = useState(String(supply.gazelkaIdm ?? 0));
-  const [savingIds, setSavingIds] = useState(false);
   const [syncing, setSyncing] = useState(false);
   // Дата отгрузки: Газелька присылает её не всегда (блок route в ответе бывает пуст),
   // поэтому менеджер должен иметь возможность проставить её руками — иначе на этикетке
@@ -63,16 +60,6 @@ const GazelkaShippingCard = ({ supply, onReload, isManager, gazelkaReady }: Gaze
 
   const linkedPlan = plans.find((p) => p.id === supply.gazelkaPlanId);
 
-  // Чего не хватает для печати листов. Считаем здесь же, чтобы менеджер видел
-  // недостающее рядом с полями, которые он и заполняет.
-  const missing = linkedPlan
-    ? missingLabelFields({
-        plan: linkedPlan,
-        supply,
-        boxesCount: linkedPlan.boxes || supply.boxes.length || 1,
-      })
-    : [];
-
   const handleSave = async () => {
     setSaving(true);
     try {
@@ -83,19 +70,6 @@ const GazelkaShippingCard = ({ supply, onReload, isManager, gazelkaReady }: Gaze
       toast({ title: 'Ошибка', description: e instanceof Error ? e.message : undefined, variant: 'destructive' });
     } finally {
       setSaving(false);
-    }
-  };
-
-  const handleSaveIds = async () => {
-    setSavingIds(true);
-    try {
-      await updateSupply(supply.id, { gazelkaIds: Number(ids) || 0, gazelkaIdm: Number(idm) || 0 });
-      toast({ title: 'Коды склада сохранены' });
-      onReload();
-    } catch (e) {
-      toast({ title: 'Ошибка', description: e instanceof Error ? e.message : undefined, variant: 'destructive' });
-    } finally {
-      setSavingIds(false);
     }
   };
 
@@ -194,12 +168,7 @@ const GazelkaShippingCard = ({ supply, onReload, isManager, gazelkaReady }: Gaze
               size="sm"
               className="w-full bg-[#004cdb] text-white hover:bg-[#003bb0]"
               onClick={handlePrintOurLabels}
-              disabled={!linkedPlan || missing.length > 0}
-              title={
-                missing.length > 0
-                  ? `Не заполнено: ${missing.join(', ')}`
-                  : undefined
-              }
+              disabled={!linkedPlan}
             >
               <Icon name="Printer" size={14} className="mr-1.5" />
               <span className="sm:hidden">Стикеры</span>
@@ -293,23 +262,6 @@ const GazelkaShippingCard = ({ supply, onReload, isManager, gazelkaReady }: Gaze
               </div>
             </div>
 
-            {/* ЧЕГО НЕ ХВАТАЕТ ДЛЯ ПЕЧАТИ.
-                Показываем списком у полей, которые менеджер и заполняет: иначе он
-                видит серую кнопку печати и не понимает, чего от него хотят. */}
-            {missing.length > 0 && (
-              <div className="space-y-1 rounded-md border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900">
-                <p className="flex items-center gap-1.5 font-medium">
-                  <Icon name="CircleAlert" size={13} className="shrink-0" />
-                  Печать листов закрыта — не заполнено:
-                </p>
-                <ul className="ml-5 list-disc space-y-0.5">
-                  {missing.map((m) => (
-                    <li key={m}>{m}</li>
-                  ))}
-                </ul>
-              </div>
-            )}
-
             {/* ДАТА ОТГРУЗКИ — РУЧНОЕ ПОЛЕ.
                 Газелька отдаёт её в блоке route, которого в ответе часто нет. Без
                 ручного ввода на этикетке в строке «Дата отгрузки» оставался прочерк,
@@ -343,44 +295,6 @@ const GazelkaShippingCard = ({ supply, onReload, isManager, gazelkaReady }: Gaze
               </div>
             )}
 
-            {/* Коды склада для штрихкода — редактирует только менеджер */}
-            {isManager && (
-              <div className="space-y-1.5">
-                <Label className="text-xs leading-snug">
-                  Код склада (IDS)
-                  <span className="hidden font-normal text-muted-foreground sm:inline">
-                    {' '}
-                    — единственное, чего нет в API Газельки
-                  </span>
-                </Label>
-                <div className="flex flex-wrap items-center gap-2">
-                  <Input
-                    type="number"
-                    className="w-24"
-                    value={ids}
-                    onChange={(e) => setIds(e.target.value)}
-                    placeholder="IDS"
-                  />
-                  {/* IDM подставляется сам из заявки (marketplace_id), поле нужно только
-                      на случай, когда Газелька просит другой код — тогда ввод главнее. */}
-                  <Input
-                    type="number"
-                    className="w-24"
-                    value={idm}
-                    onChange={(e) => setIdm(e.target.value)}
-                    placeholder={linkedPlan?.marketplaceId ? `IDM (авто: ${linkedPlan.marketplaceId})` : 'IDM'}
-                  />
-                  <Button
-                    variant="outline"
-                    className="w-full sm:w-auto"
-                    onClick={handleSaveIds}
-                    disabled={savingIds || (Number(ids) === supply.gazelkaIds && Number(idm) === supply.gazelkaIdm)}
-                  >
-                    {savingIds ? <Icon name="Loader2" size={14} className="animate-spin" /> : 'Сохранить коды'}
-                  </Button>
-                </div>
-              </div>
-            )}
           </>
         )}
       </CardContent>

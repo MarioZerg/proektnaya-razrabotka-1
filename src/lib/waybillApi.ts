@@ -153,7 +153,7 @@ export const createWaybill = (supplyId: number) => post({ action: 'create', supp
 export const updateWaybill = (supplyId: number, fields: WaybillEditableFields) =>
   post({ action: 'update', supplyId, ...fields });
 
-/** Собрать файл XLSX по форме — его и отдают водителю. */
+/** Собрать PDF по форме — его печатают и отдают водителю. */
 export const generateWaybill = (supplyId: number) => post({ action: 'generate', supplyId });
 
 /**

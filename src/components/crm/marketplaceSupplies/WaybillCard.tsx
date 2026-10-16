@@ -1,7 +1,12 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type MouseEvent } from 'react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import SupplySection from '@/components/crm/marketplaceSupplies/SupplySection';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
@@ -25,8 +30,6 @@ interface WaybillCardProps {
   supply: SupplyDetail;
   /** Менеджер или админ: заполняет накладную и подтверждает готовность. */
   isManager: boolean;
-  /** На шаге «Отгрузка» накладная и есть работа шага — открываем сразу. */
-  defaultOpen?: boolean;
 }
 
 type FieldType = 'text' | 'date' | 'number' | 'datetime-local';
@@ -92,6 +95,31 @@ const GROUPS = [
   '12. Стоимость перевозки',
 ];
 
+/** Дата с накладной на полоске: «20.10.2026», без сдвига из‑за часового пояса. */
+const showDay = (value: string | null | undefined): string => {
+  if (!value) return '—';
+  const [y, m, d] = String(value).slice(0, 10).split('-');
+  return y && m && d ? `${d}.${m}.${y}` : '—';
+};
+
+/** Коробов в накладной: сначала места при погрузке, иначе количество мест в грузе. */
+const boxCount = (doc: WaybillDocument): string =>
+  doc.loadingPlaces?.trim() || doc.cargoPlaces?.trim() || '—';
+
+/**
+ * Накладная заполнена, когда в ней уже есть номер, места или даты.
+ * Свежий пустой черновик иконку печати не получает.
+ */
+const isFilled = (doc: WaybillDocument): boolean =>
+  !!(
+    doc.number?.trim() ||
+    doc.loadingPlaces?.trim() ||
+    doc.cargoPlaces?.trim() ||
+    doc.plannedLoadingAt ||
+    doc.plannedUnloadingAt ||
+    doc.isReady
+  );
+
 /** Значение для input: даты режем под формат поля, null превращаем в пустую строку. */
 const toInput = (v: unknown, type?: FieldType): string => {
   if (v === null || v === undefined) return '';
@@ -112,8 +140,9 @@ const toInput = (v: unknown, type?: FieldType): string => {
  * подтверждения: иначе он повёз бы водителю недозаполненный документ. Любая
  * правка снимает готовность, чтобы на руках не оказалось устаревшей версии.
  */
-const WaybillCard = ({ supply, isManager, defaultOpen = false }: WaybillCardProps) => {
+const WaybillCard = ({ supply, isManager }: WaybillCardProps) => {
   const { toast } = useToast();
+  const [open, setOpen] = useState(false);
   const [doc, setDoc] = useState<WaybillDocument | null>(null);
   const [loading, setLoading] = useState(true);
   const [listError, setListError] = useState<string | null>(null);
@@ -204,7 +233,7 @@ const WaybillCard = ({ supply, isManager, defaultOpen = false }: WaybillCardProp
     try {
       const d = await generateWaybill(supply.id);
       setDoc(d);
-      toast({ title: 'Файл накладной готов', description: 'Можно скачивать и подтверждать' });
+      toast({ title: 'PDF накладной готов', description: 'Можно скачивать и подтверждать' });
     } catch (e) {
       toast({
         title: 'Не удалось сформировать',
@@ -256,209 +285,213 @@ const WaybillCard = ({ supply, isManager, defaultOpen = false }: WaybillCardProp
     );
   }
 
-  // Накладной нет. Кладовщику показываем предупреждение, а не пустоту: без
-  // документа машину выпускать нельзя, и узнать об этом надо до погрузки.
-  if (!doc) {
-    return (
-      <SupplySection
-        title="Транспортная накладная"
-        summary={<Badge variant="destructive">Не заведена</Badge>}
-        defaultOpen={defaultOpen}
-      >
-        <div className="space-y-3">
-          <p className="text-sm text-muted-foreground">
-            По этой поставке накладной нет. Документ едет с машиной — водитель
-            забирает груз вместе с ним.
-          </p>
-          {isManager ? (
-            <Button onClick={handleCreate} disabled={creating}>
-              <Icon
-                name={creating ? 'Loader2' : 'FilePlus2'}
-                size={14}
-                className={`mr-1.5 ${creating ? 'animate-spin' : ''}`}
-              />
-              Завести накладную
-            </Button>
-          ) : (
-            <p className="text-sm font-medium text-destructive">
-              Накладную заполняет менеджер — без неё груз не отгружаем.
-            </p>
-          )}
-        </div>
-      </SupplySection>
-    );
-  }
-
-  // КЛАДОВЩИК: только скачивание, и только у подтверждённой накладной.
-  //
-  // Раньше он видел бы всю форму и мог принять за готовое то, что менеджер ещё
-  // заполняет. Здесь показываем ровно одно: можно забирать документ или ещё нет.
-  if (!isManager) {
-    return (
-      <SupplySection
-        title="Транспортная накладная"
-        summary={
-          doc.isReady ? (
-            <Badge>Готова</Badge>
-          ) : (
-            <Badge variant="secondary">Заполняет менеджер</Badge>
-          )
-        }
-        defaultOpen={defaultOpen}
-      >
-        {doc.isReady && doc.fileUrl ? (
-          <div className="space-y-3">
-            <p className="text-sm text-muted-foreground">
-              Накладная готова. Скачайте, распечатайте и отдайте водителю — после
-              этого можно отгружать поставку.
-            </p>
-            <Button asChild>
-              <a href={doc.fileUrl} target="_blank" rel="noreferrer">
-                <Icon name="Download" size={14} className="mr-1.5" />
-                Скачать накладную
-              </a>
-            </Button>
-            {doc.readyByName && (
-              <p className="text-xs text-muted-foreground">
-                Подтвердил: {doc.readyByName}
-                {doc.readyAt ? `, ${formatDateTime(doc.readyAt)}` : ''}
-              </p>
-            )}
-          </div>
-        ) : (
-          <p className="flex items-start gap-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
-            <Icon name="Clock" size={15} className="mt-0.5 shrink-0" />
-            Менеджер ещё не подтвердил накладную. Отгружать поставку без документа
-            нельзя — дождитесь готовности.
-          </p>
-        )}
-      </SupplySection>
-    );
-  }
-
+  const filled = !!doc && isFilled(doc);
+  // Кладовщик печатает только подтверждённый файл. Менеджер видит иконку,
+  // как только в накладной есть номер, места или даты.
+  const showPrint = filled && (isManager || !!(doc?.isReady && doc.fileUrl));
   // Файл собран до последней правки — значит в нём старые данные.
   const fileStale =
-    !!doc.fileGeneratedAt && new Date(doc.fileGeneratedAt) < new Date(doc.updatedAt);
+    !!doc?.fileGeneratedAt && !!doc.updatedAt && new Date(doc.fileGeneratedAt) < new Date(doc.updatedAt);
+
+  const printWaybill = (event: MouseEvent) => {
+    event.stopPropagation();
+    if (doc?.fileUrl && (isManager || doc.isReady)) {
+      window.open(doc.fileUrl, '_blank', 'noopener,noreferrer');
+      return;
+    }
+    if (isManager) setOpen(true);
+  };
 
   return (
-    <SupplySection
-      title="Транспортная накладная"
-      summary={
-        <>
-          {doc.isReady ? (
-            <Badge>Готова</Badge>
-          ) : (
-            <Badge variant="outline">Черновик</Badge>
-          )}
-          {doc.number && <span className="font-mono-tech">№ {doc.number}</span>}
-        </>
-      }
-      defaultOpen={defaultOpen}
-    >
-      <div className="space-y-4">
-        <p className="rounded-md bg-muted/40 p-3 text-xs text-muted-foreground">
-          Форма по Приложению № 4 к Правилам перевозок грузов автомобильным
-          транспортом. Документ едет с машиной: заполните поля, сформируйте файл и
-          подтвердите готовность — после этого кладовщик сможет скачать накладную и
-          отгрузить поставку.
-        </p>
-
-        {/* Мест в накладной должно быть столько же, сколько коробов собрано:
-            принимающая сторона считает груз по местам, и расхождение — это спор
-            на приёмке. Заметить его надо здесь, а не у ворот склада. */}
-        {supply.boxes?.length > 0 && doc.loadingPlaces !== String(supply.boxes.length) && (
-          <p className="flex items-start gap-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
-            <Icon name="TriangleAlert" size={15} className="mt-0.5 shrink-0" />
-            В накладной мест: {doc.loadingPlaces || '—'}, а коробов собрано:{' '}
-            {supply.boxes.length}. Проверьте разделы «Груз» и «Приём груза».
-          </p>
-        )}
-
-        {fileStale && (
-          <p className="flex items-start gap-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
-            <Icon name="RefreshCw" size={15} className="mt-0.5 shrink-0" />
-            Накладную правили после того, как собрали файл. Сформируйте файл заново,
-            иначе водителю уедет старая версия.
-          </p>
-        )}
-
-        {doc.isReady && (
-          <p className="flex items-start gap-2 rounded-md border border-border p-3 text-sm">
-            <Icon name="ShieldCheck" size={15} className="mt-0.5 shrink-0" />
-            Подтвердил: {doc.readyByName || '—'}
-            {doc.readyAt ? `, ${formatDateTime(doc.readyAt)}` : ''}. Кладовщик видит
-            кнопку скачивания.
-          </p>
-        )}
-
-        <div className="flex flex-wrap gap-2">
-          <Button variant="outline" size="sm" className="w-full sm:w-auto" onClick={handleGenerate} disabled={generating}>
-            <Icon
-              name={generating ? 'Loader2' : 'FileSpreadsheet'}
-              size={14}
-              className={`mr-1.5 ${generating ? 'animate-spin' : ''}`}
-            />
-            Сформировать файл
-          </Button>
-          {doc.fileUrl && (
-            <Button variant="outline" size="sm" asChild>
-              <a href={doc.fileUrl} target="_blank" rel="noreferrer">
-                <Icon name="Download" size={14} className="mr-1.5" />
-                Скачать
-              </a>
-            </Button>
-          )}
-          {doc.isReady ? (
-            <Button variant="outline" size="sm" onClick={() => handleReady(false)}>
-              <Icon name="Undo2" size={14} className="mr-1.5" />
-              Снять готовность
-            </Button>
-          ) : (
-            <Button size="sm" className="w-full sm:w-auto" onClick={() => handleReady(true)}>
-              <Icon name="Check" size={14} className="mr-1.5" />
-              <span className="sm:hidden">К отгрузке</span>
-              <span className="hidden sm:inline">Подтвердить для отгрузки</span>
-            </Button>
-          )}
-        </div>
-
-        {GROUPS.map((group) => (
-          <div key={group} className="space-y-2">
-            <p className="text-xs font-semibold uppercase text-muted-foreground">{group}</p>
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
-              {FIELDS.filter((f) => f.group === group).map((f) => (
-                <div
-                  key={f.key}
-                  className={`space-y-1 ${f.wide ? 'sm:col-span-2 lg:col-span-3' : ''}`}
-                >
-                  <Label className="text-xs">{f.label}</Label>
-                  <Input
-                    type={f.type || 'text'}
-                    value={form[f.key] ?? ''}
-                    onChange={(e) => setForm((p) => ({ ...p, [f.key]: e.target.value }))}
-                  />
-                  {f.hint && <p className="text-[11px] text-muted-foreground">{f.hint}</p>}
-                </div>
-              ))}
-            </div>
+    <>
+      <div className="flex items-stretch overflow-hidden rounded-lg border border-border">
+        <button
+          type="button"
+          className={`flex min-w-0 flex-1 items-center gap-3 px-3 py-3 text-left sm:px-4 ${
+            isManager ? 'hover:bg-muted/50' : 'cursor-default'
+          }`}
+          onClick={() => isManager && setOpen(true)}
+        >
+          <div className="min-w-0 flex-1">
+            <span className="flex flex-wrap items-center gap-2">
+              <span className="font-semibold leading-snug">Транспортная накладная</span>
+              {!doc && <Badge variant="destructive">Не заведена</Badge>}
+              {doc?.isReady && <Badge>Готова</Badge>}
+              {doc && !doc.isReady && <Badge variant="outline">Черновик</Badge>}
+              {doc?.number && <span className="font-mono-tech text-xs">№ {doc.number}</span>}
+            </span>
+            {doc ? (
+              <span className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-xs text-muted-foreground">
+                <span>Заполнена {formatDateTime(doc.updatedAt)}</span>
+                <span>Коробов: {boxCount(doc)}</span>
+                <span>В Газельку: {showDay(doc.plannedLoadingAt)}</span>
+                <span>На маркетплейс: {showDay(doc.plannedUnloadingAt)}</span>
+              </span>
+            ) : (
+              <span className="mt-0.5 block text-xs text-muted-foreground">
+                {isManager
+                  ? 'Нажмите, чтобы завести документ'
+                  : 'Накладную заполняет менеджер — без неё груз не отгружаем'}
+              </span>
+            )}
           </div>
-        ))}
-
-        <div className="space-y-1">
-          <Label className="text-xs">Комментарий</Label>
-          <Textarea
-            rows={2}
-            value={form.comment ?? ''}
-            onChange={(e) => setForm((p) => ({ ...p, comment: e.target.value }))}
-          />
-        </div>
-
-        <Button onClick={handleSave} disabled={saving}>
-          {saving ? <Icon name="Loader2" size={14} className="mr-1.5 animate-spin" /> : null}
-          Сохранить накладную
-        </Button>
+        </button>
+        {showPrint && (
+          <button
+            type="button"
+            className="flex shrink-0 items-center border-l border-border px-3 text-primary hover:bg-muted/50"
+            title={doc?.fileUrl ? 'Печать накладной' : 'Файл ещё не сформирован'}
+            onClick={printWaybill}
+          >
+            <Icon name="Printer" size={18} />
+          </button>
+        )}
       </div>
-    </SupplySection>
+
+      {/* Форма живёт в окне: на шаге отгрузки от неё остаётся одна полоска. */}
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-3xl">
+          <DialogHeader>
+            <DialogTitle>Транспортная накладная</DialogTitle>
+          </DialogHeader>
+
+          {!doc ? (
+            <div className="space-y-3">
+              <p className="text-sm text-muted-foreground">
+                По этой поставке накладной нет. Документ едет с машиной — водитель
+                забирает груз вместе с ним.
+              </p>
+              <Button onClick={handleCreate} disabled={creating}>
+                <Icon
+                  name={creating ? 'Loader2' : 'Plus'}
+                  size={14}
+                  className={`mr-1.5 ${creating ? 'animate-spin' : ''}`}
+                />
+                Завести накладную
+              </Button>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              <p className="rounded-md bg-muted/40 p-3 text-xs text-muted-foreground">
+                Форма по Приложению № 4 к Правилам перевозок грузов автомобильным
+                транспортом. Файл собирается в PDF. После сохранения на полоске
+                обновятся дата, число коробов и даты доставки в Газельку и на маркетплейс.
+              </p>
+              {doc.fileName?.toLowerCase().endsWith('.xlsx') && (
+                <p className="flex items-start gap-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
+                  <Icon name="TriangleAlert" size={15} className="mt-0.5 shrink-0" />
+                  Сейчас скачивается Excel, в нём длинный текст обрезается. Сформируйте
+                  PDF заново — накладная соберётся на листах А4, текст останется в рамках.
+                </p>
+              )}
+
+              {supply.boxes?.length > 0 && doc.loadingPlaces !== String(supply.boxes.length) && (
+                <p className="flex items-start gap-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
+                  <Icon name="TriangleAlert" size={15} className="mt-0.5 shrink-0" />
+                  В накладной мест: {doc.loadingPlaces || '—'}, а коробов собрано:{' '}
+                  {supply.boxes.length}. Проверьте разделы «Груз» и «Приём груза».
+                </p>
+              )}
+
+              {fileStale && (
+                <p className="flex items-start gap-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
+                  <Icon name="RefreshCw" size={15} className="mt-0.5 shrink-0" />
+                  Накладную правили после того, как собрали файл. Сформируйте файл заново,
+                  иначе водителю уедет старая версия.
+                </p>
+              )}
+
+              {doc.isReady && (
+                <p className="flex items-start gap-2 rounded-md border border-border p-3 text-sm">
+                  <Icon name="Check" size={15} className="mt-0.5 shrink-0" />
+                  Подтвердил: {doc.readyByName || '—'}
+                  {doc.readyAt ? `, ${formatDateTime(doc.readyAt)}` : ''}. Кладовщик видит
+                  кнопку печати.
+                </p>
+              )}
+
+              {!isManager && !doc.isReady && (
+                <p className="flex items-start gap-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
+                  <Icon name="Clock" size={15} className="mt-0.5 shrink-0" />
+                  Менеджер ещё не подтвердил накладную. Отгружать поставку без документа
+                  нельзя — дождитесь готовности.
+                </p>
+              )}
+
+              {isManager && (
+                <>
+                  <div className="flex flex-wrap gap-2">
+                    <Button variant="outline" size="sm" className="w-full sm:w-auto" onClick={handleGenerate} disabled={generating}>
+                      <Icon
+                        name={generating ? 'Loader2' : 'FileText'}
+                        size={14}
+                        className={`mr-1.5 ${generating ? 'animate-spin' : ''}`}
+                      />
+                      Сформировать PDF
+                    </Button>
+                    {doc.fileUrl && (
+                      <Button variant="outline" size="sm" asChild>
+                        <a href={doc.fileUrl} target="_blank" rel="noreferrer">
+                          <Icon name="Download" size={14} className="mr-1.5" />
+                          Скачать
+                        </a>
+                      </Button>
+                    )}
+                    {doc.isReady ? (
+                      <Button variant="outline" size="sm" onClick={() => handleReady(false)}>
+                        <Icon name="Undo2" size={14} className="mr-1.5" />
+                        Снять готовность
+                      </Button>
+                    ) : (
+                      <Button size="sm" className="w-full sm:w-auto" onClick={() => handleReady(true)}>
+                        <Icon name="Check" size={14} className="mr-1.5" />
+                        Подтвердить для отгрузки
+                      </Button>
+                    )}
+                  </div>
+
+                  {GROUPS.map((group) => (
+                    <div key={group} className="space-y-2">
+                      <p className="text-xs font-semibold uppercase text-muted-foreground">{group}</p>
+                      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                        {FIELDS.filter((f) => f.group === group).map((f) => (
+                          <div
+                            key={f.key}
+                            className={`space-y-1 ${f.wide ? 'sm:col-span-2' : ''}`}
+                          >
+                            <Label className="text-xs">{f.label}</Label>
+                            <Input
+                              type={f.type || 'text'}
+                              value={form[f.key] ?? ''}
+                              onChange={(e) => setForm((p) => ({ ...p, [f.key]: e.target.value }))}
+                            />
+                            {f.hint && <p className="text-[11px] text-muted-foreground">{f.hint}</p>}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+
+                  <div className="space-y-1">
+                    <Label className="text-xs">Комментарий</Label>
+                    <Textarea
+                      rows={2}
+                      value={form.comment ?? ''}
+                      onChange={(e) => setForm((p) => ({ ...p, comment: e.target.value }))}
+                    />
+                  </div>
+
+                  <Button onClick={handleSave} disabled={saving}>
+                    {saving ? <Icon name="Loader2" size={14} className="mr-1.5 animate-spin" /> : null}
+                    Сохранить накладную
+                  </Button>
+                </>
+              )}
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+    </>
   );
 };
 
