@@ -96,6 +96,24 @@ const KioskWorkspace = ({
     };
   }, [screen, repackWorkshop]);
 
+  // Упаковщица-возвраты подменяет основную на стикеровке. Как только основная
+  // открыла смену, экран заказов должен закрыться сразу, а не при выходе в меню.
+  const isReturnsOnOrders = (shift?.role || user.role) === 'packer_returns' && screen === 'orders';
+  useEffect(() => {
+    if (!isReturnsOnOrders) return;
+    let alive = true;
+    const tick = () =>
+      fetchRepackCount(repackWorkshop).then((r) => {
+        if (alive) setMainPackerOnShift(r.mainPackerOnShift);
+      });
+    tick();
+    const timer = setInterval(tick, 30000);
+    return () => {
+      alive = false;
+      clearInterval(timer);
+    };
+  }, [isReturnsOnOrders, repackWorkshop]);
+
   // ПЕРЕХВАЧЕННЫЙ КРОЙ БЕЗ НАПЕЧАТАННОГО ЛИСТА.
   //
   // Опрос идёт НА ЛЮБОМ экране терминала, а не только в меню: швея за смену почти
