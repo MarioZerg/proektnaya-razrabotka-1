@@ -191,18 +191,24 @@ export interface RepackItem {
 /** Сколько вещей ждёт перепаковки в цехе — число для плитки в меню киоска. */
 export const fetchRepackCount = async (
   workshopId?: number | null,
-): Promise<{ mineCount: number; freeCount: number; returnsPackerOnShift: string | null }> => {
+): Promise<{
+  mineCount: number;
+  freeCount: number;
+  returnsPackerOnShift: string | null;
+  mainPackerOnShift: string | null;
+}> => {
   const res = await fetch(KIOSK_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ action: 'repack_count', workshopId }),
   });
   const data = await res.json();
-  if (!res.ok) return { mineCount: 0, freeCount: 0, returnsPackerOnShift: null };
+  if (!res.ok) return { mineCount: 0, freeCount: 0, returnsPackerOnShift: null, mainPackerOnShift: null };
   return {
     mineCount: data.mineCount || 0,
     freeCount: data.freeCount || 0,
     returnsPackerOnShift: data.returnsPackerOnShift || null,
+    mainPackerOnShift: data.mainPackerOnShift || null,
   };
 };
 

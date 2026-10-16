@@ -33,6 +33,8 @@ interface KioskMenuProps {
    * Пока она работает, основной упаковщице плитку «Перепаковка» прячем.
    */
   returnsPackerOnShift?: string | null;
+  /** Основная упаковщица на смене: без неё упаковщица-возвраты подменяет её. */
+  mainPackerOnShift?: string | null;
 }
 
 const tiles: Array<{
@@ -121,6 +123,7 @@ const KioskMenu = ({
   role,
   repackCount = 0,
   returnsPackerOnShift = null,
+  mainPackerOnShift = null,
 }: KioskMenuProps) => {
   // Кто что видит на терминале:
   //
@@ -167,6 +170,12 @@ const KioskMenu = ({
   // Иначе обе возьмут одну очередь, а основная отвлечётся от стикеровки.
   if (role === 'packer' && returnsPackerOnShift && !hidden.includes('repack')) {
     hidden.push('repack');
+  }
+
+  // Основной упаковщицы нет на смене — возвраты подменяет её на стикеровке.
+  if (role === 'packer_returns' && !mainPackerOnShift) {
+    const i = hidden.indexOf('orders');
+    if (i >= 0) hidden.splice(i, 1);
   }
 
   const visibleTiles = tiles.filter((t) => !hidden.includes(t.screen));

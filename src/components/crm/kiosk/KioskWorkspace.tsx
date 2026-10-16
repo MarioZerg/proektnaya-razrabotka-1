@@ -80,6 +80,7 @@ const KioskWorkspace = ({
   // одно и то же число и обе упаковщицы пойдут за одними вещами.
   const [repackCount, setRepackCount] = useState(0);
   const [returnsPackerOnShift, setReturnsPackerOnShift] = useState<string | null>(null);
+  const [mainPackerOnShift, setMainPackerOnShift] = useState<string | null>(null);
   const repackWorkshop = currentWorkshopId || Number(workshopId) || null;
   useEffect(() => {
     if (screen !== 'menu') return;
@@ -88,6 +89,7 @@ const KioskWorkspace = ({
       if (!alive) return;
       setRepackCount(r.mineCount + r.freeCount);
       setReturnsPackerOnShift(r.returnsPackerOnShift);
+      setMainPackerOnShift(r.mainPackerOnShift);
     });
     return () => {
       alive = false;
@@ -172,6 +174,7 @@ const KioskWorkspace = ({
         shiftSaving={shiftSaving}
         repackCount={repackCount}
         returnsPackerOnShift={returnsPackerOnShift}
+        mainPackerOnShift={mainPackerOnShift}
         closeAt={closeAt}
         canCloseNow={canCloseNow}
         onOpenShift={onOpenShift}

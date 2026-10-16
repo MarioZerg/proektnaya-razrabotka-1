@@ -26,6 +26,7 @@ interface Props {
   shiftSaving: boolean;
   repackCount: number;
   returnsPackerOnShift: string | null;
+  mainPackerOnShift: string | null;
   closeAt: Date | null;
   canCloseNow: boolean;
   onOpenShift: (workshopId: number | null, shiftNumber: number | null) => void;
@@ -51,6 +52,7 @@ const KioskScreenRouter = ({
   shiftSaving,
   repackCount,
   returnsPackerOnShift,
+  mainPackerOnShift,
   closeAt,
   canCloseNow,
   onOpenShift,
@@ -69,6 +71,7 @@ const KioskScreenRouter = ({
           role={(shift?.role || user.role) as Role}
           repackCount={repackCount}
           returnsPackerOnShift={returnsPackerOnShift}
+          mainPackerOnShift={mainPackerOnShift}
         />
       ) : (
         <div className="mx-auto max-w-xl space-y-4 pt-8 text-center">
@@ -107,12 +110,12 @@ const KioskScreenRouter = ({
         вытягивалась в длинную «простыню» — половину строк приходилось листать. */}
     {screen === 'orders' && (
       <div className="mx-auto max-w-5xl">
-        {isReturnsPacker((shift?.role || user.role) as Role) ? (
+        {isReturnsPacker((shift?.role || user.role) as Role) && mainPackerOnShift ? (
           <div className="rounded-lg border border-amber-300 bg-amber-50 p-4 text-amber-900">
-            <p className="text-lg font-bold">Стикеровка основной продукции вам недоступна</p>
+            <p className="text-lg font-bold">Стикеровку сейчас делает {mainPackerOnShift}</p>
             <p className="mt-1 text-base">
-              Упаковщица-возвраты закрывает только перепаковку. Основную продукцию
-              упаковывает упаковщица на стикеровке.
+              Основная упаковщица на смене. Вы сможете упаковывать заказы, когда её
+              смены не будет.
             </p>
           </div>
         ) : (

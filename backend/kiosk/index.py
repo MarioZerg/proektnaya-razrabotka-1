@@ -393,6 +393,22 @@ def active_returns_packer_name(cur, workshop_id):
     return row[0] if row else None
 
 
+def active_main_packer_name(cur, workshop_id):
+    """Кто из основных упаковщиц сейчас на смене в этом цехе — или никто."""
+    if not workshop_id:
+        return None
+    cur.execute(
+        "SELECT u.full_name FROM shift_sessions ss "
+        "JOIN users u ON u.id = ss.user_id "
+        "WHERE ss.closed_at IS NULL AND ss.workshop_id = %s "
+        "AND COALESCE(ss.role, u.role) = 'packer' "
+        "ORDER BY ss.opened_at LIMIT 1",
+        (int(workshop_id),),
+    )
+    row = cur.fetchone()
+    return row[0] if row else None
+
+
 def repack_blocked_for_main_packer(cur, actor_id, workshop_id):
     """Пока возвраты на смене, основная упаковщица перепаковку не трогает."""
     if actor_shift_role(cur, actor_id) != 'packer':
@@ -1424,14 +1440,22 @@ def handler(event: dict, context) -> dict:
                 pr = cur.fetchone()
                 packer_shift_role = pr[0] if pr else None
                 if packer_shift_role == 'packer_returns':
-                    return {
-                        'statusCode': 403,
-                        'headers': headers,
-                        'body': json.dumps({
-                            'error': 'Упаковщица-возвраты закрывает только перепаковку. '
-                                     'Основную продукцию упаковывает упаковщица на стикеровке'
-                        }, ensure_ascii=False),
-                    }
+                    # Упаковщица-возвраты подменяет основную, только когда той нет
+                    # на смене в цехе заказа. Пришла основная — стикеровка снова её.
+                    main_packer = active_main_packer_name(cur, order_workshop_id)
+                    if main_packer or not order_workshop_id:
+                        return {
+                            'statusCode': 403,
+                            'headers': headers,
+                            'body': json.dumps({
+                                'error': (
+                                    f'В цехе на смене основная упаковщица ({main_packer}) — '
+                                    f'стикеровку выполняет она'
+                                ) if main_packer else
+                                'Упаковщица-возвраты закрывает только перепаковку. '
+                                'Основную продукцию упаковывает упаковщица на стикеровке'
+                            }, ensure_ascii=False),
+                        }
                 if packer_shift_role == 'sewer' and order_workshop_id:
                     # Швея упаковывает сама только если цех это разрешил. Иначе вещи
                     # идут через упаковщицу, даже когда её смена уже закрыта.
@@ -1885,6 +1909,7 @@ def handler(event: dict, context) -> dict:
                     'mineCount': int(cnt[0] or 0),
                     'freeCount': int(cnt[1] or 0),
                     'returnsPackerOnShift': active_returns_packer_name(cur, count_ws),
+                    'mainPackerOnShift': active_main_packer_name(cur, count_ws),
                 }, ensure_ascii=False)}
 
             if action == 'repack_clear_queue':
