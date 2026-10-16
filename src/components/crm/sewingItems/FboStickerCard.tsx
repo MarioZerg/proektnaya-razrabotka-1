@@ -13,7 +13,7 @@ import Icon from '@/components/ui/icon';
 import { useToast } from '@/hooks/use-toast';
 import { updateOrder, type Order, type OrderDetail } from '@/lib/ordersApi';
 import { fetchMarketplaceItems, type MarketplaceItem, type Shop } from '@/lib/marketplaceItemsApi';
-import { printFboSticker } from '@/lib/printFboSticker';
+import { printFboSticker, fboStickerCode } from '@/lib/printFboSticker';
 import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
 
 interface FboStickerCardProps {
@@ -72,10 +72,9 @@ const FboStickerCard = ({ order, orderDetail, onSaved }: FboStickerCardProps) =>
 
   const selectedItemId = orderDetail?.marketplaceItemId ?? null;
   const isOzon = order.marketplace === 'OZON';
-  // Для OZON на стикер идёт OZON SKU (OZN + ozon_sku) — по нему товар кладётся в поставку FBO.
-  const code = isOzon ? order.productOzonSku || null : order.productBarcode || null;
-  const codeLabel = isOzon ? 'Код OZON (для поставки)' : 'Штрихкод товара';
-  const codeDisplay = code ? (isOzon ? `OZN${code}` : code) : null;
+  // На стикер идёт штрихкод товара OZON — тот же, что печатается (см. fboStickerCode).
+  const codeLabel = isOzon ? 'Штрихкод OZON (для поставки)' : 'Штрихкод товара';
+  const codeDisplay = fboStickerCode(order) || null;
   const selectedItem = selectedItemId ? items.find((i) => i.id === selectedItemId) ?? null : null;
 
   const handleSelect = async (value: string) => {
@@ -143,7 +142,7 @@ const FboStickerCard = ({ order, orderDetail, onSaved }: FboStickerCardProps) =>
           )}
         </div>
 
-        {code ? (
+        {codeDisplay ? (
           <div className="flex items-center justify-between gap-2 rounded border border-border p-2">
             <div className="text-sm">
               <div className="text-muted-foreground">{codeLabel}</div>

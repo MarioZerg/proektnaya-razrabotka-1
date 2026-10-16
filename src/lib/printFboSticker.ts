@@ -34,23 +34,33 @@ const shortOrderNumber = (orderNumber: string): string => {
 };
 
 /**
+ * Код на стикере FBO — ТОТ ШТРИХКОД, КОТОРЫЙ OZON ЗНАЕТ У ТОВАРА.
+ *
+ * Раньше печаталось «OZN + SKU товара». У льна и крепа это совпадает со
+ * штрихкодом OZON, а у вуали — нет: у vyal3_255 SKU 1207101338, а штрихкод
+ * OZN1207101339. На приёмке склад OZON читал код, которого у товара нет, и
+ * записывал вещь в пересорт/неопознанный товар — отсюда расхождения в коробах
+ * поставки 1457 и платная обработка.
+ *
+ * Поэтому берём штрихкод товара из заявки (productBarcode — его отдаёт сам
+ * OZON при импорте). «OZN + SKU» — только запасной вариант, если штрихкода нет.
+ */
+export const fboStickerCode = (order: Pick<Order, 'marketplace' | 'productOzonSku' | 'productBarcode'>): string => {
+  const barcode = (order.productBarcode || '').trim();
+  if (order.marketplace !== 'OZON') return barcode;
+  if (barcode) return barcode.toUpperCase().startsWith('OZN') ? barcode : `OZN${barcode}`;
+  const sku = (order.productOzonSku || '').trim();
+  return sku ? `OZN${sku}` : '';
+};
+
+/**
  * Печать стикера FBO сшитого товара (58×40 мм) — по формату OZON FBO:
  *   штрихкод товара (Code128) сверху во всю ширину, под ним текст штрихкода, слева название
  *   товара + ширина/высота, справа номер заказа и кластер (регион), внизу — № закройщика и швеи.
  * Штрихкод товара берётся из заказа (productBarcode, фиксируется при импорте OZON FBO).
  */
 export const printFboSticker = (order: Order): void => {
-  const isOzon = order.marketplace === 'OZON';
-  // На стикере FBO OZON кодируется OZON SKU товара (по нему товар добавляется в поставку FBO),
-  // а не его штрихкод. Для остальных маркетплейсов — штрихкод товара.
-  const code = (isOzon ? order.productOzonSku : order.productBarcode) || '';
-  // На стикере OZON приставка "OZN" — ЧАСТЬ САМОГО ШТРИХКОДА, а не подпись под ним.
-  //
-  // Раньше в полоски зашивались одни цифры, а "OZN" просто печаталось текстом рядом.
-  // Глазами разницы не видно, но сканер на приёмке OZON считывал голые цифры, не узнавал
-  // код и товар не вставал в поставку — приходилось вбивать руками.
-  // Кодируем ровно то, что напечатано: OZN + код товара.
-  const barcodeText = isOzon && code ? `OZN${code}` : code;
+  const barcodeText = fboStickerCode(order);
   const barcodeSvg = barcodeText ? svgBarcode(barcodeText) : '';
   const productName = order.material || order.product || '—';
   const stickerNumber = shortOrderNumber(order.orderNumber);
@@ -81,7 +91,7 @@ export const printFboSticker = (order: Order): void => {
     </style></head><body>
     <div class="label">
       ${
-        code
+        barcodeText
           ? `<div class="bc">${barcodeSvg}</div>
              <div class="bcval">${esc(barcodeText)}</div>`
           : `<div class="nobc">Код товара не загружен — привяжите товар</div>`
