@@ -49,9 +49,12 @@ const GenerateContractPanel = ({
     setBusy('preview');
     try {
       const res = await previewGeneratedContract(userId, actorId, role);
-      setPreviewUrl(res.fileUrl);
       await openOwnFile(res.fileUrl, 'dogovor.pdf');
+      // Адрес ставим только когда файл реально открылся. Иначе кнопка
+      // «Отправить» загорается, хотя предпросмотр сорвался.
+      setPreviewUrl(res.fileUrl);
     } catch (e) {
+      setPreviewUrl('');
       toast({
         title: 'Не удалось собрать договор',
         description: e instanceof Error ? e.message : undefined,

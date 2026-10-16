@@ -938,13 +938,18 @@ def handler(event: dict, context) -> dict:
                 f"'supplier', x.supplier, 'material', x.material, "
                 f"'quantity', x.quantity, 'unit', x.unit"
                 f") ORDER BY x.supplier, x.material) FROM ("
-                f"SELECT COALESCE(isup.name, sup.name, '—') AS supplier, "
+                # Поставщик документа подключается здесь же, а не через внешний
+                # алиас sup: у этой выборки своей таблицы sup нет, и PostgreSQL
+                # иначе отвечает «missing FROM-clause entry for table sup».
+                f"SELECT COALESCE(isup.name, doc.name, '—') AS supplier, "
                 f"m.name AS material, SUM(si.quantity) AS quantity, MAX(m.unit) AS unit "
                 f"FROM shipment_items si "
                 f"JOIN materials m ON m.id = si.material_id "
                 f"LEFT JOIN suppliers isup ON isup.id = si.supplier_id "
+                f"LEFT JOIN suppliers doc ON doc.id = ("
+                f"SELECT sh.supplier_id FROM shipments sh WHERE sh.id = si.shipment_id) "
                 f"WHERE si.shipment_id = s.id "
-                f"GROUP BY COALESCE(isup.name, sup.name, '—'), m.name"
+                f"GROUP BY isup.name, doc.name, m.name"
                 f") x) "
                 f"FROM shipments s "
                 f"LEFT JOIN suppliers sup ON sup.id = s.supplier_id "
