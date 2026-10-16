@@ -1637,6 +1637,68 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                 (fbo_gid, fbo_status, fbo_barcode,
                  fbo_material, fbo_width, fbo_height, fbo_product) = fbo_row
 
+                # НЕ БОЛЬШЕ, ЧЕМ В ЗАЯВКЕ, ПО КАЖДОМУ ТОВАРУ.
+                #
+                # Ярлык FBO обезличен: код OZN один на все штуки артикула. Скан
+                # не знает, какую физическую вещь держат в руках, и берёт любую
+                # свободную запись склада. Поэтому повторный пик той же вещи
+                # молча добавлял в короб ЕЩЁ одну штуку — и она уезжала на OZON
+                # в грузоместе. В поставке #1457 так вышло: шифон krep3_235
+                # 11 вместо 10, лён len4_255 6 вместо 5, а вуали vyal3_255
+                # недобрали 2. Итог сходился (215 из 215), а по коробам OZON
+                # видел пересорт и брал деньги за обработку.
+                #
+                # Теперь штуку сверх заявки по этому товару не принимаем.
+                cur.execute(
+                    "SELECT id FROM marketplace_items WHERE "
+                    f"upper(trim(coalesce(ozon_sku, ''))) IN ({vals}) "
+                    f"OR upper(trim(coalesce(barcode, ''))) IN ({vals})"
+                )
+                art_ids = [int(r[0]) for r in cur.fetchall()]
+                art_ids_sql = ','.join(str(i) for i in art_ids) or '0'
+                art_match = (
+                    f"(o.marketplace_item_id IN ({art_ids_sql}) "
+                    f" OR upper(trim(coalesce(o.product_ozon_sku, ''))) IN ({vals}) "
+                    f" OR upper(trim(coalesce(o.product_barcode, ''))) IN ({vals}))"
+                )
+                cur.execute(
+                    "SELECT COUNT(*) FROM orders o "
+                    "WHERE o.supply_id = %s AND COALESCE(o.status, '') <> 'Отменён' "
+                    f"  AND {art_match}",
+                    (int(supply_id),),
+                )
+                art_plan = int(cur.fetchone()[0] or 0)
+                cur.execute(
+                    "SELECT COUNT(*) FROM marketplace_supply_items msi "
+                    "JOIN goods_warehouse g ON g.id = msi.goods_warehouse_id "
+                    "JOIN orders o ON o.id = COALESCE(g.reserved_order_id, g.order_id) "
+                    f"WHERE msi.supply_id = %s AND {art_match}",
+                    (int(supply_id),),
+                )
+                art_in_boxes = int(cur.fetchone()[0] or 0)
+                art_name = fbo_product or 'Товар'
+                if art_plan == 0:
+                    return {
+                        'statusCode': 409,
+                        'headers': headers,
+                        'body': json.dumps({
+                            'error': f'«{art_name}» нет в заявке этой поставки — '
+                                     f'в короб не кладите, на OZON это будет излишек',
+                        }, ensure_ascii=False),
+                    }
+                if art_in_boxes >= art_plan:
+                    return {
+                        'statusCode': 409,
+                        'headers': headers,
+                        'body': json.dumps({
+                            'error': f'«{art_name}»: по заявке {art_plan} шт., '
+                                     f'в коробах уже {art_in_boxes}. Эта штука лишняя — '
+                                     f'возможно, вы отсканировали одну вещь дважды. '
+                                     f'Проверьте короб',
+                            'overPlan': True,
+                        }, ensure_ascii=False),
+                    }
+
                 # ДВЕ ЖИВЫЕ ПОСТАВКИ НА ОДНУ ВЕЩЬ — ЗАПРЕЩЕНО.
                 #
                 # Стикер OZON одинаковый на весь артикул, поэтому поиск выше берёт
