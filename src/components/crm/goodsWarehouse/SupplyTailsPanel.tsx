@@ -77,13 +77,30 @@ const SupplyTailsPanel = ({ onReload }: SupplyTailsPanelProps) => {
         // одним запросом функция упиралась в лимит времени и отвечала ошибкой.
         // Здесь просто повторяем вызов, пока сервер сообщает об остатке — для
         // человека это одно нажатие.
-        let rest = snapshot.map((i) => i.id);
+        //
+        // Между порциями — пауза, а если база ответила «занята», ждём и
+        // повторяем ту же порцию: уже освобождённое сервер повторно не трогает.
+        const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+        let rest = [...new Set(snapshot.map((i) => i.id))];
         let total = 0;
         while (rest.length > 0) {
-          const res = await clearSupplyTails(rest, user?.id, user?.name);
+          let res: { freed: number; remaining: number } | null = null;
+          for (let attempt = 0; attempt < 4 && !res; attempt++) {
+            try {
+              res = await clearSupplyTails(rest, user?.id, user?.name);
+            } catch (err) {
+              const msg = err instanceof Error ? err.message : '';
+              if (attempt === 3 || !/База занята|Failed to fetch|NetworkError|Load failed/i.test(msg)) {
+                throw err;
+              }
+              await sleep(1500 * (attempt + 1));
+            }
+          }
+          if (!res) break;
           total += res.freed;
           if (!res.remaining) break;
           rest = rest.slice(rest.length - res.remaining);
+          await sleep(400);
         }
         toast({
           title: `Освобождено вещей: ${total}`,
@@ -92,7 +109,9 @@ const SupplyTailsPanel = ({ onReload }: SupplyTailsPanelProps) => {
         setOpen(false);
         onReload();
       } catch (e) {
-        setItems(snapshot);
+        // Часть порций уже могла пройти — показываем то, что реально осталось.
+        load();
+        onReload();
         toast({
           title: 'Не удалось освободить',
           description: e instanceof Error ? e.message : undefined,
