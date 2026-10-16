@@ -217,6 +217,8 @@ export interface SupplyDetail extends Supply {
   /** Полки склада — для отправки отменённых заказов на хранение прямо из поставки. */
   shelves?: SupplyShelf[];
   boxes: SupplyBox[];
+  /** FBO: сверка «по заявке / в коробах» по каждому артикулу. */
+  fboArticles?: FboArticleRow[];
   /** OZON FBO: код статуса заявки на OZON. */
   ozonState?: string | null;
   ozonCheckedAt?: string | null;
@@ -561,6 +563,18 @@ export interface AddOrderToBoxResult {
   goodsWarehouseId: number;
   /** Готовая строка короба — дорисовывается без перезагрузки страницы. */
   item?: SupplyItem | null;
+  /** FBO: сверка по артикулу после этого скана. */
+  article?: { itemIds: number[]; planned: number; inBoxes: number } | null;
+}
+
+/** FBO: сверка по артикулу — сколько по заявке и сколько уже в коробах. */
+export interface FboArticleRow {
+  itemId: number | null;
+  offerId: string | null;
+  name: string | null;
+  planned: number;
+  inBoxes: number;
+  inClosedBoxes: number;
 }
 
 /** Кладёт товар в короб поставки по ШТРИХКОДУ ХРАНЕНИЯ (GW-XXXXXX). Параметр называется

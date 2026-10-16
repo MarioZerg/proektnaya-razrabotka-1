@@ -714,6 +714,47 @@ def handle_get(event: dict, headers: dict, dsn: str) -> dict:
                 'sentQty': int(row[47] or 0),
                 'sentBoxes': int(row[48] or 0),
             }
+            # СВЕРКА FBO ПО АРТИКУЛАМ: по заявке / в коробах.
+            #
+            # Общий счётчик «215 из 215» прячет пересорт: лишняя штука одного
+            # артикула закрывает недостачу другого, а OZON считает по каждому
+            # отдельно. Кладовщик должен видеть перебор и недобор до закрытия
+            # коробов, а не узнавать о них из акта приёмки.
+            if (row[2] or '').upper() == 'FBO':
+                cur.execute(
+                    "WITH plan AS ("
+                    "  SELECT COALESCE(o.marketplace_item_id, 0) AS mi, COUNT(*) AS n FROM orders o "
+                    "  WHERE o.supply_id = %s AND COALESCE(o.status, '') <> 'Отменён' "
+                    "  GROUP BY 1"
+                    "), boxed AS ("
+                    "  SELECT COALESCE(o.marketplace_item_id, 0) AS mi, COUNT(*) AS n, "
+                    "         COUNT(*) FILTER (WHERE b.closed_at IS NOT NULL) AS closed "
+                    "  FROM marketplace_supply_items msi "
+                    "  JOIN goods_warehouse g ON g.id = msi.goods_warehouse_id "
+                    "  JOIN orders o ON o.id = COALESCE(g.reserved_order_id, g.order_id) "
+                    "  LEFT JOIN marketplace_supply_boxes b ON b.id = msi.box_id "
+                    "  WHERE msi.supply_id = %s AND msi.box_id IS NOT NULL "
+                    "  GROUP BY 1"
+                    ") "
+                    "SELECT NULLIF(COALESCE(p.mi, x.mi), 0), m.sku, m.name, "
+                    "       COALESCE(p.n, 0), COALESCE(x.n, 0), COALESCE(x.closed, 0) "
+                    "FROM plan p FULL JOIN boxed x ON x.mi = p.mi "
+                    "LEFT JOIN marketplace_items m ON m.id = COALESCE(p.mi, x.mi) "
+                    "ORDER BY m.sku NULLS LAST",
+                    (int(supply_id), int(supply_id)),
+                )
+                detail['fboArticles'] = [
+                    {
+                        'itemId': r[0],
+                        'offerId': r[1],
+                        'name': r[2],
+                        'planned': int(r[3]),
+                        'inBoxes': int(r[4]),
+                        'inClosedBoxes': int(r[5]),
+                    }
+                    for r in cur.fetchall()
+                ]
+
             # Реквизиты клиента для упаковочного листа Газельки — общие настройки.
             cur.execute(
                 "SELECT key, value FROM system_settings WHERE key IN ('gazelka_client_name', 'gazelka_client_phone')"

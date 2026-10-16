@@ -9,6 +9,7 @@ import SupplyAllLabelsCard from '@/components/crm/marketplaceSupplies/SupplyAllL
 import OzonCargoSyncCard from '@/components/crm/marketplaceSupplies/OzonCargoSyncCard';
 import SupplyAssembleHeader from '@/components/crm/marketplaceSupplies/SupplyAssembleHeader';
 import SupplyBoxesSection from '@/components/crm/marketplaceSupplies/SupplyBoxesSection';
+import FboArticlesCheck from '@/components/crm/marketplaceSupplies/FboArticlesCheck';
 import SupplyAssembleFooter from '@/components/crm/marketplaceSupplies/SupplyAssembleFooter';
 import SupplyLockedScreen from '@/components/crm/marketplaceSupplies/SupplyLockedScreen';
 import { useSupplyAssemble } from '@/components/crm/marketplaceSupplies/useSupplyAssemble';
@@ -151,6 +152,8 @@ const MarketplaceSupplyAssemble = () => {
           listError={candidatesError}
           onRetry={loadCandidates}
         />
+
+        {supply.type === 'FBO' && <FboArticlesCheck rows={supply.fboArticles || []} />}
 
         <SupplyBoxesSection
           supply={supply}

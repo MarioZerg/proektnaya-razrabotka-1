@@ -18,6 +18,7 @@ import WbFbsSupplyCard from '@/components/crm/marketplaceSupplies/WbFbsSupplyCar
 import WbFboSupplyCard from '@/components/crm/marketplaceSupplies/WbFboSupplyCard';
 import WaybillCard from '@/components/crm/marketplaceSupplies/WaybillCard';
 import SupplyAcceptanceCard from '@/components/crm/marketplaceSupplies/SupplyAcceptanceCard';
+import FboArticlesCheck from '@/components/crm/marketplaceSupplies/FboArticlesCheck';
 
 interface SupplyShowContentProps {
   supply: SupplyDetail;
@@ -191,6 +192,8 @@ const SupplyShowContent = ({
           onRemove={actions.handleRemoveSewingOrder}
         />
       )}
+
+      {supply.type === 'FBO' && <FboArticlesCheck rows={supply.fboArticles || []} />}
 
       {/* Связки заказов Яндекса: показываем НАД списком товаров, чтобы кладовщик увидел
           незакрытые связки сразу, а не после прокрутки всей поставки. */}

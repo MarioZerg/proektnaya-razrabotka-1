@@ -206,8 +206,20 @@ export const useSupplyAssemble = (supplyId: number) => {
           ) {
             return prev;
           }
+          // Сверка по артикулу: сервер прислал свежее «в коробах» — правим
+          // строку таблицы сразу, без перезагрузки.
+          const art = res.article;
+          const fboArticles =
+            art && prev.fboArticles
+              ? prev.fboArticles.map((r) =>
+                  r.itemId != null && art.itemIds.includes(r.itemId)
+                    ? { ...r, inBoxes: art.inBoxes }
+                    : r,
+                )
+              : prev.fboArticles;
           return {
             ...prev,
+            fboArticles,
             boxes: prev.boxes.map((b) =>
               b.id === boxId ? { ...b, items: [...b.items, added] } : b,
             ),

@@ -1863,6 +1863,13 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                             'width': fbo_width,
                             'height': fbo_height,
                         },
+                        # Сверка по артикулу после этого скана — экран сборки
+                        # обновляет строку таблицы «по заявке / в коробах».
+                        'article': {
+                            'itemIds': art_ids,
+                            'planned': art_plan,
+                            'inBoxes': art_in_boxes + 1,
+                        },
                         'supplyStatus': 'На сборке',
                     }, ensure_ascii=False),
                 }
