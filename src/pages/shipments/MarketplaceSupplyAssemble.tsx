@@ -9,12 +9,12 @@ import SupplyAllLabelsCard from '@/components/crm/marketplaceSupplies/SupplyAllL
 import OzonCargoSyncCard from '@/components/crm/marketplaceSupplies/OzonCargoSyncCard';
 import SupplyAssembleHeader from '@/components/crm/marketplaceSupplies/SupplyAssembleHeader';
 import SupplyBoxesSection from '@/components/crm/marketplaceSupplies/SupplyBoxesSection';
-import FboArticlesCheck from '@/components/crm/marketplaceSupplies/FboArticlesCheck';
 import SupplyAssembleFooter from '@/components/crm/marketplaceSupplies/SupplyAssembleFooter';
 import SupplyLockedScreen from '@/components/crm/marketplaceSupplies/SupplyLockedScreen';
 import { useSupplyAssemble } from '@/components/crm/marketplaceSupplies/useSupplyAssemble';
 import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
 import { boxPackedCount } from '@/components/crm/marketplaceSupplies/marketplaceSuppliesShared';
+import { marketplaceSlotHold, ozonRestickHold } from '@/lib/fboShipDate';
 
 /**
  * Экран сборки поставки: кладовщик раскладывает вещи по коробам.
@@ -153,8 +153,6 @@ const MarketplaceSupplyAssemble = () => {
           onRetry={loadCandidates}
         />
 
-        {supply.type === 'FBO' && <FboArticlesCheck rows={supply.fboArticles || []} />}
-
         <SupplyBoxesSection
           supply={supply}
           canEdit={canEdit}
@@ -200,6 +198,17 @@ const MarketplaceSupplyAssemble = () => {
             plannedItems={supply.totalQuantityMarketplace}
             completing={completing}
             onSupplyAssembled={handleSupplyAssembled}
+            shipHold={
+              isOzonFbo
+                ? ozonRestickHold(supply.id, supply.shipToGazelkaAt) ||
+                  marketplaceSlotHold(
+                    supply.id,
+                    supply.shipToGazelkaAt,
+                    supply.supplyDate,
+                    supply.timeslot,
+                  )
+                : null
+            }
           />
         )}
       </div>

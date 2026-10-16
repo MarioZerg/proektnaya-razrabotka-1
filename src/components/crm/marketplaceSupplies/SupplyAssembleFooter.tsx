@@ -9,6 +9,8 @@ interface SupplyAssembleFooterProps {
   plannedItems?: number | null;
   completing: boolean;
   onSupplyAssembled: () => void;
+  /** Поставку нельзя отдать в отгрузку, пока не переклеены этикетки. */
+  shipHold?: string | null;
 }
 
 /**
@@ -31,11 +33,12 @@ const SupplyAssembleFooter = ({
   plannedItems,
   completing,
   onSupplyAssembled,
+  shipHold = null,
 }: SupplyAssembleFooterProps) => {
   // План может быть не задан (ручная поставка) — тогда по количеству не судим.
   const hasPlan = typeof plannedItems === 'number' && plannedItems > 0;
   const missing = hasPlan ? Math.max(0, plannedItems - totalBoxedItems) : 0;
-  const blocked = missing > 0 || openBoxes > 0;
+  const blocked = missing > 0 || openBoxes > 0 || !!shipHold;
 
   return (
     <div
@@ -67,6 +70,12 @@ const SupplyAssembleFooter = ({
                   Не закрыты короба: <b>{openBoxes}</b>. Закройте их — грузоместо на
                   OZON создаётся только при закрытии короба
                 </span>
+              </li>
+            )}
+            {shipHold && (
+              <li className="flex items-start gap-2">
+                <Icon name="TriangleAlert" size={14} className="mt-0.5 shrink-0" />
+                <span>{shipHold}</span>
               </li>
             )}
           </ul>

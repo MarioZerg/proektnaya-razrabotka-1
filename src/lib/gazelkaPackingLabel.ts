@@ -1,6 +1,7 @@
 import QRCode from 'qrcode';
 import type { GazelkaPlan } from '@/lib/gazelkaApi';
 import type { SupplyDetail } from '@/lib/marketplaceSuppliesApi';
+import { gazelkaLabelsHold, marketplaceSlotHold } from '@/lib/fboShipDate';
 
 /** Данные, необходимые для генерации упаковочного листа Газельки. */
 export interface PackingLabelData {
@@ -113,6 +114,10 @@ const esc = (s: string | null | undefined): string =>
 /** Открывает окно печати с упаковочными листами Газельки — по одному листу на короб. */
 export const printGazelkaLabels = async (data: PackingLabelData): Promise<void> => {
   const { plan, supply, boxesCount } = data;
+  const hold =
+    gazelkaLabelsHold(plan.shipDate, supply.shipToGazelkaAt) ||
+    marketplaceSlotHold(supply.id, supply.shipToGazelkaAt, supply.supplyDate, supply.timeslot);
+  if (hold) throw new Error(hold);
   const total = Math.max(1, boxesCount);
   // Дата отгрузки — той же функцией, что и для кода: печатаем ровно то, что зашито
   // в QR, иначе на складе сверяют бумагу с кодом и видят разные даты.

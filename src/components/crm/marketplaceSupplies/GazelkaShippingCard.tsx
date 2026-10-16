@@ -17,6 +17,8 @@ import { formatDate } from '@/lib/dateUtils';
 import { fetchGazelkaPlansForSupply, type GazelkaPlan } from '@/lib/gazelkaApi';
 import { updateSupply, type SupplyDetail } from '@/lib/marketplaceSuppliesApi';
 import { printGazelkaLabels } from '@/lib/gazelkaPackingLabel';
+import { gazelkaLabelsHold, gazelkaShipDay, marketplaceSlotHold, noteOverdueSupply } from '@/lib/fboShipDate';
+import { moscowYmd } from '@/lib/dateUtils';
 
 interface GazelkaShippingCardProps {
   supply: SupplyDetail;
@@ -45,7 +47,15 @@ const GazelkaShippingCard = ({ supply, onReload, isManager, gazelkaReady }: Gaze
   // поэтому менеджер должен иметь возможность проставить её руками — иначе на этикетке
   // в строке «Дата отгрузки» остаётся прочерк.
   const [shipAt, setShipAt] = useState((supply.shipToGazelkaAt ?? '').slice(0, 10));
+  const [marketAt, setMarketAt] = useState((supply.supplyDate ?? '').slice(0, 10));
+  const [slot, setSlot] = useState(supply.timeslot ?? '');
   const [savingShipAt, setSavingShipAt] = useState(false);
+
+  useEffect(() => {
+    setShipAt((supply.shipToGazelkaAt ?? '').slice(0, 10));
+    setMarketAt((supply.supplyDate ?? '').slice(0, 10));
+    setSlot(supply.timeslot ?? '');
+  }, [supply.shipToGazelkaAt, supply.supplyDate, supply.timeslot]);
 
   useEffect(() => {
     setLoading(true);
@@ -59,6 +69,11 @@ const GazelkaShippingCard = ({ supply, onReload, isManager, gazelkaReady }: Gaze
   }, [supply.id]);
 
   const linkedPlan = plans.find((p) => p.id === supply.gazelkaPlanId);
+  const labelsHold =
+    gazelkaLabelsHold(linkedPlan?.shipDate, supply.shipToGazelkaAt) ||
+    marketplaceSlotHold(supply.id, supply.shipToGazelkaAt, supply.supplyDate, supply.timeslot);
+  const labelDay = gazelkaShipDay(linkedPlan?.shipDate, supply.shipToGazelkaAt);
+  if (labelDay) noteOverdueSupply(supply.id, labelDay);
 
   const handleSave = async () => {
     setSaving(true);
@@ -114,10 +129,21 @@ const GazelkaShippingCard = ({ supply, onReload, isManager, gazelkaReady }: Gaze
   const handleSaveShipAt = async () => {
     setSavingShipAt(true);
     try {
+      const today = moscowYmd();
+      if ((shipAt && shipAt < today) || (marketAt && marketAt < today)) {
+        toast({
+          title: 'Дата уже прошла',
+          description: 'Поставьте актуальную дату отгрузки в Газельку и дату таймслота на маркетплейсе — не раньше сегодня.',
+          variant: 'destructive',
+        });
+        return;
+      }
       await updateSupply(supply.id, {
         shipToGazelkaAt: shipAt ? `${shipAt}T00:00:00` : '',
+        supplyDate: marketAt ? `${marketAt}T00:00:00` : '',
+        timeslot: slot,
       });
-      toast({ title: shipAt ? 'Дата отгрузки сохранена' : 'Дата отгрузки очищена' });
+      toast({ title: 'Даты отгрузки обновлены' });
       onReload();
     } catch (e) {
       toast({ title: 'Ошибка', description: e instanceof Error ? e.message : undefined, variant: 'destructive' });
@@ -168,7 +194,7 @@ const GazelkaShippingCard = ({ supply, onReload, isManager, gazelkaReady }: Gaze
               size="sm"
               className="w-full bg-[#004cdb] text-white hover:bg-[#003bb0]"
               onClick={handlePrintOurLabels}
-              disabled={!linkedPlan}
+              disabled={!linkedPlan || !!labelsHold}
             >
               <Icon name="Printer" size={14} className="mr-1.5" />
               <span className="sm:hidden">Стикеры</span>
@@ -178,6 +204,12 @@ const GazelkaShippingCard = ({ supply, onReload, isManager, gazelkaReady }: Gaze
         </div>
       </CardHeader>
       <CardContent className="space-y-3">
+        {labelsHold && (
+          <p className="flex items-start gap-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
+            <Icon name="TriangleAlert" size={15} className="mt-0.5 shrink-0" />
+            {labelsHold}
+          </p>
+        )}
         {/* Выбор заявки Газельки — только менеджер */}
         {isManager && (
           <div className="space-y-1.5">
@@ -283,15 +315,28 @@ const GazelkaShippingCard = ({ supply, onReload, isManager, gazelkaReady }: Gaze
                     value={shipAt}
                     onChange={(e) => setShipAt(e.target.value)}
                   />
-                  <Button
-                    variant="outline"
-                    className="w-full sm:w-auto"
-                    onClick={handleSaveShipAt}
-                    disabled={savingShipAt || shipAt === (supply.shipToGazelkaAt ?? '').slice(0, 10)}
-                  >
-                    {savingShipAt ? <Icon name="Loader2" size={14} className="animate-spin" /> : 'Сохранить дату'}
-                  </Button>
                 </div>
+                <Label className="text-xs leading-snug">Дата таймслота на маркетплейсе</Label>
+                <Input
+                  type="date"
+                  className="w-full sm:w-44"
+                  value={marketAt}
+                  onChange={(e) => setMarketAt(e.target.value)}
+                />
+                <Label className="text-xs leading-snug">Таймслот</Label>
+                <Input
+                  value={slot}
+                  onChange={(e) => setSlot(e.target.value)}
+                  placeholder="Например: 10:00–12:00"
+                />
+                <Button
+                  variant="outline"
+                  className="w-full sm:w-auto"
+                  onClick={handleSaveShipAt}
+                  disabled={savingShipAt}
+                >
+                  {savingShipAt ? <Icon name="Loader2" size={14} className="animate-spin" /> : 'Сохранить даты'}
+                </Button>
               </div>
             )}
 

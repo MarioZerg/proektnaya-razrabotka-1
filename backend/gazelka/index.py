@@ -67,6 +67,36 @@ def _city_words(text):
     return [w for w in _norm(text).split() if len(w) >= 4 and w not in _STOP_WORDS]
 
 
+_PLATE = re.compile(r'[A-ZА-ЯЁ]\d{3}[A-ZА-ЯЁ]{2}\d{2,3}', re.I)
+_PLATE_KEYS = re.compile(r'car|auto|vehicle|plate|gos|номер|driver|transport', re.I)
+
+
+def _find_plate(obj, depth=0):
+    """Госномер в заявке Газельки. Пока водителя нет, там стоит запасная машина."""
+    if depth > 4 or obj is None:
+        return None
+    if isinstance(obj, str):
+        compact = re.sub(r'[\s-]', '', obj)
+        found = _PLATE.search(compact)
+        return found.group(0) if found else None
+    if isinstance(obj, dict):
+        for key, value in obj.items():
+            if _PLATE_KEYS.search(str(key)):
+                found = _find_plate(value, depth + 1)
+                if found:
+                    return found
+        for value in obj.values():
+            found = _find_plate(value, depth + 1)
+            if found:
+                return found
+    if isinstance(obj, list):
+        for value in obj[:30]:
+            found = _find_plate(value, depth + 1)
+            if found:
+                return found
+    return None
+
+
 def _same_place(cluster, address):
     """Кластер поставки («САНКТ-ПЕТЕРБУРГ_РФЦ») и адрес заявки («Санкт-Петербург (Петрославянка)»)
     про один город? Сравниваем по словам: хоть одно слово кластера есть в адресе или наоборот."""
@@ -178,6 +208,8 @@ def handler(event: dict, context) -> dict:
             'payer': p.get('payer'),
             'palleting': 1 if p.get('pallets') else 0,  # PLT — паллетирование
             'shipDate': route.get('date'),    # DTS — дата отгрузки (из маршрута)
+            # P303PE797 — запасной номер, пока водителя на заявку не назначили.
+            'vehicleNumber': _find_plate(p),
         })
 
     supply_id = body_data.get('supplyId')

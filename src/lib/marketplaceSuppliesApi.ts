@@ -29,8 +29,16 @@ export interface Supply {
   supplyBarcode: string | null;
   cluster: string | null;
   gazelkaId: string | null;
+  gazelkaPlanId?: number | null;
+  /** Госномер с заявки Газельки. Пусто или P303PE797 — водителя ещё нет. */
+  gazelkaVehicleNumber?: string | null;
   shipToGazelkaAt: string | null;
+  /** true — Газелька забирает со склада, false — везём на склад Газельки сами. */
+  gazelkaPickup?: boolean;
   shipToMarketplaceAt: string | null;
+  /** Дата таймслота на складе маркетплейса. Это не момент нажатия «отгрузить». */
+  supplyDate?: string | null;
+  timeslot?: string | null;
   completedAt: string | null;
   itemsCount: number;
   /**

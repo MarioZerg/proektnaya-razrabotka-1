@@ -18,6 +18,8 @@ export interface GazelkaPlan {
   payer: number | null;
   palleting: number | null;
   shipDate: string | null;
+  /** Госномер машины на заявке. P303PE797 — запасной, водитель ещё не назначен. */
+  vehicleNumber?: string | null;
 }
 
 const loadPlans = async (supplyId?: number) => {

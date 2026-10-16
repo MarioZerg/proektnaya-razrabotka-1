@@ -1,16 +1,37 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { Button } from '@/components/ui/button';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
+import Icon from '@/components/ui/icon';
 import { useNavigate } from 'react-router-dom';
 import CrmLayout from '@/components/crm/CrmLayout';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/context/AuthContext';
 import { isStorekeeperRole } from '@/lib/roles';
 import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
+import {
   fetchSupplies,
+  fetchSupplyDetail,
   createSupply,
+  moveSupplyStatus,
   type Supply,
   type SupplyType,
   type OzonDeliveryMethod,
 } from '@/lib/marketplaceSuppliesApi';
+import { fetchGazelkaPlans } from '@/lib/gazelkaApi';
 import { fetchMarketplaceIntegrations, type Shop } from '@/lib/marketplaceIntegrationsApi';
 import ShopTabs from '@/components/crm/ShopTabs';
 import CreateOzonFboDialog from '@/components/crm/marketplaceSupplies/CreateOzonFboDialog';
@@ -37,6 +58,8 @@ const ToMarketplace = () => {
   // он понимает — до её отгрузки смену закрыть не получится.
   // Для WB FBS здесь же выбирают тип поставки: обычная или B2B (юрлица).
   const [pendingFbs, setPendingFbs] = useState<PendingFbs | null>(null);
+  /** OZON FBS уже отсканирована и ждёт 12 часов: её можно закрыть и создать новую. */
+  const [closeToCreate, setCloseToCreate] = useState<Supply | null>(null);
   const [ozonFboDialogOpen, setOzonFboDialogOpen] = useState(false);
   // FBS-поставки создаёт и собирает кладовщик — товар он отбирает со своих полок. Менеджер
   // ведёт FBO-поставки и только наблюдает за сборкой FBS в реальном времени.
@@ -66,8 +89,11 @@ const ToMarketplace = () => {
   //
   // Теперь забираем полный список один раз, а таблицу отбираем по схеме уже на
   // месте: список поставок небольшой, отобрать его в браузере мгновенно.
-  const load = () => {
-    setLoading(true);
+  const loadSeq = useRef(0);
+
+  const load = (silent = false) => {
+    if (!silent) setLoading(true);
+    const seq = ++loadSeq.current;
     fetchSupplies({
       status: statusFilter === 'open' ? undefined : statusFilter,
       marketplace: marketplaceFilter !== 'all' ? marketplaceFilter : undefined,
@@ -77,15 +103,70 @@ const ToMarketplace = () => {
       shopId: shopId || undefined,
     })
       .then((data) => {
+        if (seq !== loadSeq.current) return;
         setListError(null);
-        setAllSupplies(
-          statusFilter === 'open' ? data.filter((s) => s.status !== 'Выполнена') : data,
+        const list =
+          statusFilter === 'open' ? data.filter((s) => s.status !== 'Выполнена') : data;
+        // Список с сервера ещё не знает дату слота и забор. Не затираем их на
+        // каждом обновлении — иначе при смене таймера пропадают «на маркетплейс»,
+        // «Со склада» и машинки, пока карточки не догрузятся заново.
+        setAllSupplies((prev) => {
+          const prevById = new Map(prev.map((s) => [s.id, s]));
+          return list.map((s) => {
+            const old = prevById.get(s.id);
+            if (!old) return s;
+            return {
+              ...s,
+              supplyDate: 'supplyDate' in s ? s.supplyDate : old.supplyDate,
+              timeslot: 'timeslot' in s ? s.timeslot : old.timeslot,
+              gazelkaPickup: 'gazelkaPickup' in s ? s.gazelkaPickup : old.gazelkaPickup,
+              gazelkaPlanId: 'gazelkaPlanId' in s ? s.gazelkaPlanId : old.gazelkaPlanId,
+              gazelkaVehicleNumber: old.gazelkaVehicleNumber,
+            };
+          });
+        });
+        // Живой список ещё не отдаёт дату слота. Берём её из карточки поставки,
+        // пока в ответе списка нет поля supplyDate. После выкладки функции
+        // лишние запросы сами прекратятся.
+        const needSlot = list.filter(
+          (s) => s.type === 'FBO' && (!('supplyDate' in s) || !('gazelkaPickup' in s) || !('gazelkaPlanId' in s)),
         );
+        Promise.all([
+          Promise.all(needSlot.map((s) => fetchSupplyDetail(s.id).catch(() => null))),
+          fetchGazelkaPlans().catch(() => []),
+        ]).then(([details, plans]) => {
+          if (seq !== loadSeq.current) return;
+          const byId = new Map(
+            details.flatMap((d) => (d ? [[d.id, d] as const] : [])),
+          );
+          const plateByPlan = new Map(plans.map((p) => [p.id, p.vehicleNumber || null]));
+          setAllSupplies((prev) =>
+            prev.map((s) => {
+              const detail = byId.get(s.id);
+              const planId = detail?.gazelkaPlanId ?? s.gazelkaPlanId;
+              const plate = planId != null ? plateByPlan.get(planId) : null;
+              return {
+                ...s,
+                ...(detail
+                  ? {
+                      supplyDate: detail.supplyDate,
+                      timeslot: detail.timeslot,
+                      gazelkaPickup: detail.gazelkaPickup,
+                      gazelkaPlanId: detail.gazelkaPlanId,
+                    }
+                  : {}),
+                gazelkaVehicleNumber: plate || s.gazelkaVehicleNumber,
+              };
+            }),
+          );
+        });
       })
       .catch((e) => {
         setListError(e instanceof Error ? e.message : 'Не удалось загрузить поставки');
       })
-      .finally(() => setLoading(false));
+      .finally(() => {
+        if (!silent) setLoading(false);
+      });
   };
 
   // Магазины грузим один раз: по ним строятся вкладки, и первый становится
@@ -102,6 +183,9 @@ const ToMarketplace = () => {
   useEffect(() => {
     if (!shopId) return;
     load();
+    // Счётчик ПВЗ растёт по мере сканирования — список обновляем, не мигая загрузкой.
+    const id = window.setInterval(() => load(true), 15_000);
+    return () => window.clearInterval(id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [shopId, statusFilter, marketplaceFilter, dateFrom, dateTo]);
 
@@ -131,6 +215,25 @@ const ToMarketplace = () => {
   }, [search]);
 
   const handleCreate = async (marketplace: string, type: SupplyType) => {
+    if (marketplace === 'OZON' && type === 'FBS') {
+      const open = allSupplies.filter(
+        (s) => s.marketplace === 'OZON' && s.type === 'FBS' && s.status !== 'Выполнена',
+      );
+      const busy = open.find((s) => s.status !== 'Отгружено');
+      if (busy) {
+        toast({
+          title: 'Поставка ещё не закрыта',
+          description: `${busy.supplyNumber || 'Эта поставка'} ещё в работе. Новую создать нельзя.`,
+          variant: 'destructive',
+        });
+        return;
+      }
+      const ready = open.find((s) => s.status === 'Отгружено');
+      if (ready) {
+        setCloseToCreate(ready);
+        return;
+      }
+    }
     if (marketplace === 'OZON' && type === 'FBO') {
       setOzonFboDialogOpen(true);
       return;
@@ -146,6 +249,25 @@ const ToMarketplace = () => {
       return;
     }
     await createSupplyNow(marketplace, type, false);
+  };
+
+  const closeReadyAndCreate = async () => {
+    if (!closeToCreate) return;
+    const prev = closeToCreate;
+    setCloseToCreate(null);
+    setCreating(true);
+    try {
+      await moveSupplyStatus(prev.id, 'Выполнена');
+    } catch (e) {
+      toast({
+        title: 'Не удалось закрыть поставку',
+        description: e instanceof Error ? e.message : undefined,
+        variant: 'destructive',
+      });
+      setCreating(false);
+      return;
+    }
+    await createSupplyNow('OZON', 'FBS', false);
   };
 
   const createSupplyNow = async (marketplace: string, type: SupplyType, isB2b: boolean) => {
@@ -222,14 +344,31 @@ const ToMarketplace = () => {
 
   return (
     <CrmLayout>
-      <div className="space-y-6">
-        <div className="min-w-0">
-          <h1 className="text-xl font-bold">Поставка в маркет</h1>
-          <p className="mt-1 hidden text-sm text-muted-foreground sm:block">
-            {currentShop
-              ? `Отгрузка готового товара магазина «${currentShop.name}» на маркетплейс`
-              : 'Формирование отгрузки готового товара со склада на маркетплейс'}
-          </p>
+      <div className="space-y-4">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div className="min-w-0">
+            <h1 className="text-xl font-bold">Поставка в маркет</h1>
+            <p className="mt-1 hidden text-sm text-muted-foreground sm:block">
+              {currentShop
+                ? `Отгрузка готового товара магазина «${currentShop.name}» на маркетплейс`
+                : 'Формирование отгрузки готового товара со склада на маркетплейс'}
+            </p>
+          </div>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button disabled={creating} className="w-full shrink-0 sm:w-auto">
+                <Icon name="Plus" size={16} className="mr-2" />
+                Создать поставку
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent>
+              {availableCreateOptions.map((opt) => (
+                <DropdownMenuItem key={opt.label} onClick={() => handleCreate(opt.marketplace, opt.type)}>
+                  {opt.label}
+                </DropdownMenuItem>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
 
         {/* Вкладки магазинов. У МЕГАТЮЛЬ и ДЮНЫ разные кабинеты на площадке:
@@ -237,35 +376,31 @@ const ToMarketplace = () => {
             отсканируется. Пока магазин один, вкладки не рисуются. */}
         <ShopTabs shops={shops} value={shopId} onChange={setShopId} />
 
-        {/* Плашки по схемам: сколько работы каждого вида прямо сейчас. Таблица ниже
-            отвечает «что с конкретной поставкой», а это — «сколько всего сегодня».
-            Клик по плашке фильтрует таблицу, повторный клик снимает фильтр. */}
-        {!loading && allSupplies.length > 0 && (
-          <SupplyTypeWidgets
-            supplies={allSupplies}
-            activeType={typeFilter}
-            onSelectType={setTypeFilter}
+        {/* Создание, схема и фильтры — одна верхняя полоса, список сразу под ней. */}
+        <div className="space-y-3">
+          {!loading && allSupplies.length > 0 && (
+            <SupplyTypeWidgets
+              supplies={allSupplies}
+              activeType={typeFilter}
+              onSelectType={setTypeFilter}
+            />
+          )}
+          <ToMarketplaceFilters
+            statusFilter={statusFilter}
+            setStatusFilter={setStatusFilter}
+            typeFilter={typeFilter}
+            setTypeFilter={setTypeFilter}
+            marketplaceFilter={marketplaceFilter}
+            setMarketplaceFilter={setMarketplaceFilter}
+            dateFrom={dateFrom}
+            setDateFrom={setDateFrom}
+            dateTo={dateTo}
+            setDateTo={setDateTo}
+            search={search}
+            setSearch={setSearch}
+            onReset={resetFilters}
           />
-        )}
-
-        <ToMarketplaceFilters
-          creating={creating}
-          availableCreateOptions={availableCreateOptions}
-          onCreate={handleCreate}
-          statusFilter={statusFilter}
-          setStatusFilter={setStatusFilter}
-          typeFilter={typeFilter}
-          setTypeFilter={setTypeFilter}
-          marketplaceFilter={marketplaceFilter}
-          setMarketplaceFilter={setMarketplaceFilter}
-          dateFrom={dateFrom}
-          setDateFrom={setDateFrom}
-          dateTo={dateTo}
-          setDateTo={setDateTo}
-          search={search}
-          setSearch={setSearch}
-          onReset={resetFilters}
-        />
+        </div>
 
         {listError && (
           <WarehouseFetchError
@@ -282,6 +417,22 @@ const ToMarketplace = () => {
           onOpen={(id) => navigate(`/crm/shipments/to-marketplace/${id}`)}
         />
       </div>
+
+      <AlertDialog open={!!closeToCreate} onOpenChange={(v) => !v && setCloseToCreate(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Закрыть прошлую поставку?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {closeToCreate?.supplyNumber || 'Поставка'} отсканирована целиком и сама
+              закроется через 12 часов. Закройте её сейчас — и можно создать новую.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Отмена</AlertDialogCancel>
+            <AlertDialogAction onClick={closeReadyAndCreate}>Закрыть и создать</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <ConfirmFbsSupplyDialog
         pendingFbs={pendingFbs}

@@ -211,10 +211,45 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
             # не туда. А вот OZON FBS у МЕГАТЮЛЬ и OZON FBS у ДЮНЫ — это две разные
             # поставки в два разных кабинета: они идут параллельно и друг другу
             # не мешают.
-            if supply_type == 'FBS' and marketplace in ('WB', 'OZON'):
+            if supply_type == 'FBS' and marketplace == 'OZON':
+                # Пока прошлая поставка не «Выполнена», новую не открываем: иначе
+                # товар уедет в две сборки. Исключение — «Отгружено»: состав уже
+                # отсканирован и поставка сама закроется через 12 часов. Её можно
+                # закрыть вручную и сразу завести следующую.
+                cur.execute(
+                    "SELECT id, status, supply_number FROM marketplace_supplies "
+                    "WHERE marketplace = 'OZON' AND type = 'FBS' "
+                    "AND COALESCE(is_accumulator, false) = false "
+                    "AND shop_id = %s AND status <> 'Выполнена' "
+                    "ORDER BY id LIMIT 1",
+                    (int(shop_id),),
+                )
+                active = cur.fetchone()
+                if active:
+                    label = active[2] or f'#{active[0]}'
+                    if active[1] == 'Отгружено':
+                        return {
+                            'statusCode': 409,
+                            'headers': headers,
+                            'body': json.dumps({
+                                'error': f'Поставка {label} отсканирована и закроется сама через 12 часов. '
+                                         f'Закройте её вручную, чтобы создать новую.',
+                                'canCloseManually': True,
+                                'activeSupplyId': active[0],
+                            }, ensure_ascii=False),
+                        }
+                    return {
+                        'statusCode': 409,
+                        'headers': headers,
+                        'body': json.dumps({
+                            'error': f'Поставка {label} ещё не закрыта. Новую создать нельзя.',
+                            'activeSupplyId': active[0],
+                        }, ensure_ascii=False),
+                    }
+            elif supply_type == 'FBS' and marketplace == 'WB':
                 cur.execute(
                     "SELECT id FROM marketplace_supplies "
-                    f"WHERE marketplace = '{marketplace_esc}' AND type = 'FBS' "
+                    "WHERE marketplace = 'WB' AND type = 'FBS' "
                     "AND COALESCE(is_accumulator, false) = false "
                     "AND shop_id = %s AND COALESCE(is_b2b, false) = %s "
                     "AND status IN ('Открытая', 'На сборке') LIMIT 1",

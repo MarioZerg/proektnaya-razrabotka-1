@@ -6,6 +6,7 @@ import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/context/AuthContext';
 import { fetchOzonAllBoxLabels } from '@/lib/ozonFboApi';
 import { printBoxLabelFromUrl } from '@/lib/printMarketplaceLabel';
+import { markOzonLabelsPrinted, ozonRestickHold, shipDay } from '@/lib/fboShipDate';
 import type { SupplyDetail } from '@/lib/marketplaceSuppliesApi';
 import { boxPackedCount } from '@/components/crm/marketplaceSupplies/marketplaceSuppliesShared';
 
@@ -43,6 +44,8 @@ const SupplyAllLabelsCard = ({ supply, fullyAssembled }: SupplyAllLabelsCardProp
   // Показываем, только когда поставка собрана и заклеена целиком.
   if (!fullyAssembled || !allClosed) return null;
 
+  const restick = ozonRestickHold(supply.id, supply.shipToGazelkaAt);
+
   const handlePrintAll = async () => {
     setBusy(true);
     try {
@@ -58,6 +61,8 @@ const SupplyAllLabelsCard = ({ supply, fullyAssembled }: SupplyAllLabelsCardProp
         null,
         filledBoxes,
       );
+      const day = shipDay(supply.shipToGazelkaAt);
+      if (day) markOzonLabelsPrinted(supply.id, day);
 
       // Короб без стикера — редкость (OZON не отдал этикетку), но молчать
       // о нём нельзя: кладовщик уедет с непромаркированным коробом.
@@ -86,17 +91,19 @@ const SupplyAllLabelsCard = ({ supply, fullyAssembled }: SupplyAllLabelsCardProp
   };
 
   return (
-    <Card className="border-emerald-300 bg-emerald-50 shadow-none">
+    <Card className={`shadow-none ${restick ? 'border-amber-300 bg-amber-50' : 'border-emerald-300 bg-emerald-50'}`}>
       <CardContent className="flex flex-wrap items-center justify-between gap-3 pt-6">
         <div className="min-w-0">
-          <p className="flex items-center gap-2 font-medium text-emerald-900">
-            <Icon name="Printer" size={16} />
-            Все короба закрыты — можно печатать стикеры пачкой
+          <p className={`flex items-center gap-2 font-medium ${restick ? 'text-amber-900' : 'text-emerald-900'}`}>
+            <Icon name={restick ? 'TriangleAlert' : 'Printer'} size={16} />
+            {restick ? 'Переклейте этикетки OZON на коробах' : 'Все короба закрыты — можно печатать стикеры пачкой'}
           </p>
-          <p className="text-sm text-emerald-900">
-            Один файл на {filledBoxes.length}{' '}
-            {filledBoxes.length === 1 ? 'короб' : 'коробов'} — по наклейке на каждый,
-            в порядке номеров
+          <p className={`text-sm ${restick ? 'text-amber-900' : 'text-emerald-900'}`}>
+            {restick
+              ? restick
+              : `Один файл на ${filledBoxes.length} ${
+                  filledBoxes.length === 1 ? 'короб' : 'коробов'
+                } — по наклейке на каждый, в порядке номеров`}
           </p>
         </div>
         <Button

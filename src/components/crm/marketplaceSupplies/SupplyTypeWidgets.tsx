@@ -1,15 +1,11 @@
 import { useState } from 'react';
-import Icon from '@/components/ui/icon';
-import LiveCountBoard from '@/components/crm/LiveCountBoard';
 import SceneImage from '@/components/crm/SceneImage';
+import LiveCountBoard from '@/components/crm/LiveCountBoard';
 import type { Supply, SupplyType } from '@/lib/marketplaceSuppliesApi';
 
 /**
- * Плашки по схемам поставки — те же карточки, что станции склада товара.
- *
- * Сверху иллюстрация, снизу название и табло с числом поставок. При наведении
- * карточка приподнимается, картинка чуть приближается: видно, что это кнопка.
- * Клик фильтрует таблицу, повторный клик снимает фильтр.
+ * Плашки FBS и FBO: крупная картинка схемы и число поставок.
+ * Клик фильтрует список, повторный клик снимает фильтр.
  */
 
 type Group = {
@@ -17,8 +13,6 @@ type Group = {
   title: string;
   subtitle: string;
   image: string;
-  /** На узком кадре держим в кадре человека, а не пустой край. */
-  position: string;
   tone: 'violet' | 'cyan';
 };
 
@@ -28,26 +22,16 @@ const GROUPS: Group[] = [
     title: 'FBS',
     subtitle: 'Со своего склада — вещь едет клиенту',
     image: 'supply-fbs-white-fabric',
-    position: 'object-left',
     tone: 'cyan',
   },
   {
     type: 'FBO',
     title: 'FBO',
-    subtitle: 'Коробами на склад маркетплейса для хранения и дальнейшей продажи',
+    subtitle: 'Коробами на склад маркетплейса',
     image: 'supply-fbo-warehouse',
-    position: 'object-center',
     tone: 'violet',
   },
 ];
-
-const suppliesWord = (n: number) => {
-  const mod10 = n % 10;
-  const mod100 = n % 100;
-  if (mod10 === 1 && mod100 !== 11) return 'поставка';
-  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) return 'поставки';
-  return 'поставок';
-};
 
 const SupplyTypeWidgets = ({
   supplies,
@@ -55,24 +39,21 @@ const SupplyTypeWidgets = ({
   onSelectType,
 }: {
   supplies: Supply[];
-  /** Текущий фильтр по схеме: подсвечиваем выбранную плашку. */
   activeType: string;
   onSelectType: (type: string) => void;
-}) => {
-  return (
-    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-      {GROUPS.map((g) => (
-        <SupplySchemeCard
-          key={g.type}
-          group={g}
-          supplies={supplies.filter((s) => s.type === g.type)}
-          active={activeType === g.type}
-          onSelect={() => onSelectType(activeType === g.type ? 'all' : g.type)}
-        />
-      ))}
-    </div>
-  );
-};
+}) => (
+  <div className="grid grid-cols-1 gap-3 min-[520px]:grid-cols-2">
+    {GROUPS.map((g) => (
+      <SupplySchemeCard
+        key={g.type}
+        group={g}
+        supplies={supplies.filter((s) => s.type === g.type)}
+        active={activeType === g.type}
+        onSelect={() => onSelectType(activeType === g.type ? 'all' : g.type)}
+      />
+    ))}
+  </div>
+);
 
 const SupplySchemeCard = ({
   group,
@@ -87,9 +68,6 @@ const SupplySchemeCard = ({
 }) => {
   const [pressed, setPressed] = useState(false);
   const items = supplies.reduce((sum, s) => sum + (s.itemsCount || 0), 0);
-  const assembling = supplies.filter((s) => s.status === 'На сборке').length;
-  const locked = supplies.filter((s) => s.lockedByName).length;
-  const alive = supplies.length > 0;
 
   return (
     <button
@@ -99,60 +77,23 @@ const SupplySchemeCard = ({
       onPointerUp={() => setPressed(false)}
       onPointerLeave={() => setPressed(false)}
       aria-pressed={active}
-      aria-label={`${group.title}: ${supplies.length}`}
-      className={`group flex w-full min-w-0 flex-col overflow-hidden rounded-2xl border bg-[#f7f4ee] text-left shadow-sm transition duration-200 hover:-translate-y-1 hover:shadow-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring active:translate-y-0 motion-reduce:transition-none motion-reduce:hover:translate-y-0 ${
-        pressed ? 'scale-[0.98]' : ''
-      } ${
-        active
-          ? 'ring-2 ring-primary'
-          : alive
-            ? group.tone === 'cyan'
-              ? 'border-cyan-300'
-              : 'border-violet-200'
-            : 'border-border'
-      }`}
+      className={`flex h-full w-full min-w-0 flex-col overflow-hidden rounded-xl border bg-[#f7f4ee] text-left sm:flex-row ${
+        pressed ? 'scale-[0.99]' : ''
+      } ${active ? 'ring-2 ring-primary' : group.tone === 'cyan' ? 'border-cyan-300' : 'border-violet-200'}`}
     >
-      <div className="relative h-40 w-full overflow-hidden bg-[#f4efe6] sm:aspect-video sm:h-auto">
-        <SceneImage
-          name={group.image}
-          sizes="(min-width: 640px) 50vw, 100vw"
-          className={group.position}
-        />
+      {/* Кадр одного размера на всех ширинах: не растягивается вместе с колонкой. */}
+      <div className="relative h-36 w-full shrink-0 overflow-hidden bg-[#f4efe6] sm:h-full sm:w-40 sm:min-h-[7.5rem]">
+        <SceneImage name={group.image} sizes="160px" className="object-center" />
       </div>
-      <div className="flex min-w-0 flex-1 flex-col gap-2 px-3 py-3">
-        <div className="flex items-start gap-3">
-          <div className="min-w-0 flex-1">
-            <p className="text-sm font-bold leading-tight">
-              {group.title}
-              {active && (
-                <span className="ml-2 rounded-sm bg-primary px-1.5 py-0.5 align-middle text-[11px] font-medium text-primary-foreground">
-                  фильтр
-                </span>
-              )}
-            </p>
-            <p className="mt-1 text-xs leading-tight text-muted-foreground">{group.subtitle}</p>
-          </div>
-          <LiveCountBoard value={supplies.length} tone={group.tone} />
-        </div>
-        <div className="space-y-1 text-xs">
-          <p className="text-muted-foreground">
-            {suppliesWord(supplies.length)}
-            <span className="mx-1.5">·</span>
+      <div className="flex min-h-[4.5rem] min-w-0 flex-1 items-center gap-2 px-3 py-2">
+        <div className="min-w-0 flex-1">
+          <p className="text-base font-bold leading-tight">{group.title}</p>
+          <p className="mt-0.5 line-clamp-2 text-xs leading-snug text-muted-foreground">{group.subtitle}</p>
+          <p className="mt-0.5 text-xs text-muted-foreground">
             товаров: <span className="font-semibold text-foreground">{items} шт</span>
           </p>
-          {assembling > 0 && (
-            <p className="flex items-center gap-1.5 text-muted-foreground">
-              <Icon name="Boxes" size={13} />
-              На сборке: <span className="font-semibold text-foreground">{assembling}</span>
-            </p>
-          )}
-          {locked > 0 && (
-            <p className="flex items-center gap-1.5 text-amber-700">
-              <Icon name="Lock" size={13} />
-              Заняты другими: {locked}
-            </p>
-          )}
         </div>
+        <LiveCountBoard value={supplies.length} tone={group.tone} size="sm" />
       </div>
     </button>
   );

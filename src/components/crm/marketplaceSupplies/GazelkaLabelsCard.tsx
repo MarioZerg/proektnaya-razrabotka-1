@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button';
 import Icon from '@/components/ui/icon';
 import { useToast } from '@/hooks/use-toast';
 import { fetchGazelkaPlans, type GazelkaPlan } from '@/lib/gazelkaApi';
+import { gazelkaLabelsHold, marketplaceSlotHold, noteOverdueSupply, shipDay } from '@/lib/fboShipDate';
 import type { SupplyDetail } from '@/lib/marketplaceSuppliesApi';
 import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
 
@@ -52,7 +53,7 @@ const GazelkaLabelsCard = ({ supply }: GazelkaLabelsCardProps) => {
   useEffect(() => {
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [supply.gazelkaPlanId]);
+  }, [supply.gazelkaPlanId, supply.shipToGazelkaAt]);
 
   if (!supply.gazelkaPlanId) return null;
 
@@ -67,7 +68,12 @@ const GazelkaLabelsCard = ({ supply }: GazelkaLabelsCardProps) => {
   }
 
   const boxesCount = supply.boxes.length || plan?.boxes || 1;
-  const ready = !!plan;
+  const hold =
+    gazelkaLabelsHold(plan?.shipDate, supply.shipToGazelkaAt) ||
+    marketplaceSlotHold(supply.id, supply.shipToGazelkaAt, supply.supplyDate, supply.timeslot);
+  const day = shipDay(plan?.shipDate) || shipDay(supply.shipToGazelkaAt);
+  if (day) noteOverdueSupply(supply.id, day);
+  const ready = !!plan && !hold;
 
   const handlePrint = async () => {
     if (!plan) return;
@@ -89,25 +95,27 @@ const GazelkaLabelsCard = ({ supply }: GazelkaLabelsCardProps) => {
   };
 
   return (
-    <Card className="border-[#004cdb]/30 bg-[#004cdb]/5 shadow-none">
+    <Card className={`shadow-none ${hold ? 'border-amber-300 bg-amber-50' : 'border-[#004cdb]/30 bg-[#004cdb]/5'}`}>
       <CardContent className="flex flex-wrap items-center justify-between gap-3 pt-6">
         <div className="min-w-0">
           <p className="flex items-center gap-2 font-medium">
-            <Icon name="Truck" size={16} className="text-[#004cdb]" />
+            <Icon name="Truck" size={16} className={hold ? 'text-amber-700' : 'text-[#004cdb]'} />
             Упаковочные листы Газельки
           </p>
-          <p className="text-sm text-muted-foreground">
-            {ready
-              ? `Заявка №${supply.gazelkaPlanId} · ${boxesCount} ${
-                  boxesCount === 1 ? 'лист' : 'листов'
-                } — по одному на короб. Наклейте на короба перед отгрузкой`
-              : 'Загружаем заявку Газельки…'}
+          <p className={`text-sm ${hold ? 'text-amber-900' : 'text-muted-foreground'}`}>
+            {hold
+              ? hold
+              : ready
+                ? `Заявка №${supply.gazelkaPlanId} · ${boxesCount} ${
+                    boxesCount === 1 ? 'лист' : 'листов'
+                  } — по одному на короб. Наклейте на короба перед отгрузкой`
+                : 'Загружаем заявку Газельки…'}
           </p>
         </div>
         <Button
           className="bg-[#004cdb] text-white hover:bg-[#003bb0]"
           onClick={handlePrint}
-          disabled={!plan || loading || printing}
+          disabled={!plan || !!hold || loading || printing}
         >
           <Icon
             name={loading || printing ? 'Loader2' : 'Printer'}

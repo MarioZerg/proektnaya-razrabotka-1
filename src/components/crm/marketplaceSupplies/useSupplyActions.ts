@@ -20,6 +20,7 @@ import {
 } from '@/lib/marketplaceSuppliesApi';
 import type { GoodsWarehouseItem } from '@/lib/goodsWarehouseApi';
 import { importOzonFboComposition } from '@/lib/ozonFboApi';
+import { marketplaceSlotHold, ozonRestickHold } from '@/lib/fboShipDate';
 import { fetchWbSupplyQr } from '@/lib/wbFbsApi';
 import { useAuth } from '@/context/AuthContext';
 import { printStorageSticker } from '@/lib/printStorageSticker';
@@ -319,6 +320,15 @@ export const useSupplyActions = ({
     const idx = supplyStatusFlow.indexOf(supply.status);
     const next = supplyStatusFlow[idx + 1];
     if (!next) return;
+    if (next === 'Отгрузка' && supply.type === 'FBO' && supply.marketplace === 'OZON') {
+      const hold =
+        ozonRestickHold(supply.id, supply.shipToGazelkaAt) ||
+        marketplaceSlotHold(supply.id, supply.shipToGazelkaAt, supply.supplyDate, supply.timeslot);
+      if (hold) {
+        toast({ title: 'Отгрузить рано', description: hold, variant: 'destructive' });
+        return;
+      }
+    }
     void run(async () => {
       const runMove = async (forceUnderfill = false) => {
         const res = await moveSupplyStatus(supplyId, next, { forceUnderfill });

@@ -567,6 +567,61 @@ svg.animate-logo-spin,
   }
 }
 
+/* Машина стоит, под ней едет разметка — так кажется, что грузовик едет к маркетплейсу. */
+.supply-road {
+  position: relative;
+  display: inline-flex;
+  width: 3.25rem;
+  height: 26px;
+  flex-shrink: 0;
+  align-items: flex-end;
+  justify-content: center;
+}
+
+.supply-truck {
+  position: relative;
+  z-index: 1;
+  display: block;
+}
+
+.supply-road-line {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  height: 7px;
+  overflow: hidden;
+  border-radius: 2px;
+  background: #e7e5e4;
+  border-top: 1px solid #a8a29e;
+}
+
+.supply-road-line::before {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 0;
+  width: 200%;
+  height: 2px;
+  background: repeating-linear-gradient(90deg, #1c1917 0 9px, transparent 9px 18px);
+  animation: supply-road-move 0.45s linear infinite;
+}
+
+@keyframes supply-road-move {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(-18px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .supply-road-line::before {
+    animation: none;
+  }
+}
+
 /* Голограмма на личном QR: блик бежит поверх кода, как на защитной плёнке бейджа.
    mix-blend-mode + низкая плотность, чтобы сканер терминала по-прежнему читал модули. */
 .qr-hologram {

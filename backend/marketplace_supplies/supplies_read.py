@@ -889,7 +889,10 @@ def handle_get(event: dict, headers: dict, dsn: str) -> dict:
             f"                     AND COALESCE(s2.status, '') NOT IN ('Выполнена', 'Отменена'))) END), "
             # Поставка для заказов юрлиц: WB не смешивает их с обычными.
             f"COALESCE(s.is_b2b, false), "
-            f"s.auto_status_at, s.fbs_missing_count, s.ozon_accepted_qty "
+            f"s.auto_status_at, s.fbs_missing_count, s.ozon_accepted_qty, "
+            # Дата и время приёмки на складе маркетплейса. ship_to_marketplace_at —
+            # это момент, когда поставку отметили отгруженной, а не слот заявки.
+            f"s.supply_date, s.timeslot, COALESCE(s.gazelka_pickup, false) "
             f"FROM marketplace_supplies s "
             f"LEFT JOIN users u ON u.id = s.created_by "
             f"LEFT JOIN users lu ON lu.id = s.locked_by "
@@ -933,6 +936,9 @@ def handle_get(event: dict, headers: dict, dsn: str) -> dict:
                 'autoStatusAt': (r[26].isoformat() + 'Z') if r[26] else None,
                 'fbsMissingCount': r[27],
                 'ozonAcceptedQty': r[28],
+                'supplyDate': (r[29].isoformat() + 'Z') if r[29] else None,
+                'timeslot': r[30],
+                'gazelkaPickup': bool(r[31]),
             }
             for r in cur.fetchall()
         ]

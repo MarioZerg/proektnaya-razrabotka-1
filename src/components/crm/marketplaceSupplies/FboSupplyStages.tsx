@@ -89,7 +89,11 @@ const stageFacts = (supply: SupplyDetail) => {
         ? 'Нет состава'
         : supply.supplyNumber || supply.cluster || 'Состав есть',
     sewingText:
-      sewing.length === 0 ? 'Состава нет' : sewn === sewing.length ? 'Всё сшито' : `${sewn} из ${sewing.length}`,
+      sewing.length === 0
+        ? 'Состава нет'
+        : sewn === sewing.length
+          ? 'Всё сшито'
+          : `Сшито ${sewn} из ${sewing.length}`,
     assembleText: SHIPPED.includes(supply.status)
       ? 'Собрана'
       : supply.boxes.length === 0

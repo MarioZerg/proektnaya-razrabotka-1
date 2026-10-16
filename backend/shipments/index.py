@@ -949,7 +949,10 @@ def handler(event: dict, context) -> dict:
                 f"LEFT JOIN suppliers doc ON doc.id = ("
                 f"SELECT sh.supplier_id FROM shipments sh WHERE sh.id = si.shipment_id) "
                 f"WHERE si.shipment_id = s.id "
-                f"GROUP BY isup.name, doc.name, m.name"
+                # Группируем по тому имени, которое видно в списке. Иначе позиция
+                # со своим поставщиком и позиция без него, но с тем же именем
+                # у поставщика документа, дают две строки и рвут количество.
+                f"GROUP BY COALESCE(isup.name, doc.name, '—'), m.name"
                 f") x) "
                 f"FROM shipments s "
                 f"LEFT JOIN suppliers sup ON sup.id = s.supplier_id "
