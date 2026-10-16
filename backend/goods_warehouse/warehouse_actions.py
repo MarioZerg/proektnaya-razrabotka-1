@@ -15,6 +15,8 @@ from shared import (
     OZON_FINAL_STATUSES,
     OZON_NOT_RETURNABLE,
     RESERVE_ALIVE_SQL,
+    RESERVED_IN_OLD_SUPPLY_SQL,
+    order_left_sql,
     ozon_status_live,
     find_goods_closing_order,
     is_admin,
@@ -3441,7 +3443,8 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                 "SELECT gw.id FROM goods_warehouse gw "
                 "JOIN orders o ON o.id = gw.reserved_order_id "
                 f"WHERE gw.id IN ({ids_csv}) "
-                "  AND gw.status IN ('picking', 'awaiting_supply') "
+                "  AND (gw.status IN ('picking', 'awaiting_supply') "
+                f"       OR {RESERVED_IN_OLD_SUPPLY_SQL}) "
                 "  AND gw.shipped_at IS NULL "
                 "  AND (COALESCE(o.ozon_status, '') IN "
                 "         ('delivering', 'delivered', 'driver_pickup') "
@@ -3461,12 +3464,14 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                 "UPDATE goods_warehouse SET status = 'shipped', shipped_at = now() "
                 f"WHERE id IN ({ok_ids})"
             )
-            for r in rows:
-                log_action(
-                    cur, actor_id, actor_name, 'close_shipped', 'goods_warehouse', r[0],
-                    'Закрыта вручную: отправление уже уехало к клиенту, '
-                    'вещь не отсканирована в короб',
-                )
+            # Журнал одной вставкой: вещей бывает сотни, по строке на каждую
+            # функция упиралась бы в лимит времени.
+            log_bulk(
+                cur, actor_id, actor_name, 'close_shipped', 'goods_warehouse',
+                [r[0] for r in rows],
+                'Закрыта вручную: отправление уже уехало к клиенту, '
+                'вещь не отмечена отгруженной',
+            )
             conn.commit()
             return {'statusCode': 200, 'headers': headers,
                     'body': json.dumps({'closed': len(rows)}, ensure_ascii=False)}
@@ -3528,7 +3533,12 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                 "  AND EXISTS (SELECT 1 FROM goods_warehouse gw "
                 "              WHERE gw.id = si.goods_warehouse_id "
                 "                AND gw.shipped_at IS NULL "
-                "                AND gw.status NOT IN ('lost', 'shipped')) "
+                "                AND gw.status NOT IN ('lost', 'shipped') "
+                # Бронь на уехавший заказ не трогаем: эту вещь закрывают как
+                # отгруженную, а не освобождают.
+                "                AND NOT EXISTS (SELECT 1 FROM orders ro "
+                "                  WHERE ro.id = gw.reserved_order_id "
+                f"                    AND {order_left_sql('ro')})) "
                 "  AND NOT EXISTS (SELECT 1 FROM marketplace_supply_boxes b "
                 "                  WHERE b.id = si.box_id "
                 "                    AND b.closed_at IS NOT NULL) "

@@ -8,7 +8,12 @@ import json
 
 import psycopg2
 
-from shared import GOODS_IN_LIVE_SUPPLY_SQL, RESERVE_ALIVE_SQL
+from shared import (
+    GOODS_IN_LIVE_SUPPLY_SQL,
+    RESERVE_ALIVE_SQL,
+    RESERVED_IN_OLD_SUPPLY_SQL,
+    order_left_sql,
+)
 from exports import export_stock_ozon_xlsx, export_stock_wb_xlsx, export_stock_xlsx
 
 
@@ -208,10 +213,14 @@ def handle_get(event: dict, headers: dict, dsn: str) -> dict:
                 "JOIN marketplace_supplies s ON s.id = si.supply_id "
                 "JOIN goods_warehouse gw ON gw.id = si.goods_warehouse_id "
                 "LEFT JOIN orders o ON o.id = COALESCE(gw.reserved_order_id, gw.order_id) "
+                "LEFT JOIN orders ro ON ro.id = gw.reserved_order_id "
                 "LEFT JOIN shelves sh ON sh.id = gw.shelf_id "
                 "WHERE COALESCE(s.status, '') IN ('Выполнена', 'Отменена') "
                 "  AND gw.shipped_at IS NULL "
                 "  AND gw.status NOT IN ('lost', 'shipped') "
+                # Бронь на уехавший заказ — вещь не на складе, а у покупателя.
+                # Её место в панели «Уехало к клиенту», а не здесь.
+                f"  AND NOT (ro.id IS NOT NULL AND {order_left_sql('ro')}) "
                 "  AND NOT EXISTS (SELECT 1 FROM marketplace_supply_boxes b "
                 "                  WHERE b.id = si.box_id "
                 "                    AND b.closed_at IS NOT NULL) "
@@ -260,7 +269,8 @@ def handle_get(event: dict, headers: dict, dsn: str) -> dict:
                 "FROM goods_warehouse gw "
                 "JOIN orders o ON o.id = gw.reserved_order_id "
                 "LEFT JOIN shelves sh ON sh.id = gw.shelf_id "
-                "WHERE gw.status IN ('picking', 'awaiting_supply') "
+                "WHERE (gw.status IN ('picking', 'awaiting_supply') "
+                f"       OR {RESERVED_IN_OLD_SUPPLY_SQL}) "
                 "  AND gw.shipped_at IS NULL "
                 # Заказ уехал от нас: доставляется, доставлен или забран курьером.
                 "  AND (COALESCE(o.ozon_status, '') IN "

@@ -853,3 +853,22 @@ def find_goods_closing_order(cur, order_id):
         (int(order_id),),
     )
     return cur.fetchone()
+
+# Заказ брони уже уехал от нас: забрал курьер, едет или доставлен.
+# Вещь под такой бронью на складе не лежит — её забыли отметить отгруженной.
+def order_left_sql(alias: str) -> str:
+    return (
+        f"(COALESCE({alias}.ozon_status, '') IN ('delivering', 'delivered', 'driver_pickup') "
+        f" OR COALESCE({alias}.status, '') IN ('Отгружен', 'Доставлен'))"
+    )
+
+
+# Бронь на уехавший заказ, а сама вещь записана в старой завершённой поставке.
+# Это вещи из уехавших поставок, которые не отметили отгруженными. Раньше они
+# попадали в «хвосты» поставок, и «Освободить» стирало им запись, не решая дела.
+RESERVED_IN_OLD_SUPPLY_SQL = (
+    "(gw.status = 'reserved' AND EXISTS (SELECT 1 FROM marketplace_supply_items osi "
+    "   JOIN marketplace_supplies os ON os.id = osi.supply_id "
+    "   WHERE osi.goods_warehouse_id = gw.id "
+    "     AND COALESCE(os.status, '') IN ('Выполнена', 'Отменена')))"
+)
