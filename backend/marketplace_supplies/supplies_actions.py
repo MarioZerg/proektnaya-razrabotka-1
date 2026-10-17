@@ -1557,6 +1557,15 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                                          f'В короб повторно не кладётся и для FBS не берётся',
                             }, ensure_ascii=False),
                         }
+                    if gw_hit[2] not in ('in_stock', 'awaiting_supply', 'picking'):
+                        return {
+                            'statusCode': 409,
+                            'headers': headers,
+                            'body': json.dumps({
+                                'error': f'{code} по учёту не на складе (статус «{gw_hit[2]}»). '
+                                         f'В короб его не положить — проверьте стикер',
+                            }, ensure_ascii=False),
+                        }
                     forced_gw_id = int(gw_hit[0])
                     variants = {v for v in gw_hit[3:] if v}
                     if not variants:
