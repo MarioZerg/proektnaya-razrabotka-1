@@ -35,6 +35,25 @@ def _resp(status, body):
     return {'statusCode': status, 'headers': HEADERS, 'body': json.dumps(body, ensure_ascii=False)}
 
 
+GOODS_WAREHOUSE_URL = 'https://functions.poehali.dev/370fdff8-7cae-4cc7-a853-b664f3da61cf'
+
+
+def _kick_stock_rematch():
+    """Вернувшиеся вещи сразу ставим под ждущие заказы. Ответа не ждём."""
+    import urllib.request
+    req = urllib.request.Request(
+        GOODS_WAREHOUSE_URL,
+        data=json.dumps({'action': 'rematch_stock',
+                         'actorName': 'Система (после инвентаризации)'}).encode(),
+        headers={'Content-Type': 'application/json'},
+        method='POST',
+    )
+    try:
+        urllib.request.urlopen(req, timeout=0.5)
+    except Exception:
+        pass
+
+
 def log_action(cur, actor_id, actor_name, action, entity_id, description):
     cur.execute(
         "INSERT INTO audit_log (user_id, user_name, category, action, entity_type, entity_id, description) "
@@ -478,6 +497,61 @@ def handler(event: dict, context) -> dict:
 
             # 2. Вещи, найденные на чужой полке, переставляем по факту: пересчёт
             #    заодно наводит порядок в адресах хранения.
+            # НАЙДЕННОЕ НА ПОЛКЕ ВОЗВРАЩАЕМ В ОСТАТОК.
+            #
+            # Раньше утверждение только списывало ненайденное. Вещь, которую
+            # кладовщик держал в руках на полке, а система считала списанной на
+            # прошлой инвентаризации или «отгруженной», так и оставалась
+            # невидимой: в подбор не шла, заказы на этот размер уходили в пошив.
+            # На инвентаризации №16 таких нашлось больше сотни.
+            #
+            # Не трогаем вещи из живой поставки: короб ещё собирается или едет,
+            # её место определяет сборка, а не пересчёт.
+            restorable = (
+                "(gw.status IN ('lost', 'shipped', 'to_dispose', 'reserved') "
+                " OR (gw.status = 'awaiting_supply' AND gw.reserved_order_id IS NULL)) "
+                "AND NOT EXISTS (SELECT 1 FROM marketplace_supply_items msi "
+                "  JOIN marketplace_supplies ms ON ms.id = msi.supply_id "
+                "  WHERE msi.goods_warehouse_id = gw.id "
+                "    AND COALESCE(ms.status, '') NOT IN ('Выполнена', 'Отменена'))"
+            )
+            cur.execute(
+                "UPDATE orders SET fulfilled_from_stock_id = NULL "
+                "WHERE fulfilled_from_stock_id IN (SELECT gw.id FROM goods_warehouse gw "
+                "  JOIN stocktake_scans s ON s.goods_warehouse_id = gw.id "
+                f"  WHERE s.stocktake_id = %s AND {restorable})",
+                (int(stocktake_id),),
+            )
+            cur.execute(
+                "UPDATE goods_warehouse gw SET "
+                "  status = CASE WHEN s.shelf_id IS NULL THEN 'awaiting_shelf' ELSE 'in_stock' END, "
+                "  shelf_id = s.shelf_id, "
+                "  storage_labeled_at = CASE WHEN s.shelf_id IS NULL "
+                "    THEN COALESCE(gw.storage_labeled_at, now()) ELSE gw.storage_labeled_at END, "
+                "  reserved_order_id = NULL, matched_at = NULL, "
+                "  picked_confirmed_at = NULL, picked_confirmed_by = NULL, "
+                "  shipping_labeled_at = NULL, shipping_labeled_by = NULL, "
+                "  shipping_labeled_by_name = NULL, shipped_at = NULL, "
+                "  lost_at = NULL, lost_reason = NULL, "
+                "  dispose_reason = NULL, disposed_at = NULL, disposed_by = NULL "
+                "FROM stocktake_scans s "
+                "WHERE s.stocktake_id = %s AND s.goods_warehouse_id = gw.id "
+                f"  AND {restorable} "
+                "RETURNING gw.id",
+                (int(stocktake_id),),
+            )
+            restored_ids = [r[0] for r in cur.fetchall()]
+            restored = len(restored_ids)
+            if restored_ids:
+                cur.execute(
+                    "INSERT INTO audit_log (user_id, user_name, category, action, "
+                    "  entity_type, entity_id, description) "
+                    "SELECT %s, %s, 'warehouse', 'stocktake_restore', 'goods_warehouse', "
+                    "  unnest(%s::int[]), %s",
+                    (int(actor_id) if actor_id else None, actor_name, restored_ids,
+                     f'Возвращена в остаток: найдена на полке при инвентаризации №{stocktake_id}'),
+                )
+
             cur.execute(
                 "UPDATE goods_warehouse gw SET shelf_id = s.shelf_id "
                 "FROM stocktake_scans s "
@@ -498,10 +572,14 @@ def handler(event: dict, context) -> dict:
             log_action(
                 cur, actor_id, actor_name, 'stocktake_approve', stocktake_id,
                 f'Инвентаризация подтверждена: списано ненайденных {disposed}, '
-                f'переставлено на верные полки {moved}',
+                f'переставлено на верные полки {moved}, '
+                f'возвращено в остаток найденных {restored}',
             )
             conn.commit()
-            return _resp(200, {'success': True, 'disposed': disposed, 'moved': moved})
+            if restored:
+                _kick_stock_rematch()
+            return _resp(200, {'success': True, 'disposed': disposed, 'moved': moved,
+                               'restored': restored})
 
         if action == 'cancel':
             # Отмена пересчёта. Нужна, когда инвентаризацию открыли по ошибке или
