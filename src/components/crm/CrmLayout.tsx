@@ -280,13 +280,6 @@ const CrmLayout = ({ children }: { children: ReactNode }) => {
     navigate('/crm');
   };
 
-  const initials = user.name
-    .split(' ')
-    .map((p) => p[0])
-    .join('')
-    .slice(0, 2)
-    .toUpperCase();
-
   return (
     <SidebarProvider>
       {/* На телефоне меню выезжает поверх страницы — после выбора раздела закрываем его. */}
@@ -322,7 +315,7 @@ const CrmLayout = ({ children }: { children: ReactNode }) => {
           )}
           <div className="rounded-2xl border border-sidebar-border/70 bg-sidebar-accent/35 p-2.5">
             <div className="flex items-center gap-2.5">
-              <MyAvatarButton initials={initials} />
+              <MyAvatarButton />
               <div className="min-w-0 flex-1">
                 <p className="truncate text-sm font-semibold leading-tight" title={user.name}>
                   {shortName(user.name)}

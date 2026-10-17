@@ -2,21 +2,13 @@ import { useEffect, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
 import Icon from '@/components/ui/icon';
+import { cn } from '@/lib/utils';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/context/AuthContext';
 import { useScannerAutoSubmit } from '@/hooks/useScannerAutoSubmit';
-import { playScanSound, playScanErrorSound, primeScanSounds } from '@/lib/scanSound';
-import { fetchShelves, type Shelf } from '@/lib/shelvesApi';
+import { playScanSound, playScanErrorSound, primeScanSounds, speakText } from '@/lib/scanSound';
 import { scanStocktake, undoStocktakeScan, type Stocktake } from '@/lib/stocktakesApi';
-import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
 import ScanErrorAlert from '@/components/crm/scan/ScanErrorAlert';
 import ScanInputCard from '@/components/crm/scan/ScanInputCard';
 import { fixScanLayout } from '@/lib/keyboardLayout';
@@ -27,44 +19,32 @@ interface StocktakeScannerProps {
 }
 
 /**
- * Пересчёт полки: кладовщик выбирает полку, у которой стоит, и пикает стикеры GW.
+ * Пересчёт: кладовщик пикает стикер GW, система сама называет полку.
  *
- * Полка выбирается один раз на стеллаж, а не на каждую вещь: так система понимает,
- * что вещь лежит не там, где числится, и при подтверждении сама поправит адрес.
+ * Ходовой размер идёт на «Ходовую полку», остальное — на «Не ходовую».
+ * Цифры в конце названия не важны. Когда на полке уже 100 вещей, берётся
+ * следующая с тем же названием. При подтверждении вещь переезжает туда.
  *
  * Ленту сканов не держим на экране — мешает работе. Ошибочный пик снимается
  * одной кнопкой «убрать последний».
- *
- * POEHALI: scanStocktake уже есть. FRONTEND-ONLY: HID-скан и выбор полки на экране.
  */
 const StocktakeScanner = ({ stocktake, onScanned }: StocktakeScannerProps) => {
   const { toast } = useToast();
   const { user } = useAuth();
-  const [shelves, setShelves] = useState<Shelf[]>([]);
-  const [shelvesError, setShelvesError] = useState<string | null>(null);
-  const [shelfId, setShelfId] = useState('');
   const [barcode, setBarcode] = useState('');
   const [saving, setSaving] = useState(false);
   const [lastBarcode, setLastBarcode] = useState<string | null>(null);
   const [lastTitle, setLastTitle] = useState<string | null>(null);
+  const [lastShelf, setLastShelf] = useState<string | null>(null);
+  const [lastPopular, setLastPopular] = useState<boolean | null>(null);
   const [lastWarning, setLastWarning] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const focusInput = () => setTimeout(() => inputRef.current?.focus(), 0);
 
-  const loadShelves = () => {
-    setShelvesError(null);
-    fetchShelves()
-      .then(setShelves)
-      .catch((e) => {
-        setShelvesError(e instanceof Error ? e.message : 'Не удалось загрузить полки');
-      });
-  };
-
   useEffect(() => {
     primeScanSounds();
-    loadShelves();
     focusInput();
   }, []);
 
@@ -78,13 +58,15 @@ const StocktakeScanner = ({ stocktake, onScanned }: StocktakeScannerProps) => {
       const res = await scanStocktake({
         stocktakeId: stocktake.id,
         barcode: code,
-        shelfId: shelfId ? Number(shelfId) : null,
         actorId: user?.id,
         actorName: user?.name,
       });
       playScanSound();
+      if (res.shelfName) speakText(res.shelfName);
       setLastBarcode(res.barcode);
       setLastTitle([res.orderNumber, res.product].filter(Boolean).join(' · ') || 'Вещь');
+      setLastShelf(res.shelfName);
+      setLastPopular(res.popular ?? null);
       setLastWarning(res.warning);
       onScanned();
     } catch (e) {
@@ -104,6 +86,8 @@ const StocktakeScanner = ({ stocktake, onScanned }: StocktakeScannerProps) => {
       await undoStocktakeScan(stocktake.id, lastBarcode, user?.id, user?.name);
       setLastBarcode(null);
       setLastTitle(null);
+      setLastShelf(null);
+      setLastPopular(null);
       setLastWarning(null);
       onScanned();
     } catch (e) {
@@ -115,42 +99,21 @@ const StocktakeScanner = ({ stocktake, onScanned }: StocktakeScannerProps) => {
     }
   };
 
-  const shelfName = shelves.find((s) => String(s.id) === shelfId)?.name;
-
   return (
     <ScanInputCard
       title="Сканируйте стикеры хранения GW"
-      hint={
-        shelfName
-          ? `Полка «${shelfName}» — вещи с другой полки система заметит сама`
-          : 'Сначала выберите полку, у которой стоите'
-      }
+      hint="Полку назовёт система: ходовой размер — на ходовую полку, остальное — на неходовую. На полке до 100 вещей, дальше следующая с тем же названием."
       onBackgroundClick={(e) => {
         if (
           !(e.target as HTMLElement).closest(
-            'input, button, a, textarea, [role="combobox"]',
+            'input, button, a, textarea',
           )
         ) {
           focusInput();
         }
       }}
     >
-      <div className="grid gap-3 sm:grid-cols-[minmax(0,14rem)_1fr_auto] sm:items-end">
-        <div className="space-y-1.5">
-          <Label>Полка</Label>
-          <Select value={shelfId} onValueChange={setShelfId}>
-            <SelectTrigger>
-              <SelectValue placeholder="Выберите полку" />
-            </SelectTrigger>
-            <SelectContent>
-              {shelves.map((s) => (
-                <SelectItem key={s.id} value={String(s.id)}>
-                  {s.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
+      <div className="grid gap-3 sm:grid-cols-[1fr_auto] sm:items-end">
         <div className="space-y-1.5">
           <Label>Стикер GW</Label>
           <Input
@@ -161,7 +124,7 @@ const StocktakeScanner = ({ stocktake, onScanned }: StocktakeScannerProps) => {
             onKeyDown={(e) => e.key === 'Enter' && handleScan()}
             onBlur={(e) => {
               const next = e.relatedTarget as HTMLElement | null;
-              if (next?.closest('button, a, input, textarea, [role="combobox"]')) return;
+              if (next?.closest('button, a, input, textarea')) return;
               focusInput();
             }}
             placeholder="Наведите сканер"
@@ -183,15 +146,22 @@ const StocktakeScanner = ({ stocktake, onScanned }: StocktakeScannerProps) => {
         )}
       </div>
 
-      {shelvesError && (
-        <WarehouseFetchError
-          title="Не удалось загрузить полки"
-          description={shelvesError}
-          onRetry={loadShelves}
-        />
-      )}
-
       {error && <ScanErrorAlert>{error}</ScanErrorAlert>}
+
+      {lastBarcode && !error && lastShelf && (
+        <div
+          className={cn(
+            'rounded-xl p-4 text-center text-white',
+            lastPopular === false ? 'bg-slate-600' : lastPopular ? 'bg-emerald-600' : 'bg-slate-500',
+          )}
+        >
+          <div className="text-sm opacity-90">
+            {lastTitle}
+            {lastPopular === false ? ' · не ходовой размер' : lastPopular ? ' · ходовой размер' : ''}
+          </div>
+          <div className="mt-1 text-3xl font-extrabold">{lastShelf}</div>
+        </div>
+      )}
 
       {lastBarcode && !error && (
         <p

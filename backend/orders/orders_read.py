@@ -112,11 +112,11 @@ ORDER_LIST_COLUMNS = (
     f"({CANCELLED_SQL}) AS is_cancelled, "
     # Аватарки участников — с конца ответа, чтобы не сдвигать номера колонок
     # в середине. Сначала фото, которое загрузил админ, иначе из профиля MAX.
-    "NULLIF(COALESCE(cu.avatar_url, cu.max_avatar_url), ''), "
-    "NULLIF(COALESCE(su.avatar_url, su.max_avatar_url), ''), "
-    "NULLIF(COALESCE(pu.avatar_url, pu.max_avatar_url), ''), "
-    "NULLIF(COALESCE(u.avatar_url, u.max_avatar_url), ''), "
-    "NULLIF(COALESCE(ou.avatar_url, ou.max_avatar_url), '') "
+    "NULLIF(cu.avatar_url, ''), "
+    "NULLIF(su.avatar_url, ''), "
+    "NULLIF(pu.avatar_url, ''), "
+    "NULLIF(u.avatar_url, ''), "
+    "NULLIF(ou.avatar_url, '') "
     "FROM orders o "
     "LEFT JOIN users u ON u.id = o.assigned_user_id "
     "LEFT JOIN workshops w ON w.id = o.workshop_id "
@@ -328,7 +328,7 @@ def _fetch_max_avatars(max_ids: list) -> dict:
     return found
 
 
-def _maybe_sync_shift_avatars(cur, conn, people: list, max_pairs: list) -> None:
+def _maybe_sync_shift_avatars(cur, conn, _people: list, max_pairs: list) -> None:
     """Подтягивает свежие фото MAX у тех, кто сейчас на смене.
 
     Ручное avatar_url не затираем. GET живого цеха иначе откатит UPDATE при close.
@@ -346,8 +346,7 @@ def _maybe_sync_shift_avatars(cur, conn, people: list, max_pairs: list) -> None:
         return
     if not found:
         return
-    by_id = {p['id']: p for p in people}
-    for user_id, max_id, has_own in max_pairs:
+    for user_id, max_id, _has_own in max_pairs:
         url = found.get(max_id)
         if not url:
             continue
@@ -356,9 +355,6 @@ def _maybe_sync_shift_avatars(cur, conn, people: list, max_pairs: list) -> None:
             "AND (max_avatar_url IS DISTINCT FROM %s)",
             (url, user_id, url),
         )
-        person = by_id.get(user_id)
-        if person and not has_own:
-            person['avatarUrl'] = url
     try:
         conn.commit()
     except Exception:
@@ -404,7 +400,7 @@ def _handle_live_floor(cur, conn, headers: dict) -> dict:
         people.append({
             'id': r[0], 'name': r[1], 'role': r[2], 'workshopId': r[3],
             'workshopName': r[4], 'shiftOpenedAt': _iso(r[5]), 'canOverlock': bool(r[6]),
-            'avatarUrl': r[7] or r[8] or None,
+            'avatarUrl': r[7] or None,
             'bubbleHat': r[10],
             'hatBoostUntil': _iso(r[11]),
         })

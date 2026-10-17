@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { profileAvatarSrc } from '@/lib/profileAvatar';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import Icon from '@/components/ui/icon';
 import type { LiveEvent, LiveFloorData, LiveOrder, LivePerson } from '@/lib/liveFloorApi';
@@ -130,9 +131,12 @@ const PersonCard = ({
           <Avatar
             className={`h-10 w-10 text-sm font-bold text-white ${working ? '' : 'opacity-70'}`}
           >
-            {person.avatarUrl ? (
-              <AvatarImage src={person.avatarUrl} alt={person.name} referrerPolicy="no-referrer" className="object-cover" />
-            ) : null}
+            <AvatarImage
+              src={profileAvatarSrc(person.avatarUrl)}
+              alt=""
+              referrerPolicy="no-referrer"
+              className="object-cover"
+            />
             <AvatarFallback className={`bg-gradient-to-br text-white ${style.avatar}`}>
               {initials(person.name)}
             </AvatarFallback>

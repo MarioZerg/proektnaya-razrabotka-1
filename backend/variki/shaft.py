@@ -200,7 +200,7 @@ def _diggers(cur, today):
     cur.execute(
         "SELECT DISTINCT ON (c.user_id) c.user_id, "
         "  COALESCE(NULLIF(c.user_name, ''), u.full_name, ''), "
-        "  NULLIF(COALESCE(u.avatar_url, u.max_avatar_url), ''), "
+        "  NULLIF(u.avatar_url, ''), "
         "  c.created_at "
         "FROM shaft_claims c "
         "LEFT JOIN users u ON u.id = c.user_id "

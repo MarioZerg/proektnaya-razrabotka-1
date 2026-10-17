@@ -850,8 +850,9 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
             # Так вещи не путаются по местам, а сервер дёргается один раз вместо тридцати.
             # Полку кладовщик больше не выбирает — её назначает система. Сюда
             # приходит просто список отсканированных стикеров, а куда лечь каждой
-            # вещи, решает pick_shelf_for_item: однотипное вместе, ходовое ближе,
-            # остальное на самую свободную полку.
+            # вещи, решает pick_demand_shelf: ходовой размер на «Ходовую полку»,
+            # остальное на «Не ходовую». На полке до 100 вещей, дальше следующая
+            # с тем же названием.
             #
             # Старый формат groups=[{shelfId, barcodes}] поддерживаем на случай,
             # если у кладовщика открыта прежняя версия страницы: полку из него
@@ -887,7 +888,10 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                     })
                     continue
 
-                shelf_id, shelf_name, shelf_reason = pick_shelf_for_item(cur, gid)
+                shelf_id, shelf_name, popular = pick_demand_shelf(cur, gid)
+                shelf_reason = (
+                    'ходовой размер' if popular else 'не ходовой размер'
+                ) if shelf_id else shelf_name
                 if not shelf_id:
                     errors.append({'barcode': code, 'error': shelf_reason})
                     continue
@@ -1319,20 +1323,16 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
             if not ids:
                 return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Выберите товары'})}
             shelf_id = body_data.get('shelfId')
-            if not shelf_id:
-                return {
-                    'statusCode': 400,
-                    'headers': headers,
-                    'body': json.dumps({'error': 'Выберите полку'}, ensure_ascii=False),
-                }
-            cur.execute("SELECT name FROM shelves WHERE id = %s", (int(shelf_id),))
-            shelf_row = cur.fetchone()
-            if not shelf_row:
-                return {
-                    'statusCode': 404,
-                    'headers': headers,
-                    'body': json.dumps({'error': 'Полка не найдена'}, ensure_ascii=False),
-                }
+            shelf_row = None
+            if shelf_id:
+                cur.execute("SELECT name FROM shelves WHERE id = %s", (int(shelf_id),))
+                shelf_row = cur.fetchone()
+                if not shelf_row:
+                    return {
+                        'statusCode': 404,
+                        'headers': headers,
+                        'body': json.dumps({'error': 'Полка не найдена'}, ensure_ascii=False),
+                    }
 
             ids_csv = ','.join(str(int(i)) for i in ids)
             if not is_admin(cur, actor_id):
@@ -1349,21 +1349,64 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                                      'Вручную переместить может администратор'
                         }, ensure_ascii=False),
                     }
+            # Без указанной полки — только осмотренное после перепаковки: полку
+            # выбирает система, каждой вещи свою. Разбор с ПВЗ по-прежнему
+            # присылает shelfId, там кладовщик называет место сам.
+            auto_names = {}
+            if not shelf_id:
+                cur.execute(
+                    f"SELECT id, status FROM goods_warehouse WHERE id IN ({ids_csv})"
+                )
+                waiting = cur.fetchall()
+                if not waiting or any(row[1] not in ('inspected', 'taken') for row in waiting):
+                    return {
+                        'statusCode': 400,
+                        'headers': headers,
+                        'body': json.dumps({'error': 'Выберите полку'}, ensure_ascii=False),
+                    }
+                placed_rows = []
+                actor_sql = int(actor_id) if actor_id else None
+                # Кладём по одной: следующая вещь уже видит занятое место и не
+                # переполнит полку, на которой только что стало 100 штук.
+                for gid, _status in waiting:
+                    sid, sname, _popular = pick_demand_shelf(cur, gid)
+                    if not sid:
+                        return {
+                            'statusCode': 409,
+                            'headers': headers,
+                            'body': json.dumps({'error': sname}, ensure_ascii=False),
+                        }
+                    auto_names[gid] = sname
+                    cur.execute(
+                        "UPDATE goods_warehouse SET status = 'in_stock', shelf_id = %s, "
+                        "received_at = now(), taken_at = COALESCE(taken_at, now()), "
+                        "taken_by = COALESCE(taken_by, %s) "
+                        "WHERE id = %s AND status IN ('inspected', 'taken') "
+                        "RETURNING id, storage_barcode, order_id",
+                        (int(sid), actor_sql, int(gid)),
+                    )
+                    placed_rows.extend(cur.fetchall())
+                shelf_label = ', '.join(dict.fromkeys(auto_names.values()))
+            else:
+                placed_rows = None
+
             # Сюда же приходят вещи с этапа «Осмотрено»: упаковщица закончила проверку
             # и наклеила стикер, кладовщику остаётся положить вещь на полку. Раньше
             # эти статусы здесь не принимались, и на «Осмотрено» кнопки укладки не
             # было вовсе — приходилось идти в отдельное окно раскладки.
             # 'taken' — вещи, забранные из цеха по старой схеме: их тоже кладём.
-            cur.execute(
-                f"UPDATE goods_warehouse SET status = 'in_stock', shelf_id = {int(shelf_id)}, "
-                f"received_at = now(), "
-                f"taken_at = COALESCE(taken_at, now()), "
-                f"taken_by = COALESCE(taken_by, {int(actor_id) if actor_id else 'NULL'}) "
-                f"WHERE id IN ({ids_csv}) "
-                f"AND status IN ('checking', 'mp_return', 'inspected', 'taken') "
-                f"RETURNING id, storage_barcode, order_id"
-            )
-            placed_rows = cur.fetchall()
+            if placed_rows is None:
+                cur.execute(
+                    f"UPDATE goods_warehouse SET status = 'in_stock', shelf_id = {int(shelf_id)}, "
+                    f"received_at = now(), "
+                    f"taken_at = COALESCE(taken_at, now()), "
+                    f"taken_by = COALESCE(taken_by, {int(actor_id) if actor_id else 'NULL'}) "
+                    f"WHERE id IN ({ids_csv}) "
+                    f"AND status IN ('checking', 'mp_return', 'inspected', 'taken') "
+                    f"RETURNING id, storage_barcode, order_id"
+                )
+                placed_rows = cur.fetchall()
+                shelf_label = shelf_row[0]
             moved = len(placed_rows)
 
             # Вещь легла на полку — она снова свободный остаток и может закрыть
@@ -1410,7 +1453,7 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
 
             log_action(
                 cur, actor_id, actor_name, 'to_shelf_from_inspection', 'goods_warehouse', None,
-                f'Положил на полку «{shelf_row[0]}» вещей: {moved}',
+                f'Положил на полку «{shelf_label}» вещей: {moved}',
             )
             conn.commit()
             return {
@@ -1419,7 +1462,7 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                 'body': json.dumps({
                     'success': True,
                     'moved': moved,
-                    'shelfName': shelf_row[0],
+                    'shelfName': shelf_label,
                     'items': items_out,
                 }, ensure_ascii=False),
             }

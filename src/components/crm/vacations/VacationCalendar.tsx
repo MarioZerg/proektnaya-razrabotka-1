@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button';
 import Icon from '@/components/ui/icon';
 import { roleLabels, type Role } from '@/lib/roles';
 import type { VacationPerson } from '@/lib/usersApi';
+import { profileAvatarSrc } from '@/lib/profileAvatar';
 
 const ROLE_ORDER: Role[] = [
   'sewer', 'cutter', 'packer', 'packer_returns',
@@ -139,7 +140,7 @@ const VacationCalendar = ({
                 {group.map((person) => (
                   <div key={person.id} className="flex items-center gap-2">
                     <Avatar className="h-9 w-9 shrink-0">
-                      {person.avatarUrl && <AvatarImage src={person.avatarUrl} />}
+                      <AvatarImage src={profileAvatarSrc(person.avatarUrl)} alt="" />
                       <AvatarFallback>{initials(person.fullName)}</AvatarFallback>
                     </Avatar>
                     <div className="min-w-0">
@@ -202,7 +203,7 @@ const VacationCalendar = ({
               <span>{Number(day.slice(-2))}</span>
               {who && (
                 <Avatar className="mt-1 h-7 w-7" title={who.fullName}>
-                  {who.avatarUrl && <AvatarImage src={who.avatarUrl} />}
+                  <AvatarImage src={profileAvatarSrc(who.avatarUrl)} alt="" />
                   <AvatarFallback className="text-[10px]">{initials(who.fullName)}</AvatarFallback>
                 </Avatar>
               )}

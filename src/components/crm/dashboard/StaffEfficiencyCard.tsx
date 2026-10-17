@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { profileAvatarSrc } from '@/lib/profileAvatar';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
 import Icon from '@/components/ui/icon';
@@ -149,7 +150,7 @@ const StaffEfficiencyCard = () => {
                   {i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : i + 1}
                 </span>
                 <Avatar className="h-8 w-8 shrink-0">
-                  {r.avatarUrl && <AvatarImage src={r.avatarUrl} alt={r.userName} />}
+                  <AvatarImage src={profileAvatarSrc(r.avatarUrl)} alt="" />
                   <AvatarFallback className="text-[10px]">{initials(r.userName)}</AvatarFallback>
                 </Avatar>
 

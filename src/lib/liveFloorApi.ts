@@ -9,7 +9,7 @@ export interface LivePerson {
   workshopName: string | null;
   shiftOpenedAt: string | null;
   canOverlock: boolean;
-  /** Фото из профиля или MAX: COALESCE(avatar_url, max_avatar_url). */
+  /** Своё фото профиля. Без него на экране общая заглушка. */
   avatarUrl?: string | null;
   /** Шляпа с кейс бокса — только после покупки, новая заменяет старую. */
   bubbleHat?: string | null;

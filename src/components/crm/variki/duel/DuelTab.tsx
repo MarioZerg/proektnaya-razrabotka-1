@@ -3,8 +3,8 @@ import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
 import Icon from '@/components/ui/icon';
 import { useToast } from '@/hooks/use-toast';
-import { useAuth } from '@/context/AuthContext';
 import { fetchOwnAvatar } from '@/lib/usersApi';
+import { profileAvatarSrc } from '@/lib/profileAvatar';
 import { BubbleHat } from '@/components/lider/bubbleHats';
 import {
   challengeDuel,
@@ -42,7 +42,7 @@ const ResultFace = ({
 }) => (
   <div className="flex min-w-0 flex-1 items-center gap-2">
     <Avatar className="h-8 w-8 shrink-0 border border-amber-700">
-      {person.avatarUrl ? <AvatarImage src={person.avatarUrl} alt="" /> : null}
+      <AvatarImage src={profileAvatarSrc(person.avatarUrl)} alt="" />
       <AvatarFallback className="bg-[#3a2412] text-[10px] text-amber-100">{initials(person.name)}</AvatarFallback>
     </Avatar>
     <div className="min-w-0">
@@ -61,7 +61,6 @@ interface DuelTabProps {
 /** Вкладка «Дуэль»: арена и кого можно вызвать. Правила живут отдельно. */
 const DuelTab = ({ userId }: DuelTabProps) => {
   const { toast } = useToast();
-  const { user } = useAuth();
   const [myAvatar, setMyAvatar] = useState<string | null>(null);
   const [desk, setDesk] = useState<DuelDesk | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -138,13 +137,12 @@ const DuelTab = ({ userId }: DuelTabProps) => {
           <div className="absolute inset-x-4 bottom-1 h-16 rounded-[50%] border-[5px] border-[#8a5a28] bg-gradient-to-b from-[#f0d59a] to-[#b88845] shadow-[inset_0_-8px_16px_rgba(90,40,0,.35)]" />
           <div className="absolute bottom-6 left-[8%] flex flex-col items-center">
             <span className="flex h-14 w-14 overflow-hidden rounded-full border-4 border-amber-200 bg-[#3a2412]">
-              {myAvatar ? (
-                <img src={myAvatar} alt="" className="h-full w-full object-cover" referrerPolicy="no-referrer" />
-              ) : (
-                <span className="flex h-full w-full items-center justify-center text-xs font-bold text-amber-100">
-                  {initials(user?.name || 'Вы')}
-                </span>
-              )}
+              <img
+                src={profileAvatarSrc(myAvatar)}
+                alt=""
+                className="h-full w-full object-cover"
+                referrerPolicy="no-referrer"
+              />
             </span>
             <span className="mt-1 text-[10px] font-bold uppercase tracking-wide text-amber-100">вы</span>
             <span className="text-[10px] text-amber-100/80">без шляпы</span>
@@ -213,7 +211,7 @@ const DuelTab = ({ userId }: DuelTabProps) => {
                   >
                     <div className="relative h-16 w-16 shrink-0">
                       <Avatar className="h-16 w-16 border-4 border-amber-300">
-                        {person.avatarUrl ? <AvatarImage src={person.avatarUrl} alt="" /> : null}
+                        <AvatarImage src={profileAvatarSrc(person.avatarUrl)} alt="" />
                         <AvatarFallback className="bg-[#3a2412] text-amber-100">{initials(person.name)}</AvatarFallback>
                       </Avatar>
                       <div className="pointer-events-none absolute -top-3 left-1/2 w-14 -translate-x-1/2">

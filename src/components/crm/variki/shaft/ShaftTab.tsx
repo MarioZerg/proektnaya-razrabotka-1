@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { useToast } from '@/hooks/use-toast';
 import { claimShaft, fetchShaft, type ShaftDesk } from '@/lib/varikiApi';
+import { profileAvatarSrc } from '@/lib/profileAvatar';
 import { playShaftCoins } from '@/lib/gameSounds';
 
 const money = (value: number) => value.toLocaleString('ru-RU');
@@ -21,9 +22,6 @@ const dayTitle = (status: ShaftDesk['days'][number]['status']) => {
   if (status === 'spent') return 'закрыт';
   return 'спит';
 };
-
-const face = (name: string) =>
-  name.split(' ').slice(0, 2).map((part) => part[0]).join('').toUpperCase();
 
 const SHAFT_DAYS = [15, 16, 17];
 
@@ -275,17 +273,11 @@ const ShaftTab = ({ userId }: ShaftTabProps) => {
                 <div className="mt-2 flex flex-wrap gap-2">
                   {desk.diggers?.map((person) => (
                     <span key={person.id} title={person.name} className="inline-flex">
-                      {person.avatarUrl ? (
-                        <img
-                          src={person.avatarUrl}
-                          alt={person.name}
-                          className="h-9 w-9 rounded-full object-cover ring-2 ring-amber-700"
-                        />
-                      ) : (
-                        <span className="flex h-9 w-9 items-center justify-center rounded-full bg-[#3a2412] text-[11px] font-bold text-amber-100 ring-2 ring-amber-700">
-                          {face(person.name)}
-                        </span>
-                      )}
+                      <img
+                        src={profileAvatarSrc(person.avatarUrl)}
+                        alt=""
+                        className="h-9 w-9 rounded-full object-cover ring-2 ring-amber-700"
+                      />
                     </span>
                   ))}
                 </div>

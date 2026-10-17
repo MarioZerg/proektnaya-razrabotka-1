@@ -69,7 +69,7 @@ def sewers(cur, date_from, date_to):
         """
         SELECT u.id AS "userId",
                u.full_name AS "userName",
-               NULLIF(COALESCE(u.avatar_url, u.max_avatar_url), '') AS "avatarUrl",
+               NULLIF(u.avatar_url, '') AS "avatarUrl",
                count(*) AS items,
                COALESCE(round(sum(o.width) / 100.0, 1), 0) AS meters,
                round(percentile_cont(0.5) WITHIN GROUP (
@@ -146,7 +146,7 @@ def cutters(cur, date_from, date_to):
         )
         SELECT u.id AS "userId",
                u.full_name AS "userName",
-               NULLIF(COALESCE(u.avatar_url, u.max_avatar_url), '') AS "avatarUrl",
+               NULLIF(u.avatar_url, '') AS "avatarUrl",
                (SELECT count(*) FROM sessions s WHERE s.uid = u.id) AS items,
                COALESCE((SELECT round(sum(s.width) / 100.0, 1)
                          FROM sessions s WHERE s.uid = u.id), 0) AS meters,
@@ -177,7 +177,7 @@ def packers(cur, date_from, date_to):
         """
         SELECT u.id AS "userId",
                u.full_name AS "userName",
-               NULLIF(COALESCE(u.avatar_url, u.max_avatar_url), '') AS "avatarUrl",
+               NULLIF(u.avatar_url, '') AS "avatarUrl",
                count(*) AS items,
                COALESCE(round(sum(o.width) / 100.0, 1), 0) AS meters,
                NULL::numeric AS "medianMinutes",

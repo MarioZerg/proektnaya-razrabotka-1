@@ -213,7 +213,7 @@ def handler(event: dict, context) -> dict:
             if str(params.get('self') or '') == '1':
                 me = require_auth(cur, event)
                 cur.execute(
-                    "SELECT NULLIF(COALESCE(avatar_url, max_avatar_url), '') "
+                    "SELECT NULLIF(avatar_url, '') "
                     "FROM users WHERE id = %s",
                     (me['id'],),
                 )
@@ -228,10 +228,10 @@ def handler(event: dict, context) -> dict:
                     ),
                 }
             cur.execute(
-                # Фото: загруженное администратором главнее, иначе берём из профиля MAX —
-                # так в списках сотрудник узнаётся по лицу, а не по инициалам.
+                # В списке только своё фото профиля. Снимок из мессенджера не показываем:
+                # его могли записать на чужую карточку. Пустое место закрывает заглушка.
                 "SELECT id, login, email, full_name, role, workshop, salary, "
-                "shift_from, shift_to, NULLIF(COALESCE(avatar_url, max_avatar_url), ''), "
+                "shift_from, shift_to, NULLIF(avatar_url, ''), "
                 "is_active, created_at, updated_at, shift_number, "
                 "max_user_id, phone, registered_via_max, shift_free, salary_unlock_at, "
                 "CEIL(GREATEST(0, EXTRACT(EPOCH FROM (salary_unlock_at - now())) / 86400))::int, "

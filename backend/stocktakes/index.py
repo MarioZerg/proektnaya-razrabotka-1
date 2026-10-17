@@ -3,6 +3,8 @@ import os
 
 import psycopg2
 
+from shelf_pick import pick_inventory_shelf
+
 CORS_HEADERS = {
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
@@ -284,10 +286,6 @@ def handler(event: dict, context) -> dict:
                 return _resp(403, {'error': 'Сканировать может кладовщик или администратор'})
             stocktake_id = body_data.get('stocktakeId')
             barcode = (body_data.get('barcode') or '').strip().upper()
-            # Полка, у которой кладовщик стоит СЕЙЧАС. Без неё нельзя понять, что
-            # вещь лежит не на своём месте: она числится на «Верхней», а найдена
-            # на «Нижней». Не указана — считаем, что вещь лежит там, где числится.
-            at_shelf_id = body_data.get('shelfId')
             if not stocktake_id or not barcode:
                 return _resp(400, {'error': 'Отсканируйте стикер хранения'})
 
@@ -327,7 +325,18 @@ def handler(event: dict, context) -> dict:
 
             gw_id = gw[0] if gw else None
             expected_shelf_id = gw[2] if gw else None
-            shelf_id = int(at_shelf_id) if at_shelf_id not in (None, '') else expected_shelf_id
+            # Полку называет система: ходовой размер на «Ходовую полку», остальное
+            # на «Не ходовую». Номер в конце названия не важен, а полка с сотней
+            # вещей больше не принимается — берётся следующая с тем же названием.
+            assigned_name = None
+            popular = None
+            shelf_id = expected_shelf_id
+            if gw and gw[1] == COUNTABLE_STATUS:
+                shelf_id, assigned_name, popular = pick_inventory_shelf(
+                    cur, gw_id, int(stocktake_id),
+                )
+                if not shelf_id:
+                    return _resp(409, {'error': assigned_name})
             product = None
             order_number = None
             warning = None
@@ -355,7 +364,8 @@ def handler(event: dict, context) -> dict:
                 'barcode': barcode,
                 'orderNumber': order_number,
                 'product': product,
-                'shelfName': gw[3] if gw else None,
+                'shelfName': assigned_name or (gw[3] if gw else None),
+                'popular': popular,
                 'warning': warning,
             })
 

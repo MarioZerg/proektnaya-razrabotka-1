@@ -174,13 +174,21 @@ export const useReturnsInspection = () => {
   // по полкам»: кладовщик заново её сканировал и выбирал полку. Двойная работа — вещь
   // уже у него в руках, полку он знает.
   const handleToShelf = () => {
-    if (!shelfId) {
+    // Осмотренное после перепаковки полку не выбирает: ходовой размер — на
+    // ходовую, остальное — на неходовую. На разборе с ПВЗ полку называют сами.
+    const autoShelf = stage === 'inspected';
+    if (!autoShelf && !shelfId) {
       toast({ title: 'Выберите полку', variant: 'destructive' });
       return;
     }
     void run(async () => {
       try {
-        const res = await toShelfFromInspection(selected, Number(shelfId), user?.id, user?.name);
+        const res = await toShelfFromInspection(
+          selected,
+          autoShelf ? null : Number(shelfId),
+          user?.id,
+          user?.name,
+        );
         // Печатаем ОДНОЙ лентой, а не по стикеру на вещь: при выборе нескольких товаров
         // окна печати открывались стопкой друг на друга, и кладовщик закрывал их по одному.
         // Рулонный принтер режет ленту сам по границе наклеек.

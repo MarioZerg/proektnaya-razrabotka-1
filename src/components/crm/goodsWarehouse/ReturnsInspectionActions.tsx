@@ -142,26 +142,12 @@ const ReturnsInspectionActions = ({
           стикер) или отметить сразу несколько: тогда печатается лента стикеров,
           и рулонный принтер режет её сам. */}
       {stage === 'inspected' && isAdmin && (
-        <>
-          <Select value={shelfId} onValueChange={onShelfIdChange}>
-            <SelectTrigger className="h-9 w-44">
-              <SelectValue placeholder="Полка" />
-            </SelectTrigger>
-            <SelectContent>
-              {shelves.map((sh) => (
-                <SelectItem key={sh.id} value={String(sh.id)}>
-                  {sh.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <Button size="sm" onClick={onToShelf} disabled={acting || !shelfId}>
-            <Icon name="Boxes" size={16} className="mr-2" />
-            {selected.length > 1
-              ? `На полку + лента из ${selected.length} стикеров`
-              : 'На полку + стикер'}
-          </Button>
-        </>
+        <Button size="sm" onClick={onToShelf} disabled={acting}>
+          <Icon name="Boxes" size={16} className="mr-2" />
+          {selected.length > 1
+            ? `На полку + лента из ${selected.length} стикеров`
+            : 'На полку + стикер'}
+        </Button>
       )}
 
       {/* Утилизация — решение о судьбе товара, а не складская операция. Кладовщик

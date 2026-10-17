@@ -168,7 +168,7 @@ def _avatars(cur, ids):
     if not ids:
         return {}
     cur.execute(
-        "SELECT id, NULLIF(COALESCE(avatar_url, max_avatar_url), ''), "
+        "SELECT id, NULLIF(avatar_url, ''), "
         "  NULLIF(bubble_hat, '') "
         "FROM users WHERE id IN %s",
         (tuple(int(i) for i in ids),),
@@ -310,9 +310,9 @@ def _history(cur):
     cur.execute(
         "SELECT d.id, d.finished_at, d.winner_id, d.hat_title, "
         "  d.challenger_id, d.challenger_name, "
-        "  NULLIF(COALESCE(lc.avatar_url, lc.max_avatar_url), ''), "
+        "  NULLIF(lc.avatar_url, ''), "
         "  d.opponent_id, d.opponent_name, "
-        "  NULLIF(COALESCE(lo.avatar_url, lo.max_avatar_url), '') "
+        "  NULLIF(lo.avatar_url, '') "
         "FROM variki_duels d "
         "LEFT JOIN users lc ON lc.id = d.challenger_id "
         "LEFT JOIN users lo ON lo.id = d.opponent_id "
@@ -359,7 +359,7 @@ def desk(cur, user_id):
     has_hat = _hat_alive(hat, until)
     cur.execute(
         "SELECT u.id, u.full_name, NULLIF(u.bubble_hat, ''), u.hat_boost_until, "
-        "  NULLIF(COALESCE(u.avatar_url, u.max_avatar_url), '') "
+        "  NULLIF(u.avatar_url, '') "
         "FROM users u "
         "WHERE u.role = 'sewer' AND u.is_active = true AND u.id <> %s "
         "  AND NULLIF(u.bubble_hat, '') IS NOT NULL AND u.hat_boost_until > now() "

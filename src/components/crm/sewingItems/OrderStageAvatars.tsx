@@ -8,6 +8,7 @@ import {
   shortFio,
 } from '@/components/crm/sewingItems/sewingItemsShared';
 import { initials } from '@/components/crm/users/usersShared';
+import { profileAvatarSrc } from '@/lib/profileAvatar';
 
 export interface StagePerson {
   key: string;
@@ -91,9 +92,7 @@ const OrderStageAvatars = ({ order }: { order: Order }) => {
                   person.current ? 'ring-sky-400' : ''
                 }`}
               >
-                {person.avatarUrl && (
-                  <AvatarImage src={person.avatarUrl} alt={person.name} />
-                )}
+                <AvatarImage src={profileAvatarSrc(person.avatarUrl)} alt="" />
                 <AvatarFallback className="bg-slate-200 text-[9px] font-bold text-slate-700 sm:text-[10px]">
                   {initials(person.name)}
                 </AvatarFallback>

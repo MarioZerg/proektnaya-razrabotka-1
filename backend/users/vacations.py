@@ -113,7 +113,7 @@ def board(cur):
     today = _today(cur)
     cur.execute(
         "SELECT u.id, u.full_name, u.role, "
-        "       NULLIF(COALESCE(u.avatar_url, u.max_avatar_url), ''), u.hired_at "
+        "       NULLIF(u.avatar_url, ''), u.hired_at "
         "FROM users u "
         "WHERE u.is_active = true AND u.archived_at IS NULL "
         "  AND u.role <> 'admin' "

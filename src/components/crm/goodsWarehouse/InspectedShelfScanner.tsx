@@ -26,8 +26,9 @@ interface PlacedRow {
  * Сканер приёмки осмотренных вещей на полку.
  *
  * Полку выбирает система по спросу на размер: ходовой размер — на «Ходовую полку»,
- * редкий — на «Не ходовую». Кладовщик только сканирует: после сигнала голос
- * называет полку, и на экране она крупно — кладёт вещь туда.
+ * редкий — на «Не ходовую». Цифры в конце названия не важны. На полке до 100
+ * вещей, дальше берётся следующая с тем же названием. Кладовщик только
+ * сканирует: после сигнала голос называет полку.
  */
 const InspectedShelfScanner = ({ onPlaced }: InspectedShelfScannerProps) => {
   const { user } = useAuth();
@@ -105,6 +106,7 @@ const InspectedShelfScanner = ({ onPlaced }: InspectedShelfScannerProps) => {
   return (
     <ScanInputCard
       title="Сканируйте вещи — полку подскажет система"
+      hint="Ходовой размер — на ходовую полку, остальное — на неходовую. Когда на полке 100 вещей, берётся следующая с тем же названием."
       headerRight={
         placed.length > 0 ? (
           <span className="rounded-lg bg-primary px-3 py-1 text-base font-bold text-primary-foreground">

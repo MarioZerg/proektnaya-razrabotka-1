@@ -3,6 +3,7 @@ import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
 import Icon from '@/components/ui/icon';
 import { useToast } from '@/hooks/use-toast';
+import { profileAvatarSrc } from '@/lib/profileAvatar';
 import { fetchOwnAvatar, setOwnAvatar } from '@/lib/usersApi';
 
 /** Телефон снимает по несколько мегабайт. В кружок профиля хватает квадрата 512. */
@@ -35,16 +36,11 @@ const shrinkPhoto = (file: File): Promise<string> =>
     img.src = url;
   });
 
-interface Props {
-  /** Инициалы, если фото ещё нет — для кружка в подвале меню. */
-  initials?: string;
-}
-
 /**
  * Фото профиля: кружок в подвале бокового меню, по нажатию — окно загрузки.
  * Появляется на пузырьке смены и в дуэли.
  */
-const MyAvatarButton = ({ initials = '?' }: Props) => {
+const MyAvatarButton = () => {
   const { toast } = useToast();
   const fileRef = useRef<HTMLInputElement>(null);
   const [open, setOpen] = useState(false);
@@ -101,7 +97,7 @@ const MyAvatarButton = ({ initials = '?' }: Props) => {
     }
   };
 
-  const shown = draft || avatarUrl;
+  const shown = profileAvatarSrc(draft || avatarUrl);
 
   return (
     <>
@@ -112,11 +108,7 @@ const MyAvatarButton = ({ initials = '?' }: Props) => {
         aria-label="Фото профиля"
         title="Фото профиля"
       >
-        {avatarUrl ? (
-          <img src={avatarUrl} alt="" className="h-full w-full object-cover" />
-        ) : (
-          initials
-        )}
+        <img src={profileAvatarSrc(avatarUrl)} alt="" className="h-full w-full object-cover" />
         <span className="absolute inset-x-0 bottom-0 flex h-3.5 items-center justify-center bg-black/45">
           <Icon name="Camera" size={10} className="text-white" />
         </span>
@@ -133,11 +125,7 @@ const MyAvatarButton = ({ initials = '?' }: Props) => {
           <DialogTitle>Фото профиля</DialogTitle>
           <div className="flex flex-col items-center gap-4">
             <div className="flex h-36 w-36 items-center justify-center overflow-hidden rounded-full border border-border bg-muted">
-              {shown ? (
-                <img src={shown} alt="" className="h-full w-full object-cover" />
-              ) : (
-                <Icon name="User" size={48} className="text-muted-foreground" />
-              )}
+              <img src={shown} alt="" className="h-full w-full object-cover" />
             </div>
             <p className="text-center text-sm text-muted-foreground">
               Это фото появится на пузырьке смены и в дуэли.

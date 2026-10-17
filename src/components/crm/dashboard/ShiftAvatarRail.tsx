@@ -1,4 +1,5 @@
 import { useCallback, useLayoutEffect, useRef, useState, type RefObject } from 'react';
+import { profileAvatarSrc } from '@/lib/profileAvatar';
 import { Link } from 'react-router-dom';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
@@ -222,9 +223,12 @@ const WorkLines = ({ person, work }: { person: PersonOnShift; work: ShiftWork | 
 const Face = ({ person }: { person: PersonOnShift }) => (
   <span className="absolute inset-[3px] overflow-hidden rounded-full bg-card">
     <Avatar className="h-full w-full">
-      {person.avatarUrl ? (
-        <AvatarImage src={person.avatarUrl} alt="" referrerPolicy="no-referrer" className="object-cover" />
-      ) : null}
+      <AvatarImage
+        src={profileAvatarSrc(person.avatarUrl)}
+        alt=""
+        referrerPolicy="no-referrer"
+        className="object-cover"
+      />
       <AvatarFallback className="text-[9px]">{initials(person.name)}</AvatarFallback>
     </Avatar>
   </span>
@@ -293,9 +297,12 @@ const Circle = ({
     <PopoverContent className="w-64 p-3" side="bottom" align="end">
       <div className="flex items-center gap-3">
         <Avatar className="h-10 w-10">
-            {person.avatarUrl ? (
-              <AvatarImage src={person.avatarUrl} alt="" referrerPolicy="no-referrer" className="object-cover" />
-            ) : null}
+            <AvatarImage
+              src={profileAvatarSrc(person.avatarUrl)}
+              alt=""
+              referrerPolicy="no-referrer"
+              className="object-cover"
+            />
             <AvatarFallback>{initials(person.name)}</AvatarFallback>
         </Avatar>
         <div className="min-w-0">

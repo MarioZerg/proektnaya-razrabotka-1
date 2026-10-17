@@ -3,6 +3,7 @@ import { Badge } from '@/components/ui/badge';
 import Icon from '@/components/ui/icon';
 import { roleLabels, type Role } from '@/lib/roles';
 import type { Employee } from '@/lib/usersApi';
+import { profileAvatarSrc } from '@/lib/profileAvatar';
 
 const roleIcons: Record<Role, string> = {
   admin: 'ShieldCheck',
@@ -47,17 +48,11 @@ const PendingApprovalCard = ({
   return (
     <div className="rounded-lg border border-border bg-card p-4">
       <div className="flex flex-wrap items-start gap-4">
-        {employee.avatarUrl ? (
-          <img
-            src={employee.avatarUrl}
-            alt={employee.fullName}
-            className="h-12 w-12 shrink-0 rounded-full object-cover"
-          />
-        ) : (
-          <div className="grid h-12 w-12 shrink-0 place-items-center rounded-full bg-muted text-muted-foreground">
-            <Icon name="User" size={22} />
-          </div>
-        )}
+        <img
+          src={profileAvatarSrc(employee.avatarUrl)}
+          alt=""
+          className="h-12 w-12 shrink-0 rounded-full object-cover"
+        />
 
         <div className="min-w-[180px] flex-1">
           <p className="text-base font-semibold">{employee.fullName}</p>

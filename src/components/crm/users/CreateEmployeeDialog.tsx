@@ -19,6 +19,7 @@ import {
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import Icon from '@/components/ui/icon';
 import { roleLabels, type Role } from '@/lib/roles';
+import { profileAvatarSrc } from '@/lib/profileAvatar';
 import {
   initials,
   readFileAsBase64,
@@ -63,7 +64,7 @@ const CreateEmployeeDialog = ({
         <div className="space-y-4">
           <div className="flex items-center gap-3">
             <Avatar className="h-14 w-14">
-              {createForm.avatarBase64 && <AvatarImage src={createForm.avatarBase64} />}
+              <AvatarImage src={profileAvatarSrc(createForm.avatarBase64)} alt="" />
               <AvatarFallback>
                 {createForm.fullName ? initials(createForm.fullName) : <Icon name="User" size={20} />}
               </AvatarFallback>

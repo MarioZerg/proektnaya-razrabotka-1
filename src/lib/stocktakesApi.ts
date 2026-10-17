@@ -4,7 +4,7 @@ const STOCKTAKES_URL = 'https://functions.poehali.dev/a737392b-5582-4cfd-ba50-18
  * Клиент инвентаризации склада.
  *
  * POEHALI: живая функция stocktakes. Новые статусы и action — сначала там.
- * FRONTEND-ONLY: звук скана, выбор полки, ошибка загрузки списка.
+ * FRONTEND-ONLY: звук скана, полка которую назвала система, ошибка загрузки списка.
  */
 
 /** Одна вещь в отчёте инвентаризации. */
@@ -99,11 +99,10 @@ export const fetchStocktake = async (id: number): Promise<Stocktake | null> => {
 export const startStocktake = (actorId?: number, actorName?: string) =>
   postAction({ action: 'start', actorId, actorName }) as Promise<{ id: number }>;
 
-/** Скан стикера GW. shelfId — полка, у которой кладовщик стоит сейчас. */
+/** Скан стикера GW. Полку подбирает система: ходовая или не ходовая. */
 export const scanStocktake = (payload: {
   stocktakeId: number;
   barcode: string;
-  shelfId?: number | null;
   actorId?: number;
   actorName?: string;
 }) =>
@@ -112,6 +111,7 @@ export const scanStocktake = (payload: {
     orderNumber: string | null;
     product: string | null;
     shelfName: string | null;
+    popular?: boolean | null;
     warning: string | null;
   }>;
 

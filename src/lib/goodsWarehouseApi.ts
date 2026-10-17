@@ -673,7 +673,7 @@ export interface PlacedFromInspection {
 
 export const toShelfFromInspection = (
   ids: number[],
-  shelfId: number,
+  shelfId: number | null,
   actorId?: number,
   actorName?: string
 ): Promise<{

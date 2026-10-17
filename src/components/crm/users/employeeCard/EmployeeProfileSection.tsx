@@ -13,6 +13,7 @@ import {
   readFileAsBase64,
   type CardFormState,
 } from '@/components/crm/users/usersShared';
+import { profileAvatarSrc } from '@/lib/profileAvatar';
 import DocsReadyBadges from '@/components/crm/users/DocsReadyBadges';
 
 interface EmployeeProfileSectionProps {
@@ -37,9 +38,7 @@ const EmployeeProfileSection = ({
     <FormSection title="Профиль" hint={cardForm.fullName} defaultOpen>
       <div className="flex min-w-0 items-center gap-3">
         <Avatar className="h-16 w-16 shrink-0">
-          {(cardForm.avatarBase64 || cardEmployee.avatarUrl) && (
-            <AvatarImage src={cardForm.avatarBase64 || cardEmployee.avatarUrl || ''} />
-          )}
+          <AvatarImage src={profileAvatarSrc(cardForm.avatarBase64 || cardEmployee.avatarUrl)} alt="" />
           <AvatarFallback>{initials(cardEmployee.fullName)}</AvatarFallback>
         </Avatar>
         <div className="min-w-0">

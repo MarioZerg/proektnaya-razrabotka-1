@@ -1488,33 +1488,82 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
             # клеится ярлык ТОВАРА «OZN{ozon_sku}»: именно его читает приёмка
             # площадки, и он же единственный код на пакете.
             #
-            # СКЛАДСКОЙ СТИКЕР GW ЗДЕСЬ НЕ РАБОТАЕТ — И ЭТО НАМЕРЕННО.
+            # В КОРОБ ПИШЕТСЯ ТА ВЕЩЬ, ЧЕЙ GW ОТСТИКЕРОВАЛИ.
             #
-            # GW-XXXXXX живёт только внутри склада: по нему вещь находят на
-            # полке и ведут к стикеровке. В короб же едет вещь с ярлыком OZON,
-            # и подтверждать её надо тем кодом, который поедет на приёмку.
-            # Раньше GW принимался наравне с OZN, и кладовщик мог положить в
-            # короб неотстикерованную вещь: на складе площадки её не опознают,
-            # и она превращается в недостачу по заявке.
+            # Ярлык OZN один на весь артикул. Если по нему брать любую свободную
+            # запись, в короб попадает соседний GW, а стикер в руках остаётся
+            # числиться в поставке и не уходит в FBS. Так застрял GW-731063
+            # в уже собранной поставке #1457.
+            #
+            # Поэтому скан GW после стикеровки кладёт в короб именно эту запись
+            # и снимает её с полки. Скан OZN берёт последнюю отстикерованную
+            # вещь этого артикула, у которой полки уже нет. Неотстикерованный
+            # GW с полки в короб не принимается.
             if (supply_type or '').upper() == 'FBO':
                 code = order_number.strip().strip('\r\n\t ').upper()
 
-                # Сканирован складской стикер: объясняем, что делать, вместо
-                # глухого «не найдено» — иначе кладовщик стоит с пакетом в руках.
+                # Складской стикер — это конкретная вещь в руках. В короб пишем её,
+                # а не соседнюю штуку того же размера. Неотстикерованную (ещё на
+                # полке, без ярлыка OZN) по-прежнему не принимаем: на приёмке
+                # площадки её не опознают.
+                forced_gw_id = None
                 if code.startswith('GW'):
-                    return {
-                        'statusCode': 409,
-                        'headers': headers,
-                        'body': json.dumps({
-                            'error': 'Это складской стикер хранения (GW). В короб FBO '
-                                     'сканируется ярлык товара OZN… — отстикеруйте вещь '
-                                     'в разделе «Сборка товара с полок» и сканируйте '
-                                     'наклеенный ярлык',
-                        }, ensure_ascii=False),
-                    }
-
-                bare = code[3:] if code.startswith('OZN') else code
-                variants = {v for v in {code, bare, f'OZN{bare}', bare.lstrip('0')} if v}
+                    cur.execute(
+                        "SELECT gw.id, (gw.shipping_labeled_at IS NOT NULL), gw.status, "
+                        "       upper(trim(coalesce(o.product_ozon_sku, ''))), "
+                        "       upper(trim(coalesce(o.product_barcode, ''))), "
+                        "       upper(trim(coalesce(mi.ozon_sku, ''))), "
+                        "       upper(trim(coalesce(mi.barcode, ''))) "
+                        "FROM goods_warehouse gw "
+                        "LEFT JOIN orders o ON o.id = COALESCE(gw.reserved_order_id, gw.order_id) "
+                        "LEFT JOIN marketplace_items mi ON mi.id = o.marketplace_item_id "
+                        "WHERE upper(gw.storage_barcode) = %s",
+                        (code,),
+                    )
+                    gw_hit = cur.fetchone()
+                    if not gw_hit:
+                        return {
+                            'statusCode': 404,
+                            'headers': headers,
+                            'body': json.dumps({
+                                'error': f'Стикер {code} не найден',
+                            }, ensure_ascii=False),
+                        }
+                    if gw_hit[2] == 'in_stock' and not gw_hit[1]:
+                        return {
+                            'statusCode': 409,
+                            'headers': headers,
+                            'body': json.dumps({
+                                'error': 'Это складской стикер хранения (GW). Сначала '
+                                         'отстикеруйте вещь в разделе «Сборка товара с полок», '
+                                         'затем сканируйте её GW или наклеенный ярлык OZN',
+                            }, ensure_ascii=False),
+                        }
+                    cur.execute(
+                        "SELECT s.id, COALESCE(s.status, '') FROM marketplace_supply_items si "
+                        "JOIN marketplace_supplies s ON s.id = si.supply_id "
+                        "WHERE si.goods_warehouse_id = %s "
+                        "  AND COALESCE(s.status, '') NOT IN ('Выполнена', 'Отменена') "
+                        "LIMIT 1",
+                        (int(gw_hit[0]),),
+                    )
+                    already = cur.fetchone()
+                    if already:
+                        return {
+                            'statusCode': 409,
+                            'headers': headers,
+                            'body': json.dumps({
+                                'error': f'{code} уже в поставке #{already[0]} ({already[1]}). '
+                                         f'В короб повторно не кладётся и для FBS не берётся',
+                            }, ensure_ascii=False),
+                        }
+                    forced_gw_id = int(gw_hit[0])
+                    variants = {v for v in gw_hit[3:] if v}
+                    if not variants:
+                        variants = {code}
+                else:
+                    bare = code[3:] if code.startswith('OZN') else code
+                    variants = {v for v in {code, bare, f'OZN{bare}', bare.lstrip('0')} if v}
                 vals = ', '.join("'" + v.replace("'", "''") + "'" for v in variants)
 
                 # ВЕЩЬ БЕРЁМ ПРЕЖДЕ ВСЕГО ИЗ ПОДБОРА ЭТОЙ ЖЕ ПОСТАВКИ.
@@ -1525,9 +1574,11 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                 # подбору»: её заказ закрывала чужая вещь, а сама она лежала на
                 # полке с наклеенным ярлыком и никуда не уходила.
                 #
-                # Поэтому сортировка: сначала вещь, отложенная под заказ ИМЕННО
-                # этой поставки, затем любая отложенная под поставку, и лишь
-                # потом свободный остаток со склада.
+                # Поэтому сортировка: сначала вещь, которую только что сняли с полки
+                # и отстикеровали (у неё есть ярлык и уже нет полки), затем вещь
+                # этой заявки. Свободный остаток с полки — только если отстикерованной
+                # штуки этого артикула больше нет. Иначе в короб записывается
+                # соседний GW, а стикер в руках остаётся «в поставке» и не уходит в FBS.
                 # ВЕЩЬ ЖИВОГО ЗАКАЗА FBS В КОРОБ FBO НЕ ОТДАЁМ.
                 #
                 # Это главная защита этого запроса. Вещи одного артикула
@@ -1588,8 +1639,12 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                     f"    OR upper(trim(coalesce(mi.ozon_sku, ''))) IN ({vals}) "
                     f"    OR upper(trim(coalesce(mi.barcode, ''))) IN ({vals}) "
                     "  ) "
-                    f"ORDER BY (o.supply_id = {int(supply_id)}) DESC, "
-                    "         (gw.reserved_order_id IS NOT NULL) DESC, "
+                    + (f" AND gw.id = {int(forced_gw_id)} " if forced_gw_id else "")
+                    +
+                    f"ORDER BY (gw.shipping_labeled_at IS NOT NULL) DESC, "
+                    "         (gw.shelf_id IS NULL) DESC, "
+                    "         gw.shipping_labeled_at DESC NULLS LAST, "
+                    f"         (o.supply_id = {int(supply_id)}) DESC, "
                     "         (gw.status = 'awaiting_supply') DESC, gw.id "
                     "LIMIT 1"
                 )
@@ -1864,9 +1919,12 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                     (int(fbo_gid), int(fbo_gid), int(supply_id)),
                 )
 
-                # Вещь занята под поставку: на полке её больше не подберут под заказ.
+                # Вещь занята под поставку и снята с хранения. Полку стираем у того
+                # GW, который реально записали в короб: иначе он остаётся на стеллаже,
+                # подбор FBS приносит его в руки, а скан отвечает «уже в поставке FBO».
                 cur.execute(
-                    "UPDATE goods_warehouse SET status = 'awaiting_supply' WHERE id = %s",
+                    "UPDATE goods_warehouse SET status = 'awaiting_supply', shelf_id = NULL "
+                    "WHERE id = %s",
                     (int(fbo_gid),),
                 )
                 # Первый скан переводит поставку в работу.

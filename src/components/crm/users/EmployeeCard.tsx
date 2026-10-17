@@ -6,6 +6,7 @@ import { roleLabels } from '@/lib/roles';
 import DocsReadyBadges from '@/components/crm/users/DocsReadyBadges';
 import type { Employee } from '@/lib/usersApi';
 import { initials, shortName } from '@/components/crm/users/usersShared';
+import { profileAvatarSrc } from '@/lib/profileAvatar';
 
 interface EmployeeCardProps {
   emp: Employee;
@@ -51,7 +52,7 @@ const EmployeeCard = ({
       className="flex min-w-0 flex-1 basis-0 items-center gap-2 overflow-hidden text-left sm:gap-3"
     >
       <Avatar className="h-8 w-8 shrink-0 sm:h-11 sm:w-11">
-        {emp.avatarUrl && <AvatarImage src={emp.avatarUrl} />}
+        <AvatarImage src={profileAvatarSrc(emp.avatarUrl)} alt="" />
         <AvatarFallback className="text-sm">{initials(emp.fullName)}</AvatarFallback>
       </Avatar>
 
