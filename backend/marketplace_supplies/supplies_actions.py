@@ -1936,6 +1936,27 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                     "WHERE id = %s",
                     (int(fbo_gid),),
                 )
+
+                # ЧТО ОТСКАНИРОВАЛИ И ЧТО ЗАПИСАЛИ — В ЖУРНАЛ.
+                # По ярлыку OZN вещь выбирает программа, и без этой записи потом
+                # не восстановить, какой пакет реально лёг в короб (случай GW-731063
+                # в коробе 386 поставки #1457).
+                cur.execute(
+                    "SELECT b.box_number, "
+                    "       (SELECT full_name FROM users WHERE id = %s) "
+                    "FROM marketplace_supply_boxes b WHERE b.id = %s",
+                    (int(actor_id) if str(actor_id or '').isdigit() else None, int(box_id)),
+                )
+                log_row = cur.fetchone() or (None, None)
+                box_label = f'короб {log_row[0]}' if log_row[0] else f'короб #{box_id}'
+                how = ('стикер вещи' if forced_gw_id else
+                       ('ярлык товара' if code.startswith('OZN') else 'код товара'))
+                log_action(
+                    cur, actor_id, body_data.get('actorName') or log_row[1],
+                    'fbo_box_scan', 'goods_warehouse', int(fbo_gid),
+                    f'Поставка #{supply_id}, {box_label}: отсканирован {how} {code} — '
+                    f'записана вещь {fbo_barcode} ({fbo_product or "товар"})',
+                )
                 # Первый скан переводит поставку в работу.
                 if supply_status == 'Открытая':
                     cur.execute(
