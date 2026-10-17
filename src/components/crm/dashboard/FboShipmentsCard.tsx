@@ -17,6 +17,11 @@ import {
 import { fetchGazelkaPlans } from '@/lib/gazelkaApi';
 import ToMarketplaceCards from '@/components/crm/marketplaceSupplies/ToMarketplaceCards';
 import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from '@/components/ui/collapsible';
 
 const fmtDateTime = (iso: string | null) => {
   if (!iso) return '—';
@@ -47,6 +52,9 @@ const FboShipmentsCard = () => {
   const [loading, setLoading] = useState(true);
   const [listError, setListError] = useState<string | null>(null);
   const { busyId, run } = useIdSubmitGuard();
+  // Свёрнуто по умолчанию: строки поставок широкие и сдвигают весь дашборд.
+  // В шапке видно число активных заявок, раскрывают по клику.
+  const [open, setOpen] = useState(false);
 
   const load = async () => {
     try {
@@ -115,11 +123,25 @@ const FboShipmentsCard = () => {
   return (
     <Card className="border-border shadow-none">
       <CardContent className="space-y-3 pt-6">
-        <div className="flex items-center gap-2">
+        <Collapsible open={open} onOpenChange={setOpen}>
+        <CollapsibleTrigger className="flex w-full items-center gap-2 text-left">
           <Icon name="Truck" size={18} className="text-muted-foreground" />
           <p className="font-medium">Отгрузки FBO</p>
-          {supplies.length > 0 && <Badge variant="secondary">{supplies.length}</Badge>}
-        </div>
+          <Badge variant="secondary">
+            {loading ? '…' : `активных заявок: ${supplies.length}`}
+          </Badge>
+          {pending.length > 0 && (
+            <Badge className="bg-amber-500 text-white hover:bg-amber-500">
+              ждут ответа: {pending.length}
+            </Badge>
+          )}
+          <Icon
+            name="ChevronDown"
+            size={18}
+            className={`ml-auto text-muted-foreground transition-transform ${open ? 'rotate-180' : ''}`}
+          />
+        </CollapsibleTrigger>
+        <CollapsibleContent className="space-y-3 pt-3">
 
         {loading ? (
           <div className="flex items-center gap-2 text-sm text-muted-foreground">
@@ -172,6 +194,8 @@ const FboShipmentsCard = () => {
             />
           </>
         )}
+        </CollapsibleContent>
+        </Collapsible>
       </CardContent>
     </Card>
   );
