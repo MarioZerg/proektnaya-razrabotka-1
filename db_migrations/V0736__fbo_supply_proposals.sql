@@ -1,5 +1,7 @@
 -- Автопредложения FBO. Пока строка open_hold, этот GW нельзя отдать
 -- в другую поставку, в подбор и во вторую предложку.
+-- Предложения не удаляются, только меняют статус (accepted/rejected),
+-- поэтому каскад на удаление не нужен.
 
 CREATE TABLE IF NOT EXISTS fbo_supply_proposals (
     id serial PRIMARY KEY,
@@ -25,7 +27,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS fbo_supply_proposals_one_open
 
 CREATE TABLE IF NOT EXISTS fbo_supply_proposal_items (
     id serial PRIMARY KEY,
-    proposal_id integer NOT NULL REFERENCES fbo_supply_proposals(id) ON DELETE CASCADE,
+    proposal_id integer NOT NULL REFERENCES fbo_supply_proposals(id),
     goods_warehouse_id integer NOT NULL,
     marketplace_item_id integer,
     popular boolean NOT NULL DEFAULT false,
