@@ -298,6 +298,19 @@ NOT_STARTED_SEWING = 'Новый'
 # именно эту вещь с полки. Всё остальное — мёртвая бронь: заказ уже отгружен,
 # отменён, уехал к покупателю или ушёл на конвейер и будет закрыт новой вещью.
 # Мёртвая бронь не должна ни звать кладовщика в подбор, ни запрещать смену полки.
+# ВЕЩЬ, КОТОРУЮ КЛАДОВЩИК УЖЕ ДЕРЖИТ В РУКАХ, ИДЁТ В ЗАКАЗ ПЕРВОЙ.
+#
+# Сканер подбора отмечает вещь (picked_confirmed_at), даже если заказа на её
+# размер в эту минуту нет. Новый заказ должен закрыться именно ею, а не самой
+# старой с полки: иначе в подборе окажется соседний GW, а вещь в руках останется
+# без ярлыка. Отметка живёт сутки — потом вещь считается вернувшейся на полку.
+# Копия стоит в ozon_fbs и wb_fbs (match_from_stock) — функции живут отдельно.
+IN_HAND_FIRST_SQL = (
+    "(gw.picked_confirmed_at > now() - interval '1 day') DESC, "
+    "gw.picked_confirmed_at DESC NULLS LAST"
+)
+
+
 RESERVE_ALIVE_SQL = (
     "(COALESCE(ro.sewing_status, '') IN ('Новый', 'Со склада') "
     " AND COALESCE(ro.status, '') NOT IN ('Отменён', 'Отгружен', 'Доставлен') "
@@ -678,7 +691,7 @@ def try_match_orders_from_stock(cur, gw_id=None):
         "SELECT gw.id, src.marketplace_item_id, src.product FROM goods_warehouse gw "
         "JOIN orders src ON src.id = gw.order_id "
         f"WHERE {where_gw} AND src.product IS NOT NULL "
-        "ORDER BY gw.received_at ASC "
+        f"ORDER BY {IN_HAND_FIRST_SQL}, gw.received_at ASC "
         "FOR UPDATE OF gw SKIP LOCKED"
     )
     free_stock = cur.fetchall()

@@ -456,7 +456,10 @@ def match_from_stock(cur, order_id, item_id) -> bool:
         "WHERE gw.status = 'in_stock' AND gw.reserved_order_id IS NULL "
         "AND gw.shelf_id IS NOT NULL "
         "AND (src.marketplace_item_id = %s OR (%s IS NOT NULL AND src.product = %s)) "
-        "ORDER BY gw.received_at ASC LIMIT 1 "
+        # Вещь, которую кладовщик уже взял сканером подбора, идёт первой —
+        # см. IN_HAND_FIRST_SQL в goods_warehouse/shared.py.
+        "ORDER BY (gw.picked_confirmed_at > now() - interval '1 day') DESC, "
+        "gw.picked_confirmed_at DESC NULLS LAST, gw.received_at ASC LIMIT 1 "
         # Вещь, которую параллельно резервирует другой процесс, пропускаем —
         # так одна вещь физически не может уйти в два заказа сразу.
         "FOR UPDATE OF gw SKIP LOCKED",

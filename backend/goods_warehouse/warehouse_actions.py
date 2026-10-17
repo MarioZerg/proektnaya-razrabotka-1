@@ -2657,9 +2657,26 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
             #
             # Теперь потребность считается по заказам, а не по совпадению размера:
             # нет свободного заказа — «не нужен», даже если такой товар в подборе есть.
+            # ВЕЩЬ В РУКАХ ЗАПОМИНАЕМ.
+            # Заказа на неё сейчас нет, но кладовщик её уже снял. Следующий новый
+            # заказ этого размера должен взять ИМЕННО её, а не самую старую с полки:
+            # иначе в подборе окажется соседний GW, а этот так и останется в руках
+            # без ярлыка. Отметку подбор учитывает сутки (см. IN_HAND_FIRST_SQL).
+            cur.execute(
+                "UPDATE goods_warehouse SET picked_confirmed_at = now(), "
+                "picked_confirmed_by = %s WHERE id = %s",
+                (int(actor_id) if str(actor_id or '').isdigit() else None, int(gw_id)),
+            )
+            log_action(
+                cur, actor_id, actor_name, 'scan_picking_hold', 'goods_warehouse', gw_id,
+                f'Вещь {barcode} в руках, заказа на её размер пока нет — '
+                f'первый новый заказ закроется ею',
+            )
+            conn.commit()
             return {'statusCode': 200, 'headers': headers, 'body': json.dumps({
                 'matched': False,
-                'reason': 'Этот размер уже набран — больше не нужен',
+                'reason': 'Этот размер уже набран. Вещь отмечена: первый новый '
+                          'заказ на этот размер закроется именно ею',
                 'product': gw_product,
             }, ensure_ascii=False)}
 
