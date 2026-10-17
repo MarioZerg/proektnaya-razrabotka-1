@@ -229,6 +229,8 @@ def match_from_stock(cur, order_id, item_id) -> bool:
         # складского остатка не существует — иначе он пойдёт за товаром, которого
         # на стеллаже нет.
         "WHERE gw.status = 'in_stock' AND gw.reserved_order_id IS NULL "
+        "AND NOT EXISTS (SELECT 1 FROM fbo_supply_proposal_items _fpi "
+        "WHERE _fpi.goods_warehouse_id = gw.id AND _fpi.open_hold) "
         "AND gw.shelf_id IS NOT NULL "
         "AND (src.marketplace_item_id = %s OR (%s IS NOT NULL AND src.product = %s)) "
         # Вещь, которую кладовщик уже взял сканером подбора, идёт первой —

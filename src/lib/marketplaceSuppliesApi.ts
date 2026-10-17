@@ -416,6 +416,79 @@ const postAction = async (payload: Record<string, unknown>) => {
   return data;
 };
 
+export interface FboProposalArticle {
+  name: string;
+  quantity: number;
+  popular: boolean;
+}
+
+export interface FboProposal {
+  id: number;
+  cluster: string;
+  gateDate: string | null;
+  gateTimeslot: string | null;
+  gazelkaDate: string | null;
+  createdAt: string | null;
+  pieces: number;
+  articles: FboProposalArticle[];
+}
+
+const proposalAction = (payload: Record<string, unknown>) =>
+  postAction(payload) as Promise<{
+    proposals?: FboProposal[];
+    created?: string[];
+    skipped?: string[];
+    supplyId?: number;
+    ozonError?: string | null;
+    error?: string;
+  }>;
+
+export const fetchFboProposals = (shopId: number, actorId?: number, actorRole?: string) =>
+  proposalAction({
+    action: 'fbo_proposal_list',
+    shopId,
+    actorId,
+    actorRole,
+  });
+
+export const buildFboProposals = (shopId: number, actorId?: number, actorRole?: string) =>
+  proposalAction({
+    action: 'fbo_proposal_build',
+    shopId,
+    actorId,
+    actorRole,
+  });
+
+export const acceptFboProposal = (
+  shopId: number,
+  proposalId: number,
+  actorId?: number,
+  actorName?: string,
+  actorRole?: string,
+) =>
+  proposalAction({
+    action: 'fbo_proposal_accept',
+    shopId,
+    proposalId,
+    actorId,
+    actorName,
+    actorRole,
+  });
+
+export const rejectFboProposal = (
+  shopId: number,
+  proposalId: number,
+  actorId?: number,
+  actorRole?: string,
+) =>
+  proposalAction({
+    action: 'fbo_proposal_reject',
+    shopId,
+    proposalId,
+    actorId,
+    actorRole,
+  });
+
 export const createSupply = (payload: {
   marketplace: string;
   type: SupplyType;

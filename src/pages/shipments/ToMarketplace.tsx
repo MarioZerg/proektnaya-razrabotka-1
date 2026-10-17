@@ -38,6 +38,7 @@ import CreateOzonFboDialog from '@/components/crm/marketplaceSupplies/CreateOzon
 import SupplyTypeWidgets from '@/components/crm/marketplaceSupplies/SupplyTypeWidgets';
 import ToMarketplaceFilters from '@/components/crm/marketplaceSupplies/ToMarketplaceFilters';
 import ToMarketplaceTable from '@/components/crm/marketplaceSupplies/ToMarketplaceTable';
+import FboProposalsPanel from '@/components/crm/marketplaceSupplies/FboProposalsPanel';
 import ConfirmFbsSupplyDialog, {
   type PendingFbs,
 } from '@/components/crm/marketplaceSupplies/ConfirmFbsSupplyDialog';
@@ -76,6 +77,7 @@ const ToMarketplace = () => {
 
   const [statusFilter, setStatusFilter] = useState('open');
   const [typeFilter, setTypeFilter] = useState('all');
+  const [feed, setFeed] = useState<'supplies' | 'proposals'>('supplies');
   const [marketplaceFilter, setMarketplaceFilter] = useState('all');
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
@@ -377,6 +379,36 @@ const ToMarketplace = () => {
             отсканируется. Пока магазин один, вкладки не рисуются. */}
         <ShopTabs shops={shops} value={shopId} onChange={setShopId} />
 
+        <div className="flex gap-2">
+          <Button
+            type="button"
+            variant={feed === 'supplies' ? 'default' : 'outline'}
+            onClick={() => setFeed('supplies')}
+          >
+            Поставки
+          </Button>
+          <Button
+            type="button"
+            variant={feed === 'proposals' ? 'default' : 'outline'}
+            onClick={() => setFeed('proposals')}
+          >
+            Авто предложения поставки FBO
+          </Button>
+        </div>
+
+        {feed === 'proposals' ? (
+          <FboProposalsPanel
+            shopId={shopId}
+            actorId={user?.id}
+            actorName={user?.name}
+            isAdmin={user?.role === 'admin'}
+            onOpenSupply={(id) => {
+              setFeed('supplies');
+              navigate(`/crm/shipments/to-marketplace/${id}`);
+            }}
+          />
+        ) : (
+        <>
         {/* Создание, схема и фильтры — одна верхняя полоса, список сразу под ней. */}
         <div className="space-y-3">
           {!loading && allSupplies.length > 0 && (
@@ -417,6 +449,8 @@ const ToMarketplace = () => {
           supplies={supplies}
           onOpen={(id) => navigate(`/crm/shipments/to-marketplace/${id}`)}
         />
+        </>
+        )}
       </div>
 
       <AlertDialog open={!!closeToCreate} onOpenChange={(v) => !v && setCloseToCreate(null)}>

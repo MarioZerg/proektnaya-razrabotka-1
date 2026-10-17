@@ -1,0 +1,184 @@
+import { useEffect, useState } from 'react';
+import { Button } from '@/components/ui/button';
+import Icon from '@/components/ui/icon';
+import { useToast } from '@/hooks/use-toast';
+import {
+  acceptFboProposal,
+  buildFboProposals,
+  fetchFboProposals,
+  rejectFboProposal,
+  type FboProposal,
+} from '@/lib/marketplaceSuppliesApi';
+
+interface FboProposalsPanelProps {
+  shopId: number | null;
+  actorId?: number;
+  actorName?: string;
+  isAdmin: boolean;
+  onOpenSupply: (id: number) => void;
+}
+
+/** Список автопредложений FBO текущего магазина. */
+const FboProposalsPanel = ({
+  shopId,
+  actorId,
+  actorName,
+  isAdmin,
+  onOpenSupply,
+}: FboProposalsPanelProps) => {
+  const { toast } = useToast();
+  const [rows, setRows] = useState<FboProposal[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = () => {
+    if (!shopId || !isAdmin) return;
+    setLoading(true);
+    fetchFboProposals(shopId, actorId, 'admin')
+      .then((res) => {
+        setRows(res.proposals || []);
+        setError(null);
+      })
+      .catch((e) => setError(e instanceof Error ? e.message : 'Не удалось загрузить предложки'))
+      .finally(() => setLoading(false));
+  };
+
+  useEffect(() => {
+    load();
+    // Магазин сменился — список другой.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [shopId, isAdmin]);
+
+  const form = async () => {
+    if (!shopId) return;
+    setBusy(true);
+    try {
+      const res = await buildFboProposals(shopId, actorId, 'admin');
+      setRows(res.proposals || []);
+      const skipped = (res.skipped || []).filter(Boolean);
+      toast({
+        title: res.created?.length
+          ? `Предложки: ${res.created.join(', ')}`
+          : 'Новых предложек нет',
+        description: skipped.length ? skipped.join('\n') : undefined,
+      });
+    } catch (e) {
+      toast({
+        title: 'Не удалось сформировать',
+        description: e instanceof Error ? e.message : undefined,
+        variant: 'destructive',
+      });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const accept = async (id: number) => {
+    if (!shopId) return;
+    setBusy(true);
+    try {
+      const res = await acceptFboProposal(shopId, id, actorId, actorName, 'admin');
+      toast({
+        title: 'Поставка создана',
+        description: res.ozonError || undefined,
+        variant: res.ozonError ? 'destructive' : 'default',
+      });
+      if (res.supplyId) onOpenSupply(res.supplyId);
+      load();
+    } catch (e) {
+      toast({
+        title: 'Не удалось подтвердить',
+        description: e instanceof Error ? e.message : undefined,
+        variant: 'destructive',
+      });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const reject = async (id: number) => {
+    if (!shopId) return;
+    setBusy(true);
+    try {
+      await rejectFboProposal(shopId, id, actorId, 'admin');
+      toast({ title: 'Предложка отклонена, вещи снова на полках' });
+      load();
+    } catch (e) {
+      toast({
+        title: 'Не удалось отклонить',
+        description: e instanceof Error ? e.message : undefined,
+        variant: 'destructive',
+      });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (!isAdmin) {
+    return (
+      <p className="text-sm text-muted-foreground">
+        Автопредложения FBO подтверждает администратор.
+      </p>
+    );
+  }
+
+  return (
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="text-sm text-muted-foreground">
+          Кластер, который сейчас не принимает поставку, сюда не попадает. Вещи в предложке
+          не уходят в подбор, пока её не подтвердят или не отклонят.
+        </p>
+        <Button type="button" onClick={form} disabled={busy || !shopId}>
+          <Icon name={busy ? 'Loader2' : 'Sparkles'} size={16} className={`mr-2 ${busy ? 'animate-spin' : ''}`} />
+          Сформировать
+        </Button>
+      </div>
+      {error && <p className="text-sm text-destructive">{error}</p>}
+      {loading && <p className="text-sm text-muted-foreground">Загрузка предложек…</p>}
+      {!loading && rows.length === 0 && (
+        <p className="text-sm text-muted-foreground">Открытых предложек нет.</p>
+      )}
+      {rows.map((row) => (
+        <article key={row.id} className="space-y-3 rounded-xl border-2 border-teal-600 bg-card p-4 shadow-sm">
+          <div className="flex flex-wrap items-start justify-between gap-2">
+            <div>
+              <h2 className="text-lg font-bold underline">{row.cluster}</h2>
+              <p className="text-sm">
+                {row.pieces} шт.
+                {row.pieces < 50 ? ' — меньше 50, подтвердить нельзя' : ''}
+              </p>
+              <p className="text-sm">
+                В Газельку {row.gazelkaDate || '—'}
+                {' · '}
+                на воротах {row.gateDate || '—'}
+                {row.gateTimeslot ? `, ${row.gateTimeslot}` : ''}
+              </p>
+            </div>
+            <div className="flex gap-2">
+              <Button type="button" variant="outline" disabled={busy} onClick={() => reject(row.id)}>
+                Отклонить
+              </Button>
+              <Button type="button" disabled={busy || row.pieces < 50} onClick={() => accept(row.id)}>
+                Создать поставку
+              </Button>
+            </div>
+          </div>
+          <ul className="grid gap-1 sm:grid-cols-2">
+            {row.articles.map((article) => (
+              <li key={article.name} className="flex items-center justify-between gap-2 rounded-md border px-3 py-2 text-sm">
+                <span>{article.name}</span>
+                <span className="shrink-0 font-medium">
+                  {article.quantity} шт. · {article.popular ? 'ходовой' : 'не ходовой'}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </article>
+      ))}
+    </div>
+  );
+};
+
+export default FboProposalsPanel;

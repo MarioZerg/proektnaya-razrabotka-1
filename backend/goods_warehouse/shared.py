@@ -682,7 +682,9 @@ def try_match_orders_from_stock(cur, gw_id=None):
                 "     SELECT 1 FROM orders ro WHERE ro.id = gw.reserved_order_id "
                 f"       AND {RESERVE_ALIVE_SQL})) "
                 "AND gw.shelf_id IS NOT NULL "
-                "AND NOT " + GOODS_IN_LIVE_SUPPLY_SQL.format(gw='gw'))
+                "AND NOT " + GOODS_IN_LIVE_SUPPLY_SQL.format(gw='gw') + " "
+                "AND NOT EXISTS (SELECT 1 FROM fbo_supply_proposal_items _fpi "
+                "WHERE _fpi.goods_warehouse_id = gw.id AND _fpi.open_hold)")
     if gw_id:
         where_gw += f" AND gw.id = {int(gw_id)}"
     # FOR UPDATE OF gw SKIP LOCKED: вещь, которую параллельно резервирует другой процесс,

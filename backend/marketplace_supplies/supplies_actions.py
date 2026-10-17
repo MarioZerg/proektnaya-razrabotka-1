@@ -78,6 +78,13 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
     try:
         cur = conn.cursor()
 
+        if action in (
+            'fbo_proposal_list', 'fbo_proposal_build',
+            'fbo_proposal_accept', 'fbo_proposal_reject',
+        ):
+            from fbo_proposals import handle_proposal_action
+            return handle_proposal_action(cur, conn, body_data, headers)
+
         if actor_role == 'manager' and action in FBS_WRITE_ACTIONS:
             target_supply = (
                 body_data.get('supplyId') or body_data.get('id')
@@ -1628,6 +1635,8 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                     # Вещь должна лежать на складе и быть свободной от поставок.
                     "WHERE gw.status IN ('in_stock', 'awaiting_supply', 'picking') "
                     "  AND gw.shipped_at IS NULL "
+                    "  AND NOT EXISTS (SELECT 1 FROM fbo_supply_proposal_items _fpi "
+                    "                  WHERE _fpi.goods_warehouse_id = gw.id AND _fpi.open_hold) "
                     "  AND NOT EXISTS (SELECT 1 FROM marketplace_supply_items si "
                     "                  JOIN marketplace_supplies s2 ON s2.id = si.supply_id "
                     "                  WHERE si.goods_warehouse_id = gw.id "
@@ -3309,6 +3318,8 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                     "JOIN orders src ON src.id = gw.order_id "
                     "WHERE gw.status = 'in_stock' AND gw.reserved_order_id IS NULL "
                     "AND src.marketplace_item_id = %s "
+                    "AND NOT EXISTS (SELECT 1 FROM fbo_supply_proposal_items _fpi "
+                    "WHERE _fpi.goods_warehouse_id = gw.id AND _fpi.open_hold) "
                     "ORDER BY gw.received_at ASC LIMIT %s "
                     "FOR UPDATE OF gw SKIP LOCKED",
                     (int(mp_item_id), qty),

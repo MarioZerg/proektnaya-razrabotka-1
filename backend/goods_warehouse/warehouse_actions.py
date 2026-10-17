@@ -2274,6 +2274,19 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                     'product': gw_product,
                 }, ensure_ascii=False)}
 
+            cur.execute(
+                "SELECT 1 FROM fbo_supply_proposal_items "
+                "WHERE goods_warehouse_id = %s AND open_hold",
+                (int(gw_id),),
+            )
+            if cur.fetchone():
+                return {'statusCode': 200, 'headers': headers, 'body': json.dumps({
+                    'matched': False,
+                    'reason': 'Вещь в автопредложении FBO и ждёт администратора. '
+                              'В подбор её не берут, пока предложку не подтвердят или не отклонят',
+                    'product': gw_product,
+                }, ensure_ascii=False)}
+
             # Вещь уже собрана или уехала — второй раз её не подбирают.
             # Вещь списали: не нашли на складе и отправили заказ в пошив заново.
             # В подбор она больше не возвращается — её физически нет.
@@ -2973,6 +2986,11 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
             ).replace("'", "''")
 
             cur.execute(
+                "UPDATE fbo_supply_proposal_items SET open_hold = false "
+                "WHERE goods_warehouse_id = %s AND open_hold",
+                (int(item_id),),
+            )
+            cur.execute(
                 f"UPDATE goods_warehouse SET status = 'lost', reserved_order_id = NULL, "
                 f"matched_at = NULL, shipping_labeled_at = NULL, shipping_labeled_by = NULL, "
                 f"shipping_labeled_by_name = NULL, "
@@ -3115,6 +3133,8 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                 "LEFT JOIN shelves sh ON sh.id = gw.shelf_id "
                 "WHERE gw.status = 'in_stock' AND gw.reserved_order_id IS NULL "
                 "  AND gw.shelf_id IS NOT NULL AND gw.id <> %s "
+                "  AND NOT EXISTS (SELECT 1 FROM fbo_supply_proposal_items _fpi "
+                "                  WHERE _fpi.goods_warehouse_id = gw.id AND _fpi.open_hold) "
                 "  AND src.product = %s "
                 "  AND NOT " + GOODS_IN_LIVE_SUPPLY_SQL.format(gw='gw') + " "
                 # FIFO: первой уходит вещь, дольше всех лежащая на полке.

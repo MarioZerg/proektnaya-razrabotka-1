@@ -1089,6 +1089,8 @@ def handle_get(event: dict, headers: dict, dsn: str) -> dict:
                 # «Полка не указана», кладовщик шёл искать и не находил.
                 "WHERE gw.status = 'in_stock' AND gw.reserved_order_id IS NULL "
                 "  AND src.product IS NOT NULL "
+                "  AND NOT EXISTS (SELECT 1 FROM fbo_supply_proposal_items _fpi "
+                "                  WHERE _fpi.goods_warehouse_id = gw.id AND _fpi.open_hold) "
                 "GROUP BY src.product, sh.name "
                 "ORDER BY count(*) DESC"
             )
