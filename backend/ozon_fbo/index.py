@@ -381,6 +381,24 @@ def handle_check_composition(cur, client_id, api_key, body_data):
     })
 
 
+GOODS_WAREHOUSE_URL = 'https://functions.poehali.dev/370fdff8-7cae-4cc7-a853-b664f3da61cf'
+
+
+def _kick_stock_rematch(actor_name=None):
+    """Запускает пересчёт подбора склада. Ответа не ждём — импорт и так тяжёлый."""
+    req = urllib.request.Request(
+        GOODS_WAREHOUSE_URL,
+        data=json.dumps({'action': 'rematch_stock',
+                         'actorName': f'Система (импорт FBO{", " + actor_name if actor_name else ""})'}).encode(),
+        headers={'Content-Type': 'application/json'},
+        method='POST',
+    )
+    try:
+        urllib.request.urlopen(req, timeout=0.5)
+    except Exception:
+        pass
+
+
 def handle_import_composition(cur, conn, client_id, api_key, body_data):
     """По заявке OZON FBO создаёт нашу поставку и связывает заказы с ней.
      (если ещё нет) и заказы на конвейер из её
@@ -536,6 +554,13 @@ def handle_import_composition(cur, conn, client_id, api_key, body_data):
         f'без товара {skipped_no_item}, план поставки {planned_units} шт.',
     )
     conn.commit()
+    # СРАЗУ ПРОВЕРЯЕМ СКЛАД под новую заявку — не ждём планировщика.
+    # Подбор идёт той же общей процедурой, что и по расписанию: вещь и заказ
+    # берутся с блокировкой (SKIP LOCKED) и только если оба ещё свободны, так
+    # что одновременный заказ FBS не получит ту же вещь, а повторный импорт
+    # не закрепит её дважды. Заказы FBS в подборе идут первыми.
+    if created:
+        _kick_stock_rematch(actor_name)
     return _resp(200, {
         'supplyId': supply_id,
         'created': created,
