@@ -3604,28 +3604,12 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
             batch_ids = [int(i) for i in ids][:BATCH]
             ids_csv = ','.join(str(i) for i in batch_ids)
 
-            cur.execute(
-                "DELETE FROM marketplace_supply_items si "
-                "USING marketplace_supplies s "
-                "WHERE si.supply_id = s.id "
-                f"  AND si.goods_warehouse_id IN ({ids_csv}) "
-                "  AND COALESCE(s.status, '') IN ('Выполнена', 'Отменена') "
-                "  AND EXISTS (SELECT 1 FROM goods_warehouse gw "
-                "              WHERE gw.id = si.goods_warehouse_id "
-                "                AND gw.shipped_at IS NULL "
-                "                AND gw.status NOT IN ('lost', 'shipped', 'picking', 'awaiting_supply') "
-                "                AND gw.shipping_labeled_at IS NULL "
-                # Бронь на уехавший заказ не трогаем: эту вещь закрывают как
-                # отгруженную, а не освобождают.
-                "                AND NOT EXISTS (SELECT 1 FROM orders ro "
-                "                  WHERE ro.id = gw.reserved_order_id "
-                f"                    AND {order_left_sql('ro')})) "
-                "  AND NOT EXISTS (SELECT 1 FROM marketplace_supply_boxes b "
-                "                  WHERE b.id = si.box_id "
-                "                    AND b.closed_at IS NOT NULL) "
-                "RETURNING si.goods_warehouse_id"
-            )
-            freed = cur.fetchall()
+            # СОСТАВ ВЫПОЛНЕННОЙ ПОСТАВКИ БОЛЬШЕ НЕ УДАЛЯЕМ.
+            # Раньше здесь строки поставки стирались — так за месяц пропало
+            # 2 575 строк истории, и уехавшие вещи переставали числиться
+            # отгруженными. Подбор и сканеры смотрят только на ЖИВЫЕ поставки,
+            # поэтому запись старой поставки вещи не мешает: снимаем лишь бронь.
+            freed = []
 
             # СНИМАЕМ И БРОНЬ ЗАКРЫТОЙ ПОСТАВКИ.
             #

@@ -356,9 +356,11 @@ const SupplyItemsSection = ({
                 поставку. Это и есть объём работы кладовщика.
                 Не успел отсканировать всё — остаток сам попадёт в счётчик
                 следующей поставки, как только её создадут. */}
-            <span>
-              Ожидают отгрузки: <b>{supply.awaitingShipCount ?? readyGoods.length}</b>
-            </span>
+            {(supply.status === 'Открытая' || supply.status === 'На сборке') && (
+              <span>
+                Ожидают отгрузки: <b>{supply.awaitingShipCount ?? readyGoods.length}</b>
+              </span>
+            )}
             <span>
               Добавлено товаров: <b>{supply.items.length}</b>
             </span>

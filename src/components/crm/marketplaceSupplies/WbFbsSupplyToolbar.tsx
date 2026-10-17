@@ -67,9 +67,11 @@ const WbFbsSupplyToolbar = ({ supply, canDeliver, delivering, onDeliver }: WbFbs
             столько кладовщику предстоит отсканировать в свою поставку.
             Не успел забрать всё — остаток так и останется в резерве и попадёт
             в счётчик следующей поставки, как только он её создаст. */}
-        <span>
-          Ожидают отгрузки: <b>{supply.wbReadyCount}</b>
-        </span>
+        {(supply.status === 'Открытая' || supply.status === 'На сборке') && (
+          <span>
+            Ожидают отгрузки: <b>{supply.wbReadyCount}</b>
+          </span>
+        )}
         <span>
           Отсканировано в поставку: <b>{supply.wbOrders.length}</b>
         </span>

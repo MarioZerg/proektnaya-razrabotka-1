@@ -1453,16 +1453,10 @@ def drop_stale_completed_supply_row(cur, goods_id):
     отгрузки. Иначе каждый скан того же артикула обнулял бы короба уехавшей
     заявки, хотя на площадке штуки на месте.
     """
-    cur.execute(
-        "DELETE FROM marketplace_supply_items si "
-        "USING marketplace_supplies s "
-        "WHERE si.supply_id = s.id "
-        "  AND si.goods_warehouse_id = %s "
-        "  AND COALESCE(s.status, '') IN ('Выполнена', 'Отменена') "
-        "  AND NOT EXISTS (SELECT 1 FROM marketplace_supply_boxes b "
-        "                  WHERE b.id = si.box_id AND b.closed_at IS NOT NULL)",
-        (int(goods_id),),
-    )
+    # СОСТАВ ВЫПОЛНЕННОЙ ПОСТАВКИ БОЛЬШЕ НЕ СТИРАЕМ — это история отгрузки.
+    # Все проверки «вещь уже в поставке» смотрят только на живые поставки,
+    # поэтому старая строка новому скану не мешает.
+    return
 
 def shippable_in_supply_sql(supply_id) -> str:
     """Какие вещи поставки считать уехавшими при её отгрузке.

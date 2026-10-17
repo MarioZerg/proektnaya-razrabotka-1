@@ -58,8 +58,12 @@ export const useSupplyData = (supplyId: number) => {
         // Считаем готовым только то, что поедет ИМЕННО в эту поставку: своя площадка,
         // своя схема (FBS/FBO), а для FBO — ещё и свой кластер. Раньше счётчик брал весь
         // склад разом, и в поставке WB показывалось несколько десятков вещей для OZON.
+        // Отгруженная FBS: очередь склада к ней больше не относится — машина
+        // увезла только отсканированное, остальное поедет со следующей поставкой.
+        const fbsClosed =
+          data.type === 'FBS' && data.status !== 'Открытая' && data.status !== 'На сборке';
         setReadyGoods(
-          goods.filter(
+          fbsClosed ? [] : goods.filter(
             (g) =>
               g.marketplace === data.marketplace &&
               g.orderType === data.type &&

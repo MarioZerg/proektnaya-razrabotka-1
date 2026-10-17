@@ -586,6 +586,9 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                         "  OR gw.order_id = o.id "
                         "LEFT JOIN marketplace_supply_items msi "
                         "  ON msi.goods_warehouse_id = gw.id "
+                        "  AND EXISTS (SELECT 1 FROM marketplace_supplies _ls "
+                        "              WHERE _ls.id = msi.supply_id "
+                        "                AND COALESCE(_ls.status, '') NOT IN ('Выполнена', 'Отменена')) "
                         "WHERE o.group_key = %s AND msi.id IS NULL "
                         "ORDER BY (gw.shipping_labeled_at IS NOT NULL) DESC, "
                         "         (gw.status = 'awaiting_supply') DESC, "
@@ -2034,6 +2037,9 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                 "  OR gw.id = o.fulfilled_from_stock_id "
                 "  OR gw.order_id = o.id "
                 "LEFT JOIN marketplace_supply_items msi ON msi.goods_warehouse_id = gw.id "
+                "  AND EXISTS (SELECT 1 FROM marketplace_supplies _ls "
+                "              WHERE _ls.id = msi.supply_id "
+                "                AND COALESCE(_ls.status, '') NOT IN ('Выполнена', 'Отменена')) "
                 "WHERE (o.order_number = '{code}' OR o.ozon_posting_number = '{code}') "
                 "ORDER BY (msi.id IS NULL) DESC, (gw.shipping_labeled_at IS NOT NULL) DESC, "
                 "         (gw.status = 'awaiting_supply') DESC, "
@@ -2129,7 +2135,9 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
             # вместо понятного «этот товар уже в коробе».
             cur.execute(
                 "SELECT si.id, si.supply_id FROM marketplace_supply_items si "
-                "WHERE si.goods_warehouse_id = %s",
+                "JOIN marketplace_supplies _s ON _s.id = si.supply_id "
+                "WHERE si.goods_warehouse_id = %s "
+                "  AND COALESCE(_s.status, '') NOT IN ('Выполнена', 'Отменена')",
                 (goods_id,),
             )
             exists = cur.fetchone()
