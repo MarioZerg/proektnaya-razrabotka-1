@@ -435,6 +435,25 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                                  f'Возьмите другую вещь этого размера',
                     }, ensure_ascii=False),
                 }
+
+            # Вещь в открытой автопредложке FBO — она обещана в поставку и ждёт
+            # решения администратора. Ярлык FBS на неё не печатаем и чужую бронь
+            # на неё не переносим, иначе предложка уедет без этой вещи.
+            cur.execute(
+                "SELECT 1 FROM fbo_supply_proposal_items "
+                "WHERE goods_warehouse_id = %s AND open_hold",
+                (int(gw_id),),
+            )
+            if cur.fetchone():
+                return {
+                    'statusCode': 409,
+                    'headers': headers,
+                    'body': json.dumps({
+                        'error': 'Вещь в автопредложении FBO и ждёт администратора — '
+                                 'ярлык отправления на неё не печатается. '
+                                 'Возьмите другую вещь этого размера',
+                    }, ensure_ascii=False),
+                }
             # Вещь без резерва — самая частая заминка на складе.
             #
             # На полке лежат две одинаковые вещи (один материал и размер), подбор
