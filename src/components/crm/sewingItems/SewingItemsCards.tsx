@@ -16,6 +16,7 @@ import OrderStagesDiagram from '@/components/crm/sewingItems/OrderStagesDiagram'
 import OrderStageAvatars from '@/components/crm/sewingItems/OrderStageAvatars';
 import OrderWaitTimer from '@/components/crm/sewingItems/OrderWaitTimer';
 import { usePrintOrderSticker } from '@/components/crm/sewingItems/usePrintOrderSticker';
+import { useCutterTag, canPrintCutterTag } from '@/components/crm/sewingItems/useCutterTag';
 import { isUrgent } from '@/components/crm/sewingItems/orderUrgency';
 import { orderHangerLabel } from '@/lib/hangersApi';
 
@@ -108,6 +109,7 @@ const SewingItemsCards = ({
   canPrintSticker = false,
 }: SewingItemsCardsProps) => {
   const { printingId, printSticker: handlePrintSticker } = usePrintOrderSticker();
+  const { printingTagId, printCutterTag } = useCutterTag();
 
   if (loading && pagedOrders.length === 0) {
     return (
@@ -217,6 +219,25 @@ const SewingItemsCards = ({
                   {/* Печать стикера готовой вещи — обе схемы. Для FBS ярлык
                       запрашивается у маркетплейса: если наклейка потерялась,
                       кладовщик печатает её прямо отсюда, не уходя со списка. */}
+                  {canPrintCutterTag(o) && (
+                    <button
+                      type="button"
+                      disabled={printingTagId === o.id}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        void printCutterTag(o);
+                      }}
+                      className="text-muted-foreground hover:text-blue-600 disabled:opacity-50"
+                      aria-label="Этикетка закройщика 58×40"
+                      title="Этикетка закройщика 58×40"
+                    >
+                      <Icon
+                        name={printingTagId === o.id ? 'Loader2' : 'Tag'}
+                        size={15}
+                        className={printingTagId === o.id ? 'animate-spin' : undefined}
+                      />
+                    </button>
+                  )}
                   {canPrintSticker && o.sewingStatus === 'Готовые' && (
                     <button
                       type="button"

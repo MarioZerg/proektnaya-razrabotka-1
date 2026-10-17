@@ -8,6 +8,8 @@ export interface OrderQrTagData {
   height?: number | null;
   marketplace?: string | null;
   orderType?: string | null;
+  /** Подпись внизу бирки. По умолчанию — «замена листка закройщика». */
+  hint?: string;
 }
 
 const esc = (s: string) =>
@@ -101,7 +103,7 @@ export const printOrderQrTag = async (data: OrderQrTagData) => {
   <div class="qr"><img src="${qr}" alt="" /></div>
   <div class="num">${esc(data.orderNumber)}</div>
   ${source ? `<div class="src">${esc(source)}</div>` : ''}
-  <div class="hint">Замена листка закройщика — отсканируйте на терминале</div>
+  <div class="hint">${esc(data.hint || 'Замена листка закройщика — отсканируйте на терминале')}</div>
 </body>
 </html>`;
 

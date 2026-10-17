@@ -1,5 +1,6 @@
 import type { Dispatch, SetStateAction } from 'react';
 import { usePrintOrderSticker } from '@/components/crm/sewingItems/usePrintOrderSticker';
+import { useCutterTag, canPrintCutterTag } from '@/components/crm/sewingItems/useCutterTag';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import {
@@ -101,6 +102,7 @@ const SewingItemsTable = ({
   canPrintSticker = false,
 }: SewingItemsTableProps) => {
   const { printingId, printSticker: handlePrintSticker } = usePrintOrderSticker();
+  const { printingTagId, printCutterTag } = useCutterTag();
   const { arrived, moved, bindRow } = useConveyorRowMotion(pagedOrders);
 
   if (loading && pagedOrders.length === 0) {
@@ -260,6 +262,25 @@ const SewingItemsTable = ({
                         {o.orderNumber}
                       </span>
                       <ShopBadge name={o.shopName} color={o.shopColor} />
+                      {canPrintCutterTag(o) && (
+                        <button
+                          type="button"
+                          disabled={printingTagId === o.id}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            void printCutterTag(o);
+                          }}
+                          className="text-muted-foreground hover:text-blue-600 disabled:opacity-50"
+                          aria-label="Этикетка закройщика 58×40"
+                          title="Этикетка закройщика 58×40"
+                        >
+                          <Icon
+                            name={printingTagId === o.id ? 'Loader2' : 'Tag'}
+                            size={15}
+                            className={printingTagId === o.id ? 'animate-spin' : undefined}
+                          />
+                        </button>
+                      )}
                       {canPrintStickerForOrder(o, canPrintSticker) && (
                         <Tooltip>
                           <TooltipTrigger asChild>
