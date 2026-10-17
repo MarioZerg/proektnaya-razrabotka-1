@@ -901,7 +901,8 @@ def handle_get(event: dict, headers: dict, dsn: str) -> dict:
             f"s.auto_status_at, s.fbs_missing_count, s.ozon_accepted_qty, "
             # Дата и время приёмки на складе маркетплейса. ship_to_marketplace_at —
             # это момент, когда поставку отметили отгруженной, а не слот заявки.
-            f"s.supply_date, s.timeslot, COALESCE(s.gazelka_pickup, false) "
+            f"s.supply_date, s.timeslot, COALESCE(s.gazelka_pickup, false), "
+            f"s.gazelka_plan_id, s.gazelka_shipped_at "
             f"FROM marketplace_supplies s "
             f"LEFT JOIN users u ON u.id = s.created_by "
             f"LEFT JOIN users lu ON lu.id = s.locked_by "
@@ -948,6 +949,8 @@ def handle_get(event: dict, headers: dict, dsn: str) -> dict:
                 'supplyDate': (r[29].isoformat() + 'Z') if r[29] else None,
                 'timeslot': r[30],
                 'gazelkaPickup': bool(r[31]),
+                'gazelkaPlanId': r[32],
+                'gazelkaShippedAt': (r[33].isoformat() + 'Z') if r[33] else None,
             }
             for r in cur.fetchall()
         ]

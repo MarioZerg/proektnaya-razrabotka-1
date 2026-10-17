@@ -4,28 +4,23 @@ import { useNavigate } from 'react-router-dom';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table';
 import Icon from '@/components/ui/icon';
 import { useToast } from '@/hooks/use-toast';
+import { usePolling } from '@/hooks/usePolling';
 import {
   fetchFboBoard,
+  fetchSupplies,
   confirmGazelkaShip,
   type FboBoardItem,
+  type Supply,
 } from '@/lib/marketplaceSuppliesApi';
+import { fetchGazelkaPlans } from '@/lib/gazelkaApi';
+import ToMarketplaceCards from '@/components/crm/marketplaceSupplies/ToMarketplaceCards';
 import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
 
 const fmtDateTime = (iso: string | null) => {
   if (!iso) return '—';
-  const d = new Date(iso);
-  // Московское время — единое для всей системы, независимо от часов устройства.
-  return d.toLocaleString('ru-RU', {
+  return new Date(iso).toLocaleString('ru-RU', {
     day: '2-digit',
     month: '2-digit',
     hour: '2-digit',
@@ -34,55 +29,68 @@ const fmtDateTime = (iso: string | null) => {
   });
 };
 
-const statusVariant = (status: string): 'secondary' | 'default' | 'outline' => {
-  if (status === 'Отгрузка' || status === 'Принята') return 'default';
-  if (status === 'На сборке') return 'secondary';
-  return 'outline';
-};
+/** Обновляем сами: кладовщик меняет поставку в соседней вкладке, а дашборд висит открытым. */
+const REFRESH_MS = 30_000;
 
 /**
- * Отгрузки FBO на дашборде.
+ * Отгрузки FBO на дашборде — теми же строками, что во вкладке «Поставки в маркетплейс»:
+ * газелька, машина, обратный отсчёт, штуки в коробах. Один вид в двух местах,
+ * чтобы человек не сверял две разные раскладки одной и той же поставки.
  *
- * Поставка проходит путь: сборка → уезжает в газельку → сдаётся на воротах маркетплейса.
- * Здесь этот путь виден целиком, чтобы не открывать каждую поставку по отдельности.
- *
- * Отдельно решается частая проблема: машина уехала, а кладовщик забыл отметить отгрузку —
- * поставка продолжает висеть на сборке. Если плановое время отгрузки прошло, а отметки
- * нет, система прямо спрашивает: «Поставка уехала в газельку?».
+ * Отдельно — вопрос «уехала в газельку?», если время отгрузки прошло, а отметки нет.
  */
 const FboShipmentsCard = () => {
   const { toast } = useToast();
   const navigate = useNavigate();
-  const [items, setItems] = useState<FboBoardItem[]>([]);
+  const [supplies, setSupplies] = useState<Supply[]>([]);
+  const [pending, setPending] = useState<FboBoardItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [listError, setListError] = useState<string | null>(null);
   const { busyId, run } = useIdSubmitGuard();
 
-  const load = () => {
-    setLoading(true);
-    fetchFboBoard()
-      .then((list) => {
-        setListError(null);
-        setItems(list);
-      })
-      .catch((e) => {
-        setListError(e instanceof Error ? e.message : 'Не удалось загрузить отгрузки FBO');
-      })
-      .finally(() => setLoading(false));
+  const load = async () => {
+    try {
+      const [list, board, plans] = await Promise.all([
+        fetchSupplies({ type: 'FBO' }),
+        fetchFboBoard(),
+        fetchGazelkaPlans().catch(() => []),
+      ]);
+      // Номер машины живёт в заявке Газельки, а не в поставке: подставляем его
+      // при каждом обновлении — водителя назначают уже после создания поставки.
+      const plateByPlan = new Map(plans.map((p) => [p.id, p.vehicleNumber || null]));
+      setSupplies(
+        list
+          .filter((s) => s.status !== 'Выполнена')
+          .map((s) => ({
+            ...s,
+            gazelkaVehicleNumber:
+              (s.gazelkaPlanId != null ? plateByPlan.get(s.gazelkaPlanId) : null) ||
+              s.gazelkaVehicleNumber,
+          })),
+      );
+      setPending(board.filter((i) => i.needsShipConfirm));
+      setListError(null);
+    } catch (e) {
+      setListError(e instanceof Error ? e.message : 'Не удалось загрузить отгрузки FBO');
+    } finally {
+      setLoading(false);
+    }
   };
 
-  useEffect(load, []);
+  useEffect(() => {
+    void load();
+  }, []);
+  usePolling(load, REFRESH_MS);
 
   const answer = (item: FboBoardItem, shipped: boolean) => {
     void run(item.id, async () => {
-      setItems((prev) => prev.filter((i) => i.id !== item.id));
+      setPending((prev) => prev.filter((i) => i.id !== item.id));
       try {
         await confirmGazelkaShip(item.id, shipped);
-        toast({
-          title: shipped ? 'Отгрузка отмечена' : 'Напоминание перенесено на завтра',
-        });
+        toast({ title: shipped ? 'Отгрузка отмечена' : 'Напоминание перенесено на завтра' });
+        void load();
       } catch (e) {
-        setItems((prev) => (prev.some((i) => i.id === item.id) ? prev : [...prev, item]));
+        setPending((prev) => (prev.some((i) => i.id === item.id) ? prev : [...prev, item]));
         toast({
           title: 'Не удалось сохранить',
           description: e instanceof Error ? e.message : undefined,
@@ -92,19 +100,17 @@ const FboShipmentsCard = () => {
     });
   };
 
-  if (!loading && items.length === 0 && !listError) return null;
+  if (!loading && supplies.length === 0 && pending.length === 0 && !listError) return null;
 
-  if (listError && items.length === 0) {
+  if (listError && supplies.length === 0) {
     return (
       <WarehouseFetchError
         title="Не удалось загрузить отгрузки FBO"
         description={listError}
-        onRetry={load}
+        onRetry={() => void load()}
       />
     );
   }
-
-  const pending = items.filter((i) => i.needsShipConfirm);
 
   return (
     <Card className="border-border shadow-none">
@@ -112,7 +118,7 @@ const FboShipmentsCard = () => {
         <div className="flex items-center gap-2">
           <Icon name="Truck" size={18} className="text-muted-foreground" />
           <p className="font-medium">Отгрузки FBO</p>
-          {items.length > 0 && <Badge variant="secondary">{items.length}</Badge>}
+          {supplies.length > 0 && <Badge variant="secondary">{supplies.length}</Badge>}
         </div>
 
         {loading ? (
@@ -122,8 +128,6 @@ const FboShipmentsCard = () => {
           </div>
         ) : (
           <>
-            {/* Поставки, по которым время отгрузки прошло, а отметки нет: спрашиваем
-                у кладовщика напрямую, иначе поставка так и зависнет на сборке. */}
             {pending.map((item) => (
               <div
                 key={item.id}
@@ -142,11 +146,7 @@ const FboShipmentsCard = () => {
                   </div>
                 </div>
                 <div className="flex flex-wrap gap-2">
-                  <Button
-                    size="sm"
-                    onClick={() => answer(item, true)}
-                    disabled={busyId === item.id}
-                  >
+                  <Button size="sm" onClick={() => answer(item, true)} disabled={busyId === item.id}>
                     {busyId === item.id ? (
                       <Icon name="Loader2" size={14} className="mr-1 animate-spin" />
                     ) : (
@@ -166,60 +166,10 @@ const FboShipmentsCard = () => {
               </div>
             ))}
 
-            <div className="overflow-x-auto">
-              <Table>
-                <TableHeader>
-                  <TableRow className="bg-primary hover:bg-primary">
-                    <TableHead className="text-primary-foreground">Поставка</TableHead>
-                    <TableHead className="text-primary-foreground">Маркетплейс</TableHead>
-                    <TableHead className="text-primary-foreground">Кластер</TableHead>
-                    <TableHead className="text-primary-foreground text-right">Заказов</TableHead>
-                    <TableHead className="text-primary-foreground">Статус</TableHead>
-                    <TableHead className="text-primary-foreground">В газельку</TableHead>
-                    <TableHead className="text-primary-foreground">Способ</TableHead>
-                    <TableHead className="text-primary-foreground">На воротах</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {items.map((item) => (
-                    <TableRow
-                      key={item.id}
-                      className="cursor-pointer"
-                      onClick={() => navigate(`/crm/shipments/to-marketplace/${item.id}`)}
-                    >
-                      <TableCell className="font-mono-tech font-medium">
-                        {item.supplyNumber || `#${item.id}`}
-                      </TableCell>
-                      <TableCell>{item.marketplace}</TableCell>
-                      <TableCell>{item.cluster || '—'}</TableCell>
-                      <TableCell className="text-right">{item.ordersCount}</TableCell>
-                      <TableCell>
-                        <Badge variant={statusVariant(item.status)}>{item.status}</Badge>
-                      </TableCell>
-                      {/* Показываем факт отгрузки, если он есть, иначе план. */}
-                      <TableCell className="text-sm">
-                        {item.gazelkaShippedAt ? (
-                          <span className="font-medium">
-                            {fmtDateTime(item.gazelkaShippedAt)}
-                          </span>
-                        ) : (
-                          <span className="text-muted-foreground">
-                            план {fmtDateTime(item.shipToGazelkaAt)}
-                          </span>
-                        )}
-                      </TableCell>
-                      {/* Забирает газелька с нашего склада или везём до склада сами. */}
-                      <TableCell className="text-sm text-muted-foreground">
-                        {item.gazelkaPickup ? 'Забор газелькой' : 'До склада'}
-                      </TableCell>
-                      <TableCell className="text-sm">
-                        {fmtDateTime(item.shipToMarketplaceAt)}
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </div>
+            <ToMarketplaceCards
+              supplies={supplies}
+              onOpen={(id) => navigate(`/crm/shipments/to-marketplace/${id}`)}
+            />
           </>
         )}
       </CardContent>
