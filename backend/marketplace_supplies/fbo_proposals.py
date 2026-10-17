@@ -341,7 +341,10 @@ def _ozon_stock(client_id, api_key, clusters):
 
 
 def build(cur, shop_id):
-    cur.execute('SELECT pg_advisory_xact_lock(740361, %s)', (int(shop_id),))
+    # Два одновременных нажатия «Сформировать» не должны занять одни и те же
+    # GW дважды: второй расчёт ждёт, пока первый не закончит. Служебные
+    # блокировки базы на платформе запрещены, поэтому держим строку магазина.
+    cur.execute('SELECT id FROM shops WHERE id = %s FOR UPDATE', (int(shop_id),))
     goods = _free_goods(cur, shop_id)
     demand = _demand(cur, shop_id)
     if not demand:
