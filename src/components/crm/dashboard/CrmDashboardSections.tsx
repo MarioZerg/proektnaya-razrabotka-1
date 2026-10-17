@@ -83,6 +83,10 @@ const CrmDashboardSections = ({
 
     {widgets.length > 0 && <DashboardWidgetsGrid widgets={widgets} loading={dataLoading} />}
 
+    {/* Отгрузки FBO — сразу под плитками (последняя из них — рулоны с малым
+        остатком). Нужны складу, менеджеру и администратору. */}
+    {canSeeFboBoard && <FboShipmentsCard />}
+
     {/* Живой цех: админ и кладовщики — видят, как вещи движутся по цеху. */}
     {(isAdmin || canSeeLiveFloor) && (
       <LiveFloorBoundary>
@@ -96,10 +100,6 @@ const CrmDashboardSections = ({
         с сотрудников или списать на поставщика. Карточка сама скрывается, когда
         нерассмотренных рулонов нет. */}
     {isAdmin && <ShortagePenaltyCard />}
-
-    {/* Отгрузки FBO: путь поставки от сборки до сдачи на воротах маркетплейса.
-        Нужен тем, кто отвечает за отгрузку — складу, менеджеру и администратору. */}
-    {canSeeFboBoard && <FboShipmentsCard />}
 
     <div className="grid grid-cols-1 gap-6 lg:grid-cols-5">
       {isAdmin ? (
