@@ -1,6 +1,6 @@
 import type { Dispatch, SetStateAction } from 'react';
 import { usePrintOrderSticker } from '@/components/crm/sewingItems/usePrintOrderSticker';
-import { useCutterTag, canPrintCutterTag } from '@/components/crm/sewingItems/useCutterTag';
+import { useCutterTag } from '@/components/crm/sewingItems/useCutterTag';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import {
@@ -102,7 +102,7 @@ const SewingItemsTable = ({
   canPrintSticker = false,
 }: SewingItemsTableProps) => {
   const { printingId, printSticker: handlePrintSticker } = usePrintOrderSticker();
-  const { printingTagId, printCutterTag } = useCutterTag();
+  const { printingTagId, printCutterTag, canPrintCutterTag } = useCutterTag();
   const { arrived, moved, bindRow } = useConveyorRowMotion(pagedOrders);
 
   if (loading && pagedOrders.length === 0) {

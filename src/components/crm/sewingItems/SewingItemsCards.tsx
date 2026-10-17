@@ -16,7 +16,7 @@ import OrderStagesDiagram from '@/components/crm/sewingItems/OrderStagesDiagram'
 import OrderStageAvatars from '@/components/crm/sewingItems/OrderStageAvatars';
 import OrderWaitTimer from '@/components/crm/sewingItems/OrderWaitTimer';
 import { usePrintOrderSticker } from '@/components/crm/sewingItems/usePrintOrderSticker';
-import { useCutterTag, canPrintCutterTag } from '@/components/crm/sewingItems/useCutterTag';
+import { useCutterTag } from '@/components/crm/sewingItems/useCutterTag';
 import { isUrgent } from '@/components/crm/sewingItems/orderUrgency';
 import { orderHangerLabel } from '@/lib/hangersApi';
 
@@ -109,7 +109,7 @@ const SewingItemsCards = ({
   canPrintSticker = false,
 }: SewingItemsCardsProps) => {
   const { printingId, printSticker: handlePrintSticker } = usePrintOrderSticker();
-  const { printingTagId, printCutterTag } = useCutterTag();
+  const { printingTagId, printCutterTag, canPrintCutterTag } = useCutterTag();
 
   if (loading && pagedOrders.length === 0) {
     return (
