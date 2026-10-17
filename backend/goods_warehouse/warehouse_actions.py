@@ -32,6 +32,7 @@ from shared import (
     resolve_ozon_barcode,
     try_match_orders_from_stock,
     wb_sticker_number,
+    auto_release_stock,
 )
 from exports import export_stock_ozon_xlsx, export_stock_wb_xlsx, export_stock_xlsx
 
@@ -2048,6 +2049,25 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                     'restored': len(restored),
                 }, ensure_ascii=False),
             }
+
+        if action == 'auto_release':
+            # Фоновое освобождение вещей — только по ключу планировщика.
+            import os as _os
+            secret = _os.environ.get('CRON_SECRET', '')
+            if not secret or body_data.get('cronSecret') != secret:
+                return {'statusCode': 403, 'headers': headers, 'body': json.dumps(
+                    {'error': 'Неверный ключ планировщика'}, ensure_ascii=False)}
+            summary = auto_release_stock(cur)
+            if any(summary[k] for k in ('cancelled', 'shipped', 'fboLeftover')):
+                log_action(
+                    cur, None, 'Планировщик', 'stock_auto_release', 'goods_warehouse', None,
+                    f"Автоосвобождение склада: отменённых {summary['cancelled']}, "
+                    f"закрыто уехавших {summary['shipped']}, лишних FBO {summary['fboLeftover']}, "
+                    f"ждут полки {summary['toShelf']}, сразу подобрано под заказы {summary['matched']}",
+                )
+            conn.commit()
+            return {'statusCode': 200, 'headers': headers,
+                    'body': json.dumps(summary, ensure_ascii=False)}
 
         if action == 'rematch_stock':
             # Ручной перезапуск подбора по всему складу. Нужен как страховка: если

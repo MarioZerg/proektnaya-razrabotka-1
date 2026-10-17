@@ -210,6 +210,19 @@ JOBS = [
         'lateAfter': 120,
     },
     {
+        'key': 'stock_auto_release',
+        'title': 'Освобождение склада',
+        'func': 'ozon_fbs',
+        'urlAction': 'sync_orders',
+        'purpose': 'Снимает бронь с вещей отменённых заказов и лишних вещей закрытых '
+                   'поставок FBO, закрывает уехавшие с ярлыком. Запускается вместе '
+                   'с загрузкой OZON; пишет в журнал, только когда было что освободить',
+        'group': 'service',
+        'everyMin': 15,
+        'lateAfter': 1440,
+        'optional': True,
+    },
+    {
         'key': 'shifts_auto_close',
         'title': 'Автозакрытие смен',
         'func': 'shift_sessions',

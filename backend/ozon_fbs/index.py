@@ -664,6 +664,26 @@ def _claim_chain_step(cur, conn, job, step):
         return False
 
 
+GOODS_WAREHOUSE_URL = 'https://functions.poehali.dev/370fdff8-7cae-4cc7-a853-b664f3da61cf'
+
+
+def _kick_stock_release():
+    """Просит склад освободить вещи отменённых и уехавших заказов. Ответа не ждём."""
+    secret = os.environ.get('CRON_SECRET', '')
+    if not secret:
+        return
+    req = urllib.request.Request(
+        GOODS_WAREHOUSE_URL,
+        data=json.dumps({'action': 'auto_release', 'cronSecret': secret}).encode(),
+        headers={'Content-Type': 'application/json'},
+        method='POST',
+    )
+    try:
+        urllib.request.urlopen(req, timeout=0.5)
+    except Exception:
+        pass
+
+
 def _continue_later(payload):
     """Просит систему запустить эту же функцию ещё раз — доделать остаток.
 
@@ -2282,6 +2302,14 @@ def _handler_impl(event: dict, context) -> dict:
             return _resp(403, {'error': 'Неверный ключ планировщика'})
         # В журнале должно быть видно, что заказы подтянул планировщик, а не сотрудник.
         actor_id, actor_name = None, 'Планировщик'
+        # ЗАОДНО — АВТООСВОБОЖДЕНИЕ СКЛАДА.
+        # Отменённые и уехавшие заказы держали вещи в подборе, пока кто-то не
+        # нажмёт кнопку. Запускаем освобождение раз в 15 минут вместе с загрузкой
+        # заказов: отдельного задания в планировщике заводить не нужно. Только
+        # на первом запуске цикла — догрузки и другие кабинеты его не повторяют.
+        if (action == 'sync_orders' and not body_data.get('chain')
+                and not body_data.get('shopId') and not body_data.get('postingNumbers')):
+            _kick_stock_release()
 
     if action not in ('sync_orders', 'split_pending', 'refresh_status',
                       'refresh_all_statuses', 'label', 'find_by_barcode'):

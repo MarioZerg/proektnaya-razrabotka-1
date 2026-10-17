@@ -956,3 +956,120 @@ RESERVED_IN_OLD_SUPPLY_SQL = (
     "   WHERE osi.goods_warehouse_id = gw.id "
     "     AND COALESCE(os.status, '') IN ('Выполнена', 'Отменена')))"
 )
+
+
+def auto_release_stock(cur):
+    """Освобождает вещи склада без участия людей. Запускается планировщиком.
+
+    Раньше бронь с вещей снималась, только когда кто-то открывал экран подбора
+    или жал кнопку в панели: за две недели кладовщики сделали это руками больше
+    восьмидесяти раз. Товар ходит через сканер, система и так знает всё нужное.
+
+    Три правила — только там, где ошибиться нельзя:
+      1. Заказ отменён — вещь возвращается в свободный остаток.
+      2. Заказ уехал к покупателю, а на вещи был наклеен ярлык — сканер подтвердил,
+         что уехала именно она: закрываем как отгруженную.
+      3. Поставка FBO закрыта, а вещь с её бронью в короб не попала — это лишняя,
+         она снова свободный остаток.
+
+    Вещь без полки (её сняли под ярлык) не объявляем лежащей на стеллаже — она
+    встаёт в «положить на полку», и кладовщик сканирует её на место.
+
+    Случай «заказ уехал, а ярлык не клеили» сюда НЕ входит: где вещь физически —
+    неизвестно, это решает старший кладовщик.
+    """
+    not_in_live_supply = "NOT " + GOODS_IN_LIVE_SUPPLY_SQL.format(gw='gw')
+    summary = {'cancelled': 0, 'shipped': 0, 'fboLeftover': 0, 'toShelf': 0, 'matched': 0}
+
+    def _free(ids, reason_action, reason_text):
+        if not ids:
+            return
+        ids_csv = ','.join(str(int(i)) for i in ids)
+        cur.execute(
+            "UPDATE orders SET fulfilled_from_stock_id = NULL "
+            f"WHERE fulfilled_from_stock_id IN ({ids_csv})"
+        )
+        cur.execute(
+            "UPDATE goods_warehouse SET "
+            "  status = CASE WHEN shelf_id IS NULL THEN 'awaiting_shelf' ELSE 'in_stock' END, "
+            "  storage_labeled_at = CASE WHEN shelf_id IS NULL "
+            "                            THEN COALESCE(storage_labeled_at, now()) "
+            "                            ELSE storage_labeled_at END, "
+            "  reserved_order_id = NULL, matched_at = NULL, "
+            "  picked_confirmed_at = NULL, picked_confirmed_by = NULL, "
+            "  shipping_labeled_at = NULL, shipping_labeled_by = NULL, "
+            "  shipping_labeled_by_name = NULL "
+            f"WHERE id IN ({ids_csv}) RETURNING shelf_id IS NULL"
+        )
+        summary['toShelf'] += sum(1 for r in cur.fetchall() if r[0])
+        log_bulk(cur, None, 'Система', reason_action, 'goods_warehouse', ids, reason_text)
+
+    # 1. Заказ отменён.
+    cur.execute(
+        "SELECT gw.id FROM goods_warehouse gw "
+        "JOIN orders ro ON ro.id = gw.reserved_order_id "
+        "WHERE gw.status IN ('picking', 'in_stock', 'awaiting_supply') "
+        "  AND gw.shipped_at IS NULL "
+        "  AND (ro.status = 'Отменён' OR ro.sewing_status = 'Отменён' "
+        "       OR ro.cancelled_at IS NOT NULL "
+        "       OR strpos(lower(COALESCE(ro.ozon_status, '')), 'cancel') = 1 "
+        "       OR strpos(upper(COALESCE(ro.ym_status, '')), 'CANCEL') > 0) "
+        f"  AND {not_in_live_supply} "
+        "LIMIT 200 FOR UPDATE OF gw SKIP LOCKED"
+    )
+    ids = [r[0] for r in cur.fetchall()]
+    summary['cancelled'] = len(ids)
+    _free(ids, 'auto_release_cancelled',
+          'Автоматически: заказ отменён — бронь и ярлык сняты, вещь снова в остатке')
+
+    # 2. Уехала к покупателю с наклеенным ярлыком.
+    cur.execute(
+        "SELECT gw.id FROM goods_warehouse gw "
+        "JOIN orders ro ON ro.id = gw.reserved_order_id "
+        "WHERE (gw.status IN ('picking', 'awaiting_supply') "
+        f"       OR {RESERVED_IN_OLD_SUPPLY_SQL}) "
+        "  AND gw.shipped_at IS NULL "
+        "  AND gw.shipping_labeled_at IS NOT NULL "
+        "  AND (COALESCE(ro.ozon_status, '') IN ('delivering', 'delivered', 'driver_pickup') "
+        "       OR COALESCE(ro.status, '') IN ('Отгружен', 'Доставлен')) "
+        f"  AND {not_in_live_supply} "
+        "LIMIT 200 FOR UPDATE OF gw SKIP LOCKED"
+    )
+    ids = [r[0] for r in cur.fetchall()]
+    if ids:
+        ids_csv = ','.join(str(int(i)) for i in ids)
+        cur.execute(
+            "UPDATE goods_warehouse SET status = 'shipped', shipped_at = now(), "
+            f"shelf_id = NULL WHERE id IN ({ids_csv})"
+        )
+        log_bulk(cur, None, 'Система', 'auto_close_shipped', 'goods_warehouse', ids,
+                 'Автоматически: отправление уехало к покупателю, ярлык был наклеен '
+                 'на эту вещь — закрыта как отгруженная')
+    summary['shipped'] = len(ids)
+
+    # 3. Лишние вещи закрытой поставки FBO. Вещь в закрытом коробе уехала —
+    #    её не трогаем; освобождаем только то, что в короба не легло.
+    cur.execute(
+        "SELECT gw.id FROM goods_warehouse gw "
+        "JOIN orders ro ON ro.id = gw.reserved_order_id "
+        "JOIN marketplace_supplies s ON s.id = ro.supply_id "
+        "WHERE upper(COALESCE(ro.order_type, '')) = 'FBO' "
+        "  AND s.status IN ('Выполнена', 'Отменена') "
+        "  AND gw.status IN ('picking', 'awaiting_supply', 'in_stock') "
+        "  AND gw.shipped_at IS NULL "
+        f"  AND {not_in_live_supply} "
+        "  AND NOT EXISTS (SELECT 1 FROM marketplace_supply_items msi "
+        "        LEFT JOIN marketplace_supply_boxes b ON b.id = msi.box_id "
+        "        WHERE msi.goods_warehouse_id = gw.id "
+        "          AND (msi.box_id IS NULL OR b.closed_at IS NOT NULL)) "
+        "LIMIT 200 FOR UPDATE OF gw SKIP LOCKED"
+    )
+    ids = [r[0] for r in cur.fetchall()]
+    summary['fboLeftover'] = len(ids)
+    _free(ids, 'auto_release_fbo_leftover',
+          'Автоматически: поставка FBO закрыта, вещь в короб не попала — '
+          'снова свободный остаток')
+
+    if summary['cancelled'] or summary['fboLeftover']:
+        summary['matched'] = len(try_match_orders_from_stock(cur) or [])
+    return summary
