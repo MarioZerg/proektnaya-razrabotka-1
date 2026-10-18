@@ -158,6 +158,54 @@
         "reasonLabel": "тест"
       },
       "expectedStatus": 403
+    },
+    {
+      "name": "Removal request without piece fails",
+      "method": "POST",
+      "path": "/",
+      "body": {
+        "action": "request_removal",
+        "reason": "defective"
+      },
+      "expectedStatus": 400
+    },
+    {
+      "name": "Removal request with bad reason fails",
+      "method": "POST",
+      "path": "/",
+      "body": {
+        "action": "request_removal",
+        "pieceId": 1,
+        "reason": "xxx"
+      },
+      "expectedStatus": 400
+    },
+    {
+      "name": "Removal request without login fails",
+      "method": "POST",
+      "path": "/",
+      "body": {
+        "action": "request_removal",
+        "pieceId": 1,
+        "reason": "defective"
+      },
+      "expectedStatus": 401
+    },
+    {
+      "name": "Dismiss removal without login fails",
+      "method": "POST",
+      "path": "/",
+      "body": {
+        "action": "dismiss_removal",
+        "pieceId": 1
+      },
+      "expectedStatus": 401
+    },
+    {
+      "name": "Removal tab works",
+      "method": "GET",
+      "path": "/?status=removal",
+      "expectedStatus": 200
     }
   ]
 }

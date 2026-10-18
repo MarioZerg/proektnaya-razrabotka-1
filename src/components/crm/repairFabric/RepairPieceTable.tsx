@@ -11,6 +11,7 @@ import Icon from '@/components/ui/icon';
 import { formatDateTime } from '@/lib/dateUtils';
 import type { RepairPiece } from '@/lib/repairFabricApi';
 import StatusBadge from '@/components/crm/repairFabric/RepairStatusBadge';
+import RemovalRequestNote from '@/components/crm/repairFabric/RemovalRequestNote';
 
 interface RepairPieceTableProps {
   visible: RepairPiece[];
@@ -20,7 +21,12 @@ interface RepairPieceTableProps {
   handleWriteOff: (piece: RepairPiece) => void;
   handleDelete: (piece: RepairPiece) => void;
   onOpen: (piece: RepairPiece) => void;
+  canRequestRemoval?: boolean;
+  onRequestRemoval?: (piece: RepairPiece) => void;
 }
+
+const canAsk = (p: RepairPiece) =>
+  !p.removalRequest && ['available', 'reserved', 'incoming'].includes(p.status);
 
 const RepairPieceTable = ({
   visible,
@@ -30,6 +36,8 @@ const RepairPieceTable = ({
   handleWriteOff,
   handleDelete,
   onOpen,
+  canRequestRemoval,
+  onRequestRemoval,
 }: RepairPieceTableProps) => (
   <div className="hidden overflow-x-auto md:block">
     <Table>
@@ -47,7 +55,7 @@ const RepairPieceTable = ({
           <TableHead>Когда</TableHead>
           {isAdmin && <TableHead>Куда ушёл</TableHead>}
           <TableHead className="w-10" />
-          {isAdmin && <TableHead />}
+          {(isAdmin || canRequestRemoval) && <TableHead />}
         </TableRow>
       </TableHeader>
       <TableBody>
@@ -74,6 +82,7 @@ const RepairPieceTable = ({
               {p.sourceOrderNumber && (
                 <div className="text-xs text-muted-foreground">заказ {p.sourceOrderNumber}</div>
               )}
+              {p.removalRequest && <RemovalRequestNote request={p.removalRequest} compact />}
             </TableCell>
             <TableCell>
               <StatusBadge status={p.status} />
@@ -103,6 +112,22 @@ const RepairPieceTable = ({
             <TableCell className="text-muted-foreground">
               <Icon name="ChevronRight" size={16} title="Открыть историю" />
             </TableCell>
+            {!isAdmin && canRequestRemoval && (
+              <TableCell className="text-right" onClick={(e) => e.stopPropagation()}>
+                {canAsk(p) && onRequestRemoval && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="text-destructive hover:text-destructive"
+                    title="Попросить администратора удалить кусок"
+                    onClick={() => onRequestRemoval(p)}
+                  >
+                    <Icon name="MessageSquareWarning" size={14} className="mr-1.5" />
+                    На удаление
+                  </Button>
+                )}
+              </TableCell>
+            )}
             {isAdmin && (
               <TableCell className="text-right" onClick={(e) => e.stopPropagation()}>
                 <div className="flex justify-end gap-1">

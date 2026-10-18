@@ -3,6 +3,7 @@ import Icon from '@/components/ui/icon';
 import { formatDateTime } from '@/lib/dateUtils';
 import type { RepairPiece } from '@/lib/repairFabricApi';
 import StatusBadge from '@/components/crm/repairFabric/RepairStatusBadge';
+import RemovalRequestNote from '@/components/crm/repairFabric/RemovalRequestNote';
 
 interface RepairPieceCardsProps {
   visible: RepairPiece[];
@@ -12,6 +13,8 @@ interface RepairPieceCardsProps {
   handleWriteOff: (piece: RepairPiece) => void;
   handleDelete: (piece: RepairPiece) => void;
   onOpen: (piece: RepairPiece) => void;
+  canRequestRemoval?: boolean;
+  onRequestRemoval?: (piece: RepairPiece) => void;
 }
 
 const RepairPieceCards = ({
@@ -22,6 +25,8 @@ const RepairPieceCards = ({
   handleWriteOff,
   handleDelete,
   onOpen,
+  canRequestRemoval,
+  onRequestRemoval,
 }: RepairPieceCardsProps) => (
   <>
     {/* Мобильные карточки: в цехе смотрят с телефона, таблица там не читается. */}
@@ -62,6 +67,7 @@ const RepairPieceCards = ({
               <p className="text-xs text-muted-foreground">
                 {p.createdByName || '—'} · {formatDateTime(p.createdAt)}
               </p>
+              {p.removalRequest && <RemovalRequestNote request={p.removalRequest} compact />}
             </div>
             <div className="flex shrink-0 flex-col items-end gap-1">
               <StatusBadge status={p.status} />
@@ -77,6 +83,27 @@ const RepairPieceCards = ({
               {p.usedOrderNumber}
             </p>
           )}
+          {!isAdmin &&
+            canRequestRemoval &&
+            onRequestRemoval &&
+            !p.removalRequest &&
+            ['available', 'reserved', 'incoming'].includes(p.status) && (
+              <div
+                className="mt-2"
+                onClick={(e) => e.stopPropagation()}
+                onKeyDown={(e) => e.stopPropagation()}
+              >
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="text-destructive hover:text-destructive"
+                  onClick={() => onRequestRemoval(p)}
+                >
+                  <Icon name="MessageSquareWarning" size={14} className="mr-1.5" />
+                  Отправить на удаление
+                </Button>
+              </div>
+            )}
           {isAdmin && p.status !== 'used' && (
             <div
               className="mt-2 flex gap-2"

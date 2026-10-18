@@ -70,13 +70,35 @@ export interface RepairPiece {
   sewnAt?: string | null;
   packedAt?: string | null;
   disposeReason?: string | null;
+  /** Закройщик попросил администратора удалить кусок — ждёт решения. */
+  removalRequest?: RepairRemovalRequest | null;
   /** Насколько кусок больше заказа — только в подборе под заказ. */
   extraWidth?: number;
   extraHeight?: number;
 }
 
+export type RepairRemovalReason = 'sticker_mismatch' | 'defective';
+
+export const REMOVAL_REASON_LABELS: Record<RepairRemovalReason, string> = {
+  sticker_mismatch: 'Не соответствует стикеру',
+  defective: 'Бракованный, не подходит',
+};
+
+export interface RepairRemovalRequest {
+  reason: RepairRemovalReason;
+  reasonLabel: string;
+  comment?: string | null;
+  byName?: string | null;
+  at: string;
+}
+
+/** Вкладка списка: статус куска, вся история или просьбы на удаление. */
+export type RepairPiecesTab = RepairPieceStatus | 'all' | 'removal';
+
 export interface RepairPiecesResult {
   pieces: RepairPiece[];
+  /** Сколько кусков закройщики просят удалить — уведомление администратору. */
+  removalRequests: number;
   /** Сколько кусков каждого материала лежит в цехе. */
   summary: Array<{ material: string; count: number }>;
 }
@@ -116,14 +138,29 @@ const post = (payload: Record<string, unknown>) =>
   });
 
 /** Остатки кусков в цехе. status='all' — вся история, включая израсходованные. */
-export const fetchRepairPieces = (
-  params: { status?: RepairPieceStatus | 'all'; material?: string } = {},
+export const fetchRepairPieces = async (
+  params: { status?: RepairPiecesTab; material?: string } = {},
 ): Promise<RepairPiecesResult> => {
   const q = new URLSearchParams();
   if (params.status) q.set('status', params.status);
   if (params.material) q.set('material', params.material);
-  return request(`${REPAIR_FABRIC_URL}?${q.toString()}`);
+  const data = await request(`${REPAIR_FABRIC_URL}?${q.toString()}`);
+  return { ...data, removalRequests: data.removalRequests ?? 0 };
 };
+
+/**
+ * Закройщик просит администратора удалить кусок: не соответствует стикеру
+ * или бракованный. Сам кусок не удаляется — решает администратор.
+ */
+export const requestPieceRemoval = (
+  pieceId: number,
+  reason: RepairRemovalReason,
+  comment?: string,
+) => post({ action: 'request_removal', pieceId, reason, comment });
+
+/** Администратор отказал в удалении — кусок остаётся в цехе. */
+export const dismissPieceRemoval = (pieceId: number) =>
+  post({ action: 'dismiss_removal', pieceId });
 
 /**
  * Куски, которыми можно перешить конкретный заказ.

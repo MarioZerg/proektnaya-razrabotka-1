@@ -7,11 +7,13 @@ import { useAuth } from '@/context/AuthContext';
 import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
 import {
   deleteRepairPiece,
+  dismissPieceRemoval,
   fetchRepairPieces,
   writeOffRepairPiece,
   type RepairPiece,
-  type RepairPieceStatus,
+  type RepairPiecesTab,
 } from '@/lib/repairFabricApi';
+import RequestRemovalDialog from '@/components/crm/repairFabric/RequestRemovalDialog';
 import RepairPieceBatchScanner from '@/components/crm/repairFabric/RepairPieceBatchScanner';
 import RepairFabricFilters from '@/components/crm/repairFabric/RepairFabricFilters';
 import RepairPieceCards from '@/components/crm/repairFabric/RepairPieceCards';
@@ -45,12 +47,16 @@ const RepairFabric = () => {
   const isAdmin = user?.role === 'admin';
   const isStorekeeper = user?.role === 'storekeeper' || user?.role === 'senior_storekeeper';
   const canAddPiece = isAdmin || isStorekeeper;
+  const isCutter = user?.role === 'cutter';
 
   const [pieces, setPieces] = useState<RepairPiece[]>([]);
   const [summary, setSummary] = useState<Array<{ material: string; count: number }>>([]);
   const [loading, setLoading] = useState(true);
   const [listError, setListError] = useState<string | null>(null);
-  const [tab, setTab] = useState<RepairPieceStatus | 'all'>('available');
+  const [tab, setTab] = useState<RepairPiecesTab>('available');
+  const [removalRequests, setRemovalRequests] = useState(0);
+  const [askRemoval, setAskRemoval] = useState<RepairPiece | null>(null);
+  const [dismissing, setDismissing] = useState<number | null>(null);
   const [material, setMaterial] = useState('all');
   const [writingOff, setWritingOff] = useState<number | null>(null);
   const [deleting, setDeleting] = useState<number | null>(null);
@@ -66,6 +72,7 @@ const RepairFabric = () => {
         setListError(null);
         setPieces(r.pieces);
         setSummary(r.summary);
+        setRemovalRequests(r.removalRequests);
       })
       .catch((e) => {
         setListError(e instanceof Error ? e.message : 'Не удалось загрузить куски');
@@ -163,6 +170,23 @@ const RepairFabric = () => {
     }
   };
 
+  const handleDismissRemoval = async (piece: RepairPiece) => {
+    setDismissing(piece.id);
+    try {
+      await dismissPieceRemoval(piece.id);
+      toast({ title: 'Кусок оставлен в цехе' });
+      load();
+    } catch (e) {
+      toast({
+        title: 'Не удалось',
+        description: e instanceof Error ? e.message : undefined,
+        variant: 'destructive',
+      });
+    } finally {
+      setDismissing(null);
+    }
+  };
+
   return (
     <CrmLayout>
       <div className="space-y-4">
@@ -218,6 +242,7 @@ const RepairFabric = () => {
           isAdmin={isAdmin}
           search={search}
           setSearch={setSearch}
+          removalRequests={removalRequests}
         />
 
         {loading ? (
@@ -234,7 +259,9 @@ const RepairFabric = () => {
                 ? 'В цехе нет кусков на перешив'
                 : tab === 'reserved'
                   ? 'Ни один кусок не закреплён за заказом'
-                  : 'Ничего не найдено'}
+                  : tab === 'removal'
+                    ? 'Закройщики ничего не просят удалить'
+                    : 'Ничего не найдено'}
             </p>
             <p className="text-sm text-muted-foreground">
               Куски появляются, когда упаковщица отправляет их с перепаковки или
@@ -252,6 +279,8 @@ const RepairFabric = () => {
               handleWriteOff={handleWriteOff}
               handleDelete={handleDelete}
               onOpen={setSelected}
+              canRequestRemoval={isCutter}
+              onRequestRemoval={setAskRemoval}
             />
 
             <RepairPieceTable
@@ -262,6 +291,8 @@ const RepairFabric = () => {
               handleWriteOff={handleWriteOff}
               handleDelete={handleDelete}
               onOpen={setSelected}
+              canRequestRemoval={isCutter}
+              onRequestRemoval={setAskRemoval}
             />
           </>
         )}
@@ -277,6 +308,18 @@ const RepairFabric = () => {
           deleting={deleting}
           onWriteOff={handleWriteOff}
           onDelete={handleDelete}
+          canRequestRemoval={isCutter}
+          onRequestRemoval={setAskRemoval}
+          dismissing={dismissing}
+          onDismissRemoval={handleDismissRemoval}
+        />
+
+        <RequestRemovalDialog
+          piece={askRemoval}
+          onOpenChange={(open) => {
+            if (!open) setAskRemoval(null);
+          }}
+          onSent={load}
         />
       </div>
     </CrmLayout>

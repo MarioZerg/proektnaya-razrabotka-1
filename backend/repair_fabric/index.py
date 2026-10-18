@@ -8,6 +8,7 @@ from authz import (
     auth_error_response,
     current_user,
     require_admin,
+    require_role,
 )
 
 CORS_HEADERS = {
@@ -132,7 +133,10 @@ def list_pieces(cur, event):
 
     where = []
     params = []
-    if status != 'all':
+    if status == 'removal':
+        where.append("p.removal_requested_at IS NOT NULL "
+                     "AND p.status IN ('available', 'reserved', 'incoming')")
+    elif status != 'all':
         where.append("p.status = %s")
         params.append(status)
     if material:
@@ -148,7 +152,9 @@ def list_pieces(cur, event):
         f"       p.barcode, p.reason_label, p.added_by_role, p.goods_warehouse_id, "
         f"       gw.storage_barcode, src.order_number, "
         f"       gw.received_at, gw.shipping_labeled_at, gw.shipped_at, "
-        f"       src.cut_at, src.sewn_at, src.packed_at, gw.dispose_reason "
+        f"       src.cut_at, src.sewn_at, src.packed_at, gw.dispose_reason, "
+        f"       p.removal_reason, p.removal_comment, p.removal_requested_by_name, "
+        f"       p.removal_requested_at "
         f"FROM repair_fabric_pieces p "
         f"LEFT JOIN workshops w ON w.id = p.workshop_id "
         f"LEFT JOIN orders o ON o.id = p.used_order_id "
@@ -174,6 +180,16 @@ def list_pieces(cur, event):
             'receivedAt': r[22], 'labeledAt': r[23], 'shippedAt': r[24],
             'cutAt': r[25], 'sewnAt': r[26], 'packedAt': r[27],
             'disposeReason': r[28],
+            'removalRequest': (
+                {
+                    'reason': r[29],
+                    'reasonLabel': REMOVAL_REASONS.get(r[29], r[29]),
+                    'comment': r[30],
+                    'byName': r[31],
+                    'at': r[32],
+                }
+                if r[32] else None
+            ),
         }
         for r in cur.fetchall()
     ]
@@ -187,9 +203,18 @@ def list_pieces(cur, event):
         summary.setdefault(p['material'], 0)
         summary[p['material']] += 1
 
+    # Просьбы закройщиков удалить кусок — админ видит их на любой вкладке,
+    # а не только там, где этот кусок лежит по статусу.
+    cur.execute(
+        "SELECT COUNT(*) FROM repair_fabric_pieces "
+        "WHERE removal_requested_at IS NOT NULL AND status IN ('available', 'reserved', 'incoming')"
+    )
+    removal_requests = int(cur.fetchone()[0] or 0)
+
     return _resp(200, {
         'pieces': pieces,
         'summary': [{'material': k, 'count': v} for k, v in sorted(summary.items())],
+        'removalRequests': removal_requests,
     })
 
 
@@ -777,6 +802,90 @@ def delete_piece(cur, conn, event, body):
     return _resp(200, {'success': True})
 
 
+REMOVAL_REASONS = {
+    'sticker_mismatch': 'Не соответствует стикеру',
+    'defective': 'Бракованный, не подходит',
+}
+
+
+def request_removal(cur, conn, event, body):
+    """Закройщик просит администратора удалить кусок.
+
+    Сам закройщик кусок не удаляет: удаление стирает строку из учёта, это
+    решение администратора. Кусок до решения остаётся в таблице, но помечен —
+    админ видит просьбу, причину и кто просит.
+    """
+    piece_id = body.get('pieceId')
+    reason = (body.get('reason') or '').strip()
+    comment = (body.get('comment') or '').strip()[:500]
+    if not piece_id:
+        return _resp(400, {'error': 'Укажите кусок'})
+    if reason not in REMOVAL_REASONS:
+        return _resp(400, {'error': 'Выберите причину'})
+
+    user = require_role(cur, event, 'cutter', 'admin')
+
+    cur.execute(
+        "SELECT status, material, width, height, removal_requested_at "
+        "FROM repair_fabric_pieces WHERE id = %s FOR UPDATE",
+        (int(piece_id),),
+    )
+    row = cur.fetchone()
+    if not row:
+        return _resp(404, {'error': 'Кусок не найден'})
+    status, material, width, height, requested_at = row
+    if status not in ('available', 'reserved', 'incoming'):
+        return _resp(409, {'error': 'Кусок уже раскроен, списан или удалён'})
+    if requested_at:
+        return _resp(409, {'error': 'Просьба об удалении уже отправлена администратору'})
+
+    cur.execute(
+        "UPDATE repair_fabric_pieces SET removal_reason = %s, removal_comment = %s, "
+        "  removal_requested_by = %s, removal_requested_by_name = %s, "
+        "  removal_requested_at = now() WHERE id = %s",
+        (reason, comment or None, user['realUserId'], user['name'], int(piece_id)),
+    )
+    log_action(
+        cur, user['realUserId'], user['name'], 'repair_piece_removal_request', piece_id,
+        f'Просит удалить кусок {material} {width}x{height}: {REMOVAL_REASONS[reason]}'
+        + (f' — {comment}' if comment else ''),
+    )
+    conn.commit()
+    return _resp(200, {'success': True})
+
+
+def dismiss_removal(cur, conn, event, body):
+    """Администратор отказал: кусок остаётся в цехе, пометка снимается."""
+    piece_id = body.get('pieceId')
+    if not piece_id:
+        return _resp(400, {'error': 'Укажите кусок'})
+
+    user = require_admin(cur, event)
+
+    cur.execute(
+        "SELECT material, width, height, removal_requested_by_name "
+        "FROM repair_fabric_pieces WHERE id = %s AND removal_requested_at IS NOT NULL",
+        (int(piece_id),),
+    )
+    row = cur.fetchone()
+    if not row:
+        return _resp(404, {'error': 'Просьба об удалении не найдена'})
+    material, width, height, by_name = row
+
+    cur.execute(
+        "UPDATE repair_fabric_pieces SET removal_reason = NULL, removal_comment = NULL, "
+        "  removal_requested_by = NULL, removal_requested_by_name = NULL, "
+        "  removal_requested_at = NULL WHERE id = %s",
+        (int(piece_id),),
+    )
+    log_action(
+        cur, user['realUserId'], user['name'], 'repair_piece_removal_dismiss', piece_id,
+        f'Отказано в удалении куска {material} {width}x{height} (просил {by_name or "—"})',
+    )
+    conn.commit()
+    return _resp(200, {'success': True})
+
+
 def write_off_piece(cur, conn, event, body):
     """Администратор списывает кусок (брак, потеря, ошибка)."""
     piece_id = body.get('pieceId')
@@ -1067,6 +1176,10 @@ def _route(event, method):
                 return release_piece(cur, conn, event, body)
             if action == 'write_off':
                 return write_off_piece(cur, conn, event, body)
+            if action == 'request_removal':
+                return request_removal(cur, conn, event, body)
+            if action == 'dismiss_removal':
+                return dismiss_removal(cur, conn, event, body)
             if action == 'delete':
                 return delete_piece(cur, conn, event, body)
         except AuthError as err:

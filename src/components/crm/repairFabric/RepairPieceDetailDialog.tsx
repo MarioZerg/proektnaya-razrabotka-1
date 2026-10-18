@@ -12,6 +12,7 @@ import type { RepairPiece } from '@/lib/repairFabricApi';
 import { lifeFromRepairPiece } from '@/lib/goodsLifeTimeline';
 import GoodsLifeTimeline from '@/components/crm/goodsWarehouse/GoodsLifeTimeline';
 import StatusBadge from '@/components/crm/repairFabric/RepairStatusBadge';
+import RemovalRequestNote from '@/components/crm/repairFabric/RemovalRequestNote';
 
 interface Props {
   piece: RepairPiece | null;
@@ -22,6 +23,10 @@ interface Props {
   deleting: number | null;
   onWriteOff: (piece: RepairPiece) => void;
   onDelete: (piece: RepairPiece) => void;
+  canRequestRemoval?: boolean;
+  onRequestRemoval?: (piece: RepairPiece) => void;
+  dismissing?: number | null;
+  onDismissRemoval?: (piece: RepairPiece) => void;
 }
 
 const Fact = ({ label, value }: { label: string; value: ReactNode }) => (
@@ -46,6 +51,10 @@ const RepairPieceDetailDialog = ({
   deleting,
   onWriteOff,
   onDelete,
+  canRequestRemoval,
+  onRequestRemoval,
+  dismissing,
+  onDismissRemoval,
 }: Props) => {
   if (!piece) return null;
 
@@ -76,6 +85,7 @@ const RepairPieceDetailDialog = ({
               {piece.reasonLabel ? (
                 <p className="mt-1 text-sm font-medium text-amber-800">{piece.reasonLabel}</p>
               ) : null}
+              {piece.removalRequest ? <RemovalRequestNote request={piece.removalRequest} /> : null}
             </div>
             <StatusBadge status={piece.status} />
           </div>
@@ -138,8 +148,41 @@ const RepairPieceDetailDialog = ({
           </div>
         </div>
 
+        {!isAdmin &&
+          canRequestRemoval &&
+          onRequestRemoval &&
+          !piece.removalRequest &&
+          ['available', 'reserved', 'incoming'].includes(piece.status) && (
+            <div className="flex shrink-0 border-t border-border px-6 py-3">
+              <Button
+                variant="outline"
+                size="sm"
+                className="text-destructive hover:text-destructive"
+                onClick={() => onRequestRemoval(piece)}
+              >
+                <Icon name="MessageSquareWarning" size={14} className="mr-1.5" />
+                Отправить на удаление администратору
+              </Button>
+            </div>
+          )}
+
         {isAdmin && piece.status !== 'used' && (
           <div className="flex shrink-0 flex-wrap gap-2 border-t border-border px-6 py-3">
+            {piece.removalRequest && onDismissRemoval && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => onDismissRemoval(piece)}
+                disabled={dismissing === piece.id}
+              >
+                <Icon
+                  name={dismissing === piece.id ? 'Loader2' : 'Undo2'}
+                  size={14}
+                  className={`mr-1.5 ${dismissing === piece.id ? 'animate-spin' : ''}`}
+                />
+                Оставить кусок
+              </Button>
+            )}
             {piece.status !== 'written_off' && (
               <Button
                 variant="outline"
