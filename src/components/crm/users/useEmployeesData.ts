@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { fetchEmployees, type Employee } from '@/lib/usersApi';
+import type { EmployeesTab } from '@/components/crm/users/EmployeesTabsSwitch';
 
 /**
  * Список сотрудников: загрузка, вкладки «Работают»/«Архив», поиск и фильтры.
@@ -16,7 +17,7 @@ export const useEmployeesData = () => {
 
   // Работающие и уволенные — на разных вкладках. Архив открывают редко, поэтому
   // по умолчанию показываем тех, кто работает сейчас.
-  const [tab, setTab] = useState<'active' | 'archived'>('active');
+  const [tab, setTab] = useState<EmployeesTab>('active');
 
   const load = () => {
     setLoading(true);

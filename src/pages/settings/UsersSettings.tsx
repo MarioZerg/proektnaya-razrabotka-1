@@ -5,6 +5,8 @@ import EmployeeCardDialog from '@/components/crm/users/EmployeeCardDialog';
 import DeleteEmployeeDialog from '@/components/crm/users/DeleteEmployeeDialog';
 import ArchiveEmployeeDialog from '@/components/crm/users/ArchiveEmployeeDialog';
 import EmployeesTabsSwitch from '@/components/crm/users/EmployeesTabsSwitch';
+import CandidateChatsPanel from '@/components/crm/users/CandidateChatsPanel';
+import { useEffect } from 'react';
 import { useEmployeesData } from '@/components/crm/users/useEmployeesData';
 import { useEmployeeCard } from '@/components/crm/users/useEmployeeCard';
 import { useEmployeeActions } from '@/components/crm/users/useEmployeeActions';
@@ -70,12 +72,19 @@ const UsersSettings = () => {
     handleUnlockSalary,
   } = useEmployeeCard({ setEmployees, load });
 
+  const isAdmin = user?.role === 'admin' && !user.isImpersonated;
+
+  useEffect(() => {
+    if (!isAdmin && tab === 'candidates') setTab('active');
+  }, [isAdmin, tab, setTab]);
+
   return (
     <CrmLayout>
       <div className="space-y-6">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <h1 className="text-xl font-bold">Пользователи</h1>
 
+          {tab !== 'candidates' && (
           <div className="flex flex-wrap items-center gap-2">
             <Button
               type="button"
@@ -102,6 +111,7 @@ const UsersSettings = () => {
             createFileRef={createFileRef}
           />
           </div>
+          )}
         </div>
 
         <EmployeesTabsSwitch
@@ -109,8 +119,13 @@ const UsersSettings = () => {
           setTab={setTab}
           activeCount={activeCount}
           archivedCount={archivedCount}
+          showCandidates={isAdmin}
         />
 
+        {isAdmin && tab === 'candidates' ? (
+          <CandidateChatsPanel />
+        ) : (
+        <>
         {listError && (
           <WarehouseFetchError
             title="Не удалось загрузить сотрудников"
@@ -136,6 +151,8 @@ const UsersSettings = () => {
           enteringId={enteringId}
           currentUserId={user?.id}
         />
+        </>
+        )}
       </div>
 
       <EmployeeCardDialog

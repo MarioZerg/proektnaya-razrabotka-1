@@ -12,6 +12,7 @@ import psycopg2
 
 from authz import AuthError, auth_error_response, require_admin, require_auth
 import vacations as vacation_mod
+import candidate_chats
 from max_avatars import sync_max_avatars
 from onec_flush import enqueue_onec_entity, flush_onec_outbox
 
@@ -210,6 +211,34 @@ def handler(event: dict, context) -> dict:
                     'headers': headers,
                     'body': json.dumps(payload, ensure_ascii=False),
                 }
+            if str(params.get('candidateChats') or '') == '1':
+                require_admin(cur, event)
+                payload = candidate_chats.list_chats(cur)
+                conn.commit()
+                return {
+                    'statusCode': 200,
+                    'headers': headers,
+                    'body': json.dumps(payload, ensure_ascii=False),
+                }
+            if params.get('candidateChat'):
+                require_admin(cur, event)
+                try:
+                    live = str(params.get('live') or '1') != '0'
+                    payload = candidate_chats.load_thread(
+                        cur, params.get('candidateChat'), live=live,
+                    )
+                except RuntimeError as e:
+                    return {
+                        'statusCode': 400,
+                        'headers': headers,
+                        'body': json.dumps({'error': str(e)}, ensure_ascii=False),
+                    }
+                conn.commit()
+                return {
+                    'statusCode': 200,
+                    'headers': headers,
+                    'body': json.dumps(payload, ensure_ascii=False),
+                }
             if str(params.get('self') or '') == '1':
                 me = require_auth(cur, event)
                 cur.execute(
@@ -336,6 +365,86 @@ def handler(event: dict, context) -> dict:
         conn = psycopg2.connect(dsn)
         try:
             cur = conn.cursor()
+            # Авито шлёт webhook без токена сотрудника. Это не действие админа:
+            # в теле нет action, есть payload.type = message.
+            if candidate_chats.is_webhook(body_data):
+                candidate_chats.handle_webhook(cur, body_data)
+                conn.commit()
+                return {
+                    'statusCode': 200,
+                    'headers': headers,
+                    'body': json.dumps({'ok': True}),
+                }
+            # Авито при подписке на webhook проверяет адрес пустым POST и ждёт 200.
+            if not action and not body_data:
+                return {
+                    'statusCode': 200,
+                    'headers': headers,
+                    'body': json.dumps({'ok': True}),
+                }
+            if action == 'candidate_chats_sync':
+                require_admin(cur, event)
+                try:
+                    result = candidate_chats.sync_chats(cur)
+                except RuntimeError as e:
+                    conn.rollback()
+                    return {
+                        'statusCode': 400,
+                        'headers': headers,
+                        'body': json.dumps({'error': str(e)}, ensure_ascii=False),
+                    }
+                except Exception as e:
+                    conn.rollback()
+                    return {
+                        'statusCode': 502,
+                        'headers': headers,
+                        'body': json.dumps(
+                            {'error': f'Авито не ответил: {e}'},
+                            ensure_ascii=False,
+                        ),
+                    }
+                conn.commit()
+                return {
+                    'statusCode': 200,
+                    'headers': headers,
+                    'body': json.dumps({'success': True, **result}, ensure_ascii=False),
+                }
+            if action == 'candidate_chat_status':
+                require_admin(cur, event)
+                try:
+                    candidate_chats.set_status(
+                        cur, body_data.get('chatId'), body_data.get('status'),
+                    )
+                except RuntimeError as e:
+                    conn.rollback()
+                    return {
+                        'statusCode': 400,
+                        'headers': headers,
+                        'body': json.dumps({'error': str(e)}, ensure_ascii=False),
+                    }
+                conn.commit()
+                return {
+                    'statusCode': 200,
+                    'headers': headers,
+                    'body': json.dumps({'success': True}),
+                }
+            if action == 'candidate_chat_send':
+                require_admin(cur, event)
+                try:
+                    candidate_chats.send_reply(cur, body_data.get('chatId'), body_data.get('text'))
+                except RuntimeError as e:
+                    conn.rollback()
+                    return {
+                        'statusCode': 400,
+                        'headers': headers,
+                        'body': json.dumps({'error': str(e)}, ensure_ascii=False),
+                    }
+                conn.commit()
+                return {
+                    'statusCode': 200,
+                    'headers': headers,
+                    'body': json.dumps({'success': True}),
+                }
             if action in ('vacation_book', 'vacation_cancel'):
                 is_admin = False
                 actor_id = body_data.get('userId')
