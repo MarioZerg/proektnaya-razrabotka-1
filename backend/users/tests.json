@@ -98,6 +98,56 @@
         "action": "unarchive"
       },
       "expectedStatus": 401
+    },
+    {
+      "name": "Пустой POST от Авито отвечает 200",
+      "method": "POST",
+      "path": "/",
+      "body": {},
+      "expectedStatus": 200
+    },
+    {
+      "name": "Чаты кандидатов без админа закрыты",
+      "method": "GET",
+      "path": "/?candidateChats=1",
+      "expectedStatus": 401
+    },
+    {
+      "name": "Диалог кандидата без админа закрыт",
+      "method": "GET",
+      "path": "/?candidateChat=1&live=0",
+      "expectedStatus": 401
+    },
+    {
+      "name": "Синхронизация Авито без админа закрыта",
+      "method": "POST",
+      "path": "/",
+      "body": {
+        "action": "candidate_chats_sync"
+      },
+      "expectedStatus": 401
+    },
+    {
+      "name": "Ответ кандидату без админа закрыт",
+      "method": "POST",
+      "path": "/",
+      "body": {
+        "action": "candidate_chat_send",
+        "chatId": 1,
+        "text": "x"
+      },
+      "expectedStatus": 401
+    },
+    {
+      "name": "Статус кандидата без админа закрыт",
+      "method": "POST",
+      "path": "/",
+      "body": {
+        "action": "candidate_chat_status",
+        "chatId": 1,
+        "status": "selected"
+      },
+      "expectedStatus": 401
     }
   ]
 }
