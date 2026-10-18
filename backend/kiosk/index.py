@@ -3306,7 +3306,7 @@ def handler(event: dict, context) -> dict:
                     f"WHERE {where_sql} "
                     "ORDER BY d.created_at DESC, d.id DESC "
                     "LIMIT %s OFFSET %s",
-                    tuple(params) + [page_size, (page - 1) * page_size],
+                    tuple(params) + (page_size, (page - 1) * page_size),
                 )
                 items = [
                     {
