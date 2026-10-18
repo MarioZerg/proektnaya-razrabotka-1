@@ -120,9 +120,13 @@ const CandidateChatsPanel = () => {
       const result = await syncCandidateChats();
       toast({
         title: 'Чаты обновлены',
-        description: result.webhookError
-          ? `Диалогов по вакансиям: ${result.synced}. ${result.webhookError}`
-          : `Диалогов по вакансиям: ${result.synced}. Новые сообщения придут в MAX.`,
+        description: [
+          `Диалогов по вакансиям: ${result.synced}.`,
+          result.webhookError || 'Новые сообщения придут в MAX.',
+          result.partial ? 'Самые старые чаты подтянутся при следующем нажатии.' : '',
+        ]
+          .filter(Boolean)
+          .join(' '),
       });
       load();
       if (selectedId) openChat(selectedId);

@@ -63,7 +63,7 @@ export const fetchCandidateThread = async (
   return res.json();
 };
 
-export const syncCandidateChats = async (): Promise<{ synced: number; webhookError?: string }> => {
+export const syncCandidateChats = async (): Promise<{ synced: number; webhookError?: string; partial?: boolean }> => {
   const res = await fetch(USERS_URL, {
     method: 'POST',
     headers: authHeaders(),

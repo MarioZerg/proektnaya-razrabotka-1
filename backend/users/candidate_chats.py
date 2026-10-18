@@ -10,6 +10,7 @@
 
 import json
 import os
+import time
 from datetime import datetime, timezone
 
 import requests
@@ -98,7 +99,7 @@ def _token(client_id: str, client_secret: str) -> str:
             'client_id': client_id,
             'client_secret': client_secret,
         },
-        timeout=15,
+        timeout=4,
     )
     if resp.status_code >= 400:
         raise RuntimeError('Авито не принял ключи кабинета. Проверьте Client ID и Client Secret')
@@ -309,25 +310,53 @@ def _mark_old_as_seen(cur, row_id: int) -> None:
     )
 
 
+def _subscribe_webhook(token: str) -> str:
+    try:
+        hook = requests.post(
+            f'{AVITO_API}/messenger/v3/webhook',
+            headers={**_headers(token), 'Content-Type': 'application/json'},
+            json={'url': WEBHOOK_URL},
+            timeout=4,
+        )
+        if hook.status_code >= 400:
+            print(f'avito webhook failed: {hook.status_code} {hook.text[:200]}')
+            return 'Авито не включил уведомления о новых сообщениях'
+    except requests.RequestException as e:
+        print(f'avito webhook error: {e}')
+        return 'Не удалось включить уведомления Авито'
+    return ''
+
+
+# Функция живёт 5 секунд. Авито отвечает по 0,3–1 с на запрос, поэтому
+# страницы старых чатов забираем, пока есть запас, и вовремя отвечаем экрану.
+SYNC_BUDGET_SECONDS = 3.5
+
+
 def sync_chats(cur) -> dict:
+    started = time.monotonic()
     ensure_tables(cur)
     total = 0
     webhook_error = ''
+    partial = False
     for account in _credentials(cur):
         token = _token(account['clientId'], account['clientSecret'])
+        # Подписку ставим первой: это главное, ради чего жмут кнопку.
+        # Даже если список чатов не успеет догрузиться, новые сообщения
+        # всё равно начнут приходить.
+        webhook_error = _subscribe_webhook(token) or webhook_error
         account_id = _account_id(token)
         offset = 0
         for _page in range(3):
+            if time.monotonic() - started > SYNC_BUDGET_SECONDS:
+                partial = True
+                break
             resp = requests.get(
                 f'{AVITO_API}/messenger/v2/accounts/{account_id}/chats',
                 headers=_headers(token),
                 params={'chat_types': 'u2i', 'limit': 100, 'offset': offset},
-                timeout=20,
+                timeout=max(1.0, 4.5 - (time.monotonic() - started)),
             )
             if resp.status_code >= 400:
-                # Первая страница не пришла — синхронизации не было.
-                # Следующие страницы — это старые чаты: что успели, то сохранили,
-                # и всё равно включаем webhook ниже.
                 if _page == 0:
                     if resp.status_code == 429:
                         raise RuntimeError('Авито просит подождать минуту — слишком частые запросы. Нажмите ещё раз позже')
@@ -353,18 +382,7 @@ def sync_chats(cur) -> dict:
             if len(chats) < 100:
                 break
             offset += 100
-        try:
-            hook = requests.post(
-                f'{AVITO_API}/messenger/v3/webhook',
-                headers={**_headers(token), 'Content-Type': 'application/json'},
-                json={'url': WEBHOOK_URL},
-                timeout=15,
-            )
-            if hook.status_code >= 400:
-                webhook_error = 'Авито не включил уведомления о новых сообщениях'
-        except requests.RequestException:
-            webhook_error = 'Не удалось включить уведомления Авито'
-    return {'synced': total, 'webhookError': webhook_error}
+    return {'synced': total, 'webhookError': webhook_error, 'partial': partial}
 
 
 STATUSES = ('new', 'selected', 'meeting', 'rejected')
