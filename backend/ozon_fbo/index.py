@@ -436,6 +436,18 @@ def handle_import_composition(cur, conn, client_id, api_key, body_data):
     row = cur.fetchone()
     if row:
         supply_id = row[0]
+        # Поставка уже собрана из заказов ДРУГОЙ заявки (перенос при смене
+        # кластера) — повторная загрузка создала бы второй комплект на пошив.
+        cur.execute(
+            "SELECT COUNT(*) FROM orders WHERE supply_id = %s "
+            "AND COALESCE(status, '') <> 'Отменён' AND order_number NOT LIKE %s",
+            (int(supply_id), f'{order_number}%'),
+        )
+        if int(cur.fetchone()[0] or 0) > 0:
+            return _resp(409, {
+                'error': 'В поставке уже есть заказы, перенесённые из другой заявки. '
+                         'Товарный состав загружать не нужно — иначе он уйдёт в пошив повторно',
+            })
     else:
         cur.execute(
             "INSERT INTO marketplace_supplies (marketplace, type, status, ozon_delivery_method, "
