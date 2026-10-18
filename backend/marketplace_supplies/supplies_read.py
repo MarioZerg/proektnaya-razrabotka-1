@@ -902,7 +902,13 @@ def handle_get(event: dict, headers: dict, dsn: str) -> dict:
             # Дата и время приёмки на складе маркетплейса. ship_to_marketplace_at —
             # это момент, когда поставку отметили отгруженной, а не слот заявки.
             f"s.supply_date, s.timeslot, COALESCE(s.gazelka_pickup, false), "
-            f"s.gazelka_plan_id, s.gazelka_shipped_at "
+            f"s.gazelka_plan_id, s.gazelka_shipped_at, "
+            # Поставку перенесли из другой заявки OZON (смена кластера): на коробах
+            # висят стикеры старой заявки — кладовщику надо переклеить новые.
+            f"(s.type = 'FBO' AND COALESCE(s.comment, '') LIKE 'Перенесена из поставки%'), "
+            f"(SELECT COUNT(*) FROM marketplace_supply_boxes rb WHERE rb.supply_id = s.id), "
+            f"(SELECT COUNT(*) FROM marketplace_supply_boxes rb WHERE rb.supply_id = s.id "
+            f"   AND rb.ozon_cargo_id IS NOT NULL AND rb.sticker_url IS NOT NULL) "
             f"FROM marketplace_supplies s "
             f"LEFT JOIN users u ON u.id = s.created_by "
             f"LEFT JOIN users lu ON lu.id = s.locked_by "
@@ -951,6 +957,9 @@ def handle_get(event: dict, headers: dict, dsn: str) -> dict:
                 'gazelkaPickup': bool(r[31]),
                 'gazelkaPlanId': r[32],
                 'gazelkaShippedAt': (r[33].isoformat() + 'Z') if r[33] else None,
+                'relabelBoxes': bool(r[34]),
+                'boxesTotal': int(r[35] or 0),
+                'boxesRelabeled': int(r[36] or 0),
             }
             for r in cur.fetchall()
         ]

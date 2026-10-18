@@ -68,6 +68,11 @@ export interface Supply {
   fbsMissingCount?: number | null;
   /** OZON FBO: сколько штук принял склад по акту. */
   ozonAcceptedQty?: number | null;
+  /** Поставку перенесли из другой заявки OZON — на коробах старые стикеры. */
+  relabelBoxes?: boolean;
+  boxesTotal?: number;
+  /** Сколько коробов уже закрыто в новой заявке и имеет новый стикер. */
+  boxesRelabeled?: number;
 }
 
 export interface SupplyItem {

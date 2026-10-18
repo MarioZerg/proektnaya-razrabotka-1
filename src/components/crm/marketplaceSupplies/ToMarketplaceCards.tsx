@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { driverAssigned } from '@/lib/gazelkaPlate';
 import SupplyTypeBadge from './SupplyTypeBadge';
+import RelabelBoxesBadge from './RelabelBoxesBadge';
 import B2bBadge from './B2bBadge';
 import { Badge } from '@/components/ui/badge';
 import Icon from '@/components/ui/icon';
@@ -106,6 +107,11 @@ const ToMarketplaceCards = ({ supplies, onOpen }: ToMarketplaceCardsProps) => (
               <span className="text-xs font-semibold text-black">{s.gazelkaId}</span>
             )}
           </div>
+          {s.relabelBoxes && !['Отгружено', 'Принята', 'Выполнена', 'Отменена'].includes(s.status) && (
+            <div className="mt-1.5">
+              <RelabelBoxesBadge total={s.boxesTotal ?? 0} relabeled={s.boxesRelabeled ?? 0} />
+            </div>
+          )}
           <div className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-muted-foreground empty:hidden">
             {s.completedAt && (
               <span className="font-medium text-black">выполнена {formatDate(s.completedAt)}</span>
