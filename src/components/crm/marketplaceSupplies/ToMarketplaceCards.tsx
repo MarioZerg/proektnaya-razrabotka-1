@@ -54,7 +54,7 @@ const pieceStats = (s: Supply): PieceStat[] => {
 /** FBO без кластера, Газельки или даты на маркетплейс ещё не заполнена. */
 const fboIncomplete = (s: Supply) => {
   if (s.type !== 'FBO') return false;
-  if (['Отгружено', 'Принята', 'Выполнена'].includes(s.status)) return false;
+  if (['Отгружено', 'Принята', 'Выполнена', 'Отменена'].includes(s.status)) return false;
   // Даты слота и номера плана в списке может ещё не быть: отсутствие поля — та же дыра, что и пустое значение.
   return !s.cluster || !s.gazelkaId || !s.gazelkaPlanId || !s.shipToGazelkaAt || !s.supplyDate;
 };
@@ -199,7 +199,7 @@ const ToMarketplaceCards = ({ supplies, onOpen }: ToMarketplaceCardsProps) => (
                   <span className="whitespace-nowrap text-xs font-medium leading-none text-black">
                     в Газельку {formatDate(s.shipToGazelkaAt)}
                   </span>
-                  {!['Отгружено', 'Принята', 'Выполнена'].includes(s.status) && (
+                  {!['Отгружено', 'Принята', 'Выполнена', 'Отменена'].includes(s.status) && (
                     <GazelkaCountdown at={s.shipToGazelkaAt} />
                   )}
                 </span>

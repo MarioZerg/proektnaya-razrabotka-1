@@ -19,7 +19,8 @@ export const useSupplyFlags = (supply: SupplyDetail) => {
   const flowStatus =
     supply.status === 'Отгружено' || supply.status === 'Принята' ? 'Отгрузка' : supply.status;
   const rawNextStatus = supplyStatusFlow[supplyStatusFlow.indexOf(flowStatus) + 1];
-  const nextStatus = isWbFbs && rawNextStatus !== 'Выполнена' ? undefined : rawNextStatus;
+  const nextStatus =
+    supply.status === 'Отменена' || (isWbFbs && rawNextStatus !== 'Выполнена') ? undefined : rawNextStatus;
   // FBS-поставку собирает кладовщик — он сканирует товары со своих полок. Менеджер такую
   // поставку только НАБЛЮДАЕТ в реальном времени: сборка идёт на складе, а не за его столом,
   // поэтому редактирование состава ему недоступно. FBO-поставки менеджера это не касается —

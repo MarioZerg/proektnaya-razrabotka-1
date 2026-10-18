@@ -13,6 +13,7 @@ export const statusVariant: Record<string, { className: string }> = {
   Отгружено: { className: 'bg-teal-600 text-white hover:bg-teal-600' },
   Принята: { className: 'bg-indigo-600 text-white hover:bg-indigo-600' },
   Выполнена: { className: 'bg-emerald-600 text-white hover:bg-emerald-600' },
+  Отменена: { className: 'bg-red-600 text-white hover:bg-red-600' },
 };
 
 export const createOptions: Array<{ marketplace: string; type: SupplyType; label: string }> = [

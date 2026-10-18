@@ -2616,6 +2616,14 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                 return {'statusCode': 404, 'headers': headers, 'body': json.dumps({'error': 'Поставка не найдена'})}
             current_status = row[0]
             supply_type = row[1]
+            # Отменённая поставка (например, перенесённая в другую заявку) закрыта
+            # навсегда: её заказы и короба уже живут в новой поставке.
+            if current_status == 'Отменена':
+                return {
+                    'statusCode': 409,
+                    'headers': headers,
+                    'body': json.dumps({'error': 'Поставка отменена — менять её статус нельзя'}, ensure_ascii=False),
+                }
             current_idx = VALID_STATUSES.index(current_status) if current_status in VALID_STATUSES else -1
             # «Отгружено» и «Принята» ставит система сама — это этап между
             # «Отгрузкой» и «Выполнена». Закрыть вручную раньше таймера можно.

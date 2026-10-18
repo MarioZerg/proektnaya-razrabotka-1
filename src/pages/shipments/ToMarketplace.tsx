@@ -108,7 +108,9 @@ const ToMarketplace = () => {
         if (seq !== loadSeq.current) return;
         setListError(null);
         const list =
-          statusFilter === 'open' ? data.filter((s) => s.status !== 'Выполнена') : data;
+          statusFilter === 'open'
+            ? data.filter((s) => s.status !== 'Выполнена' && s.status !== 'Отменена')
+            : data;
         // Список с сервера ещё не знает дату слота и забор. Не затираем их на
         // каждом обновлении — иначе при смене таймера пропадают «на маркетплейс»,
         // «Со склада» и машинки, пока карточки не догрузятся заново.
@@ -220,7 +222,7 @@ const ToMarketplace = () => {
   const handleCreate = async (marketplace: string, type: SupplyType) => {
     if (marketplace === 'OZON' && type === 'FBS') {
       const open = allSupplies.filter(
-        (s) => s.marketplace === 'OZON' && s.type === 'FBS' && s.status !== 'Выполнена',
+        (s) => s.marketplace === 'OZON' && s.type === 'FBS' && s.status !== 'Выполнена' && s.status !== 'Отменена',
       );
       const busy = open.find((s) => s.status !== 'Отгружено');
       if (busy) {
