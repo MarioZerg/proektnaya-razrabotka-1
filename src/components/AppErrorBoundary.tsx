@@ -1,6 +1,7 @@
 import { Component, type ErrorInfo, type ReactNode } from 'react';
 import { isChunkLoadError, reloadOnce } from '@/lib/chunkReload';
 import { reportError } from '@/lib/errorReporter';
+import { clearAppCache } from '@/lib/appUpdate';
 
 interface Props {
   children: ReactNode;
@@ -39,16 +40,9 @@ class AppErrorBoundary extends Component<Props, State> {
   }
 
   handleReload = () => {
-    // Чистим сохранённую оболочку: без этого обновление вернёт ту же версию.
-    const reload = () => window.location.reload();
-    if ('caches' in window) {
-      caches
-        .keys()
-        .then((keys) => Promise.all(keys.map((k) => caches.delete(k))))
-        .finally(reload);
-    } else {
-      reload();
-    }
+    // Полный сброс: кэш, служебный файл и метка в адресе. Обычная перезагрузка
+    // могла снова достать старую страницу, и экран «Вышла новая версия» крутился по кругу.
+    void clearAppCache();
   };
 
   render() {

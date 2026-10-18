@@ -40,7 +40,11 @@ export const reloadOnce = (): boolean => {
 
   // Служебный файл мог отдать старую оболочку из памяти — чистим, иначе
   // перезагрузка вернёт ту же самую устаревшую версию.
-  const done = () => window.location.reload();
+  const done = () => {
+    const url = new URL(window.location.href);
+    url.searchParams.set('v', String(Date.now()));
+    window.location.replace(url.toString());
+  };
   if ('caches' in window) {
     caches
       .keys()
