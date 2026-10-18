@@ -74,18 +74,40 @@ export const watchForUpdates = (onAvailable: UpdateListener, intervalMs = CHECK_
   navigator.serviceWorker.addEventListener('controllerchange', () => {
     if (reloading) return;
     reloading = true;
-    window.location.reload();
+    const url = new URL(window.location.href);
+    url.searchParams.set('v', String(Date.now()));
+    window.location.replace(url.toString());
   });
 };
 
 /** Применяет скачанную версию: сотрудник нажал «Обновить». */
 export const applyUpdate = () => {
-  if (waitingWorker) {
-    waitingWorker.postMessage({ type: 'SKIP_WAITING' });
+  // Запасной путь: если новая версия так и не вступила в силу за 4 секунды
+  // (скачанная версия устарела — после неё вышла ещё одна), кнопка крутилась
+  // вечно. Теперь сбрасываем кэш и грузим страницу с сервера.
+  window.setTimeout(() => {
+    if (!reloading) void clearAppCache();
+  }, 4000);
+
+  const send = (worker: ServiceWorker | null | undefined) => {
+    if (worker && worker.state !== 'redundant') {
+      worker.postMessage({ type: 'SKIP_WAITING' });
+      return true;
+    }
+    return false;
+  };
+
+  if (send(waitingWorker)) return;
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker
+      .getRegistration()
+      .then((reg) => {
+        if (!send(reg?.waiting)) void clearAppCache();
+      })
+      .catch(() => void clearAppCache());
     return;
   }
-  // Обновление ждёт, но ссылку на него потеряли — просто перезагружаемся.
-  window.location.reload();
+  void clearAppCache();
 };
 
 /**

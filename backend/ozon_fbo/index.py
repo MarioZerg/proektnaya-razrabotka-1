@@ -1843,11 +1843,11 @@ def handle_move_to_application(cur, conn, client_id, api_key, body_data, actor):
         )
         new_id = cur.fetchone()[0]
 
-    # Короба: снимаем отгрузку с вещей и стираем грузоместа старой заявки.
+    # Короба: стираем грузоместа старой заявки. Статус вещей НЕ трогаем — они
+    # уже упакованы; снятие отгрузки ломалось на вещах, чей заказ зарезервирован
+    # и за другой карточкой склада (уникальность резерва).
     cur.execute("SELECT id FROM marketplace_supply_boxes WHERE supply_id = %s", (int(from_id),))
     box_ids = [r[0] for r in cur.fetchall()]
-    for box_id in box_ids:
-        unseal_box(cur, box_id)
     cur.execute(
         "UPDATE marketplace_supply_boxes SET supply_id = %s, closed_at = NULL, ozon_cargo_id = NULL, "
         "  sticker_url = NULL, sticker_name = NULL, ozon_label_operation_id = NULL, "
