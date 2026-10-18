@@ -1,12 +1,3 @@
-import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
-
 export type EmployeesTab = 'active' | 'archived' | 'candidates';
 
 interface EmployeesTabsSwitchProps {
@@ -18,42 +9,45 @@ interface EmployeesTabsSwitchProps {
   showCandidates?: boolean;
 }
 
-/** Переключатель «Работают» / «Архив — уволенные» со счётчиками. */
+/** Кнопки разделов. На телефоне тоже кнопки, не выпадающий список:
+    «Чаты с кандидатами» иначе не видно, пока не откроешь меню. */
 const EmployeesTabsSwitch = ({
   tab,
   setTab,
   activeCount,
   archivedCount,
   showCandidates = false,
-}: EmployeesTabsSwitchProps) => (
-  <>
-    {/* На телефоне — выпадающий список, на компьютере вкладки: две подписи
-        со счётчиками в ширину телефона не помещаются. */}
-    <div className="sm:hidden">
-      <Select value={tab} onValueChange={(v) => setTab(v as EmployeesTab)}>
-        <SelectTrigger className="w-full">
-          <SelectValue />
-        </SelectTrigger>
-        <SelectContent>
-          <SelectItem value="active">Работают ({activeCount})</SelectItem>
-          <SelectItem value="archived">Архив — уволенные ({archivedCount})</SelectItem>
-          {showCandidates && <SelectItem value="candidates">Чаты с кандидатами</SelectItem>}
-        </SelectContent>
-      </Select>
-    </div>
+}: EmployeesTabsSwitchProps) => {
+  const items: { id: EmployeesTab; label: string; short: string }[] = [
+    { id: 'active', label: `Работают (${activeCount})`, short: `Работают ${activeCount}` },
+    { id: 'archived', label: `Архив — уволенные (${archivedCount})`, short: `Архив ${archivedCount}` },
+  ];
+  if (showCandidates) {
+    items.push({ id: 'candidates', label: 'Чаты с кандидатами', short: 'Чаты' });
+  }
 
-    <Tabs
-      value={tab}
-      onValueChange={(v) => setTab(v as EmployeesTab)}
-      className="hidden sm:block"
-    >
-      <TabsList>
-        <TabsTrigger value="active">Работают ({activeCount})</TabsTrigger>
-        <TabsTrigger value="archived">Архив — уволенные ({archivedCount})</TabsTrigger>
-        {showCandidates && <TabsTrigger value="candidates">Чаты с кандидатами</TabsTrigger>}
-      </TabsList>
-    </Tabs>
-  </>
-);
+  return (
+    <div className="flex gap-2 overflow-x-auto pb-1 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+      {items.map((item) => {
+        const active = tab === item.id;
+        return (
+          <button
+            key={item.id}
+            type="button"
+            onClick={() => setTab(item.id)}
+            className={`shrink-0 rounded-full px-3.5 py-2 text-sm font-medium transition ${
+              active
+                ? 'bg-primary text-primary-foreground shadow-sm'
+                : 'bg-muted text-foreground hover:bg-muted/80'
+            }`}
+          >
+            <span className="sm:hidden">{item.short}</span>
+            <span className="hidden sm:inline">{item.label}</span>
+          </button>
+        );
+      })}
+    </div>
+  );
+};
 
 export default EmployeesTabsSwitch;
