@@ -281,9 +281,14 @@ def _pull_messages(cur, token: str, account_id: int, avito_chat_id: str, row_id:
         timeout=20,
     )
     resp.raise_for_status()
+    data = resp.json() or {}
+    # v3 отдаёт {"messages": [...]}, а не голый список.
+    items = data.get('messages') if isinstance(data, dict) else data
     fresh_in = False
     preview = ''
-    for message in resp.json() or []:
+    for message in items or []:
+        if not isinstance(message, dict):
+            continue
         when = _from_unix(message.get('created'))
         body = _message_text(message.get('content'))
         direction = message.get('direction') or 'in'
@@ -319,7 +324,16 @@ def sync_chats(cur) -> dict:
                 params={'chat_types': 'u2i', 'limit': 100, 'offset': offset},
                 timeout=20,
             )
-            resp.raise_for_status()
+            if resp.status_code >= 400:
+                # Первая страница не пришла — синхронизации не было.
+                # Следующие страницы — это старые чаты: что успели, то сохранили,
+                # и всё равно включаем webhook ниже.
+                if _page == 0:
+                    if resp.status_code == 429:
+                        raise RuntimeError('Авито просит подождать минуту — слишком частые запросы. Нажмите ещё раз позже')
+                    raise RuntimeError(f'Авито не отдал список чатов (код {resp.status_code})')
+                print(f'avito chats page {_page} failed: {resp.status_code} {resp.text[:200]}')
+                break
             chats = (resp.json() or {}).get('chats') or []
             for chat in chats:
                 if not is_vacancy(chat):

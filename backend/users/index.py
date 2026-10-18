@@ -395,6 +395,7 @@ def handler(event: dict, context) -> dict:
                     }
                 except Exception as e:
                     conn.rollback()
+                    print(f'candidate_chats_sync failed: {type(e).__name__}: {e}')
                     return {
                         'statusCode': 502,
                         'headers': headers,
