@@ -10,7 +10,9 @@
       "name": "Unknown action fails",
       "method": "POST",
       "path": "/",
-      "body": {"action": "nope"},
+      "body": {
+        "action": "nope"
+      },
       "expectedStatus": 400
     },
     {
@@ -23,28 +25,49 @@
       "name": "Import without auth is rejected",
       "method": "POST",
       "path": "/",
-      "body": {"action": "import_composition"},
+      "body": {
+        "action": "import_composition"
+      },
       "expectedStatus": 401
     },
     {
       "name": "Close boxes without auth is rejected",
       "method": "POST",
       "path": "/",
-      "body": {"action": "close_boxes", "supplyId": 1},
+      "body": {
+        "action": "close_boxes",
+        "supplyId": 1
+      },
       "expectedStatus": 401
     },
     {
       "name": "List applications without auth is rejected",
       "method": "POST",
       "path": "/",
-      "body": {"action": "list_applications"},
+      "body": {
+        "action": "list_applications"
+      },
       "expectedStatus": 401
     },
     {
       "name": "Sync cargoes without auth is rejected",
       "method": "POST",
       "path": "/",
-      "body": {"action": "sync_cargoes", "supplyId": 1},
+      "body": {
+        "action": "sync_cargoes",
+        "supplyId": 1
+      },
+      "expectedStatus": 401
+    },
+    {
+      "name": "Перенос в другую заявку без входа закрыт",
+      "method": "POST",
+      "path": "/",
+      "body": {
+        "action": "move_to_application",
+        "supplyId": 1,
+        "orderNumber": "1"
+      },
       "expectedStatus": 401
     }
   ]

@@ -5,6 +5,7 @@ import type { SupplyDetail } from '@/lib/marketplaceSuppliesApi';
 import SupplySection from '@/components/crm/marketplaceSupplies/SupplySection';
 import { formatDateTime } from '@/components/crm/marketplaceSupplies/marketplaceSuppliesShared';
 import { formatDate } from '@/lib/dateUtils';
+import OzonMoveApplicationButton from '@/components/crm/marketplaceSupplies/OzonMoveApplicationButton';
 
 const deliveryMethodLabels: Record<string, string> = {
   direct: 'Прямая поставка',
@@ -52,6 +53,9 @@ const OzonFboApplicationCard = ({
           </Button>
         </div>
       )}
+      <div className="mb-3">
+        <OzonMoveApplicationButton supply={supply} />
+      </div>
       <div className="space-y-2 text-sm">
         <div className="flex flex-col gap-0.5 border-b border-border py-2 sm:flex-row sm:items-center sm:justify-between">
           <span className="text-xs text-muted-foreground sm:text-sm">Номер поставки</span>

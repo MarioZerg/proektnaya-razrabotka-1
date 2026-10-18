@@ -1733,6 +1733,166 @@ def handle_reopen_box(cur, conn, client_id, api_key, body_data):
     return _resp(200, {'success': True, 'boxNumber': box_number, 'note': ozon_note})
 
 
+def handle_move_to_application(cur, conn, client_id, api_key, body_data, actor):
+    """Переносит уже собранную поставку в ДРУГУЮ заявку OZON (сменился кластер).
+
+    Товарный состав НЕ загружается заново и в пошив ничего не уходит: те же
+    заказы, вещи и короба переезжают в новую поставку, привязанную к новой
+    заявке. Старая поставка отменяется у нас; на OZON её отменяют вручную.
+
+    Грузоместа старой заявки к новой не относятся, поэтому короба
+    переоткрываются: кладовщик закрывает их в новой поставке, OZON выдаёт
+    новые этикетки, их переклеивают.
+    """
+    from_id = body_data.get('supplyId')
+    new_number = str(body_data.get('orderNumber') or '').strip()
+    if not from_id or not new_number:
+        return _resp(400, {'error': 'Укажите поставку и номер новой заявки OZON'})
+
+    cur.execute(
+        "SELECT marketplace, type, status, ozon_supply_order_id, supply_number, shop_id, "
+        "       ozon_cargo_type, gazelka_id, gazelka_plan_id, gazelka_pickup, ship_to_gazelka_at, "
+        "       total_quantity_marketplace, created_by, is_b2b "
+        "FROM marketplace_supplies WHERE id = %s FOR UPDATE",
+        (int(from_id),),
+    )
+    src = cur.fetchone()
+    if not src:
+        return _resp(404, {'error': 'Поставка не найдена'})
+    (mp, s_type, s_status, old_order_id, old_number, shop_id, cargo_type,
+     gz_id, gz_plan, gz_pickup, ship_gz_at, planned, created_by, is_b2b) = src
+    if mp != 'OZON' or s_type != 'FBO':
+        return _resp(400, {'error': 'Перенос доступен только для поставок OZON FBO'})
+    if s_status in ('Выполнена', 'Отменена', 'Принята'):
+        return _resp(409, {'error': f'Поставка в статусе «{s_status}» — переносить поздно'})
+    if str(old_number or '') == new_number:
+        return _resp(409, {'error': 'Поставка уже привязана к этой заявке'})
+
+    # Ищем новую заявку на OZON по номеру — нужен её order_id, склад и таймслот.
+    st, data = ozon_post(
+        '/v3/supply-order/list', client_id, api_key,
+        {'filter': {'states': ['DATA_FILLING', 'READY_TO_SUPPLY']},
+         'limit': 100, 'sort_by': 1, 'sort_dir': 1},
+        retries=2,
+    )
+    if st != 200:
+        return _resp(502, {'error': f'OZON не отдал список заявок: {ozon_error_text(st, data)}'})
+    order_ids = data.get('order_ids', []) if isinstance(data, dict) else []
+    app = None
+    for o in fetch_application_details(client_id, api_key, order_ids):
+        if str(o.get('order_number') or '') == new_number:
+            app = o
+            break
+    if not app:
+        return _resp(404, {
+            'error': f'Заявка {new_number} не найдена на OZON среди «Заполнение данных» '
+                     f'и «Готова к отгрузке»',
+        })
+    new_order_id = int(app['order_id'])
+    supplies = app.get('supplies') or []
+    warehouse = ((supplies[0].get('storage_warehouse') or {}).get('name') if supplies else None) \
+        or (app.get('drop_off_warehouse') or {}).get('name')
+    internal_id = supplies[0].get('supply_id') if supplies else None
+    ts = (app.get('timeslot') or {}).get('timeslot') or {}
+    supply_date = (ts.get('from') or '')[:10] or None
+    timeslot = (ts.get('from') or '')[11:16] or None
+
+    # Новая заявка уже могла быть заведена у нас — тогда только если она пустая.
+    cur.execute(
+        "SELECT id, (SELECT COUNT(*) FROM orders WHERE supply_id = s.id), "
+        "       (SELECT COUNT(*) FROM marketplace_supply_boxes WHERE supply_id = s.id) "
+        "FROM marketplace_supplies s WHERE ozon_supply_order_id = %s",
+        (new_order_id,),
+    )
+    existing = cur.fetchone()
+    if existing and (existing[1] or existing[2]):
+        return _resp(409, {
+            'error': f'Заявка {new_number} уже заведена у нас (поставка №{existing[0]}) '
+                     f'и в ней есть заказы или короба. Перенос остановлен, чтобы не смешать составы',
+        })
+
+    if existing:
+        new_id = existing[0]
+        cur.execute(
+            "UPDATE marketplace_supplies SET status = 'На сборке', cluster = %s, "
+            "  supply_number = %s, ozon_application_number = %s, supply_date = %s, timeslot = %s, "
+            "  ozon_internal_supply_id = %s, ozon_cargo_type = %s, gazelka_id = %s, "
+            "  gazelka_plan_id = %s, gazelka_pickup = %s, ship_to_gazelka_at = %s, "
+            "  total_quantity_marketplace = %s WHERE id = %s",
+            (warehouse, new_number, new_number, supply_date, timeslot,
+             int(internal_id) if internal_id else None, cargo_type, gz_id, gz_plan,
+             gz_pickup, ship_gz_at, planned, int(new_id)),
+        )
+    else:
+        cur.execute(
+            "INSERT INTO marketplace_supplies (marketplace, type, status, ozon_delivery_method, "
+            "  ozon_status, ozon_supply_order_id, ozon_internal_supply_id, supply_number, "
+            "  ozon_application_number, cluster, supply_date, timeslot, created_by, shop_id, "
+            "  ozon_cargo_type, gazelka_id, gazelka_plan_id, gazelka_pickup, ship_to_gazelka_at, "
+            "  total_quantity_marketplace, is_b2b, comment) "
+            "VALUES ('OZON', 'FBO', 'На сборке', 'direct', %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, "
+            "        %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id",
+            (
+                'Заполнение данных' if app.get('state') == 'DATA_FILLING' else 'Готова к отгрузке',
+                new_order_id, int(internal_id) if internal_id else None,
+                new_number, new_number, warehouse, supply_date, timeslot,
+                created_by, shop_id, cargo_type, gz_id, gz_plan, gz_pickup, ship_gz_at,
+                planned, is_b2b,
+                f'Перенесена из поставки №{from_id} (заявка {old_number}) — смена кластера',
+            ),
+        )
+        new_id = cur.fetchone()[0]
+
+    # Короба: снимаем отгрузку с вещей и стираем грузоместа старой заявки.
+    cur.execute("SELECT id FROM marketplace_supply_boxes WHERE supply_id = %s", (int(from_id),))
+    box_ids = [r[0] for r in cur.fetchall()]
+    for box_id in box_ids:
+        unseal_box(cur, box_id)
+    cur.execute(
+        "UPDATE marketplace_supply_boxes SET supply_id = %s, closed_at = NULL, ozon_cargo_id = NULL, "
+        "  sticker_url = NULL, sticker_name = NULL, ozon_label_operation_id = NULL, "
+        "  ozon_create_operation_id = NULL WHERE supply_id = %s",
+        (int(new_id), int(from_id)),
+    )
+    cur.execute(
+        "UPDATE marketplace_supply_items SET supply_id = %s WHERE supply_id = %s",
+        (int(new_id), int(from_id)),
+    )
+    # Заказы переезжают как есть: статус и этап пошива не меняются.
+    cur.execute(
+        "UPDATE orders SET supply_id = %s, cluster = %s WHERE supply_id = %s",
+        (int(new_id), warehouse, int(from_id)),
+    )
+    moved_orders = cur.rowcount
+    cur.execute(
+        "UPDATE supply_bundle_labels SET supply_id = %s WHERE supply_id = %s",
+        (int(new_id), int(from_id)),
+    )
+    cur.execute(
+        "UPDATE waybill_documents SET supply_id = %s WHERE supply_id = %s "
+        "AND NOT EXISTS (SELECT 1 FROM waybill_documents w2 WHERE w2.supply_id = %s)",
+        (int(new_id), int(from_id), int(new_id)),
+    )
+    cur.execute(
+        "UPDATE marketplace_supplies SET status = 'Отменена', locked_by = NULL, locked_at = NULL, "
+        "  comment = %s WHERE id = %s",
+        (f'Перенесена в поставку №{new_id} (заявка {new_number}) — смена кластера', int(from_id)),
+    )
+    log_action(
+        cur, actor.get('id'), actor.get('name'), 'ozon_fbo_move_application', new_id,
+        f'Поставка №{from_id} (заявка {old_number}) перенесена в заявку {new_number}, '
+        f'кластер {warehouse}: заказов {moved_orders}, коробов {len(box_ids)}. Пошив не создавался',
+    )
+    conn.commit()
+    return _resp(200, {
+        'supplyId': new_id,
+        'movedOrders': moved_orders,
+        'movedBoxes': len(box_ids),
+        'cluster': warehouse,
+        'orderNumber': new_number,
+    })
+
+
 def handle_all_labels(cur, conn, client_id, api_key, body_data):
     """Собирает ОДИН PDF со стикерами всех коробов поставки — для печати пачкой.
 
@@ -1906,7 +2066,7 @@ def handler(event: dict, context) -> dict:
     action = body_data.get('action')
     if action not in ('list_applications', 'check_composition', 'import_composition',
                       'close_boxes', 'all_box_labels', 'reopen_box',
-                      'fetch_box_label', 'sync_cargoes'):
+                      'fetch_box_label', 'sync_cargoes', 'move_to_application'):
         return _resp(400, {'error': 'Неизвестное действие'})
 
     dsn = os.environ['DATABASE_URL']
@@ -1925,10 +2085,12 @@ def handler(event: dict, context) -> dict:
         # Роли те же, что у сборки поставок: короба собирает кладовщик,
         # заявки ведёт менеджер, администратор может всё.
         try:
-            require_role(
+            actor = require_role(
                 cur, event,
                 'admin', 'manager', 'senior_storekeeper', 'storekeeper',
             )
+            if action == 'move_to_application' and actor.get('role') != 'admin':
+                raise AuthError('Перенести поставку в другую заявку может только администратор', 403)
         except AuthError as err:
             return auth_error_response(err, CORS_HEADERS)
 
@@ -1954,5 +2116,7 @@ def handler(event: dict, context) -> dict:
             return handle_fetch_box_label(cur, conn, client_id, api_key, body_data)
         if action == 'sync_cargoes':
             return handle_sync_cargoes(cur, conn, client_id, api_key, body_data)
+        if action == 'move_to_application':
+            return handle_move_to_application(cur, conn, client_id, api_key, body_data, actor)
     finally:
         conn.close()

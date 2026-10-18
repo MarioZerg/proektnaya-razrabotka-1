@@ -237,3 +237,20 @@ export const syncOzonCargoes = async (
   if (!res.ok) throw new Error(data.error || 'Ошибка OZON FBO');
   return data as OzonSyncCargoesResult;
 };
+export interface OzonMoveToApplicationResult {
+  supplyId: number;
+  movedOrders: number;
+  movedBoxes: number;
+  cluster: string | null;
+  orderNumber: string;
+}
+
+/**
+ * Перенести собранную поставку в другую заявку OZON (сменился кластер).
+ * Заказы и короба переезжают как есть, в пошив ничего не уходит.
+ */
+export const moveOzonSupplyToApplication = (
+  supplyId: number,
+  orderNumber: string,
+): Promise<OzonMoveToApplicationResult> =>
+  post({ action: 'move_to_application', supplyId, orderNumber }) as Promise<OzonMoveToApplicationResult>;
