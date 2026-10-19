@@ -14,6 +14,8 @@ ACTION_TITLES = {
     'take_order': 'Взял заказ в пошив',
     'send_to_stickering': 'Отшил, отправил на стикеровку',
     'close_order': 'Упаковал заказ',
+    'stock_order_released': 'Заказ снят со склада',
+    'release_shelf_reserve': 'Снята бронь полочной вещи',
     'cancel_order': 'Отменил заказ',
     'delete_order': 'Удалил заказ',
     'create_manual': 'Завёл заказ вручную',

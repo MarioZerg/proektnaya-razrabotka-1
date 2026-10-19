@@ -515,6 +515,13 @@ def handler(event: dict, context) -> dict:
                 "  WHERE msi.goods_warehouse_id = gw.id "
                 "    AND COALESCE(ms.status, '') NOT IN ('Выполнена', 'Отменена'))"
             )
+            log_stock_release(
+                cur,
+                "o.fulfilled_from_stock_id IN (SELECT gw.id FROM goods_warehouse gw "
+                "  JOIN stocktake_scans s ON s.goods_warehouse_id = gw.id "
+                f"  WHERE s.stocktake_id = %s AND {restorable})",
+                (int(stocktake_id),), f'закрытие инвентаризации №{stocktake_id}',
+                actor_id, actor_name)
             cur.execute(
                 "UPDATE orders SET fulfilled_from_stock_id = NULL "
                 "WHERE fulfilled_from_stock_id IN (SELECT gw.id FROM goods_warehouse gw "
@@ -639,3 +646,31 @@ def handler(event: dict, context) -> dict:
         return _resp(400, {'error': 'Неизвестное действие'})
     finally:
         conn.close()
+
+def log_stock_release(cur, where_sql, params, reason, actor_id=None, actor_name=None):
+    """Журнал: заказ снят со склада (сброшена пометка «Со склада» / ссылка на вещь).
+
+    Вызывать ДО самого UPDATE с тем же условием WHERE. Без этой записи нельзя
+    понять, почему заказ, под который на полке лежал пакет, ушёл в раскрой
+    (19.10: 5 заказов OZON сшиты при забронированных пакетах, следов не было).
+    В запись попадает и вещь, которая всё ещё числится за заказом.
+    """
+    cur.execute(
+        "INSERT INTO audit_log (user_id, user_name, category, action, entity_type, "
+        "  entity_id, description, details) "
+        "SELECT %s, %s, 'warehouse', 'stock_order_released', 'order', o.id, "
+        "  'Заказ #' || COALESCE(o.order_number, o.id::text) || ' снят со склада ("
+        "' || COALESCE(o.sewing_status, '—') || '): ' || %s "
+        "  || COALESCE(', была вещь ' || fg.storage_barcode, '') "
+        "  || COALESCE('. За заказом всё ещё числится вещь ' || ("
+        "       SELECT string_agg(h.storage_barcode, ', ') FROM goods_warehouse h "
+        "       WHERE h.reserved_order_id = o.id AND h.order_id <> o.id "
+        "         AND h.shipped_at IS NULL AND h.status NOT IN ('shipped', 'lost')), ''), "
+        "  jsonb_build_object('reason', %s, 'oldSewingStatus', o.sewing_status, "
+        "                     'oldStockId', o.fulfilled_from_stock_id) "
+        "FROM orders o LEFT JOIN goods_warehouse fg ON fg.id = o.fulfilled_from_stock_id "
+        f"WHERE ({where_sql}) "
+        "  AND (o.fulfilled_from_stock_id IS NOT NULL OR o.sewing_status = 'Со склада')",
+        (int(actor_id) if str(actor_id or '').isdigit() else None,
+         actor_name or None, reason, reason) + tuple(params),
+    )

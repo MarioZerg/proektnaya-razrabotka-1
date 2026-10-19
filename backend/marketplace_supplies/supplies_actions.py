@@ -14,6 +14,7 @@ import psycopg2
 from authz import AuthError, auth_error_response, require_role
 
 from shared import (
+    log_stock_release,
     shippable_in_supply_sql,
     OZON_DEAD_STATUSES,
     OZON_SHIP_BATCH,
@@ -1295,6 +1296,9 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                 )
                 # Заказ, под который вещь резервировали, снова ждёт подбора: система
                 # подберёт под него другую вещь или отправит его в пошив.
+                log_stock_release(cur, "o.fulfilled_from_stock_id = %s", (int(goods_id),),
+                                  'вещь убрали из поставки и вернули на полку',
+                                  actor_id, body_data.get('actorName'))
                 cur.execute(
                     "UPDATE orders SET fulfilled_from_stock_id = NULL, sewing_status = 'Новый' "
                     "WHERE fulfilled_from_stock_id = %s",
@@ -1744,6 +1748,11 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                     take = cur.fetchone()
                     if take:
                         take_gid, fbs_order_id, fbs_order_number = take[0], take[7], take[8]
+                        log_stock_release(
+                            cur, "o.id = %s AND (o.fulfilled_from_stock_id IS NULL "
+                                 "OR o.fulfilled_from_stock_id = %s)",
+                            (int(fbs_order_id), int(take_gid)),
+                            'вещь FBS забрали в короб FBO', actor_id, body_data.get('actorName'))
                         cur.execute(
                             "UPDATE orders SET fulfilled_from_stock_id = NULL, "
                             "  sewing_status = 'Новый' "
@@ -2483,6 +2492,9 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                     "shipping_labeled_at = NULL, shipping_labeled_by = NULL, shipping_labeled_by_name = NULL, reserved_order_id = NULL, matched_at = NULL "
                     f"WHERE id = {int(goods_id)}"
                 )
+                log_stock_release(cur, "o.fulfilled_from_stock_id = %s", (int(goods_id),),
+                                  'вещь убрали из поставки и вернули на полку',
+                                  actor_id, body_data.get('actorName'))
                 cur.execute(
                     "UPDATE orders SET fulfilled_from_stock_id = NULL, sewing_status = 'Новый' "
                     "WHERE fulfilled_from_stock_id = %s",
@@ -2599,6 +2611,9 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                         "shipping_labeled_by_name = NULL, reserved_order_id = NULL, "
                         f"matched_at = NULL WHERE id = {int(goods_id)}"
                     )
+                    log_stock_release(cur, "o.fulfilled_from_stock_id = %s", (int(goods_id),),
+                                      'вещь убрали из поставки (массово)',
+                                      actor_id, body_data.get('actorName'))
                     cur.execute(
                         "UPDATE orders SET fulfilled_from_stock_id = NULL, "
                         "sewing_status = 'Новый' WHERE fulfilled_from_stock_id = %s",

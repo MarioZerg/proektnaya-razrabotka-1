@@ -831,6 +831,9 @@ def try_match_orders_from_stock(cur, gw_id=None):
             #
             # Переводим его обратно в «Новый»: заказ отменён и никуда не поедет,
             # а если вдруг оживёт — попадёт в очередь и будет сшит заново.
+            log_stock_release(cur, "o.fulfilled_from_stock_id = %s AND o.id <> %s",
+                              (pick_id, int(order_id)),
+                              'автоподбор отдал вещь другому заказу')
             cur.execute(
                 "UPDATE orders SET fulfilled_from_stock_id = NULL, sewing_status = 'Новый' "
                 "WHERE fulfilled_from_stock_id = %s AND id <> %s",
@@ -987,6 +990,8 @@ def auto_release_stock(cur):
         if not ids:
             return
         ids_csv = ','.join(str(int(i)) for i in ids)
+        log_stock_release(cur, f"o.fulfilled_from_stock_id IN ({ids_csv})", (),
+                          f'планировщик освободил вещь: {reason_text}')
         cur.execute(
             "UPDATE orders SET fulfilled_from_stock_id = NULL "
             f"WHERE fulfilled_from_stock_id IN ({ids_csv})"
@@ -1075,3 +1080,32 @@ def auto_release_stock(cur):
     if summary['cancelled'] or summary['fboLeftover']:
         summary['matched'] = len(try_match_orders_from_stock(cur) or [])
     return summary
+
+
+def log_stock_release(cur, where_sql, params, reason, actor_id=None, actor_name=None):
+    """Журнал: заказ снят со склада (сброшена пометка «Со склада» / ссылка на вещь).
+
+    Вызывать ДО самого UPDATE с тем же условием WHERE. Без этой записи нельзя
+    понять, почему заказ, под который на полке лежал пакет, ушёл в раскрой
+    (19.10: 5 заказов OZON сшиты при забронированных пакетах, следов не было).
+    В запись попадает и вещь, которая всё ещё числится за заказом.
+    """
+    cur.execute(
+        "INSERT INTO audit_log (user_id, user_name, category, action, entity_type, "
+        "  entity_id, description, details) "
+        "SELECT %s, %s, 'warehouse', 'stock_order_released', 'order', o.id, "
+        "  'Заказ #' || COALESCE(o.order_number, o.id::text) || ' снят со склада ("
+        "' || COALESCE(o.sewing_status, '—') || '): ' || %s "
+        "  || COALESCE(', была вещь ' || fg.storage_barcode, '') "
+        "  || COALESCE('. За заказом всё ещё числится вещь ' || ("
+        "       SELECT string_agg(h.storage_barcode, ', ') FROM goods_warehouse h "
+        "       WHERE h.reserved_order_id = o.id AND h.order_id <> o.id "
+        "         AND h.shipped_at IS NULL AND h.status NOT IN ('shipped', 'lost')), ''), "
+        "  jsonb_build_object('reason', %s, 'oldSewingStatus', o.sewing_status, "
+        "                     'oldStockId', o.fulfilled_from_stock_id) "
+        "FROM orders o LEFT JOIN goods_warehouse fg ON fg.id = o.fulfilled_from_stock_id "
+        f"WHERE ({where_sql}) "
+        "  AND (o.fulfilled_from_stock_id IS NOT NULL OR o.sewing_status = 'Со склада')",
+        (int(actor_id) if str(actor_id or '').isdigit() else None,
+         actor_name or None, reason, reason) + tuple(params),
+    )

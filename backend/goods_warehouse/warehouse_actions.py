@@ -23,6 +23,7 @@ from shared import (
     is_admin_or_senior,
     log_action,
     log_bulk,
+    log_stock_release,
     log_return_history,
     next_storage_barcode,
     notify_admin,
@@ -2199,6 +2200,8 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                 ids_csv = ','.join(str(int(i['orderId'])) for i in to_return)
                 # Возвращаем в общую очередь: связь со складской вещью рвём,
                 # исполнителей не трогаем — их и не было, заказ закрывался складом.
+                log_stock_release(cur, f"o.id IN ({ids_csv}) AND o.sewing_status = 'Со склада'",
+                                  (), 'возврат зависших заказов в цех', actor_id, actor_name)
                 cur.execute(
                     "UPDATE orders SET fulfilled_from_stock_id = NULL, "
                     "  sewing_status = 'Новый' "
@@ -2406,6 +2409,9 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                     # уходит (статус не «Новый»), в подборе не показывается
                     # (вещи за ним нет) и просто выпадает из работы, пока
                     # маркетплейс не начнёт считать просрочку.
+                    log_stock_release(cur, "o.fulfilled_from_stock_id = %s", (int(gw_id),),
+                                      'скан подбора: поставка заказа закрыта',
+                                      actor_id, actor_name)
                     cur.execute(
                         "UPDATE orders SET fulfilled_from_stock_id = NULL, "
                         "  sewing_status = CASE WHEN sewing_status = 'Со склада' "
@@ -2516,6 +2522,9 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                 # освобождаем её, иначе она навсегда выпадет из оборота. Заодно
                 # убираем обратную ссылку у заказа: иначе он остаётся «закрытым
                 # складом» без вещи и просто исчезает из работы.
+                log_stock_release(
+                    cur, f"o.id = {int(gw_reserved)} AND o.fulfilled_from_stock_id = {int(gw_id)}",
+                    (), 'скан подбора: заказ мёртвый, вещь освобождена', actor_id, actor_name)
                 cur.execute(
                     "UPDATE orders SET fulfilled_from_stock_id = NULL, "
                     "  sewing_status = CASE WHEN sewing_status = 'Со склада' "
@@ -2816,6 +2825,8 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
             # Поэтому вместе со ссылкой снимаем и статус: раньше сбрасывалась
             # только ссылка, и заказ оставался «Со склада» — ровно тем самым
             # невидимкой, от которого этот комментарий и предостерегал.
+            log_stock_release(cur, "o.fulfilled_from_stock_id = %s", (int(item_id),),
+                              'вещь вернули на полку', actor_id, actor_name)
             cur.execute(
                 "UPDATE orders SET fulfilled_from_stock_id = NULL, "
                 "  sewing_status = CASE WHEN sewing_status = 'Со склада' "
@@ -3021,6 +3032,8 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
             # возвращаем в цех — иначе он будет ждать вещь, которой нет.
             returned_order = None
             if nf_reserved:
+                log_stock_release(cur, "o.id = %s", (int(nf_reserved),),
+                                  'вещь не нашли на полке', actor_id, actor_name)
                 cur.execute(
                     "UPDATE orders SET fulfilled_from_stock_id = NULL, sewing_status = 'Новый', "
                     "assigned_user_id = NULL, workshop_id = NULL WHERE id = %s "
@@ -3341,6 +3354,8 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
             # Заказ покупателя, который закрывался этой вещью, возвращаем в производство.
             returned_order = None
             if reserved_order_id:
+                log_stock_release(cur, "o.id = %s", (int(reserved_order_id),),
+                                  'вещь списана как брак', actor_id, actor_name)
                 cur.execute(
                     "UPDATE orders SET fulfilled_from_stock_id = NULL, sewing_status = 'Новый', "
                     "assigned_user_id = NULL, workshop_id = NULL WHERE id = %s "
@@ -3371,6 +3386,9 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                             "shipping_labeled_at = NULL, shipping_labeled_by = NULL, shipping_labeled_by_name = NULL WHERE id = %s",
                             (sib,),
                         )
+                    log_stock_release(cur, "o.group_key = %s AND COALESCE(o.status, '') <> 'Отменён'",
+                                      (group_key,), 'брак в связке — вся связка в пошив',
+                                      actor_id, actor_name)
                     cur.execute(
                         "UPDATE orders SET fulfilled_from_stock_id = NULL, sewing_status = 'Новый', "
                         "assigned_user_id = NULL, workshop_id = NULL "
@@ -3491,6 +3509,8 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
             # Обратная ссылка у отменённого заказа больше не действительна: вещь
             # его не закрывает. Сам заказ при этом остаётся на конвейере.
             all_ids = ','.join(str(int(r[0])) for r in rows)
+            log_stock_release(cur, f"o.fulfilled_from_stock_id IN ({all_ids})", (),
+                              'заказ отменён на маркетплейсе, вещь в оборот', actor_id, actor_name)
             cur.execute(
                 f"UPDATE orders SET fulfilled_from_stock_id = NULL "
                 f"WHERE fulfilled_from_stock_id IN ({all_ids})"
@@ -3691,6 +3711,8 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                 rel_csv = ','.join(str(int(r[0])) for r in released)
                 # Ссылка и статус — вместе: заказ, оставшийся «Со склада» без
                 # вещи, выпадает из работы и всплывает на панели как зависший.
+                log_stock_release(cur, f"o.fulfilled_from_stock_id IN ({rel_csv})", (),
+                                  'снята бронь старой выполненной поставки', actor_id, actor_name)
                 cur.execute(
                     "UPDATE orders SET fulfilled_from_stock_id = NULL, "
                     "  sewing_status = CASE WHEN sewing_status = 'Со склада' "
@@ -3963,6 +3985,8 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
             )
             linked = cur.fetchall()
             for lnk_id, lnk_number, lnk_status in linked:
+                log_stock_release(cur, "o.id = %s", (int(lnk_id),),
+                                  'складская вещь удалена', actor_id, actor_name)
                 if (lnk_status or '') in ('Отгружен', 'Доставлен', 'Отменён'):
                     cur.execute(
                         "UPDATE orders SET fulfilled_from_stock_id = NULL WHERE id = %s",

@@ -1171,6 +1171,19 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
             if not fields:
                 return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Нет полей для обновления'})}
 
+            if 'sewingStatus' in body_data and body_data['sewingStatus'] != 'Со склада':
+                cur.execute(
+                    "INSERT INTO audit_log (user_id, user_name, category, action, entity_type, "
+                    "  entity_id, description, details) "
+                    "SELECT %s, %s, 'warehouse', 'stock_order_released', 'order', o.id, "
+                    "  'Заказ #' || COALESCE(o.order_number, o.id::text) || ' снят со склада ("
+                    "' || COALESCE(o.sewing_status, '—') || '): администратор вручную сменил статус на ' || %s, "
+                    "  jsonb_build_object('reason', 'manual_status', 'oldStockId', o.fulfilled_from_stock_id) "
+                    "FROM orders o WHERE o.id = %s "
+                    "  AND (o.sewing_status = 'Со склада' OR o.fulfilled_from_stock_id IS NOT NULL)",
+                    (int(actor_id) if str(actor_id or '').isdigit() else None,
+                     actor_name or None, str(body_data['sewingStatus']), int(item_id)),
+                )
             cur.execute(f"UPDATE orders SET {', '.join(fields)} WHERE id = {int(item_id)}")
 
             if revert_cutter_accrual:
