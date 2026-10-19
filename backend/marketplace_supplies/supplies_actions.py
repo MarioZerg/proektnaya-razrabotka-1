@@ -1650,7 +1650,12 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                     "                  JOIN marketplace_supply_boxes bx ON bx.id = si.box_id "
                     "                  WHERE si.goods_warehouse_id = gw.id "
                     "                    AND bx.closed_at IS NOT NULL "
-                    "                    AND gw.status <> 'in_stock') "
+                    "                    AND gw.status <> 'in_stock' "
+                    # Вещь вернулась на склад (инвентаризация, возврат) и её заново
+                    # отстикеровали ПОСЛЕ закрытия того короба: старая запись — хвост
+                    # прошлой поставки, а не груз в пути (GW-726455, 19.10).
+                    "                    AND NOT (gw.shipping_labeled_at IS NOT NULL "
+                    "                             AND gw.shipping_labeled_at > bx.closed_at)) "
                     # Чужое живое отправление не трогаем — см. пояснение выше.
                     "  AND (COALESCE(own.order_type, '') = 'FBO' "
                     f"       OR NOT {owner_alive}) "
