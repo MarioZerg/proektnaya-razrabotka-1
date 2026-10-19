@@ -21,7 +21,7 @@ from supplies_read import handle_get
 from supplies_actions import handle_post
 
 
-def handler(event: dict, context) -> dict:
+def _handler(event: dict, context) -> dict:
     """Поставки готового товара на маркетплейс (полный цикл, как на физическом складе):
 
     Жизненный цикл поставки:
@@ -96,3 +96,23 @@ def handler(event: dict, context) -> dict:
         return handle_post(event, headers, dsn)
 
     return {'statusCode': 405, 'headers': headers, 'body': json.dumps({'error': 'Method not allowed'})}
+
+BUSY_ERROR = ('Сервер перегружен и не ответил. Подождите 2–3 секунды и отсканируйте '
+              'ещё раз — повтор безопасен, дважды операция не пройдёт')
+
+
+def handler(event: dict, context) -> dict:
+    """Поставки на маркетплейс: сборка коробов, сканирование, статусы.
+
+    При пике нагрузки база отвечает «rate limit exceeded». Транзакция в этом
+    случае откатывается — ничего не записано, поэтому отвечаем понятным 503,
+    а не обрывом, который сканер показывает как «Failed to fetch».
+    """
+    try:
+        return _handler(event, context)
+    except psycopg2.OperationalError:
+        return {
+            'statusCode': 503,
+            'headers': {'Access-Control-Allow-Origin': '*', 'Content-Type': 'application/json'},
+            'body': json.dumps({'error': BUSY_ERROR, 'serverBusy': True}, ensure_ascii=False),
+        }

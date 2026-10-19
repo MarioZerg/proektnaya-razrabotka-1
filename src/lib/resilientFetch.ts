@@ -89,6 +89,52 @@ const withAuthHeader = (init?: RequestInit): RequestInit | undefined => {
   return { ...init, headers };
 };
 
+/** Что показать человеку, если сервер не принял отправку. */
+export const BUSY_MESSAGE =
+  'Сервер сейчас перегружен и не ответил. Подождите 2–3 секунды и отсканируйте ещё раз — ' +
+  'повтор безопасен, дважды операция не пройдёт';
+const OFFLINE_MESSAGE =
+  'Нет связи с сервером. Проверьте интернет и отсканируйте ещё раз';
+
+const busyResponse = (status: number) =>
+  new Response(JSON.stringify({ error: BUSY_MESSAGE, serverBusy: true }), {
+    status,
+    headers: { 'Content-Type': 'application/json' },
+  });
+
+/**
+ * Одна попытка отправки. Пик нагрузки на базу (rate limit) облачный шлюз отдаёт
+ * HTML-страницей 502/503/504 — код экрана пытался прочитать её как JSON и
+ * показывал непонятную ошибку. Подменяем такой ответ понятным текстом.
+ */
+const sendOnce = async (
+  originalFetch: typeof window.fetch,
+  input: RequestInfo | URL,
+  init: RequestInit | undefined,
+  url: string,
+): Promise<Response> => {
+  let response: Response;
+  try {
+    response = await originalFetch(input, init);
+  } catch (error) {
+    if ((error as Error)?.name === 'AbortError') throw error;
+    throw new Error(OFFLINE_MESSAGE);
+  }
+  if (RETRY_STATUSES.has(response.status)) {
+    const type = response.headers.get('Content-Type') || '';
+    if (!type.includes('application/json')) {
+      if (!isErrorReportUrl(url)) {
+        reportError({
+          source: 'backend',
+          message: `Функция ответила ошибкой ${response.status} при отправке: ${url}`,
+        });
+      }
+      return busyResponse(response.status);
+    }
+  }
+  return response;
+};
+
 export const setupResilientFetch = () => {
   const originalFetch = window.fetch.bind(window);
 
@@ -103,8 +149,10 @@ export const setupResilientFetch = () => {
     // Ключ сессии добавляем ко ВСЕМ нашим запросам, включая отправку данных.
     const authInit = withAuthHeader(init);
 
-    // Отправку данных дальше не трогаем: повторять её нельзя.
-    if (method !== 'GET') return originalFetch(input, authInit);
+    // Отправку данных не повторяем: неизвестно, дошла ли она до сервера.
+    // Но вместо «Failed to fetch» или «Unexpected token <» человек со сканером
+    // должен увидеть понятное «сервер занят — отсканируйте ещё раз».
+    if (method !== 'GET') return sendOnce(originalFetch, input, authInit, url);
 
     init = authInit;
 

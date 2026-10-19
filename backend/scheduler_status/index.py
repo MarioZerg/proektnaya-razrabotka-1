@@ -31,6 +31,29 @@ CORS_HEADERS = {
 # lateAfter   — через сколько минут молчания считаем задание сломавшимся;
 # optional    — задание может законно молчать (запускается редко, раз в сутки),
 #               поэтому «никогда не запускалось» для него не тревога.
+# РАЗНЕСЁННОЕ РАСПИСАНИЕ (19.10).
+#
+# Раньше задания стартовали в одни и те же минуты (:00, :15, :50). Каждое
+# задание делает десятки запросов к базе, и в эти секунды база упиралась в
+# предел «rate limit exceeded»: кладовщик со сканером получал ошибку, хотя сам
+# скан занимает доли секунды. Здесь у каждого задания своя минута — пики
+# не накладываются друг на друга.
+CRON_LINES = {
+    'ozon_sync_orders': '1-59/15 * * * *',
+    'wb_sync_orders': '4-59/15 * * * *',
+    'ym_sync': '7-59/15 * * * *',
+    'stock_auto_release': '10-59/15 * * * *',
+    'supplies_auto_statuses': '13-59/30 * * * *',
+    'ozon_refresh_statuses': '27 * * * *',
+    'wb_check_statuses': '57 * * * *',
+    'ym_check_statuses': '3 * * * *',
+    'sync': '12 * * * *',
+    'ozon_split_pending': '33 * * * *',
+    'price_robot': '42 * * * *',
+    'sales_sync': '21 */2 * * *',
+    'ue_sync_prices': '48 */6 * * *',
+}
+
 JOBS = [
     # --- ПРИЁМ ЗАКАЗОВ. Молчит — новые заказы не попадают в цех вообще.
     {
@@ -394,6 +417,7 @@ def handler(event: dict, context) -> dict:
                 'purpose': job['purpose'],
                 'group': job['group'],
                 'everyMin': job['everyMin'],
+                'cronLine': CRON_LINES.get(job['key']),
                 'lastRunAt': last.isoformat() if last else None,
                 'minutesAgo': minutes_ago,
                 'runsPerDay': runs,

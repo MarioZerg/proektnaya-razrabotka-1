@@ -25,6 +25,7 @@ const agoText = (minutes: number | null) => {
  * платим за вызовы, которые не сработали.
  */
 const cronLine = (job: SchedulerJob) => {
+  if (job.cronLine) return job.cronLine;
   const shift = (job.key.length * 7) % 60;
   if (job.everyMin < 60) return `*/${job.everyMin} * * * *`;
   if (job.everyMin === 60) return `${shift} * * * *`;
@@ -161,6 +162,28 @@ const SchedulerJobCard = ({ job }: { job: SchedulerJob }) => {
                 <p className="break-all rounded border bg-background px-2 py-1 font-mono-tech text-xs">
                   {job.url}
                 </p>
+                {/* Своя минута у каждого задания: если все стартуют одновременно,
+                    база отвечает отказом, и у кладовщиков сканеры выдают ошибку. */}
+                {job.cronLine && (
+                  <div className="space-y-1">
+                    <p className="text-xs text-muted-foreground">
+                      Расписание (своя минута, чтобы задания не мешали сканерам):
+                    </p>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <code className="rounded border bg-background px-2 py-1 font-mono-tech text-xs">
+                        {job.cronLine}
+                      </code>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => copy(job.cronLine!, 'Расписание')}
+                      >
+                        <Icon name="Copy" size={14} className="mr-1" />
+                        Копировать
+                      </Button>
+                    </div>
+                  </div>
+                )}
                 {job.body && (
                   <div className="space-y-1">
                     <p className="text-xs text-muted-foreground">Тело запроса:</p>

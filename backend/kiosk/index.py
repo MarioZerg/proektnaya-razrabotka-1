@@ -8,6 +8,24 @@ from datetime import datetime, timedelta, date
 import psycopg2
 
 
+_RU_TO_EN = dict(zip(
+    'йцукенгшщзхъфывапролджэячсмитьбюЙЦУКЕНГШЩЗХЪФЫВАПРОЛДЖЭЯЧСМИТЬБЮёЁ',
+    "qwertyuiop[]asdfghjkl;'zxcvbnm,.QWERTYUIOP{}ASDFGHJKL:\"ZXCVBNM<>`~",
+))
+
+
+def normalize_scan_layout(code):
+    """Код со сканера в английской раскладке.
+
+    Сканер «печатает» как клавиатура: при включённом русском языке стикер OZON
+    ii50022340265 приходит как шш50022340265, и вещь «не находится».
+    """
+    raw = (code or '').strip()
+    if not re.search('[а-яА-ЯёЁ]', raw):
+        return raw
+    return ''.join(_RU_TO_EN.get(ch, ch) for ch in raw)
+
+
 def resolve_ozon_barcode(cur, barcode):
     """Штрихкод с ярлыка OZON FBS → номер отправления (через API OZON)."""
     barcode = (barcode or '').strip()
@@ -578,7 +596,7 @@ def shift_close_allowed_at(schedule_row, opened_at):
     return (opened_at + duration).isoformat() + 'Z'
 
 
-def handler(event: dict, context) -> dict:
+def _handler(event: dict, context) -> dict:
     """Терминал упаковщицы (kiosk) — упрощённый экран для завершения стикеровки.
 
     Упаковщица находит заказ со статусом "Стикеровка" по номеру заказа, проверяет его и
@@ -1824,11 +1842,9 @@ def handler(event: dict, context) -> dict:
             # месяцами, и число на плитке давно не совпадало с тележкой в цехе.
             # received_at обновляется в момент отправки на перепаковку.
             # +3 часа — дата по Москве, как и в остальных складских отсечках.
-            repack_since = (
-                "(received_at + interval '3 hours') >= GREATEST("
-                "TIMESTAMP '2026-09-01', "
-                "date_trunc('month', now() + interval '3 hours'))"
-            )
+            # Отсечку по месяцу сняли 19.10: в очередь входят ВСЕ вещи на
+            # перепаковке — сентябрьские лежали в тележке, а сканер их не видел.
+            repack_since = "TRUE"
             repack_since_gw = repack_since.replace('received_at', 'gw.received_at')
 
             if action == 'repack_list':
@@ -1859,7 +1875,7 @@ def handler(event: dict, context) -> dict:
                     "LEFT JOIN orders o ON o.id = gw.order_id "
                     "LEFT JOIN marketplace_returns mr ON mr.id = gw.repack_return_id "
                     "WHERE gw.status = 'repacking' AND " + repack_since_gw + ws_filter +
-                    " ORDER BY gw.received_at ASC LIMIT 100"
+                    " ORDER BY gw.received_at ASC LIMIT 1000"
                 )
                 items = [
                     {
@@ -1970,7 +1986,7 @@ def handler(event: dict, context) -> dict:
                 #
                 # Скан ЗАКРЕПЛЯЕТ вещь за цехом киоска: с этого момента она пропадает из
                 # списка соседнего цеха, и одну и ту же вещь не переупакуют дважды.
-                scan_code = (body_data.get('barcode') or '').strip()
+                scan_code = normalize_scan_layout(body_data.get('barcode') or '')
                 scan_ws = body_data.get('workshopId')
                 if not scan_code:
                     return {'statusCode': 400, 'headers': headers,
@@ -3952,3 +3968,22 @@ def handler(event: dict, context) -> dict:
 # release: packer_returns
 
 # redeploy: role switch
+
+BUSY_ERROR = ('Сервер перегружен и не ответил. Подождите 2–3 секунды и отсканируйте '
+              'ещё раз — повтор безопасен, дважды операция не пройдёт')
+
+
+def handler(event: dict, context) -> dict:
+    """Терминал цеха: стикеровка, перепаковка, вход сотрудников.
+
+    При пике нагрузки база отвечает «rate limit exceeded»: транзакция
+    откатывается, ничего не записано. Отвечаем понятным 503 вместо обрыва.
+    """
+    try:
+        return _handler(event, context)
+    except psycopg2.OperationalError:
+        return {
+            'statusCode': 503,
+            'headers': {'Access-Control-Allow-Origin': '*', 'Content-Type': 'application/json'},
+            'body': json.dumps({'error': BUSY_ERROR, 'serverBusy': True}, ensure_ascii=False),
+        }

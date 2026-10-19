@@ -18,6 +18,8 @@ export interface SchedulerJob {
   group: string;
   /** Как часто задание должно запускаться, минут. */
   everyMin: number;
+  /** Рекомендованное расписание для планировщика — со своей минутой, чтобы задания не стартовали одновременно. */
+  cronLine?: string | null;
   lastRunAt: string | null;
   /** Сколько минут назад отработало. null — не запускалось ни разу. */
   minutesAgo: number | null;

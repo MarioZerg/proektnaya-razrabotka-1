@@ -681,10 +681,9 @@ def handle_get(event: dict, headers: dict, dsn: str) -> dict:
                 # Перепаковка: только вещи, заведённые и отправленные в цех
                 # с 01.09.2026 и в текущем месяце. Старые ручные потеряшки
                 # в этот счётчик не входят — см. ту же отсечку в kiosk/index.py.
-                "  COUNT(*) FILTER (WHERE status = 'repacking' "
-                "    AND (received_at + interval '3 hours') >= GREATEST("
-                "      TIMESTAMP '2026-09-01', "
-                "      date_trunc('month', now() + interval '3 hours'))), "
+                # Перепаковка: ВСЕ вещи в цехе, без отсечки по месяцу (решение 19.10:
+                # сентябрьские вещи лежали в тележке, а сканер их не видел).
+                "  COUNT(*) FILTER (WHERE status = 'repacking'), "
                 # «Осмотрено» и «Забрано с производства» слиты в один этап: для
                 # кладовщика это одна и та же работа — положить вещь на полку.
                 "  COUNT(*) FILTER (WHERE status IN ('inspected', 'taken')), "
@@ -726,12 +725,7 @@ def handle_get(event: dict, headers: dict, dsn: str) -> dict:
             elif stage == 'atPackers':
                 # Тот же отбор, что у счётчика «На проверке»: с 01.09.2026
                 # и только отправленные на перепаковку в текущем месяце.
-                where_stage = (
-                    "gw.status = 'repacking' "
-                    "AND (gw.received_at + interval '3 hours') >= GREATEST("
-                    "TIMESTAMP '2026-09-01', "
-                    "date_trunc('month', now() + interval '3 hours'))"
-                )
+                where_stage = "gw.status = 'repacking'"
             elif stage_status:
                 where_stage = f"gw.status = '{stage_status}'"
             else:
@@ -820,7 +814,7 @@ def handle_get(event: dict, headers: dict, dsn: str) -> dict:
                     "LEFT JOIN users tk ON tk.id = gw.taken_by "
                     "LEFT JOIN users pk ON pk.id = o.packer_user_id "
                     f"WHERE {where_stage} "
-                    "ORDER BY gw.received_at ASC LIMIT 300"
+                    "ORDER BY gw.received_at ASC LIMIT 1000"
                 )
                 items = [
                     {

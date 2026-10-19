@@ -5,6 +5,7 @@ import { useSubmitGuard } from '@/hooks/useSubmitGuard';
 import { useAuth } from '@/context/AuthContext';
 import { fetchShelves, type Shelf } from '@/lib/shelvesApi';
 import { printStorageStickers } from '@/lib/printStorageSticker';
+import { fixScanLayout } from '@/lib/keyboardLayout';
 import {
   fetchInspection,
   moveToWorkshop,
@@ -115,13 +116,18 @@ export const useReturnsInspection = () => {
    */
   const norm = (s: string) => s.toLowerCase().replace(/\s+/g, ' ').trim();
   const query = norm(search);
+  // Сканер в русской раскладке шлёт «шш5002…» вместо «ii5002…». Ищем и по
+  // исходному тексту (названия товаров пишут по-русски), и по исправленному.
+  const queryFixed = norm(fixScanLayout(search));
   const visible = query
-    ? items.filter((i) =>
-        norm(
+    ? items.filter((i) => {
+        const hay = norm(
           [
             i.returnBarcode,
             i.storageBarcode,
             i.orderNumber,
+            i.clientOrderNumber,
+            i.latestClientOrder,
             i.product,
             i.returnProductName,
             i.material,
@@ -129,8 +135,9 @@ export const useReturnsInspection = () => {
           ]
             .filter(Boolean)
             .join(' '),
-        ).includes(query),
-      )
+        );
+        return hay.includes(query) || hay.includes(queryFixed);
+      })
     : items;
 
   const toggleAll = () =>
