@@ -132,7 +132,7 @@ const MissedAccrualsAlert = () => {
           className={`shrink-0 text-amber-700 transition-transform ${open ? 'rotate-90' : ''}`}
         />
         <p className="min-w-0 flex-1 truncate text-sm font-semibold text-amber-900">
-          Работа без начисления
+          Не начислилось автоматически
         </p>
         <span className="shrink-0 rounded-sm bg-amber-200 px-1.5 py-0.5 text-xs font-bold tabular-nums text-amber-900">
           {total} шт · {items.length}
@@ -142,8 +142,11 @@ const MissedAccrualsAlert = () => {
       {open && (
         <div className="border-t border-amber-200 px-3 py-3">
           <p className="text-xs leading-snug text-amber-900">
-            Этапы выполнены, но зарплата за них не начислена. «Доначислить» — по
-            заведённым ставкам. Если дыра объяснима — уберите строку крестиком.
+            Зарплата за выполненные этапы начисляется сама по прайс-листу — в том числе
+            если при закрытии этапа что-то сорвалось. Здесь остаются только случаи, где
+            система начислить не может: нет ставки в прайсе, не указан цех или это
+            администратор. Заведите ставку и нажмите «Повторить». Если случай объяснимый —
+            уберите строку крестиком.
           </p>
 
           <div className="mt-3 space-y-1.5">
@@ -170,7 +173,7 @@ const MissedAccrualsAlert = () => {
                     type="button"
                     onClick={() => handleAccrue(i)}
                     disabled={accruing === key}
-                    title="Начислить зарплату за эти заказы по заведённым ставкам"
+                    title="Повторить начисление после того, как заведена ставка"
                     className="ml-auto shrink-0 rounded-md border border-amber-400 bg-amber-100 px-2 py-0.5 text-xs font-semibold text-amber-900 hover:bg-amber-200 disabled:opacity-50"
                   >
                     {accruing === key ? (
@@ -181,7 +184,7 @@ const MissedAccrualsAlert = () => {
                     ) : (
                       <span className="flex items-center gap-1">
                         <Icon name="Wallet" size={12} />
-                        Доначислить
+                        Повторить
                       </span>
                     )}
                   </button>

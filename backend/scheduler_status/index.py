@@ -52,6 +52,7 @@ CRON_LINES = {
     'price_robot': '42 * * * *',
     'sales_sync': '21 */2 * * *',
     'ue_sync_prices': '48 */6 * * *',
+    'auto_accrue_missed': '16-59/30 * * * *',
 }
 
 JOBS = [
@@ -243,6 +244,21 @@ JOBS = [
         'group': 'service',
         'everyMin': 15,
         'lateAfter': 1440,
+        'optional': True,
+    },
+    {
+        'key': 'auto_accrue_missed',
+        'title': 'Автоначисление зарплаты',
+        'func': 'salary',
+        'urlAction': 'auto_accrue',
+        'method': 'POST',
+        'purpose': 'Начисляет по прайсу раскрой, пошив и стикеровку, если при закрытии '
+                   'этапа начисление не прошло',
+        'group': 'service',
+        'everyMin': 30,
+        'lateAfter': 180,
+        # Пишет в журнал и тогда, когда начислять было нечего, но страховка
+        # продублирована в расчётах зарплаты — задание необязательное.
         'optional': True,
     },
     {
