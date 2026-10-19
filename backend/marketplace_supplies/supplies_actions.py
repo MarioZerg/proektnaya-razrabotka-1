@@ -1654,7 +1654,26 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                     # Чужое живое отправление не трогаем — см. пояснение выше.
                     "  AND (COALESCE(own.order_type, '') = 'FBO' "
                     f"       OR NOT {owner_alive}) "
-                    "  AND ("
+                    # ВЕЩЬ, ОТСТИКЕРОВАННАЯ ПОД ДРУГУЮ ЖИВУЮ ЗАЯВКУ FBO, НЕ НАША.
+                    #
+                    # Ярлык OZN одинаков у всех заявок, и раньше скан брал самую
+                    # свежую отстикерованную вещь артикула, не глядя, под какую
+                    # заявку её снимали с полки. 19.10 кладовщик отстикеровал 4 шт.
+                    # «Лен 300x245» под Пушкино (#1487), а скан коробов Ростова
+                    # (#1482) записал в свой короб именно их. Когда пакеты Пушкино
+                    # дошли до своего короба, свободных вещей FBO уже не было, и
+                    # скан отвечал «вещь принадлежит FBS».
+                    + (
+                        ""
+                        if forced_gw_id else
+                        "  AND NOT (gw.shipping_labeled_at IS NOT NULL "
+                        "           AND COALESCE(own.order_type, '') = 'FBO' "
+                        f"           AND own.supply_id IS NOT NULL AND own.supply_id <> {int(supply_id)} "
+                        "           AND EXISTS (SELECT 1 FROM marketplace_supplies os_ "
+                        "                       WHERE os_.id = own.supply_id "
+                        "                         AND COALESCE(os_.status, '') NOT IN ('Выполнена', 'Отменена'))) "
+                    )
+                    + "  AND ("
                     f"       upper(trim(coalesce(o.product_ozon_sku, ''))) IN ({vals}) "
                     f"    OR upper(trim(coalesce(o.product_barcode, ''))) IN ({vals}) "
                     f"    OR upper(trim(coalesce(mi.ozon_sku, ''))) IN ({vals}) "
@@ -1662,7 +1681,10 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                     "  ) "
                     + (f" AND gw.id = {int(forced_gw_id)} " if forced_gw_id else "")
                     +
-                    f"ORDER BY (gw.shipping_labeled_at IS NOT NULL) DESC, "
+                    # Сначала вещь, отстикерованная под ЭТУ заявку, потом любая
+                    # другая отстикерованная, и только потом остаток с полки.
+                    f"ORDER BY (gw.shipping_labeled_at IS NOT NULL AND o.supply_id = {int(supply_id)}) DESC, "
+                    "         (gw.shipping_labeled_at IS NOT NULL) DESC, "
                     "         (gw.shelf_id IS NULL) DESC, "
                     "         gw.shipping_labeled_at DESC NULLS LAST, "
                     f"         (o.supply_id = {int(supply_id)}) DESC, "
@@ -1700,6 +1722,39 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                         "  ) LIMIT 1"
                     )
                     busy_fbs = cur.fetchone()
+                    # Отстикерованная под эту заявку вещь уже лежит в коробе ДРУГОЙ
+                    # заявки — значит, её ярлык отсканировали не в тот короб. Это
+                    # надо назвать прямо, а не отсылать к чужому заказу FBS.
+                    cur.execute(
+                        "SELECT s2.id, COALESCE(s2.cluster, ''), b.box_number, gw.storage_barcode "
+                        "FROM goods_warehouse gw "
+                        "JOIN orders ro ON ro.id = gw.reserved_order_id "
+                        "JOIN marketplace_supply_items si ON si.goods_warehouse_id = gw.id "
+                        "JOIN marketplace_supplies s2 ON s2.id = si.supply_id "
+                        "LEFT JOIN marketplace_supply_boxes b ON b.id = si.box_id "
+                        "WHERE ro.supply_id = %s AND si.supply_id <> %s "
+                        "  AND gw.shipping_labeled_at IS NOT NULL "
+                        "  AND ("
+                        f"       upper(trim(coalesce(ro.product_ozon_sku, ''))) IN ({vals}) "
+                        f"    OR upper(trim(coalesce(ro.product_barcode, ''))) IN ({vals}) "
+                        "  ) ORDER BY si.id DESC LIMIT 1",
+                        (int(supply_id), int(supply_id)),
+                    )
+                    misplaced = cur.fetchone()
+                    if misplaced:
+                        box_txt = f', короб {misplaced[2]}' if misplaced[2] else ''
+                        return {
+                            'statusCode': 409,
+                            'headers': headers,
+                            'body': json.dumps({
+                                'error': f'Свободных отстикерованных вещей этого артикула '
+                                         f'под эту поставку нет: вещь, отстикерованная под неё '
+                                         f'({misplaced[3]}), уже записана в поставку '
+                                         f'#{misplaced[0]} {misplaced[1]}{box_txt}. '
+                                         f'Пакет в руках — скорее всего её пара: '
+                                         f'проверьте состав того короба',
+                            }, ensure_ascii=False),
+                        }
                     if busy_fbs:
                         return {
                             'statusCode': 409,
