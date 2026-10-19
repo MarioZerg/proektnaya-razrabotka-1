@@ -48,6 +48,21 @@ from shared import (
 )
 
 
+# ЗА ЗАКАЗОМ УЖЕ ЗАБРОНИРОВАНА ВЕЩЬ С ПОЛКИ — В РАСКРОЙ ОН НЕ ИДЁТ.
+#
+# Раньше смотрели только на ссылку заказа на складскую вещь. Но бронь живёт в
+# самой вещи: ссылку у заказа могли сбросить, а пакет на полке оставался
+# закреплённым за ним. Цех кроил и шил заказ, под который склад уже держал
+# готовую штору, и на терминале стикеровки закрытие падало (19.10, 5 заказов).
+HELD_BY_SHELF_SQL = (
+    "NOT EXISTS (SELECT 1 FROM goods_warehouse hgw "
+    "            WHERE hgw.reserved_order_id = orders.id "
+    "              AND hgw.order_id <> orders.id "
+    "              AND hgw.shipped_at IS NULL "
+    "              AND hgw.status NOT IN ('shipped', 'lost')) "
+)
+
+
 def handle_post(event: dict, headers: dict, dsn: str) -> dict:
     """Действия конвейера: всё, что двигает заказ по этапам."""
     body_data = json.loads(event.get('body') or '{}')
@@ -346,6 +361,7 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                 "SELECT id, group_key, group_size, COALESCE(width, 0) FROM orders "
                 "WHERE sewing_status = 'Новый' "
                 "AND fulfilled_from_stock_id IS NULL "
+                f"AND {HELD_BY_SHELF_SQL}"
                 # ПО ЗАКАЗУ УЖЕ ЕСТЬ СШИТАЯ ВЕЩЬ — В РАСКРОЙ ОН НЕ ИДЁТ.
                 #
                 # Заказ мог пройти конвейер целиком: вещь сшита, отстикерована и
@@ -424,6 +440,7 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                 cur.execute(
                     "SELECT id FROM orders WHERE sewing_status = 'Новый' "
                     "AND fulfilled_from_stock_id IS NULL "
+                f"AND {HELD_BY_SHELF_SQL}"
                     f"AND NOT ({cancelled_sql('')}) "
                     f"AND group_key IN ({keys_csv}) "
                     "AND material IN (" + names_csv + ") "
@@ -464,6 +481,7 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                 cur.execute(
                     "SELECT id FROM orders WHERE sewing_status = 'Новый' "
                     "AND fulfilled_from_stock_id IS NULL "
+                f"AND {HELD_BY_SHELF_SQL}"
                     f"AND NOT ({cancelled_sql('')}) "
                     "AND marketplace = 'OZON' "
                     "AND ozon_posting_number IS NOT NULL "
@@ -614,6 +632,7 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                     cur.execute(
                         "SELECT 1 FROM orders WHERE sewing_status = 'Новый' "
                         "AND fulfilled_from_stock_id IS NULL "
+                f"AND {HELD_BY_SHELF_SQL}"
                         f"AND NOT ({cancelled_sql('')}) "
                         "AND material IN (" + names_csv + ") "
                         "AND (group_key IS NULL OR COALESCE(group_size, 1) <= 1) "
