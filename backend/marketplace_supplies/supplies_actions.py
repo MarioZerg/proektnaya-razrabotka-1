@@ -1693,6 +1693,86 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                 )
                 fbo_row = cur.fetchone()
 
+                # СВОБОДНОЙ ВЕЩИ FBO НЕТ — ЗАБИРАЕМ ВЕЩЬ У ЗАКАЗА FBS, ЕЩЁ ЛЕЖАЩУЮ «СО СКЛАДА».
+                #
+                # Кладовщик снял вещь с полки и наклеил на неё ярлык FBO по
+                # программе. Программа при этом могла держать её за заказом FBS,
+                # которому ярлык покупателя ещё не печатали (заказ закрыт
+                # «Со склада», вещь не отстикерована). Раньше скан отвечал
+                # «вещь принадлежит FBS», и пакет с ярлыком FBO оставался без места.
+                #
+                # Решение руководства (19.10): то, что физически отстикеровано
+                # под FBO, едет в FBO. Заказ FBS освобождается и уходит в пошив.
+                # Вещи, сшитые под FBS в цехе или уже с ярлыком покупателя, не трогаем.
+                if not fbo_row and not forced_gw_id:
+                    cur.execute(
+                        "SELECT gw.id, gw.status, gw.storage_barcode, "
+                        "       o.material, o.width, o.height, o.product, "
+                        "       own.id, own.order_number "
+                        "FROM goods_warehouse gw "
+                        "JOIN orders o ON o.id = gw.order_id "
+                        "LEFT JOIN marketplace_items mi ON mi.id = o.marketplace_item_id "
+                        "JOIN orders own ON own.id = gw.reserved_order_id "
+                        "WHERE gw.status IN ('in_stock', 'picking') "
+                        "  AND gw.shipped_at IS NULL "
+                        "  AND gw.shipping_labeled_at IS NULL "
+                        "  AND COALESCE(own.order_type, '') = 'FBS' "
+                        "  AND own.sewing_status = 'Со склада' "
+                        "  AND own.fulfilled_from_stock_id = gw.id "
+                        "  AND own.marketplace = 'OZON' "
+                        "  AND COALESCE(own.ozon_status, '') IN ('', 'awaiting_packaging') "
+                        "  AND NOT EXISTS (SELECT 1 FROM marketplace_supply_items si "
+                        "                  JOIN marketplace_supplies s2 ON s2.id = si.supply_id "
+                        "                  WHERE si.goods_warehouse_id = gw.id "
+                        "                    AND COALESCE(s2.status, '') NOT IN ('Выполнена', 'Отменена')) "
+                        "  AND NOT EXISTS (SELECT 1 FROM fbo_supply_proposal_items _fpi "
+                        "                  WHERE _fpi.goods_warehouse_id = gw.id AND _fpi.open_hold) "
+                        "  AND EXISTS (SELECT 1 FROM orders fo "
+                        "              LEFT JOIN marketplace_items fmi ON fmi.id = fo.marketplace_item_id "
+                        "              WHERE fo.supply_id = %s "
+                        "                AND COALESCE(fo.status, '') <> 'Отменён' "
+                        "                AND NOT EXISTS (SELECT 1 FROM goods_warehouse g2 "
+                        "                                WHERE g2.reserved_order_id = fo.id "
+                        "                                  AND g2.shipped_at IS NULL) "
+                        f"                AND (upper(trim(coalesce(fo.product_ozon_sku, ''))) IN ({vals}) "
+                        f"                     OR upper(trim(coalesce(fmi.ozon_sku, ''))) IN ({vals}))) "
+                        "  AND ("
+                        f"       upper(trim(coalesce(o.product_ozon_sku, ''))) IN ({vals}) "
+                        f"    OR upper(trim(coalesce(o.product_barcode, ''))) IN ({vals}) "
+                        f"    OR upper(trim(coalesce(mi.ozon_sku, ''))) IN ({vals}) "
+                        f"    OR upper(trim(coalesce(mi.barcode, ''))) IN ({vals}) "
+                        "  ) "
+                        "ORDER BY gw.picked_confirmed_at DESC NULLS LAST, gw.matched_at DESC NULLS LAST, gw.id "
+                        "LIMIT 1 FOR UPDATE OF gw SKIP LOCKED",
+                        (int(supply_id),),
+                    )
+                    take = cur.fetchone()
+                    if take:
+                        take_gid, fbs_order_id, fbs_order_number = take[0], take[7], take[8]
+                        cur.execute(
+                            "UPDATE orders SET fulfilled_from_stock_id = NULL, "
+                            "  sewing_status = 'Новый' "
+                            "WHERE id = %s AND fulfilled_from_stock_id = %s",
+                            (int(fbs_order_id), int(take_gid)),
+                        )
+                        cur.execute(
+                            "UPDATE goods_warehouse SET reserved_order_id = NULL, "
+                            "  matched_at = NULL, shipping_labeled_at = now(), "
+                            "  shipping_labeled_by = %s, "
+                            "  shipping_labeled_by_name = COALESCE(%s, shipping_labeled_by_name) "
+                            "WHERE id = %s",
+                            (int(actor_id) if str(actor_id or '').isdigit() else None,
+                             body_data.get('actorName'), int(take_gid)),
+                        )
+                        log_action(
+                            cur, actor_id, body_data.get('actorName'),
+                            'fbo_takeover_from_fbs', 'goods_warehouse', take_gid,
+                            f'Поставка #{supply_id}: вещь {take[2]} ({take[6]}) отстикерована '
+                            f'под FBO и уходит в короб. Заказ FBS {fbs_order_number} '
+                            f'освобождён и отправлен в пошив',
+                        )
+                        fbo_row = take[:7]
+
                 # Подходящая вещь есть, но она занята живым заказом FBS.
                 # Молчать нельзя: кладовщик держит пакет в руках и должен
                 # понять, что эту штуку в короб класть не надо, — иначе он
