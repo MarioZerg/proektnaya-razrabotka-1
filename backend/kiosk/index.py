@@ -2440,14 +2440,45 @@ def _handler(event: dict, context) -> dict:
                                 int(actor_id), repack_amount,
                                 int(gw_order[0]) if gw_order and gw_order[0] else None,
                                 f'Перепаковка возврата {row[0]}'
+                                + (f' (возврат №{int(row[2])})' if row[2] else '')
                                 + (' (новый пакет)' if new_bag else ' (пакет прежний)'),
                             ),
                         )
-                        # Оплата за этот возврат уже была (вещь перепаковывают повторно) —
-                        # второй раз не платим и в ответе показываем 0, чтобы упаковщица не
-                        # ждала лишних денег.
+                        # Начисление на этот заказ уже есть. Два разных случая:
+                        #  - вещь вернулась от покупателя ПОВТОРНО (новый возврат) —
+                        #    это новая работа, платим. Раньше не платили: за 30 дней
+                        #    15 перепаковок прошли бесплатно (19.10);
+                        #  - ту же перепаковку закрыли второй раз — не платим.
+                        # Отличаем по номеру возврата: он пишется в описание начисления.
                         if not cur.fetchone():
-                            repack_amount = 0.0
+                            ret_id = int(row[2]) if row[2] else None
+                            paid_again = False
+                            if ret_id:
+                                ret_tag = f'возврат №{ret_id}'
+                                # Уже оплачено за ЭТОТ возврат: есть начисление с его
+                                # номером, либо это самый первый возврат вещи, а старое
+                                # начисление (до появления номера) было как раз за него.
+                                cur.execute(
+                                    "SELECT 1 FROM salary_accruals WHERE type = 'packer_repack' "
+                                    "AND (description LIKE %s OR ("
+                                    "  order_id = %s AND description NOT LIKE '%%возврат №%%' "
+                                    "  AND %s = (SELECT min(r.id) FROM marketplace_returns r "
+                                    "            WHERE r.goods_warehouse_id = %s))) LIMIT 1",
+                                    (f'%{ret_tag}%',
+                                     int(gw_order[0]) if gw_order and gw_order[0] else 0,
+                                     ret_id, int(gw_id)),
+                                )
+                                if not cur.fetchone():
+                                    cur.execute(
+                                        "INSERT INTO salary_accruals (user_id, type, amount, description) "
+                                        "VALUES (%s, 'packer_repack', %s, %s)",
+                                        (int(actor_id), repack_amount,
+                                         f'Перепаковка возврата {row[0]} ({ret_tag}, повторный)'
+                                         + (' (новый пакет)' if new_bag else ' (пакет прежний)')),
+                                    )
+                                    paid_again = True
+                            if not paid_again:
+                                repack_amount = 0.0
 
                 log_action(
                     cur, actor_id, actor_name, 'repack_done', 'goods_warehouse', gw_id,
