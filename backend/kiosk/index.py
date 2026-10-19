@@ -1451,15 +1451,18 @@ def _handler(event: dict, context) -> dict:
                             "INSERT INTO goods_warehouse (order_id, reserved_order_id, "
                             "  status, storage_barcode, receive_reason, "
                             "  shipping_labeled_at, matched_at, bundle_barcode) "
-                            "VALUES (%s, %s, 'awaiting_supply', %s, 'fbs_ready', "
-                            "        COALESCE((SELECT packed_at FROM orders "
-                            "                  WHERE id = %s), now()), now(), %s) "
+                            "SELECT %s, CASE WHEN EXISTS (SELECT 1 FROM goods_warehouse h "
+                            "  WHERE h.reserved_order_id = %s AND h.shipped_at IS NULL "
+                            "    AND h.status NOT IN ('shipped', 'lost')) THEN NULL ELSE %s END, "
+                            "  'awaiting_supply', %s, 'fbs_ready', "
+                            "  COALESCE((SELECT packed_at FROM orders WHERE id = %s), now()), "
+                            "  now(), %s "
                             # Две упаковщицы могли нажать кнопку одновременно —
                             # вторая просто ничего не делает.
                             "ON CONFLICT (order_id) DO NOTHING "
                             "RETURNING storage_barcode",
-                            (int(order_id), int(order_id), next_storage_barcode(cur),
-                             int(order_id), fix_bundle),
+                            (int(order_id), int(order_id), int(order_id),
+                             next_storage_barcode(cur), int(order_id), fix_bundle),
                         )
                         gw_done = cur.fetchone()
                     conn.commit()
@@ -1622,14 +1625,6 @@ def _handler(event: dict, context) -> dict:
                     conn.rollback()
                     return {'statusCode': 409, 'headers': headers, 'body': json.dumps({'error': pack_err})}
 
-                # packed_at — момент, когда вещь реально упакована. По нему считается
-                # акция дня: метры засчитываются за упакованное, а не за сданное на
-                # стикеровку, иначе вещь могла зачесться и пролежать неупакованной.
-                cur.execute(
-                    f"UPDATE orders SET sewing_status = 'Готовые', packer_user_id = {int(packer_id)}, "
-                    f"packed_at = COALESCE(packed_at, now()) "
-                    f"WHERE id = {int(order_id)}"
-                )
 
                 # Заказ отменён клиентом — вещь не поедет покупателю. Сразу заводим её на складе
                 # в статусе awaiting_shelf: упаковщик клеит стикер хранения, а кладовщик потом
@@ -1695,13 +1690,22 @@ def _handler(event: dict, context) -> dict:
                         # товар FBO обезличен, и без этой привязки в короб могла уйти
                         # соседняя штука того же артикула, а строка подбора осталась бы
                         # висеть незакрытой.
+                        # За заказом уже может числиться другая вещь, которую нельзя
+                        # снять: в FBO — пакет, уже отсканированный в короб по ярлыку,
+                        # в FBS — полочная вещь с наклеенным ярлыком. База не даёт
+                        # держать за заказом две вещи, и закрытие падало (19.10, 11
+                        # заказов). Тогда сшитая вещь заводится без брони — свободным
+                        # товаром «к поставке», кладовщик положит её в следующий короб.
                         cur.execute(
                             "INSERT INTO goods_warehouse (order_id, reserved_order_id, status, "
                             "storage_barcode, receive_reason, shipping_labeled_at, "
                             "matched_at, bundle_barcode) "
-                            "VALUES (%s, %s, 'awaiting_supply', %s, 'fbs_ready', now(), "
-                            "        now(), %s)",
-                            (int(order_id), int(order_id),
+                            "SELECT %s, CASE WHEN EXISTS (SELECT 1 FROM goods_warehouse h "
+                            "  WHERE h.reserved_order_id = %s AND h.shipped_at IS NULL "
+                            "    AND h.status NOT IN ('shipped', 'lost')) THEN NULL ELSE %s END, "
+                            "  'awaiting_supply', %s, 'fbs_ready', now(), now(), %s "
+                            "ON CONFLICT (order_id) DO NOTHING",
+                            (int(order_id), int(order_id), int(order_id),
                              next_storage_barcode(cur), bundle_barcode),
                         )
 
@@ -1838,6 +1842,24 @@ def _handler(event: dict, context) -> dict:
                 # нельзя, иначе первую вещь вообще не получится обработать. Вместо этого
                 # показываем упаковщице, сколько осталось, чтобы она не унесла пакет
                 # раньше времени и не отправила связку по частям.
+                # СТАТУС «ГОТОВЫЕ» СТАВИМ ПОСЛЕДНИМ ШАГОМ (19.10).
+                #
+                # Каждая команда к базе сохраняется сразу, по отдельности — откат
+                # всей операции при сбое не срабатывает. Раньше статус ставился
+                # первым: если дальше что-то падало (конфликт складской записи,
+                # перегрузка базы), заказ уже числился закрытым, а начислений,
+                # складской вещи и записи в журнале не было. Повторное нажатие
+                # видело «Готовые» и начисления уже не делало.
+                #
+                # Теперь при сбое заказ остаётся на стикеровке, и повторное
+                # закрытие проходит все шаги заново: списание упаковки и
+                # начисления защищены от двойного срабатывания.
+                cur.execute(
+                    "UPDATE orders SET sewing_status = 'Готовые', packer_user_id = %s, "
+                    "packed_at = COALESCE(packed_at, now()) WHERE id = %s",
+                    (int(packer_id), int(order_id)),
+                )
+
                 group_left = 0
                 if group_key and (group_size or 0) > 1:
                     cur.execute(
