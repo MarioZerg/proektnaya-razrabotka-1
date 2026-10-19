@@ -161,6 +161,42 @@ def log_action(cur, actor_id, actor_name, action, entity_type, entity_id, descri
     )
 
 
+def release_shelf_reserve(cur, order_id, actor_id=None, actor_name=None):
+    """Снять с заказа бронь полочной вещи, если заказ всё-таки сшили в цехе.
+
+    Подбор закрепляет за заказом FBS готовую вещь со склада, но цех тем временем
+    кроит и шьёт заказ сам. На терминале сшитая вещь должна встать под заказ, а
+    база не даёт держать за одним заказом две вещи: закрытие падало с ошибкой,
+    упаковщица видела, что заказ «закрыт вещью со склада». Ярлык уже на сшитой
+    вещи, поэтому полочную возвращаем на полку свободной (19.10, 5 заказов).
+    Вещь, уже отстикерованную ярлыком отправления, не трогаем.
+    """
+    cur.execute(
+        "UPDATE goods_warehouse SET status = 'in_stock', reserved_order_id = NULL, "
+        "  matched_at = NULL "
+        "WHERE reserved_order_id = %s AND order_id <> %s "
+        "  AND shipped_at IS NULL AND shipping_labeled_at IS NULL "
+        "  AND status IN ('picking', 'in_stock') "
+        "RETURNING id, storage_barcode",
+        (int(order_id), int(order_id)),
+    )
+    released = cur.fetchall()
+    for gid, bc in released:
+        log_action(
+            cur, actor_id, actor_name, 'release_shelf_reserve', 'goods_warehouse', int(gid),
+            f'Вещь {bc} снята с заказа: заказ сшит в цехе и закрыт на терминале, '
+            f'полочная вещь снова свободна',
+        )
+    if released:
+        cur.execute(
+            "UPDATE orders SET fulfilled_from_stock_id = NULL "
+            "WHERE id = %s AND fulfilled_from_stock_id IN (" +
+            ",".join(str(int(r[0])) for r in released) + ")",
+            (int(order_id),),
+        )
+    return released
+
+
 def next_storage_barcode(cur) -> str:
     """Следующий стикер хранения GW-XXXXXX — номер выдаёт САМА БАЗА.
 
@@ -1404,6 +1440,7 @@ def _handler(event: dict, context) -> dict:
                     # защищены ON CONFLICT и могли пройти в оборвавшейся попытке.
                     if not gw_done and not is_cancelled and not is_individual \
                             and (order_type or '') in ('FBS', 'FBO'):
+                        release_shelf_reserve(cur, int(order_id), packer_id)
                         fix_bundle = None
                         if group_key and (group_size or 0) > 1:
                             fix_bundle = f"{group_key}-{group_position or 1}"
@@ -1650,6 +1687,7 @@ def _handler(event: dict, context) -> dict:
                         # кнопка стикера, а упаковщице нечего было наклеить на вещь.
                         if group_key and (group_size or 0) > 1:
                             bundle_barcode = f"{group_key}-{group_position or 1}"
+                        release_shelf_reserve(cur, int(order_id), packer_id)
                         # Вещь сразу закрепляем за своим заказом заявки (reserved_order_id):
                         # товар FBO обезличен, и без этой привязки в короб могла уйти
                         # соседняя штука того же артикула, а строка подбора осталась бы
