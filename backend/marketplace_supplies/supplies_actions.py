@@ -1759,6 +1759,57 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                         )
                         fbo_row = take[:7]
 
+                # ВЕЩЬ УЖЕ В РУКАХ С ЯРЛЫКОМ, А ЗАКАЗ ЕЩЁ НЕ ЗАКРЫТ НА ТЕРМИНАЛЕ.
+                #
+                # Складская запись сшитой под FBO вещи появляется, только когда
+                # упаковщица закрывает заказ на терминале. Но пакет с ярлыком OZN
+                # физически уже готов и лежит у кладовщика, а заказ ещё числится
+                # «На стикеровке». Скан отвечал «свободных вещей нет», хотя по
+                # заявке этого артикула не хватает десятками (Пушкино #1487, 19.10).
+                #
+                # Решение 19.10: ориентируемся на ярлык OZN и количество по заявке.
+                # Заводим складскую запись под такой заказ этой же поставки и кладём
+                # её в короб. Когда упаковщица закроет заказ на терминале, запись
+                # уже будет — второй не появится, зарплата начислится как обычно.
+                if not fbo_row and not forced_gw_id:
+                    cur.execute(
+                        "SELECT o.id, o.order_number, o.material, o.width, o.height, o.product "
+                        "FROM orders o "
+                        "LEFT JOIN marketplace_items mi ON mi.id = o.marketplace_item_id "
+                        "WHERE o.supply_id = %s "
+                        "  AND COALESCE(o.status, '') <> 'Отменён' "
+                        "  AND o.sewing_status = 'Стикеровка' "
+                        "  AND NOT EXISTS (SELECT 1 FROM goods_warehouse g "
+                        "                  WHERE g.order_id = o.id OR g.reserved_order_id = o.id) "
+                        "  AND ("
+                        f"       upper(trim(coalesce(o.product_ozon_sku, ''))) IN ({vals}) "
+                        f"    OR upper(trim(coalesce(o.product_barcode, ''))) IN ({vals}) "
+                        f"    OR upper(trim(coalesce(mi.ozon_sku, ''))) IN ({vals}) "
+                        f"    OR upper(trim(coalesce(mi.barcode, ''))) IN ({vals}) "
+                        "  ) "
+                        "ORDER BY o.id LIMIT 1 FOR UPDATE OF o SKIP LOCKED",
+                        (int(supply_id),),
+                    )
+                    st = cur.fetchone()
+                    if st:
+                        cur.execute(
+                            "INSERT INTO goods_warehouse (order_id, reserved_order_id, status, "
+                            "  storage_barcode, receive_reason, shipping_labeled_at, matched_at) "
+                            "VALUES (%s, %s, 'awaiting_supply', "
+                            "  'GW-' || lpad(nextval('goods_warehouse_storage_seq')::text, 6, '0'), "
+                            "  'fbs_ready', now(), now()) "
+                            "RETURNING id, status, storage_barcode",
+                            (int(st[0]), int(st[0])),
+                        )
+                        new_gw = cur.fetchone()
+                        log_action(
+                            cur, actor_id, body_data.get('actorName'),
+                            'fbo_scan_from_stickering', 'goods_warehouse', int(new_gw[0]),
+                            f'Поставка #{supply_id}: ярлык {code} — заказ {st[1]} ещё на '
+                            f'стикеровке, вещь {new_gw[2]} заведена по скану и уходит в короб',
+                        )
+                        fbo_row = (new_gw[0], new_gw[1], new_gw[2], st[2], st[3], st[4], st[5])
+
                 # Подходящая вещь есть, но она занята живым заказом FBS.
                 # Молчать нельзя: кладовщик держит пакет в руках и должен
                 # понять, что эту штуку в короб класть не надо, — иначе он
