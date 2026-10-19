@@ -1788,7 +1788,11 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                         "LEFT JOIN marketplace_items mi ON mi.id = o.marketplace_item_id "
                         "WHERE o.supply_id = %s "
                         "  AND COALESCE(o.status, '') <> 'Отменён' "
-                        "  AND o.sewing_status = 'Стикеровка' "
+                        # Кроме стикеровки — заказы «Со склада», чья складская вещь
+                        # ушла другому заказу (подбор переставил резерв): по учёту
+                        # заказ закрыт, а своей вещи у него нет. Так в Пушкино 5
+                        # штук «Лён 200×245» не принимались при пакетах в руках.
+                        "  AND o.sewing_status IN ('Стикеровка', 'Со склада', 'Готовые', 'В работе') "
                         "  AND NOT EXISTS (SELECT 1 FROM goods_warehouse g "
                         "                  WHERE g.order_id = o.id OR g.reserved_order_id = o.id) "
                         "  AND ("
@@ -1797,7 +1801,9 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                         f"    OR upper(trim(coalesce(mi.ozon_sku, ''))) IN ({vals}) "
                         f"    OR upper(trim(coalesce(mi.barcode, ''))) IN ({vals}) "
                         "  ) "
-                        "ORDER BY o.id LIMIT 1 FOR UPDATE OF o SKIP LOCKED",
+                        "ORDER BY CASE o.sewing_status WHEN 'Стикеровка' THEN 0 "
+                        "  WHEN 'Со склада' THEN 1 WHEN 'Готовые' THEN 2 ELSE 3 END, o.id "
+                        "LIMIT 1 FOR UPDATE OF o SKIP LOCKED",
                         (int(supply_id),),
                     )
                     st = cur.fetchone()
@@ -1812,11 +1818,16 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                             (int(st[0]), int(st[0])),
                         )
                         new_gw = cur.fetchone()
+                        cur.execute(
+                            "UPDATE orders SET fulfilled_from_stock_id = %s "
+                            "WHERE id = %s AND sewing_status = 'Со склада'",
+                            (int(new_gw[0]), int(st[0])),
+                        )
                         log_action(
                             cur, actor_id, body_data.get('actorName'),
                             'fbo_scan_from_stickering', 'goods_warehouse', int(new_gw[0]),
-                            f'Поставка #{supply_id}: ярлык {code} — заказ {st[1]} ещё на '
-                            f'стикеровке, вещь {new_gw[2]} заведена по скану и уходит в короб',
+                            f'Поставка #{supply_id}: ярлык {code} — у заказа {st[1]} не было своей '
+                            f'складской вещи, вещь {new_gw[2]} заведена по скану и уходит в короб',
                         )
                         fbo_row = (new_gw[0], new_gw[1], new_gw[2], st[2], st[3], st[4], st[5])
 
