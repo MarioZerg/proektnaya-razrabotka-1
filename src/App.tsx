@@ -55,6 +55,7 @@ const UsersSettings = lazy(() => import("./pages/settings/UsersSettings"));
 const CompanySettings = lazy(() => import("./pages/settings/CompanySettings"));
 const SchedulerSettings = lazy(() => import("./pages/settings/SchedulerSettings"));
 const Logs = lazy(() => import("./pages/settings/Logs"));
+const AppErrorsLog = lazy(() => import("./pages/settings/AppErrorsLog"));
 const PendingEmployees = lazy(() => import("./pages/settings/PendingEmployees"));
 const MarketplaceOrders = lazy(() => import("./pages/marketplace/MarketplaceOrders"));
 const LoginCode = lazy(() => import("./pages/LoginCode"));
@@ -182,6 +183,7 @@ const App = () => (
             <Route path="/crm/settings/company" element={<CompanySettings />} />
             <Route path="/crm/settings/scheduler" element={<SchedulerSettings />} />
             <Route path="/crm/settings/logs" element={<Logs />} />
+            <Route path="/crm/settings/logs/errors" element={<AppErrorsLog />} />
             <Route path="/crm/settings/pending-employees" element={<PendingEmployees />} />
             <Route path="/crm/marketplace/orders" element={<MarketplaceOrders />} />
             <Route path="/crm/marketplace/sewing-items" element={<SewingItems />} />

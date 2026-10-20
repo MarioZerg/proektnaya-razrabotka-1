@@ -4,6 +4,7 @@ import TablePager from '@/components/crm/finance/TablePager';
 import LogsFilters from '@/components/crm/logs/LogsFilters';
 import LogsSummaryTiles from '@/components/crm/logs/LogsSummaryTiles';
 import LogsTable from '@/components/crm/logs/LogsTable';
+import LogsTabs from '@/components/crm/logs/LogsTabs';
 import { useLogsState } from '@/components/crm/logs/useLogsState';
 import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
 
@@ -14,6 +15,7 @@ const Logs = () => {
   return (
     <CrmLayout>
       <div className="space-y-4 sm:space-y-6">
+        <LogsTabs />
         <div>
           <h1 className="flex items-center gap-2 text-xl font-bold">
             <Icon name="ScrollText" size={22} className="shrink-0" />
