@@ -289,16 +289,32 @@ def _get_ca_bundle() -> str:
 
 
 
-def _send_max(max_user_id, text):
+def _send_max(max_user_id, text, timeout=10):
     """Сообщение в MAX. Токен — в заголовке, чтобы не попал в логи."""
     requests.post(
         f'{MAX_API_URL}/messages',
         params={'user_id': max_user_id},
         json={'text': text},
         headers={'Authorization': os.environ['MAX_BOT_TOKEN']},
-        timeout=10,
+        timeout=timeout,
         verify=_get_ca_bundle(),
     ).raise_for_status()
+
+
+def _manager_max_targets(cur):
+    """Кому писать о поставках: менеджеры с MAX, а если их нет — администраторы."""
+    cur.execute(
+        "SELECT max_user_id FROM users "
+        "WHERE role = 'manager' AND max_user_id IS NOT NULL AND is_active = true"
+    )
+    targets = [r[0] for r in cur.fetchall()]
+    if not targets:
+        cur.execute(
+            "SELECT max_user_id FROM users "
+            "WHERE role = 'admin' AND max_user_id IS NOT NULL AND is_active = true"
+        )
+        targets = [r[0] for r in cur.fetchall()]
+    return targets
 
 
 def notify_supply_assembled(cur, supply_id, actor_name=None):
@@ -328,17 +344,7 @@ def notify_supply_assembled(cur, supply_id, actor_name=None):
         return {'sent': 0}
     number, app_number, marketplace, stype, cluster, supply_date, items, boxes = row
 
-    cur.execute(
-        "SELECT max_user_id FROM users "
-        "WHERE role = 'manager' AND max_user_id IS NOT NULL AND is_active = true"
-    )
-    targets = [r[0] for r in cur.fetchall()]
-    if not targets:
-        cur.execute(
-            "SELECT max_user_id FROM users "
-            "WHERE role = 'admin' AND max_user_id IS NOT NULL AND is_active = true"
-        )
-        targets = [r[0] for r in cur.fetchall()]
+    targets = _manager_max_targets(cur)
     if not targets:
         return {'sent': 0}
 
@@ -1671,10 +1677,14 @@ def sync_fbo_dates(cur, conn, deadline, timeout=3):
     """Подтягивает даты «в Газельку» и «на маркетплейс». Возвращает число изменённых дат."""
     import time as _t
     changed = 0
+    # Сдвиги, о которых пишем менеджеру в MAX. Первое заполнение пустой даты —
+    # не сдвиг, о нём не пишем.
+    shifts = []
 
     # 1. Газелька: груз ещё не сдан.
     cur.execute(
-        "SELECT id, COALESCE(gazelka_plan_id::text, gazelka_id), ship_to_gazelka_at::date "
+        "SELECT id, COALESCE(gazelka_plan_id::text, gazelka_id), ship_to_gazelka_at::date, "
+        "       COALESCE(supply_number, ozon_application_number, id::text), marketplace, cluster "
         "FROM marketplace_supplies "
         "WHERE type = 'FBO' AND gazelka_shipped_at IS NULL "
         "  AND COALESCE(status, '') NOT IN ('Выполнена', 'Отменена', 'Принята') "
@@ -1684,7 +1694,7 @@ def sync_fbo_dates(cur, conn, deadline, timeout=3):
     rows = cur.fetchall()
     if rows and _t.time() < deadline:
         plans = _gazelka_plans(timeout)
-        for sid, plan_id, current in rows:
+        for sid, plan_id, current, number, mp, cluster in rows:
             p = plans.get(str(plan_id).strip())
             route = (p or {}).get('route') if isinstance((p or {}).get('route'), dict) else {}
             new_date = str(route.get('date') or '')[:10]
@@ -1703,11 +1713,18 @@ def sync_fbo_dates(cur, conn, deadline, timeout=3):
                        f"{current.strftime('%d.%m.%Y') if current else '—'} → "
                        f"{new_date[8:10]}.{new_date[5:7]}.{new_date[:4]}")
             changed += 1
+            if current:
+                shifts.append((sid, number, mp, cluster, 'Отгрузка в Газельку',
+                               current.strftime('%d.%m.%Y'),
+                               f"{new_date[8:10]}.{new_date[5:7]}.{new_date[:4]}",
+                               f'по заявке Газельки {plan_id}'))
         conn.commit()
 
     # 2. OZON: слот на складе маркетплейса, в том числе после сдачи в Газельку.
     cur.execute(
-        "SELECT id, ozon_supply_order_id, supply_date, timeslot FROM marketplace_supplies "
+        "SELECT id, ozon_supply_order_id, supply_date, timeslot, "
+        "       COALESCE(supply_number, ozon_application_number, id::text), cluster "
+        "FROM marketplace_supplies "
         "WHERE marketplace = 'OZON' AND type = 'FBO' AND ozon_supply_order_id IS NOT NULL "
         "  AND COALESCE(status, '') NOT IN ('Выполнена', 'Отменена', 'Принята') "
         "ORDER BY id LIMIT 50"
@@ -1723,7 +1740,7 @@ def sync_fbo_dates(cur, conn, deadline, timeout=3):
                 ts = ((o.get('timeslot') or {}).get('timeslot') or {}).get('from') or ''
                 if ts:
                     slots[int(o.get('order_id') or 0)] = ts
-            for sid, order_id, cur_date, cur_slot in rows:
+            for sid, order_id, cur_date, cur_slot, number, cluster in rows:
                 ts = slots.get(int(order_id))
                 if not ts:
                     continue
@@ -1739,8 +1756,47 @@ def sync_fbo_dates(cur, conn, deadline, timeout=3):
                            f"Дата на маркетплейс из OZON: {old} → "
                            f"{new_date[8:10]}.{new_date[5:7]}.{new_date[:4]} {new_slot or ''}".strip())
                 changed += 1
+                # Добавилось только время слота к той же дате — не сдвиг.
+                date_moved = cur_date and str(cur_date) != new_date
+                slot_moved = cur_slot and new_slot and cur_slot != new_slot
+                if date_moved or slot_moved:
+                    shifts.append((sid, number, 'OZON', cluster, 'Поставка на склад OZON', old,
+                                   f"{new_date[8:10]}.{new_date[5:7]}.{new_date[:4]} {new_slot or ''}".strip(),
+                                   'OZON перенёс слот'))
             conn.commit()
+
+    if shifts:
+        try:
+            notify_fbo_date_shifts(cur, shifts)
+        except Exception:
+            pass
     return changed
+
+
+def notify_fbo_date_shifts(cur, shifts):
+    """Пишет менеджеру в MAX, что Газелька или OZON сдвинули дату поставки.
+
+    Ошибку отправки глушим: даты уже сохранены, недоступный мессенджер не повод
+    их откатывать. Таймаут короткий — проверка идёт и при открытии списка.
+    """
+    targets = _manager_max_targets(cur)
+    if not targets or not os.environ.get('MAX_BOT_TOKEN'):
+        return 0
+    blocks = ['Сдвинулась дата поставки' if len(shifts) == 1 else 'Сдвинулись даты поставок']
+    for sid, number, mp, cluster, what, old, new, source in shifts:
+        head = f'{mp or ""} FBO № {number}'.strip()
+        if cluster:
+            head += f' · {cluster}'
+        blocks.append(f'\n{head}\n{what}: {old} → {new}\n({source})')
+    text = '\n'.join(blocks)
+    sent = 0
+    for uid in targets:
+        try:
+            _send_max(uid, text, timeout=2)
+            sent += 1
+        except Exception:
+            continue
+    return sent
 
 
 def sync_fbo_dates_throttled(cur, conn):
