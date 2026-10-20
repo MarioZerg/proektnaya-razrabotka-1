@@ -39,7 +39,7 @@ const OzonMoveApplicationButton = ({ supply }: { supply: SupplyDetail }) => {
       const r = await moveOzonSupplyToApplication(supply.id, number.trim());
       toast({
         title: `Поставка перенесена в заявку ${r.orderNumber}`,
-        description: `Кластер: ${r.cluster || '—'}. Заказов: ${r.movedOrders}, коробов: ${r.movedBoxes}. Закройте короба заново и переклейте стикеры.`,
+        description: `Кластер: ${r.cluster || '—'}. Заказов: ${r.movedOrders}, коробов: ${r.movedBoxes}. Закройте короба заново и переклейте стикеры. Заявка Газельки сброшена — привяжите новую под этот склад.`,
       });
       setOpen(false);
       navigate(`/crm/shipments/to-marketplace/${r.supplyId}`);

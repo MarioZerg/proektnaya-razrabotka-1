@@ -253,7 +253,12 @@ const FboSupplyStages = ({
 
       {stage === 'assemble' && (
         <div className="space-y-4">
-          <FboArticlesCheck rows={supply.fboArticles || []} />
+          <FboArticlesCheck rows={supply.fboArticles || []} onRefresh={async () => {
+              load(true);
+              // load не отдаёт обещание — даём спиннеру покрутиться, пока придут короба.
+              await new Promise((r) => setTimeout(r, 1200));
+            }}
+          />
           <SupplyGroupsPanel
             groups={supply.groups || []}
             cancelledCount={supply.items.filter((i) => i.isCancelled).length}

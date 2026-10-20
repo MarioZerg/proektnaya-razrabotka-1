@@ -6,6 +6,8 @@ import type { FboArticleRow } from '@/lib/marketplaceSuppliesApi';
 
 interface FboArticlesCheckProps {
   rows: FboArticleRow[];
+  /** Перечитать короба с сервера — после того как лишнее убрали. */
+  onRefresh?: () => Promise<void> | void;
 }
 
 const diffOf = (r: FboArticleRow) => r.inBoxes - r.planned;
@@ -18,8 +20,19 @@ const diffOf = (r: FboArticleRow) => r.inBoxes - r.planned;
  * берёт деньги за обработку. Сверху — проблемные строки (перебор красным,
  * недобор жёлтым), совпавшие свёрнуты, чтобы не мешали.
  */
-const FboArticlesCheck = ({ rows }: FboArticlesCheckProps) => {
+const FboArticlesCheck = ({ rows, onRefresh }: FboArticlesCheckProps) => {
   const [showAll, setShowAll] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+
+  const refresh = async () => {
+    if (!onRefresh) return;
+    setRefreshing(true);
+    try {
+      await onRefresh();
+    } finally {
+      setRefreshing(false);
+    }
+  };
 
   const { problems, ok, over, under } = useMemo(() => {
     const sorted = [...rows].sort((a, b) => {
@@ -36,10 +49,12 @@ const FboArticlesCheck = ({ rows }: FboArticlesCheckProps) => {
     };
   }, [rows]);
 
-  if (!rows.length) return null;
+  const hasOver = over > 0;
+  // Сверка нужна, только пока в коробах есть лишнее. Убрали излишки —
+  // после обновления блок пропадает, чтобы не отвлекал от сборки.
+  if (!rows.length || !hasOver) return null;
 
   const visible = showAll ? [...problems, ...ok] : problems;
-  const hasOver = over > 0;
 
   return (
     <Card className={`shadow-none ${hasOver ? 'border-destructive/50' : 'border-border'}`}>
@@ -49,7 +64,17 @@ const FboArticlesCheck = ({ rows }: FboArticlesCheckProps) => {
             <Icon name="ListChecks" size={18} className="text-muted-foreground" />
             <span className="font-semibold">Сверка по артикулам</span>
           </div>
-          <div className="flex flex-wrap gap-2 text-xs">
+          <div className="flex flex-wrap items-center gap-2 text-xs">
+            {onRefresh && (
+              <Button variant="outline" size="sm" className="h-7" onClick={refresh} disabled={refreshing}>
+                <Icon
+                  name={refreshing ? 'Loader2' : 'RefreshCw'}
+                  size={13}
+                  className={`mr-1.5 ${refreshing ? 'animate-spin' : ''}`}
+                />
+                Обновить сверку
+              </Button>
+            )}
             {hasOver && (
               <span className="rounded-md bg-destructive/10 px-2 py-1 font-medium text-destructive">
                 Лишнее: {over} шт.

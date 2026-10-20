@@ -129,7 +129,8 @@ def _supply_context(supply_id):
         row = cur.fetchone()
         cur.execute(
             "SELECT gazelka_plan_id FROM marketplace_supplies "
-            "WHERE gazelka_plan_id IS NOT NULL AND id <> %s",
+            "WHERE gazelka_plan_id IS NOT NULL AND id <> %s "
+            "  AND COALESCE(status, '') <> 'Отменена'",
             (int(supply_id),),
         )
         taken = {r[0] for r in cur.fetchall()}

@@ -1773,6 +1773,10 @@ def handle_move_to_application(cur, conn, client_id, api_key, body_data, actor):
         return _resp(404, {'error': 'Поставка не найдена'})
     (mp, s_type, s_status, old_order_id, old_number, shop_id, cargo_type,
      gz_id, gz_plan, gz_pickup, ship_gz_at, planned, created_by, is_b2b) = src
+    # ГАЗЕЛЬКУ НЕ ПЕРЕНОСИМ. Заявка Газельки привязана к складу назначения:
+    # при смене кластера старая заявка везёт груз не на тот склад. Новая поставка
+    # начинает без заявки — менеджер привязывает новую в карточке «Газелька».
+    gz_id, gz_plan, ship_gz_at = None, None, None
     if mp != 'OZON' or s_type != 'FBO':
         return _resp(400, {'error': 'Перенос доступен только для поставок OZON FBO'})
     if s_status in ('Выполнена', 'Отменена', 'Принята'):
@@ -1880,20 +1884,30 @@ def handle_move_to_application(cur, conn, client_id, api_key, body_data, actor):
         "UPDATE supply_bundle_labels SET supply_id = %s WHERE supply_id = %s",
         (int(new_id), int(from_id)),
     )
+    # Накладная переезжает, но данные старой заявки Газельки из неё стираем:
+    # номер заявки, водитель и машина относятся к рейсу на прежний склад.
     cur.execute(
-        "UPDATE waybill_documents SET supply_id = %s WHERE supply_id = %s "
+        "UPDATE waybill_documents SET supply_id = %s, order_number = NULL, order_date = NULL, "
+        "  driver_details = NULL, vehicle_details = NULL, vehicle_number = NULL, "
+        "  planned_unloading_at = NULL, transport_cost = NULL, transport_cost_total = NULL, "
+        "  is_ready = false, ready_at = NULL, ready_by = NULL, ready_by_name = NULL, "
+        "  updated_at = now() WHERE supply_id = %s "
         "AND NOT EXISTS (SELECT 1 FROM waybill_documents w2 WHERE w2.supply_id = %s)",
         (int(new_id), int(from_id), int(new_id)),
     )
+    # Старая поставка отменяется — заявку Газельки освобождаем, иначе она числится
+    # занятой и не показывается в списке для привязки.
     cur.execute(
         "UPDATE marketplace_supplies SET status = 'Отменена', locked_by = NULL, locked_at = NULL, "
+        "  gazelka_id = NULL, gazelka_plan_id = NULL, "
         "  comment = %s WHERE id = %s",
         (f'Перенесена в поставку №{new_id} (заявка {new_number}) — смена кластера', int(from_id)),
     )
     log_action(
         cur, actor.get('id'), actor.get('name'), 'ozon_fbo_move_application', new_id,
         f'Поставка №{from_id} (заявка {old_number}) перенесена в заявку {new_number}, '
-        f'кластер {warehouse}: заказов {moved_orders}, коробов {len(box_ids)}. Пошив не создавался',
+        f'кластер {warehouse}: заказов {moved_orders}, коробов {len(box_ids)}. Пошив не создавался. '
+        f'Заявка Газельки сброшена — привяжите новую',
     )
     conn.commit()
     return _resp(200, {
