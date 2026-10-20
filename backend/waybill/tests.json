@@ -33,6 +33,15 @@
       "bodyMatcher": "partial"
     },
     {
+      "name": "Gazelka fill without manager role forbidden",
+      "method": "POST",
+      "path": "/",
+      "body": { "action": "gazelka_fill", "supplyId": 1 },
+      "expectedStatus": 403,
+      "expectedBody": { "error": "string" },
+      "bodyMatcher": "partial"
+    },
+    {
       "name": "Create without manager role forbidden",
       "method": "POST",
       "path": "/",

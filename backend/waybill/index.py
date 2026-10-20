@@ -2,6 +2,7 @@ import base64
 import io
 import json
 import os
+import urllib.request
 from datetime import date, datetime
 
 import boto3
@@ -202,6 +203,155 @@ def _defaults(cur, supply_id):
         'unload_places': f'{places}' if places else '',
         'cargo_name_items': items,
     }
+
+
+# ---------------------------------------------------------------- Газелька
+#
+# Перевозчик сам знает водителя, машину, дату забора и стоимость — менеджер
+# переписывал это руками из кабинета Газельки. Теперь берём из заявки.
+# Детальной заявки в API нет: только список my-plans, в нём и ищем свою.
+# Маршрут (водитель, машина, дата) появляется, когда Газелька поставила заявку
+# в рейс — до этого заполняем только номер, дату заявки и дату доставки.
+
+GAZELKA_API = 'https://gazelka.space/api'
+
+
+def _clean(v):
+    """Убираем табуляции и лишние пробелы: их приносит копипаст из кабинетов."""
+    return ' '.join(str(v).split()) if v not in (None, '') else ''
+
+
+def _gazelka_plan(plan_id):
+    token = (os.environ.get('GAZELKA_API_KEY') or '').strip()
+    if not token or not plan_id:
+        return None
+    req = urllib.request.Request(GAZELKA_API + '/my-plans', method='POST', data=b'{}')
+    req.add_header('Authorization', f'Bearer {token}')
+    req.add_header('Content-Type', 'application/json')
+    req.add_header('Accept', 'application/json')
+    try:
+        with urllib.request.urlopen(req, timeout=3) as r:
+            data = json.loads(r.read().decode('utf-8') or '[]')
+    except Exception:
+        return None
+    plans = data if isinstance(data, list) else (data.get('plans') or data.get('data') or [])
+    for p in plans:
+        if isinstance(p, dict) and str(p.get('id')) == str(plan_id):
+            return p
+    return None
+
+
+def _supply_plan_id(cur, supply_id):
+    cur.execute(
+        'SELECT gazelka_plan_id, gazelka_id FROM marketplace_supplies WHERE id = %s',
+        (int(supply_id),),
+    )
+    row = cur.fetchone()
+    if not row:
+        return None
+    return _clean(row[0] or row[1]) or None
+
+
+def _last_carrier(cur, supply_id):
+    """Реквизиты перевозчика в API Газельки нет — берём из прошлой накладной."""
+    cur.execute(
+        "SELECT carrier_details FROM waybill_documents "
+        "WHERE supply_id <> %s AND COALESCE(carrier_details, '') <> '' "
+        "ORDER BY updated_at DESC NULLS LAST, id DESC LIMIT 1",
+        (int(supply_id),),
+    )
+    row = cur.fetchone()
+    return _clean(row[0]) if row else ''
+
+
+def _gazelka_fields(cur, supply_id):
+    """Поля накладной из заявки Газельки. Пусто — Газелька недоступна или заявки нет."""
+    plan_id = _supply_plan_id(cur, supply_id)
+    p = _gazelka_plan(plan_id)
+    if not p:
+        return {}
+    route = p.get('route') if isinstance(p.get('route'), dict) else {}
+    out = {'order_number': _clean(p.get('id'))}
+
+    app_date = _clean(p.get('application_date'))[:10]
+    if app_date:
+        out['order_date'] = app_date
+    if p.get('delivery_date'):
+        out['planned_unloading_at'] = f"{p['delivery_date']}T00:00:00"
+
+    boxes, pallets = int(p.get('boxes') or 0), int(p.get('pallets') or 0)
+    if pallets:
+        out['_places'] = (str(pallets), f'{pallets} палет')
+    elif boxes:
+        out['_places'] = (str(boxes), f'{boxes} коробов')
+
+    if route:
+        driver = ', '.join(x for x in (_clean(route.get('driver_name')),
+                                       f"тел. {_clean(route.get('driver_phone'))}"
+                                       if route.get('driver_phone') else '') if x)
+        if driver:
+            out['driver_details'] = driver
+        if route.get('vehicle_make'):
+            out['vehicle_details'] = f"Грузовой автомобиль {_clean(route['vehicle_make'])}"
+        if route.get('vehicle_number'):
+            out['vehicle_number'] = _clean(route['vehicle_number']).upper()
+        if route.get('date'):
+            out['planned_loading_at'] = f"{route['date']}T00:00:00"
+
+    total = p.get('total_cost')
+    if total:
+        out['transport_cost'] = f'{total} руб.'
+        out['transport_cost_total'] = f'{total} руб.'
+    return out
+
+
+def _apply_gazelka(cur, supply_id, doc, force=False):
+    """Проставляет в накладную данные Газельки. Возвращает True, если что-то изменилось.
+
+    Готовую накладную сам не трогаем — у кладовщика может быть уже напечатанный
+    файл. Обновить её можно кнопкой (force), тогда готовность снимается.
+    Количество мест и перевозчика заполняем, только если поле пустое: их могли
+    поправить по факту погрузки.
+    """
+    if doc.get('isReady') and not force:
+        return False
+    g = _gazelka_fields(cur, supply_id)
+    if not g:
+        return False
+    places = g.pop('_places', None)
+    if places:
+        if not _clean(doc.get('loadingPlaces')):
+            g['loading_places'] = places[0]
+        if not _clean(doc.get('cargoPlaces')):
+            g['cargo_places'] = places[1]
+        if not _clean(doc.get('unloadPlaces')):
+            g['unload_places'] = places[0]
+    if not _clean(doc.get('carrierDetails')):
+        carrier = _last_carrier(cur, supply_id)
+        if carrier:
+            g['carrier_details'] = carrier
+
+    changes = {}
+    for col, value in g.items():
+        current = doc.get(_camel(col))
+        cur_s = _clean(current)
+        # У дат сравниваем только день: время подачи менеджер мог уточнить сам.
+        if col.endswith('_at') or col.endswith('_date'):
+            if cur_s[:10] == str(value)[:10]:
+                continue
+        elif cur_s == _clean(value):
+            continue
+        changes[col] = value
+    if not changes:
+        return False
+    sets = ', '.join(f'{c} = %s' for c in changes)
+    reset = (', is_ready = false, ready_at = NULL, ready_by = NULL, ready_by_name = NULL'
+             if doc.get('isReady') else '')
+    cur.execute(
+        f'UPDATE waybill_documents SET {sets}{reset}, updated_at = now() WHERE supply_id = %s',
+        list(changes.values()) + [int(supply_id)],
+    )
+    return True
 
 
 # ---------------------------------------------------------------- PDF
@@ -508,6 +658,9 @@ def handler(event: dict, context) -> dict:
         - собрать файл PDF и положить в хранилище
     POST /  { action: 'set_ready', supplyId, ready, actorId }
         - подтвердить готовность: кладовщик увидит кнопку скачивания
+    POST /  { action: 'gazelka_fill', supplyId, actorId }
+        - подтянуть из заявки Газельки водителя, машину, даты, места и стоимость
+          (черновик дозаполняется так же сам при каждом открытии)
 
     Args:
         event: dict с httpMethod, queryStringParameters, body
@@ -529,14 +682,20 @@ def handler(event: dict, context) -> dict:
             supply_id = params.get('supplyId')
             if not supply_id:
                 return _resp(400, {'error': 'Укажите supplyId'})
-            return _resp(200, {'document': _get_doc(cur, supply_id)})
+            doc = _get_doc(cur, supply_id)
+            # Черновик дозаполняем из Газельки при каждом открытии: водителя и
+            # машину Газелька назначает позже, чем менеджер заводит накладную.
+            if doc and not doc.get('isReady') and _apply_gazelka(cur, supply_id, doc):
+                conn.commit()
+                doc = _get_doc(cur, supply_id)
+            return _resp(200, {'document': doc})
 
         if method != 'POST':
             return _resp(405, {'error': 'Method not allowed'})
 
         body_data = json.loads(event.get('body') or '{}')
         action = body_data.get('action')
-        if action not in ('create', 'update', 'generate', 'set_ready'):
+        if action not in ('create', 'update', 'generate', 'set_ready', 'gazelka_fill'):
             return _resp(400, {'error': 'Неизвестное действие'})
 
         supply_id = body_data.get('supplyId')
@@ -567,12 +726,22 @@ def handler(event: dict, context) -> dict:
                 [int(supply_id)] + [d[c] for c in cols]
                 + [int(actor_id) if actor_id else None],
             )
+            _apply_gazelka(cur, supply_id, _get_doc(cur, supply_id))
             conn.commit()
             return _resp(200, {'document': _get_doc(cur, supply_id)})
 
         doc = _get_doc(cur, supply_id)
         if not doc:
             return _resp(404, {'error': 'Накладная не заведена'})
+
+        if action == 'gazelka_fill':
+            if not _supply_plan_id(cur, supply_id):
+                return _resp(400, {'error': 'К поставке не привязана заявка Газельки'})
+            if not _gazelka_fields(cur, supply_id):
+                return _resp(502, {'error': 'Газелька не ответила или заявки нет в её списке'})
+            _apply_gazelka(cur, supply_id, doc, force=True)
+            conn.commit()
+            return _resp(200, {'document': _get_doc(cur, supply_id)})
 
         if action == 'update':
             sets, values = [], []

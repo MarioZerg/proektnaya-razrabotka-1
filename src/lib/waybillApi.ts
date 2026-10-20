@@ -150,6 +150,10 @@ export const fetchWaybill = async (supplyId: number): Promise<WaybillDocument | 
 /** Создать черновик: наши реквизиты, склад назначения и число коробов подставятся сами. */
 export const createWaybill = (supplyId: number) => post({ action: 'create', supplyId });
 
+/** Подтянуть из заявки Газельки водителя, машину, даты, места и стоимость. */
+export const fillWaybillFromGazelka = (supplyId: number) =>
+  post({ action: 'gazelka_fill', supplyId });
+
 export const updateWaybill = (supplyId: number, fields: WaybillEditableFields) =>
   post({ action: 'update', supplyId, ...fields });
 

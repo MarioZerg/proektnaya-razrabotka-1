@@ -20,6 +20,7 @@ import {
   updateWaybill,
   generateWaybill,
   setWaybillReady,
+  fillWaybillFromGazelka,
   type WaybillDocument,
   type WaybillEditableFields,
 } from '@/lib/waybillApi';
@@ -197,6 +198,30 @@ const WaybillCard = ({ supply, isManager }: WaybillCardProps) => {
       });
     } finally {
       setCreating(false);
+    }
+  };
+
+  const [gazelkaLoading, setGazelkaLoading] = useState(false);
+  const handleGazelka = async () => {
+    setGazelkaLoading(true);
+    try {
+      const d = await fillWaybillFromGazelka(supply.id);
+      setDoc(d);
+      fillForm(d);
+      toast({
+        title: 'Данные Газельки подставлены',
+        description: d.driverDetails
+          ? 'Водитель, машина, даты и стоимость — из заявки'
+          : 'Водителя Газелька ещё не назначила — подставим, когда заявка встанет в рейс',
+      });
+    } catch (e) {
+      toast({
+        title: 'Не удалось получить данные Газельки',
+        description: e instanceof Error ? e.message : undefined,
+        variant: 'destructive',
+      });
+    } finally {
+      setGazelkaLoading(false);
     }
   };
 
@@ -404,6 +429,22 @@ const WaybillCard = ({ supply, isManager }: WaybillCardProps) => {
                       <Icon name="FileText" size={14} className="mr-1.5" />
                       Сформировать PDF
                     </Button>
+                    {supply.gazelkaPlanId || supply.gazelkaId ? (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="w-full sm:w-auto"
+                        onClick={handleGazelka}
+                        disabled={gazelkaLoading}
+                      >
+                        <Icon
+                          name={gazelkaLoading ? 'Loader2' : 'Truck'}
+                          size={14}
+                          className={`mr-1.5 ${gazelkaLoading ? 'animate-spin' : ''}`}
+                        />
+                        Обновить из Газельки
+                      </Button>
+                    ) : null}
                     {doc.isReady ? (
                       <Button variant="outline" size="sm" onClick={() => handleReady(false)}>
                         <Icon name="Undo2" size={14} className="mr-1.5" />
