@@ -199,8 +199,13 @@ const ToMarketplaceCards = ({ supplies, onOpen }: ToMarketplaceCardsProps) => (
                   <span className="whitespace-nowrap text-xs font-medium leading-none text-black">
                     в Газельку {formatDate(s.shipToGazelkaAt)}
                   </span>
-                  {!['Отгружено', 'Принята', 'Выполнена', 'Отменена'].includes(s.status) && (
-                    <GazelkaCountdown at={s.shipToGazelkaAt} />
+                  {/* Водитель назначен — Газелька груз приняла, таймер больше не нужен. */}
+                  {s.gazelkaPickup && driverAssigned(s.gazelkaVehicleNumber) ? (
+                    <CargoAccepted />
+                  ) : (
+                    !['Отгружено', 'Принята', 'Выполнена', 'Отменена'].includes(s.status) && (
+                      <GazelkaCountdown at={s.shipToGazelkaAt} />
+                    )
                   )}
                 </span>
               )}
@@ -217,9 +222,12 @@ const ToMarketplaceCards = ({ supplies, onOpen }: ToMarketplaceCardsProps) => (
                 )
               )}
               {s.supplyDate && (
-                <span className="-ml-1 shrink-0 whitespace-nowrap text-xs font-medium text-black">
-                  на маркетплейс {formatDate(s.supplyDate)}
-                  {s.timeslot ? `, ${s.timeslot}` : ''}
+                <span className="-ml-1 inline-flex shrink-0 flex-col items-start leading-none">
+                  <span className="whitespace-nowrap text-xs font-medium leading-none text-black">
+                    на маркетплейс {formatDate(s.supplyDate)}
+                    {s.timeslot ? `, ${s.timeslot}` : ''}
+                  </span>
+                  {s.type !== 'FBS' && ['Принята', 'Выполнена'].includes(s.status) && <CargoAccepted />}
                 </span>
               )}
             </div>
@@ -297,6 +305,13 @@ const FbsCloseHint = ({ at }: { at: string }) => {
       : `закроется через ${Math.floor(left / 3_600_000) > 0 ? `${Math.floor(left / 3_600_000)} ч ` : ''}${Math.floor((left % 3_600_000) / 60_000)} мин`;
   return <span className="ml-auto shrink-0 whitespace-nowrap text-xs font-medium text-red-600">{text}</span>;
 };
+
+/** Подпись под датой: груз уже принят — Газелькой или складом маркетплейса. */
+const CargoAccepted = () => (
+  <span className="mt-0.5 whitespace-nowrap text-[11px] font-semibold leading-none text-emerald-600">
+    груз принят
+  </span>
+);
 
 const GazelkaCountdown = ({ at }: { at: string }) => {
   const [now, setNow] = useState(() => Date.now());
