@@ -1678,6 +1678,21 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                     f"    OR upper(trim(coalesce(mi.barcode, ''))) IN ({vals}) "
                     "  ) "
                     + (f" AND gw.id = {int(forced_gw_id)} " if forced_gw_id else "")
+                    # ПО ЯРЛЫКУ OZN — ТОЛЬКО ВЕЩЬ, КОТОРУЮ РЕАЛЬНО ОТСТИКЕРОВАЛИ (20.10).
+                    #
+                    # Ярлык OZN один на весь артикул. Раньше, если отстикерованной
+                    # штуки не находилось, в короб записывался ЛЮБОЙ свободный GW
+                    # с полки. Пакет уезжал один, а «уехавшим» числился другой —
+                    # тот, что продолжал лежать на стеллаже (GW-732867: лежит на
+                    # Ходовой полке № 1, а по учёту уехал в коробе 389). Потом
+                    # кладовщик ловил ошибки на каждой такой вещи.
+                    #
+                    # Теперь по OZN берём только вещь с наклеенным ярлыком отправки
+                    # или сшитую в цехе «к поставке» (её на полку не клали). Вещь
+                    # с полки без ярлыка в короб не попадает никогда.
+                    + ("" if forced_gw_id else
+                       " AND (gw.shipping_labeled_at IS NOT NULL "
+                       "      OR (gw.shelf_id IS NULL AND gw.status = 'awaiting_supply')) ")
                     +
                     # Сначала вещь, отстикерованная под ЭТУ заявку, потом любая
                     # другая отстикерованная, и только потом остаток с полки.
@@ -1702,7 +1717,10 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                 # Решение руководства (19.10): то, что физически отстикеровано
                 # под FBO, едет в FBO. Заказ FBS освобождается и уходит в пошив.
                 # Вещи, сшитые под FBS в цехе или уже с ярлыком покупателя, не трогаем.
-                if not fbo_row and not forced_gw_id:
+                # Только для вещи, чей GW отсканировали: её физически держат в
+                # руках с ярлыком FBO. По обезличенному OZN чужую вещь FBS не
+                # забираем — так 20.10 «пропадали» вещи у заказов FBS.
+                if not fbo_row and forced_gw_id:
                     cur.execute(
                         "SELECT gw.id, gw.status, gw.storage_barcode, "
                         "       o.material, o.width, o.height, o.product, "
@@ -1714,6 +1732,7 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                         "WHERE gw.status IN ('in_stock', 'picking') "
                         "  AND gw.shipped_at IS NULL "
                         "  AND gw.shipping_labeled_at IS NULL "
+                        f"  AND gw.id = {int(forced_gw_id or 0)} "
                         "  AND COALESCE(own.order_type, '') = 'FBS' "
                         # Ярлык покупателя на вещь не печатали, а заказ ещё не
                         # передан в доставку: вещь можно отдать в FBO, заказ сошьют.
@@ -1907,9 +1926,10 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                             'statusCode': 409,
                             'headers': headers,
                             'body': json.dumps({
-                                'error': f'«{known[0]}» — на складе нет свободных вещей '
-                                         f'этого товара. Все уже разложены по поставкам '
-                                         f'или проданы',
+                                'error': f'«{known[0]}» — нет вещи, отстикерованной под FBO. '
+                                         f'Отсканируйте складской стикер GW на этой вещи '
+                                         f'(в короб запишется именно она) или сначала '
+                                         f'отстикеруйте её в «Сборке товара с полок»',
                             }, ensure_ascii=False),
                         }
 
