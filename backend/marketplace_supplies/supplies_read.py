@@ -9,6 +9,7 @@ from datetime import datetime
 
 import psycopg2
 
+from shared import close_expired_supplies
 from shared import (
     GOODS_READY_FOR_SUPPLY_SQL,
     compute_order_status,
@@ -24,6 +25,14 @@ def handle_get(event: dict, headers: dict, dsn: str) -> dict:
     conn = psycopg2.connect(dsn)
     try:
         cur = conn.cursor()
+
+        # Подстраховка планировщика: просроченные «Отгружено»/«Принята» закрываем
+        # при открытии списка. Сбой закрытия не должен ломать показ поставок.
+        if not supply_id:
+            try:
+                close_expired_supplies(cur, conn)
+            except Exception:
+                conn.rollback()
 
         # Сводка отгрузок FBO для дашборда: что собирается, что уехало в газельку,
         # что сдано на воротах маркетплейса. Кладовщик по ней видит, не забыл ли

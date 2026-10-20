@@ -71,6 +71,13 @@ def _handler(event: dict, context) -> dict:
     headers = {'Access-Control-Allow-Origin': '*', 'Content-Type': 'application/json'}
     dsn = os.environ['DATABASE_URL']
 
+    qs = event.get('queryStringParameters') or {}
+    # Планировщик мог быть настроен обычной ссылкой (GET) — принимаем и так.
+    if method == 'GET' and qs.get('action') == 'auto_statuses':
+        method = 'POST'
+        event = {**event, 'body': json.dumps({'action': 'auto_statuses',
+                                              'cronSecret': qs.get('cronSecret', '')})}
+
     if method == 'GET':
         return handle_get(event, headers, dsn)
 

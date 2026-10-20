@@ -1608,25 +1608,38 @@ def finish_supply(cur, supply_id):
     )
 
 
+def close_expired_supplies(cur, conn):
+    """Закрывает поставки, у которых вышли 12 ч («Отгружено») или 24 ч («Принята»).
+
+    Вызывается не только планировщиком, но и при каждом открытии списка поставок:
+    внешнее задание однажды не запустилось ни разу, и поставки висели в
+    «Отгружено» по двое суток. Теперь закрытие не зависит от одного планировщика.
+    SKIP LOCKED — чтобы два одновременных запроса не закрыли одну поставку дважды.
+    """
+    cur.execute(
+        "SELECT id FROM marketplace_supplies "
+        "WHERE (status = 'Отгружено' AND auto_status_at < now() - %s * interval '1 hour') "
+        "   OR (status = 'Принята' AND auto_status_at < now() - %s * interval '1 hour') "
+        "ORDER BY id LIMIT 30 FOR UPDATE SKIP LOCKED",
+        (FBS_AUTO_CLOSE_HOURS, FBO_AUTO_CLOSE_HOURS),
+    )
+    closed = 0
+    for (sid,) in cur.fetchall():
+        finish_supply(cur, sid)
+        log_action(cur, None, 'Планировщик', 'supply_auto_close', 'marketplace_supply', sid,
+                   'Поставка закрыта автоматически')
+        closed += 1
+    conn.commit()
+    return closed
+
+
 def run_auto_statuses(cur, conn, deadline):
     """Один проход фонового задания. Возвращает сводку для журнала."""
     import time as _t
     summary = {'shipped': 0, 'missing': 0, 'accepted': 0, 'closed': 0, 'ozonChecked': 0}
 
     # 1. Закрываем то, у чего вышло время.
-    cur.execute(
-        "SELECT id FROM marketplace_supplies "
-        "WHERE (status = 'Отгружено' AND auto_status_at < now() - %s * interval '1 hour') "
-        "   OR (status = 'Принята' AND auto_status_at < now() - %s * interval '1 hour') "
-        "ORDER BY id LIMIT 30",
-        (FBS_AUTO_CLOSE_HOURS, FBO_AUTO_CLOSE_HOURS),
-    )
-    for (sid,) in cur.fetchall():
-        finish_supply(cur, sid)
-        log_action(cur, None, 'Планировщик', 'supply_auto_close', 'marketplace_supply', sid,
-                   'Поставка закрыта автоматически')
-        summary['closed'] += 1
-    conn.commit()
+    summary['closed'] = close_expired_supplies(cur, conn)
 
     # 2. FBS в «Отгрузке»: всё отсканировано — «Отгружено».
     cur.execute(
