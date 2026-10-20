@@ -18,6 +18,7 @@ import {
   type PickupRoute,
 } from '@/lib/marketplaceReturnsApi';
 import { placeOnShelf } from '@/lib/goodsWarehouseApi';
+import { printStorageSticker } from '@/lib/printStorageSticker';
 import { playScanSound, playScanErrorSound, primeScanSounds } from '@/lib/scanSound';
 import { fixScanLayout } from '@/lib/keyboardLayout';
 
@@ -42,6 +43,8 @@ interface ScanRow {
   route?: PickupRoute | null;
   /** Полка, на которую вещь положили из этого окна. */
   shelfName?: string;
+  /** Номер заказа — печатаем на стикере хранения. */
+  orderNumber?: string | null;
   error?: string;
 }
 
@@ -157,9 +160,18 @@ const PickupReturnsDialog = ({ open, onOpenChange, onDone }: PickupReturnsDialog
     setPlacing(row.key);
     try {
       const res = await placeOnShelf(row.storageBarcode);
+      // На вещи ещё наклеен ярлык FBS отправления. Без стикера хранения её не найти
+      // на полке и не взять в подбор — печатаем его сразу, кладовщик клеит поверх.
+      printStorageSticker({
+        storageBarcode: row.storageBarcode,
+        title: row.title,
+        orderNumber: res.orderNumber,
+      });
       playScanSound();
       setRows((prev) =>
-        prev.map((r) => (r.key === row.key ? { ...r, shelfName: res.shelfName } : r))
+        prev.map((r) =>
+          r.key === row.key ? { ...r, shelfName: res.shelfName, orderNumber: res.orderNumber } : r
+        )
       );
       onDone();
     } catch (e) {
@@ -191,8 +203,9 @@ const PickupReturnsDialog = ({ open, onOpenChange, onDone }: PickupReturnsDialog
           <p className="text-sm text-muted-foreground">
             Сканируйте пакеты один за другим — OZON, Wildberries и Яндекс Маркет. Каждая
             вещь сразу уходит «На проверке» — отвезите её в цех. Если заказ отменили в
-            день отгрузки и вещь не была у покупателя, здесь появится кнопка «Положить на
-            полку». Не тот товар в пакете — нажмите «Подмена на ПВЗ».
+            день отгрузки и вещь не была у покупателя, здесь появится кнопка «Стикер и на
+            полку»: напечатается стикер хранения — наклейте его поверх ярлыка FBS, система
+            назовёт полку. Не тот товар в пакете — нажмите «Подмена на ПВЗ».
           </p>
 
           <div className="space-y-1.5">
@@ -254,7 +267,26 @@ const PickupReturnsDialog = ({ open, onOpenChange, onDone }: PickupReturnsDialog
                                   size={14}
                                   className={`mr-1.5 ${placing === r.key ? 'animate-spin' : ''}`}
                                 />
-                                Положить на полку
+                                Стикер и на полку
+                              </Button>
+                            )}
+                            {r.shelfName && r.storageBarcode && (
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="outline"
+                                className="h-8"
+                                onClick={() => {
+                                  printStorageSticker({
+                                    storageBarcode: r.storageBarcode as string,
+                                    title: r.title,
+                                    orderNumber: r.orderNumber,
+                                  });
+                                  focusInput();
+                                }}
+                              >
+                                <Icon name="Printer" size={14} className="mr-1.5" />
+                                Стикер ещё раз
                               </Button>
                             )}
                             {r.substituted ? (
@@ -305,7 +337,7 @@ const PickupRouteLine = ({ row }: { row: ScanRow }) => {
   if (row.shelfName) {
     return (
       <p className="mt-1 text-xs font-semibold text-emerald-700">
-        Положите на полку {row.shelfName}
+        Наклейте стикер хранения поверх ярлыка FBS и положите на полку {row.shelfName}
       </p>
     );
   }
