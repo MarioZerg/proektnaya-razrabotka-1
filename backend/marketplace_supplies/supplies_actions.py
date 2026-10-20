@@ -1753,21 +1753,30 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                                  "OR o.fulfilled_from_stock_id = %s)",
                             (int(fbs_order_id), int(take_gid)),
                             'вещь FBS забрали в короб FBO', actor_id, body_data.get('actorName'))
+                        # ОДНОЙ КОМАНДОЙ (20.10).
+                        #
+                        # Раньше это были два отдельных шага: сначала заказ
+                        # освобождался, потом вещь. Каждый шаг сохраняется сразу,
+                        # и при перегрузке базы второй обрывался — заказ уже
+                        # «Новый» (уходит в пошив), а вещь всё ещё за ним. Потом
+                        # кладовщик получал «заказ закрывается пошивом» (3 заказа
+                        # за 12:47–12:59). Теперь заказ и вещь меняются вместе
+                        # или не меняются вовсе.
                         cur.execute(
+                            "WITH freed AS ("
+                            "  UPDATE goods_warehouse SET reserved_order_id = NULL, "
+                            "    matched_at = NULL, shipping_labeled_at = now(), "
+                            "    shipping_labeled_by = %s, "
+                            "    shipping_labeled_by_name = COALESCE(%s, shipping_labeled_by_name) "
+                            "  WHERE id = %s RETURNING id) "
                             "UPDATE orders SET fulfilled_from_stock_id = NULL, "
                             "  sewing_status = 'Новый' "
                             "WHERE id = %s AND (fulfilled_from_stock_id IS NULL "
-                            "                   OR fulfilled_from_stock_id = %s)",
-                            (int(fbs_order_id), int(take_gid)),
-                        )
-                        cur.execute(
-                            "UPDATE goods_warehouse SET reserved_order_id = NULL, "
-                            "  matched_at = NULL, shipping_labeled_at = now(), "
-                            "  shipping_labeled_by = %s, "
-                            "  shipping_labeled_by_name = COALESCE(%s, shipping_labeled_by_name) "
-                            "WHERE id = %s",
+                            "                   OR fulfilled_from_stock_id = %s) "
+                            "  AND EXISTS (SELECT 1 FROM freed)",
                             (int(actor_id) if str(actor_id or '').isdigit() else None,
-                             body_data.get('actorName'), int(take_gid)),
+                             body_data.get('actorName'), int(take_gid),
+                             int(fbs_order_id), int(take_gid)),
                         )
                         log_action(
                             cur, actor_id, body_data.get('actorName'),

@@ -984,7 +984,41 @@ def auto_release_stock(cur):
     неизвестно, это решает старший кладовщик.
     """
     not_in_live_supply = "NOT " + GOODS_IN_LIVE_SUPPLY_SQL.format(gw='gw')
-    summary = {'cancelled': 0, 'shipped': 0, 'fboLeftover': 0, 'toShelf': 0, 'matched': 0}
+    summary = {'cancelled': 0, 'shipped': 0, 'fboLeftover': 0, 'toShelf': 0, 'matched': 0,
+               'healed': 0}
+
+    # 0. САМОЛЕЧЕНИЕ РАССИНХРОНА «ВЕЩЬ ЗА ЗАКАЗОМ, А ЗАКАЗ В ОЧЕРЕДИ НА ПОШИВ».
+    #
+    # Каждая команда к базе сохраняется сразу, по отдельности. Если операция
+    # обрывается посередине (перегрузка базы в пик), заказ уже освобождён
+    # («Новый»), а вещь всё ещё числится за ним. Кладовщик с этой вещью в руках
+    # получал «заказ закрывается пошивом», а цех мог бы сшить лишнюю штору
+    # (20.10: 2 заказа). Раз в 15 минут возвращаем такие заказы в «Со склада»,
+    # если их никто не брал в цех.
+    cur.execute(
+        "WITH pair AS ("
+        "  SELECT DISTINCT ON (o.id) o.id AS oid, gw.id AS gid "
+        "  FROM orders o JOIN goods_warehouse gw ON gw.reserved_order_id = o.id "
+        "  WHERE o.sewing_status = 'Новый' "
+        "    AND o.cut_at IS NULL AND o.cutter_user_id IS NULL AND o.sewer_user_id IS NULL "
+        "    AND o.cut_given_to_order_id IS NULL AND o.cut_from_order_id IS NULL "
+        "    AND (o.fulfilled_from_stock_id IS NULL OR o.fulfilled_from_stock_id = gw.id) "
+        "    AND COALESCE(o.status, '') NOT IN ('Отменён', 'Отгружен', 'Доставлен') "
+        "    AND COALESCE(o.ozon_status, '') NOT IN "
+        "        ('cancelled', 'not_accepted', 'delivering', 'delivered', 'driver_pickup') "
+        "    AND gw.order_id <> o.id "
+        "    AND gw.status IN ('in_stock', 'picking') AND gw.shipped_at IS NULL "
+        "  ORDER BY o.id, gw.matched_at DESC NULLS LAST "
+        "  LIMIT 100) "
+        "UPDATE orders o SET sewing_status = 'Со склада', fulfilled_from_stock_id = pair.gid "
+        "FROM pair WHERE o.id = pair.oid RETURNING o.id"
+    )
+    healed = [r[0] for r in cur.fetchall()]
+    if healed:
+        log_bulk(cur, None, 'Система', 'stock_order_restored', 'order', healed,
+                 'Автоматически: вещь числилась за заказом, а заказ стоял в очереди '
+                 'на пошив, хотя в цех его не брали — заказ снова закрыт складом')
+    summary['healed'] = len(healed)
 
     def _free(ids, reason_action, reason_text):
         if not ids:
