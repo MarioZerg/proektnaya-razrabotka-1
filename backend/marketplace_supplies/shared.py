@@ -1631,6 +1631,16 @@ def close_expired_supplies(cur, conn):
     )
     closed = 0
     for (sid,) in cur.fetchall():
+        # Два открытия списка в одну секунду видели одну и ту же поставку и
+        # закрывали её дважды (две записи в журнале, повторный пересчёт вещей).
+        # Перед закрытием ещё раз проверяем статус под блокировкой строки.
+        cur.execute(
+            "SELECT 1 FROM marketplace_supplies WHERE id = %s "
+            "AND status IN ('Отгружено', 'Принята') FOR UPDATE",
+            (int(sid),),
+        )
+        if not cur.fetchone():
+            continue
         finish_supply(cur, sid)
         log_action(cur, None, 'Планировщик', 'supply_auto_close', 'marketplace_supply', sid,
                    'Поставка закрыта автоматически')
@@ -1766,9 +1776,12 @@ def notify_fbo_date_shifts(cur, shifts):
 def sync_fbo_dates_throttled(cur, conn):
     """То же, но не чаще раза в 10 минут — для вызова при открытии списка поставок."""
     import time as _t
+    # Сравниваем updated_at, а не value::timestamp: база вправе применить
+    # приведение к ЛЮБОЙ строке настроек до фильтра по ключу — и падала на
+    # значениях вроде «true» или «08:00». Из-за этого проверка дат тихо не шла.
     cur.execute(
         "SELECT 1 FROM system_settings WHERE key = %s "
-        "AND value::timestamp > now() - %s * interval '1 minute'",
+        "AND updated_at > now() - %s * interval '1 minute'",
         (FBO_DATES_SYNC_KEY, FBO_DATES_EVERY_MIN),
     )
     if cur.fetchone():
@@ -1776,7 +1789,10 @@ def sync_fbo_dates_throttled(cur, conn):
     cur.execute("UPDATE system_settings SET value = now()::text, updated_at = now() WHERE key = %s",
                 (FBO_DATES_SYNC_KEY,))
     if cur.rowcount == 0:
-        cur.execute("INSERT INTO system_settings (key, value, updated_at) VALUES (%s, now()::text, now())",
+        # ON CONFLICT по ключу: два открытия списка одновременно не должны
+        # падать на вставке одной и той же отметки.
+        cur.execute("INSERT INTO system_settings (key, value, updated_at) VALUES (%s, now()::text, now()) "
+                    "ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()",
                     (FBO_DATES_SYNC_KEY,))
     conn.commit()
     return sync_fbo_dates(cur, conn, _t.time() + 2.5, timeout=2)

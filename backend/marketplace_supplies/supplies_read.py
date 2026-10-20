@@ -36,8 +36,11 @@ def handle_get(event: dict, headers: dict, dsn: str) -> dict:
         # Даты FBO из Газельки и OZON — не чаще раза в 10 минут.
         try:
             sync_fbo_dates_throttled(cur, conn)
-        except Exception:
+        except Exception as e:
             conn.rollback()
+            # Не роняем список, но и не молчим: иначе проверка дат тихо не
+            # работает, и никто об этом не узнаёт.
+            print(f'sync_fbo_dates failed: {e!r}')
 
         # Сводка отгрузок FBO для дашборда: что собирается, что уехало в газельку,
         # что сдано на воротах маркетплейса. Кладовщик по ней видит, не забыл ли

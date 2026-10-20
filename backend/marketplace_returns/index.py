@@ -1028,11 +1028,17 @@ def _accept_cancelled_fbs(cur, conn, code, actor_id, actor_name):
         "SELECT o.order_number, o.material, o.width, o.height, o.product, "
         "       (o.status = 'Отменён' OR o.cancelled_at IS NOT NULL "
         "        OR COALESCE(o.ozon_status, '') = 'cancelled' "
-        "        OR COALESCE(o.ym_status, '') = 'CANCELLED') "
+        "        OR COALESCE(o.ym_status, '') = 'CANCELLED'), "
+        # Отменили ДО сдачи на ПВЗ (или в тот же день) — вещь до покупателя
+        # не доезжала. Если отмена позже, вещь могла побывать у покупателя
+        # (отказ при вручении, не забрал) — такую без осмотра на полку нельзя.
+        "       (o.cancelled_at IS NULL OR o.completed_at IS NULL "
+        "        OR (o.cancelled_at AT TIME ZONE 'UTC' AT TIME ZONE 'Europe/Moscow')::date "
+        "           <= (o.completed_at AT TIME ZONE 'UTC' AT TIME ZONE 'Europe/Moscow')::date) "
         "FROM orders o WHERE o.id = %s",
         (order_id,),
     )
-    order_number, material, width, height, product, cancelled = cur.fetchone()
+    order_number, material, width, height, product, cancelled, pre_ship = cur.fetchone()
     if not cancelled:
         return None
 
@@ -1063,35 +1069,39 @@ def _accept_cancelled_fbs(cur, conn, code, actor_id, actor_name):
                 'accepted': accepted, 'route': None, 'cancelledFbs': True,
                 'note': f'Вещь по заказу {order_number} уже на складе'}
 
+    # Не доезжала до покупателя — ждёт полки; иначе сразу в цех на проверку.
+    new_status = 'mp_return' if pre_ship else 'repacking'
+    reason = 'cancelled_fbs_pvz' if pre_ship else 'return'
     if gw:
         gw_id = gw[0]
         cur.execute(
-            "UPDATE goods_warehouse SET status = 'mp_return', shelf_id = NULL, "
+            "UPDATE goods_warehouse SET status = %s, shelf_id = NULL, "
             "shipped_at = NULL, lost_reason = NULL, lost_at = NULL, "
             "reserved_order_id = NULL, shipping_labeled_at = NULL, "
             "shipping_labeled_by = NULL, shipping_labeled_by_name = NULL, "
-            "receive_reason = 'cancelled_fbs_pvz', received_at = now() WHERE id = %s",
-            (gw_id,),
+            "receive_reason = %s, received_at = now() WHERE id = %s",
+            (new_status, reason, gw_id),
         )
         sb = gw[2]
     else:
         sb = next_storage_barcode(cur)
         cur.execute(
             "INSERT INTO goods_warehouse (order_id, status, storage_barcode, receive_reason, received_at) "
-            "VALUES (%s, 'mp_return', %s, 'cancelled_fbs_pvz', now()) RETURNING id",
-            (order_id, sb),
+            "VALUES (%s, %s, %s, %s, now()) RETURNING id",
+            (order_id, new_status, sb, reason),
         )
         gw_id = cur.fetchone()[0]
     # Из уехавшей поставки вещь вычёркивать не нужно — это история короба.
     log_action(
         cur, actor_id, actor_name, 'receive_cancelled_fbs',
-        f'Вернули с ПВЗ отменённый FBS: заказ {order_number} ({sb}) — на полку без осмотра',
+        f'Вернули с ПВЗ отменённый FBS: заказ {order_number} ({sb}) — '
+        + ('на полку без осмотра' if pre_ship else 'в цех на проверку: отмена после сдачи на ПВЗ'),
     )
     conn.commit()
     accepted['storageBarcode'] = sb
     return {'found': 1, 'barcode': code, 'alreadyPicked': False,
-            'accepted': accepted, 'route': 'shelf', 'cancelledFbs': True,
-            'title': title}
+            'accepted': accepted, 'route': 'shelf' if pre_ship else 'check',
+            'cancelledFbs': True, 'title': title}
 
 def _stock_wb_yandex_order(cur, conn, row, code, actor_id, actor_name):
     """Ставит найденный заказ WB/Яндекса на склад как возврат и цепляет заявку."""
