@@ -295,8 +295,7 @@ def _gazelka_fields(cur, supply_id):
             out['vehicle_details'] = f"Грузовой автомобиль {_clean(route['vehicle_make'])}"
         if route.get('vehicle_number'):
             out['vehicle_number'] = _clean(route['vehicle_number']).upper()
-        if route.get('date'):
-            out['planned_loading_at'] = f"{route['date']}T00:00:00"
+        # route.date — не день погрузки у нас, его в накладную не ставим.
 
     total = p.get('total_cost')
     if total:

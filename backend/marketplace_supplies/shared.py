@@ -1644,9 +1644,8 @@ def close_expired_supplies(cur, conn):
 #
 # Менеджер всё равно сначала правит заявку в кабинете Газельки и слот в OZON,
 # а потом переписывал те же даты к нам. Теперь даты берём оттуда сами:
-#   * «В Газельку» — дата рейса из заявки Газельки (route.date). Пока Газелька
-#     не поставила заявку в рейс, даты нет — оставляем ту, что есть. Проверяем,
-#     пока груз не сдан в Газельку: дата могла сдвинуться или уже истечь.
+#   * «В Газельку» — ставит менеджер: в API Газельки дня забора нет, а дата
+#     рейса (route.date) с ним не совпадает.
 #   * «На маркетплейс» — начало таймслота заявки OZON. Проверяем и после сдачи
 #     в Газельку: OZON переносит слот, когда машина уже в пути.
 # Каждое изменение пишем в журнал поставки — видно, кто и когда сдвинул дату.
@@ -1681,44 +1680,9 @@ def sync_fbo_dates(cur, conn, deadline, timeout=3):
     # не сдвиг, о нём не пишем.
     shifts = []
 
-    # 1. Газелька: груз ещё не сдан.
-    cur.execute(
-        "SELECT id, COALESCE(gazelka_plan_id::text, gazelka_id), ship_to_gazelka_at::date, "
-        "       COALESCE(supply_number, ozon_application_number, id::text), marketplace, cluster "
-        "FROM marketplace_supplies "
-        "WHERE type = 'FBO' AND gazelka_shipped_at IS NULL "
-        "  AND COALESCE(status, '') NOT IN ('Выполнена', 'Отменена', 'Принята') "
-        "  AND COALESCE(gazelka_plan_id::text, gazelka_id, '') <> '' "
-        "ORDER BY id LIMIT 50"
-    )
-    rows = cur.fetchall()
-    if rows and _t.time() < deadline:
-        plans = _gazelka_plans(timeout)
-        for sid, plan_id, current, number, mp, cluster in rows:
-            p = plans.get(str(plan_id).strip())
-            route = (p or {}).get('route') if isinstance((p or {}).get('route'), dict) else {}
-            new_date = str(route.get('date') or '')[:10]
-            if not new_date or (current and str(current) == new_date):
-                continue
-            # Кладовщик ответил «не уехала» — дата сдвинута на завтра. Старая дата
-            # рейса из Газельки уже прошла: назад её не возвращаем, ждём новую.
-            if current and new_date < str(current) and new_date < _t.strftime('%Y-%m-%d'):
-                continue
-            cur.execute(
-                "UPDATE marketplace_supplies SET ship_to_gazelka_at = %s::date WHERE id = %s",
-                (new_date, int(sid)),
-            )
-            log_action(cur, None, 'Планировщик', 'supply_gazelka_date', 'marketplace_supply', sid,
-                       f"Дата в Газельку из заявки {plan_id}: "
-                       f"{current.strftime('%d.%m.%Y') if current else '—'} → "
-                       f"{new_date[8:10]}.{new_date[5:7]}.{new_date[:4]}")
-            changed += 1
-            if current:
-                shifts.append((sid, number, mp, cluster, 'Отгрузка в Газельку',
-                               current.strftime('%d.%m.%Y'),
-                               f"{new_date[8:10]}.{new_date[5:7]}.{new_date[:4]}",
-                               f'по заявке Газельки {plan_id}'))
-        conn.commit()
+    # Дату «в Газельку» из Газельки НЕ берём: route.date — это не день забора у
+    # нас (поставка №1307: сдали 25.09, доставка 26.09, а рейс в заявке 27.09).
+    # Других дат забора API Газельки не отдаёт, поэтому эту дату ставит менеджер.
 
     # 2. OZON: слот на складе маркетплейса, в том числе после сдачи в Газельку.
     cur.execute(

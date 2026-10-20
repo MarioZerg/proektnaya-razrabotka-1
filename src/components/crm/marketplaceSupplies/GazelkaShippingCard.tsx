@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import {
@@ -42,6 +43,13 @@ const GazelkaShippingCard = ({ supply, onReload, isManager, gazelkaReady }: Gaze
   const [selected, setSelected] = useState(supply.gazelkaPlanId ? String(supply.gazelkaPlanId) : '');
   const [saving, setSaving] = useState(false);
   const [syncing, setSyncing] = useState(false);
+  // Дату сдачи в Газельку ставит менеджер: в API Газельки дня забора нет, а дата
+  // рейса (route.date) с ним не совпадает — №1307 сдали 25.09, рейс стоял 27.09.
+  const [shipAt, setShipAt] = useState((supply.shipToGazelkaAt ?? '').slice(0, 10));
+  const [savingShipAt, setSavingShipAt] = useState(false);
+  useEffect(() => {
+    setShipAt((supply.shipToGazelkaAt ?? '').slice(0, 10));
+  }, [supply.shipToGazelkaAt]);
   useEffect(() => {
     setLoading(true);
     fetchGazelkaPlansForSupply(supply.id)
@@ -74,40 +82,38 @@ const GazelkaShippingCard = ({ supply, onReload, isManager, gazelkaReady }: Gaze
   };
 
   // Подтягивает данные привязанной заявки Газельки в поля поставки: ID отгрузки (№ заявки),
-  // дату отгрузки (route.date), забор Газелькой (cargo_pickup) и количество коробов.
+  // забор Газелькой (cargo_pickup) и количество коробов. Дату сдачи не трогаем.
   const handleSyncFromGazelka = async () => {
     if (!linkedPlan) return;
     setSyncing(true);
     try {
-      // ДАТУ ОТГРУЗКИ НЕ ЗАТИРАЕМ, ЕСЛИ ГАЗЕЛЬКА ЕЁ НЕ ПРИСЛАЛА.
-      //
-      // shipDate лежит в блоке route, а его API отдаёт не всегда. Раньше в таком
-      // случае сюда уходила пустая строка — и синхронизация СТИРАЛА дату, которую
-      // менеджер проставил руками. Получался тупик: на этикетке вечный прочерк,
-      // сколько ни нажимай «Синхронизировать».
-      const shipAt = linkedPlan.shipDate
-        ? `${linkedPlan.shipDate.slice(0, 10)}T00:00:00`
-        : undefined;
       await updateSupply(supply.id, {
         gazelkaId: String(linkedPlan.id),
-        ...(shipAt ? { shipToGazelkaAt: shipAt } : {}),
         gazelkaPickup: !!linkedPlan.cargoPickup,
         packagingCount: linkedPlan.boxes ?? null,
       });
-      // Про дату пишем только когда она реально пришла: иначе сообщение обещало
-      // «дата обновлена», менеджер шёл печатать — а там прочерк.
       toast({
         title: 'Данные из Газельки подтянуты',
-        description: shipAt
-          ? `ID отгрузки, дата, забор и ${linkedPlan.boxes ?? 0} коробов обновлены.`
-          : `ID отгрузки, забор и ${linkedPlan.boxes ?? 0} коробов обновлены. `
-            + 'Дата отгрузки появится сама, когда Газелька поставит заявку в рейс.',
+        description: `ID отгрузки, забор и ${linkedPlan.boxes ?? 0} коробов обновлены.`,
       });
       onReload();
     } catch (e) {
       toast({ title: 'Ошибка', description: e instanceof Error ? e.message : undefined, variant: 'destructive' });
     } finally {
       setSyncing(false);
+    }
+  };
+
+  const handleSaveShipAt = async () => {
+    setSavingShipAt(true);
+    try {
+      await updateSupply(supply.id, { shipToGazelkaAt: shipAt ? `${shipAt}T00:00:00` : '' });
+      toast({ title: 'Дата сдачи в Газельку сохранена' });
+      onReload();
+    } catch (e) {
+      toast({ title: 'Ошибка', description: e instanceof Error ? e.message : undefined, variant: 'destructive' });
+    } finally {
+      setSavingShipAt(false);
     }
   };
 
@@ -263,16 +269,37 @@ const GazelkaShippingCard = ({ supply, onReload, isManager, gazelkaReady }: Gaze
               </div>
             </div>
 
-            {/* ДАТЫ ТОЛЬКО ДЛЯ ЧТЕНИЯ. Дату в Газельку система берёт из рейса заявки
-                Газельки, дату и время слота — из заявки OZON. Проверяет сама каждые
-                10 минут; вручную их больше не ставят. */}
+            {/* Дату сдачи в Газельку ставит менеджер. Слот маркетплейса — только для
+                чтения: система сама берёт его из заявки OZON каждые 10 минут. */}
             <div className="space-y-1.5 rounded-md bg-muted/40 p-3 text-xs">
-              <div className="flex justify-between gap-2">
-                <span className="text-muted-foreground">Отгрузка в Газельку</span>
-                <span className="font-medium">
-                  {supply.shipToGazelkaAt ? formatDate(supply.shipToGazelkaAt) : 'ждём рейс Газельки'}
-                </span>
-              </div>
+              {isManager ? (
+                <div className="space-y-1.5">
+                  <Label className="text-xs">Сдача груза в Газельку</Label>
+                  <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                    <Input
+                      type="date"
+                      className="h-8 w-full bg-background sm:w-44"
+                      value={shipAt}
+                      onChange={(e) => setShipAt(e.target.value)}
+                    />
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={handleSaveShipAt}
+                      disabled={savingShipAt || shipAt === (supply.shipToGazelkaAt ?? '').slice(0, 10)}
+                    >
+                      {savingShipAt ? <Icon name="Loader2" size={14} className="animate-spin" /> : 'Сохранить'}
+                    </Button>
+                  </div>
+                </div>
+              ) : (
+                <div className="flex justify-between gap-2">
+                  <span className="text-muted-foreground">Сдача груза в Газельку</span>
+                  <span className="font-medium">
+                    {supply.shipToGazelkaAt ? formatDate(supply.shipToGazelkaAt) : '—'}
+                  </span>
+                </div>
+              )}
               <div className="flex justify-between gap-2">
                 <span className="text-muted-foreground">Слот на маркетплейсе</span>
                 <span className="font-medium">
@@ -281,8 +308,8 @@ const GazelkaShippingCard = ({ supply, onReload, isManager, gazelkaReady }: Gaze
                 </span>
               </div>
               <p className="text-muted-foreground">
-                Даты подтягиваются сами из Газельки и {supply.marketplace === 'OZON' ? 'OZON' : 'маркетплейса'}.
-                Менять их нужно в кабинетах площадок.
+                Слот подтягивается сам из {supply.marketplace === 'OZON' ? 'OZON' : 'маркетплейса'} — менять
+                его нужно в кабинете площадки.
               </p>
             </div>
 
