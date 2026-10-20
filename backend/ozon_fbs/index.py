@@ -2034,12 +2034,17 @@ def assemble_posting(client_id, api_key, posting_number, debug=None):
     if not items:
         return 'У товаров отправления нет кода OZON — собрать не получится', None
 
-    # OZON принимает сборку в двух форматах, и какой именно — зависит от схемы работы
-    # продавца. Пробуем оба: сначала с перечислением товаров (обычная схема), затем
-    # упрощённый вызов без состава. Так упаковщица не упрётся в ошибку формата.
+    # ОДИН ФОРМАТ — С СОСТАВОМ (20.10).
+    #
+    # Раньше вторым шагом слали «упрощённый» вызов без состава. OZON его не
+    # принимает никогда и отвечает «packages must contain at least 1 item».
+    # Хуже того: этот ответ ЗАТИРАЛ настоящую причину отказа первой попытки
+    # (чаще всего — «слишком много запросов в секунду»), и кладовщик видел
+    # непонятную ошибку про пустую упаковку, хотя товары в запросе были.
+    # Теперь при перегрузке OZON (429) ждём и повторяем тот же запрос, а при
+    # любой другой ошибке показываем то, что OZON ответил на самом деле.
     attempts = [
         {'posting_number': posting_number, 'packages': [{'products': items}]},
-        {'posting_number': posting_number},
     ]
 
     def _try_ship():
@@ -2056,6 +2061,13 @@ def assemble_posting(client_id, api_key, posting_number, debug=None):
             ship_status, ship_data = ozon_post(
                 '/v4/posting/fbs/ship', client_id, api_key, payload
             )
+            for pause in (0.6, 1.2):
+                if ship_status != 429:
+                    break
+                time.sleep(pause)
+                ship_status, ship_data = ozon_post(
+                    '/v4/posting/fbs/ship', client_id, api_key, payload
+                )
             if ship_status == 200:
                 return None, None
             last_status, last_data = ship_status, ship_data
@@ -2093,6 +2105,9 @@ def assemble_posting(client_id, api_key, posting_number, debug=None):
         if ship_status is None:
             return None, 'awaiting_deliver'
 
+    if ship_status == 429:
+        return ('OZON сейчас перегружен запросами и не успел собрать отправление. '
+                'Нажмите «Печать» ещё раз через пару секунд.'), None
     return (
         f'OZON не принял сборку отправления (код {ship_status}): '
         f'{ozon_error_text(ship_status, ship_data)}'
