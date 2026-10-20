@@ -1633,6 +1633,135 @@ def close_expired_supplies(cur, conn):
     return closed
 
 
+# ---------------------------------------------------------------------------
+# ДАТЫ FBO-ПОСТАВОК ИЗ ГАЗЕЛЬКИ И OZON.
+#
+# Менеджер всё равно сначала правит заявку в кабинете Газельки и слот в OZON,
+# а потом переписывал те же даты к нам. Теперь даты берём оттуда сами:
+#   * «В Газельку» — дата рейса из заявки Газельки (route.date). Пока Газелька
+#     не поставила заявку в рейс, даты нет — оставляем ту, что есть. Проверяем,
+#     пока груз не сдан в Газельку: дата могла сдвинуться или уже истечь.
+#   * «На маркетплейс» — начало таймслота заявки OZON. Проверяем и после сдачи
+#     в Газельку: OZON переносит слот, когда машина уже в пути.
+# Каждое изменение пишем в журнал поставки — видно, кто и когда сдвинул дату.
+# ---------------------------------------------------------------------------
+
+FBO_DATES_SYNC_KEY = 'fbo_dates_synced_at'
+FBO_DATES_EVERY_MIN = 10
+
+
+def _gazelka_plans(timeout):
+    token = (os.environ.get('GAZELKA_API_KEY') or '').strip()
+    if not token:
+        return {}
+    req = urllib.request.Request('https://gazelka.space/api/my-plans', method='POST', data=b'{}')
+    req.add_header('Authorization', f'Bearer {token}')
+    req.add_header('Content-Type', 'application/json')
+    req.add_header('Accept', 'application/json')
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            data = json.loads(r.read().decode('utf-8') or '[]')
+    except Exception:
+        return {}
+    plans = data if isinstance(data, list) else (data.get('plans') or data.get('data') or [])
+    return {str(p.get('id')): p for p in plans if isinstance(p, dict) and p.get('id')}
+
+
+def sync_fbo_dates(cur, conn, deadline, timeout=3):
+    """Подтягивает даты «в Газельку» и «на маркетплейс». Возвращает число изменённых дат."""
+    import time as _t
+    changed = 0
+
+    # 1. Газелька: груз ещё не сдан.
+    cur.execute(
+        "SELECT id, COALESCE(gazelka_plan_id::text, gazelka_id), ship_to_gazelka_at::date "
+        "FROM marketplace_supplies "
+        "WHERE type = 'FBO' AND gazelka_shipped_at IS NULL "
+        "  AND COALESCE(status, '') NOT IN ('Выполнена', 'Отменена', 'Принята') "
+        "  AND COALESCE(gazelka_plan_id::text, gazelka_id, '') <> '' "
+        "ORDER BY id LIMIT 50"
+    )
+    rows = cur.fetchall()
+    if rows and _t.time() < deadline:
+        plans = _gazelka_plans(timeout)
+        for sid, plan_id, current in rows:
+            p = plans.get(str(plan_id).strip())
+            route = (p or {}).get('route') if isinstance((p or {}).get('route'), dict) else {}
+            new_date = str(route.get('date') or '')[:10]
+            if not new_date or (current and str(current) == new_date):
+                continue
+            # Кладовщик ответил «не уехала» — дата сдвинута на завтра. Старая дата
+            # рейса из Газельки уже прошла: назад её не возвращаем, ждём новую.
+            if current and new_date < str(current) and new_date < _t.strftime('%Y-%m-%d'):
+                continue
+            cur.execute(
+                "UPDATE marketplace_supplies SET ship_to_gazelka_at = %s::date WHERE id = %s",
+                (new_date, int(sid)),
+            )
+            log_action(cur, None, 'Планировщик', 'supply_gazelka_date', 'marketplace_supply', sid,
+                       f"Дата в Газельку из заявки {plan_id}: "
+                       f"{current.strftime('%d.%m.%Y') if current else '—'} → "
+                       f"{new_date[8:10]}.{new_date[5:7]}.{new_date[:4]}")
+            changed += 1
+        conn.commit()
+
+    # 2. OZON: слот на складе маркетплейса, в том числе после сдачи в Газельку.
+    cur.execute(
+        "SELECT id, ozon_supply_order_id, supply_date, timeslot FROM marketplace_supplies "
+        "WHERE marketplace = 'OZON' AND type = 'FBO' AND ozon_supply_order_id IS NOT NULL "
+        "  AND COALESCE(status, '') NOT IN ('Выполнена', 'Отменена', 'Принята') "
+        "ORDER BY id LIMIT 50"
+    )
+    rows = cur.fetchall()
+    if rows and _t.time() < deadline:
+        client_id, api_key = _ozon_creds(cur)
+        if client_id and api_key:
+            data = _ozon_quick('/v3/supply-order/get', client_id, api_key,
+                               {'order_ids': [int(r[1]) for r in rows]}, timeout=timeout)
+            slots = {}
+            for o in ((data or {}).get('orders') or []):
+                ts = ((o.get('timeslot') or {}).get('timeslot') or {}).get('from') or ''
+                if ts:
+                    slots[int(o.get('order_id') or 0)] = ts
+            for sid, order_id, cur_date, cur_slot in rows:
+                ts = slots.get(int(order_id))
+                if not ts:
+                    continue
+                new_date, new_slot = ts[:10], (ts[11:16] or None)
+                if cur_date and str(cur_date) == new_date and (cur_slot or None) == new_slot:
+                    continue
+                cur.execute(
+                    "UPDATE marketplace_supplies SET supply_date = %s, timeslot = %s WHERE id = %s",
+                    (new_date, new_slot, int(sid)),
+                )
+                old = f"{cur_date.strftime('%d.%m.%Y') if cur_date else '—'} {cur_slot or ''}".strip()
+                log_action(cur, None, 'Планировщик', 'supply_marketplace_date', 'marketplace_supply', sid,
+                           f"Дата на маркетплейс из OZON: {old} → "
+                           f"{new_date[8:10]}.{new_date[5:7]}.{new_date[:4]} {new_slot or ''}".strip())
+                changed += 1
+            conn.commit()
+    return changed
+
+
+def sync_fbo_dates_throttled(cur, conn):
+    """То же, но не чаще раза в 10 минут — для вызова при открытии списка поставок."""
+    import time as _t
+    cur.execute(
+        "SELECT 1 FROM system_settings WHERE key = %s "
+        "AND value::timestamp > now() - %s * interval '1 minute'",
+        (FBO_DATES_SYNC_KEY, FBO_DATES_EVERY_MIN),
+    )
+    if cur.fetchone():
+        return 0
+    cur.execute("UPDATE system_settings SET value = now()::text, updated_at = now() WHERE key = %s",
+                (FBO_DATES_SYNC_KEY,))
+    if cur.rowcount == 0:
+        cur.execute("INSERT INTO system_settings (key, value, updated_at) VALUES (%s, now()::text, now())",
+                    (FBO_DATES_SYNC_KEY,))
+    conn.commit()
+    return sync_fbo_dates(cur, conn, _t.time() + 2.5, timeout=2)
+
+
 def run_auto_statuses(cur, conn, deadline):
     """Один проход фонового задания. Возвращает сводку для журнала."""
     import time as _t
@@ -1722,6 +1851,10 @@ def run_auto_statuses(cur, conn, deadline):
                            f'OZON закончил приёмку — «Принята», закроется через {FBO_AUTO_CLOSE_HOURS} ч')
                 summary['accepted'] += 1
             conn.commit()
+
+    # 4. Даты FBO из Газельки и OZON.
+    if _t.time() < deadline:
+        summary['datesChanged'] = sync_fbo_dates(cur, conn, deadline)
 
     return summary
 

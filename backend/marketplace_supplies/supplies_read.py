@@ -9,7 +9,7 @@ from datetime import datetime
 
 import psycopg2
 
-from shared import close_expired_supplies
+from shared import close_expired_supplies, sync_fbo_dates_throttled
 from shared import (
     GOODS_READY_FOR_SUPPLY_SQL,
     compute_order_status,
@@ -33,6 +33,11 @@ def handle_get(event: dict, headers: dict, dsn: str) -> dict:
                 close_expired_supplies(cur, conn)
             except Exception:
                 conn.rollback()
+        # Даты FBO из Газельки и OZON — не чаще раза в 10 минут.
+        try:
+            sync_fbo_dates_throttled(cur, conn)
+        except Exception:
+            conn.rollback()
 
         # Сводка отгрузок FBO для дашборда: что собирается, что уехало в газельку,
         # что сдано на воротах маркетплейса. Кладовщик по ней видит, не забыл ли
