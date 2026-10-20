@@ -564,10 +564,38 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
             # что выйдет из цеха, — печатать стикер на складскую вещь нельзя, иначе
             # один и тот же заказ уедет дважды.
             cur.execute(
-                "SELECT sewing_status, fulfilled_from_stock_id FROM orders WHERE id = %s",
+                "SELECT sewing_status, fulfilled_from_stock_id, "
+                "  (cut_at IS NULL AND cutter_user_id IS NULL AND sewer_user_id IS NULL "
+                "   AND cut_given_to_order_id IS NULL AND cut_from_order_id IS NULL) "
+                "FROM orders WHERE id = %s",
                 (int(reserved_order_id),),
             )
             sew_row = cur.fetchone()
+            # РАССИНХРОН «ВЕЩЬ ЗА ЗАКАЗОМ, А ЗАКАЗ В ОЧЕРЕДИ НА ПОШИВ» (20.10).
+            #
+            # Вещь числится за заказом, а заказ при этом стоит «Новый», хотя в
+            # цех его не брали. Так бывает, когда операция оборвалась на середине
+            # (перегрузка базы: заказ уже освобождён, а вещь ещё нет) или когда
+            # подбор перенёс заказ на вещь в руках, не вернув ему «Со склада».
+            # Кладовщик держит вещь с ярлыком в руках и получал отказ.
+            #
+            # Раз заказ никто не кроил и не шил, а вещь за ним — закрываем заказ
+            # этой вещью, как и должно было быть.
+            if (sew_row and sew_row[0] == 'Новый' and sew_row[2]
+                    and sew_row[1] in (None, gw_id)):
+                cur.execute(
+                    "UPDATE orders SET sewing_status = 'Со склада', "
+                    "  fulfilled_from_stock_id = %s WHERE id = %s",
+                    (int(gw_id), int(reserved_order_id)),
+                )
+                log_action(
+                    cur, actor_id, actor_name, 'stock_order_restored', 'order',
+                    int(reserved_order_id),
+                    f'Заказ #{target_number} снова закрыт складской вещью '
+                    f'{scan_barcode}: вещь числилась за ним, а заказ стоял в очереди '
+                    f'на пошив, хотя в цех его не брали',
+                )
+                sew_row = ('Со склада', gw_id, True)
             # Заказ считается закрытым складом, только если он сам указывает на ЭТУ
             # вещь. Статус «Новый» здесь недопустим: такой заказ стоит в очереди на
             # пошив, и цех сошьёт для него отдельный товар. Наклеив ярлык на складскую
@@ -2625,8 +2653,15 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                     "shipping_labeled_by_name = NULL WHERE id = %s",
                     (int(twin_order_id), actor_id, int(gw_id)),
                 )
+                # Заказ закрывается этой вещью — значит, он «Со склада», а не в
+                # очереди на пошив. Раньше ставилась только ссылка на вещь, и
+                # заказ, оставшийся «Новый», потом не давал напечатать ярлык.
                 cur.execute(
-                    "UPDATE orders SET fulfilled_from_stock_id = %s WHERE id = %s",
+                    "UPDATE orders SET fulfilled_from_stock_id = %s, "
+                    "  sewing_status = CASE WHEN sewing_status = 'Новый' "
+                    "    AND cut_at IS NULL AND cutter_user_id IS NULL "
+                    "    THEN 'Со склада' ELSE sewing_status END "
+                    "WHERE id = %s",
                     (int(gw_id), int(twin_order_id)),
                 )
                 log_action(
