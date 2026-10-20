@@ -852,14 +852,22 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
             if gw_status == 'mp_return':
                 cur.execute(
                     "SELECT 1 FROM goods_warehouse gw "
-                    "JOIN orders o ON o.id = gw.order_id "
+                    "JOIN orders o ON o.id = COALESCE(gw.order_id, gw.reserved_order_id) "
                     "LEFT JOIN marketplace_returns r ON r.goods_warehouse_id = gw.id "
-                    "WHERE gw.id = %s AND o.completed_at IS NOT NULL "
-                    "  AND (o.cancelled_at IS NOT NULL OR COALESCE(o.ozon_status, '') = 'cancelled' "
-                    "       OR r.return_reason ILIKE '%%отменил%%') "
-                    "  AND (COALESCE(o.cancelled_at, r.mp_created_at, now() AT TIME ZONE 'UTC') "
-                    "       AT TIME ZONE 'UTC' AT TIME ZONE 'Europe/Moscow')::date "
-                    "    = (o.completed_at AT TIME ZONE 'UTC' AT TIME ZONE 'Europe/Moscow')::date "
+                    "WHERE gw.id = %s AND ("
+                    # Отменённый FBS, который ПВЗ не принял и вернул.
+                    "  gw.receive_reason = 'cancelled_fbs_pvz' "
+                    # Заказ отменили, а вещь отгрузили в тот же день или уже после отмены.
+                    "  OR (o.completed_at IS NOT NULL "
+                    # Причина — именно отмена покупателем. «Отказался при вручении»,
+                    # «передумал», «не забрал» — вещь была у покупателя, ей нужен осмотр.
+                    "      AND (r.return_reason ILIKE '%%отменил%%' "
+                    "           OR (r.id IS NULL AND (o.cancelled_at IS NOT NULL "
+                    "               OR COALESCE(o.ozon_status, '') = 'cancelled'))) "
+                    "      AND ((COALESCE(o.cancelled_at, r.mp_created_at, now() AT TIME ZONE 'UTC') "
+                    "            AT TIME ZONE 'UTC' AT TIME ZONE 'Europe/Moscow')::date "
+                    "           <= (o.completed_at AT TIME ZONE 'UTC' AT TIME ZONE 'Europe/Moscow')::date))"
+                    ") "
                     "LIMIT 1",
                     (gw_id,),
                 )

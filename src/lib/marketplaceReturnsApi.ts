@@ -140,6 +140,10 @@ export const scanPickupReturn = (
   /** Куда вещь дальше: 'check' — сразу «На проверке» в цех;
    * 'shelf' — отмена в день отгрузки, не была у покупателя, кладём на полку. */
   route?: PickupRoute | null;
+  /** Отменённый FBS: ПВЗ не принял вещь и отдал обратно. */
+  cancelledFbs?: boolean;
+  /** Пояснение, почему ничего не заведено (вещь уже на складе). */
+  note?: string;
 }> =>
   postAction({ action: 'fetch_by_barcode', barcode, accept: 1, actorId, actorName }) as Promise<{
     found: number;
@@ -147,6 +151,8 @@ export const scanPickupReturn = (
     accepted: AcceptedReturn | null;
     alreadyPicked: boolean;
     route?: PickupRoute | null;
+    cancelledFbs?: boolean;
+    note?: string;
   }>;
 
 /** Кладовщик вскрыл пакет: внутри не тот товар, покупатель подменил на ПВЗ. */

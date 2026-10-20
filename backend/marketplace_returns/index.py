@@ -864,14 +864,22 @@ def _same_day_cancel(cur, gw_id):
     """Вещь не была у покупателя: заказ отменили в день отгрузки (по Москве)."""
     cur.execute(
         "SELECT 1 FROM goods_warehouse gw "
-        "JOIN orders o ON o.id = gw.order_id "
+        "JOIN orders o ON o.id = COALESCE(gw.order_id, gw.reserved_order_id) "
         "LEFT JOIN marketplace_returns r ON r.goods_warehouse_id = gw.id "
-        "WHERE gw.id = %s AND o.completed_at IS NOT NULL "
-        "  AND (o.cancelled_at IS NOT NULL OR COALESCE(o.ozon_status, '') = 'cancelled' "
-        "       OR r.return_reason ILIKE '%%отменил%%') "
-        "  AND (COALESCE(o.cancelled_at, r.mp_created_at, now() AT TIME ZONE 'UTC') "
-        "       AT TIME ZONE 'UTC' AT TIME ZONE 'Europe/Moscow')::date "
-        "    = (o.completed_at AT TIME ZONE 'UTC' AT TIME ZONE 'Europe/Moscow')::date "
+        "WHERE gw.id = %s AND ("
+        # Отменённый FBS, который ПВЗ не принял и вернул.
+        "  gw.receive_reason = 'cancelled_fbs_pvz' "
+        # Заказ отменили, а вещь отгрузили в тот же день или уже после отмены.
+        "  OR (o.completed_at IS NOT NULL "
+        # Причина — именно отмена покупателем. «Отказался при вручении»,
+        # «передумал», «не забрал» — вещь была у покупателя, ей нужен осмотр.
+        "      AND (r.return_reason ILIKE '%%отменил%%' "
+        "           OR (r.id IS NULL AND (o.cancelled_at IS NOT NULL "
+        "               OR COALESCE(o.ozon_status, '') = 'cancelled'))) "
+        "      AND ((COALESCE(o.cancelled_at, r.mp_created_at, now() AT TIME ZONE 'UTC') "
+        "            AT TIME ZONE 'UTC' AT TIME ZONE 'Europe/Moscow')::date "
+        "           <= (o.completed_at AT TIME ZONE 'UTC' AT TIME ZONE 'Europe/Moscow')::date))"
+        ") "
         "LIMIT 1",
         (int(gw_id),),
     )
@@ -917,13 +925,186 @@ def _with_route(cur, conn, result, actor_id, actor_name):
     result['route'] = route
     return result
 
+
+# Состояния вещи после приёмки возврата: повторный скан их не трогает.
+ALREADY_RECEIVED_STATUSES = (
+    'mp_return', 'checking', 'repacking', 'inspected', 'taken',
+    'in_stock', 'awaiting_shelf', 'to_dispose',
+)
+
+
+def _received_as_return(cur, gw_id):
+    """Вещь уже вернулась с ПВЗ: заведена возвратом и после этого не уезжала снова.
+
+    Если вещь после приёмки опять отгрузили (продали со склада) и она вернулась ещё
+    раз — это новый возврат, его принимаем. Признак — дата приёмки позже последней
+    отгрузки вещи.
+    """
+    cur.execute(
+        "SELECT 1 FROM goods_warehouse gw "
+        "WHERE gw.id = %s AND gw.receive_reason IN ('return', 'cancelled_fbs_pvz') "
+        "  AND gw.received_at IS NOT NULL "
+        "  AND gw.shipped_at IS NULL",
+        (int(gw_id),),
+    )
+    return cur.fetchone() is not None
+
+
+# ---------------------------------------------------------------------------
+# ОТМЕНЁННЫЙ FBS, КОТОРЫЙ УВЕЗЛИ НА ПВЗ.
+#
+# Покупатель отменил заказ, кладовщик вещь не нашёл и сдал её на ПВЗ вместе с
+# остальными. Пункт выдачи такую вещь не принимает и отдаёт обратно. Возврата по
+# ней у площадки нет — сканер «Привёз с пункта выдачи» отвечал «возврат не
+# найден», и вещь оставалась вне учёта.
+#
+# Теперь сканер узнаёт её по ярлыку FBS (номер отправления, штрихкод OZON, стикер
+# WB или номер Яндекса): заказ отменён, вещь числится отгруженной. Она до
+# покупателя не доезжала — осмотр не нужен, кладовщик сразу кладёт её на полку
+# и печатает стикер хранения.
+# ---------------------------------------------------------------------------
+
+def _ozon_posting_by_label(cur, code):
+    """Номер отправления OZON по штрихкоду с ярлыка FBS (длинное число или ii…)."""
+    raw = (code or '').strip()
+    if raw[:2].lower() == 'шш':
+        raw = 'ii' + raw[2:]
+    if not (re.fullmatch(r'(?i)ii\d{6,}', raw) or (raw.isdigit() and len(raw) >= 12)):
+        return None
+    if raw[:2].lower() == 'ii':
+        raw = 'ii' + raw[2:]
+    for sid in (list_return_shops(cur) or [None]):
+        creds, enabled = get_credentials(cur, 'ozon', sid)
+        if not enabled:
+            continue
+        st, data = http_json(
+            OZON_API_BASE + '/v2/posting/fbs/get-by-barcode', 'POST',
+            {'Client-Id': (creds.get('clientId') or '').strip(),
+             'Api-Key': (creds.get('apiKey') or '').strip()},
+            {'barcode': raw},
+        )
+        if st == 200 and isinstance(data, dict):
+            posting = (data.get('result') or {}).get('posting_number')
+            if posting:
+                return posting
+    return None
+
+
+def _accept_cancelled_fbs(cur, conn, code, actor_id, actor_name):
+    """Отменённый FBS вернули с ПВЗ: заводим на склад «ждёт полки». None — не он."""
+    aliases = _scan_aliases(code)
+    sticker_num = _wb_sticker_number(code)
+    posting = None
+    if re.fullmatch(r'\d{6,}-\d{3,}-\d+', (code or '').strip()):
+        posting = code.strip()
+    params = [aliases, aliases, aliases, aliases]
+    extra = ''
+    if sticker_num is not None:
+        extra = ' OR o.wb_sticker_number = %s'
+        params.append(sticker_num)
+    cur.execute(
+        "SELECT o.id FROM orders o "
+        "WHERE o.order_type = 'FBS' AND (o.order_number = ANY(%s) "
+        "  OR o.ozon_posting_number = ANY(%s) OR o.wb_sticker_barcode = ANY(%s) "
+        "  OR o.wb_rid = ANY(%s)" + extra + ") "
+        "ORDER BY o.id DESC LIMIT 1",
+        tuple(params),
+    )
+    row = cur.fetchone()
+    if not row and not posting:
+        posting = _ozon_posting_by_label(cur, code)
+    if not row and posting:
+        cur.execute(
+            "SELECT id FROM orders WHERE order_type = 'FBS' "
+            "AND (ozon_posting_number = %s OR order_number = %s) ORDER BY id DESC LIMIT 1",
+            (posting, posting),
+        )
+        row = cur.fetchone()
+    if not row:
+        return None
+    order_id = row[0]
+
+    cur.execute(
+        "SELECT o.order_number, o.material, o.width, o.height, o.product, "
+        "       (o.status = 'Отменён' OR o.cancelled_at IS NOT NULL "
+        "        OR COALESCE(o.ozon_status, '') = 'cancelled' "
+        "        OR COALESCE(o.ym_status, '') = 'CANCELLED') "
+        "FROM orders o WHERE o.id = %s",
+        (order_id,),
+    )
+    order_number, material, width, height, product, cancelled = cur.fetchone()
+    if not cancelled:
+        return None
+
+    # Вещь, которая уехала с этим ярлыком: сшитая под заказ или взятая с полки.
+    cur.execute(
+        "SELECT id, status, storage_barcode, receive_reason, shipped_at FROM goods_warehouse "
+        "WHERE order_id = %s OR reserved_order_id = %s "
+        "   OR id = (SELECT fulfilled_from_stock_id FROM orders WHERE id = %s) "
+        "ORDER BY (status = 'shipped') DESC, id DESC LIMIT 1",
+        (order_id, order_id, order_id),
+    )
+    gw = cur.fetchone()
+    title = (f'{material} {width}×{height}' if material and width and height
+             else (product or 'Отменённый заказ'))
+    accepted = {
+        'material': material, 'width': width, 'height': height,
+        'storageBarcode': gw[2] if gw else None, 'productName': product,
+    }
+
+    # Уже вернули: повторный скан ничего не заводит.
+    if gw and gw[1] != 'shipped' and gw[3] == 'cancelled_fbs_pvz':
+        return {'found': 0, 'barcode': code, 'alreadyPicked': True,
+                'accepted': accepted, 'route': 'shelf' if gw[1] == 'mp_return' else None,
+                'cancelledFbs': True}
+    # Вещь не числится уехавшей — значит она и не на ПВЗ: не наш случай.
+    if gw and gw[1] != 'shipped':
+        return {'found': 0, 'barcode': code, 'alreadyPicked': True,
+                'accepted': accepted, 'route': None, 'cancelledFbs': True,
+                'note': f'Вещь по заказу {order_number} уже на складе'}
+
+    if gw:
+        gw_id = gw[0]
+        cur.execute(
+            "UPDATE goods_warehouse SET status = 'mp_return', shelf_id = NULL, "
+            "shipped_at = NULL, lost_reason = NULL, lost_at = NULL, "
+            "reserved_order_id = NULL, shipping_labeled_at = NULL, "
+            "shipping_labeled_by = NULL, shipping_labeled_by_name = NULL, "
+            "receive_reason = 'cancelled_fbs_pvz', received_at = now() WHERE id = %s",
+            (gw_id,),
+        )
+        sb = gw[2]
+    else:
+        sb = next_storage_barcode(cur)
+        cur.execute(
+            "INSERT INTO goods_warehouse (order_id, status, storage_barcode, receive_reason, received_at) "
+            "VALUES (%s, 'mp_return', %s, 'cancelled_fbs_pvz', now()) RETURNING id",
+            (order_id, sb),
+        )
+        gw_id = cur.fetchone()[0]
+    # Из уехавшей поставки вещь вычёркивать не нужно — это история короба.
+    log_action(
+        cur, actor_id, actor_name, 'receive_cancelled_fbs',
+        f'Вернули с ПВЗ отменённый FBS: заказ {order_number} ({sb}) — на полку без осмотра',
+    )
+    conn.commit()
+    accepted['storageBarcode'] = sb
+    return {'found': 1, 'barcode': code, 'alreadyPicked': False,
+            'accepted': accepted, 'route': 'shelf', 'cancelledFbs': True,
+            'title': title}
+
 def _stock_wb_yandex_order(cur, conn, row, code, actor_id, actor_name):
     """Ставит найденный заказ WB/Яндекса на склад как возврат и цепляет заявку."""
     order_id, order_number, marketplace, material, width, height, gw_id, gw_status, storage_barcode = row
 
     # Повторный скан той же вещи ничего не меняет: кладовщик просто пикнул пакет
     # дважды. Заявку всё равно цепляем — раньше скан заводил вещь и забывал про неё.
-    if gw_id and gw_status == 'mp_return':
+    #
+    # «Уже принята» — любое состояние ПОСЛЕ приёмки возврата: ждёт полки, едет
+    # в цех, осмотрена, лежит на полке. Раньше защищал только mp_return, а теперь
+    # вещь сразу уходит «На проверке» — второй скан сбрасывал её обратно в возврат
+    # и снимал с полки уже разложенную.
+    if gw_id and gw_status in ALREADY_RECEIVED_STATUSES and _received_as_return(cur, gw_id):
         _attach_return_to_goods(
             cur, order_id, gw_id, marketplace, code, actor_id, actor_name,
         )
@@ -1928,6 +2109,10 @@ def handler(event: dict, context) -> dict:
                 # Стикер WB и номер YM- в кабинете OZON не живут. Не спрашиваем
                 # чужую площадку и не пишем кладовщику «OZON не знает возврат».
                 if _looks_like_wb_or_yandex_label(code):
+                    if body_data.get('accept'):
+                        cancelled_fbs = _accept_cancelled_fbs(cur, conn, code, actor_id, actor_name)
+                        if cancelled_fbs is not None:
+                            return _resp(200, cancelled_fbs)
                     return _resp(404, {'error': _unknown_return_message(code)})
 
                 # КОД С КОРОБКИ СПРАШИВАЕМ У ВСЕХ КАБИНЕТОВ.
@@ -2107,6 +2292,11 @@ def handler(event: dict, context) -> dict:
                     # Кабинет ответил ошибкой (неверные ключи, лимит, 401) — это не
                     # «возврата нет», и молчать об этом нельзя: иначе кладовщик
                     # ищет вещь, которая у площадки есть, а мы просто не дозвонились.
+                    # Возврата нет — может, это отменённый FBS, который ПВЗ не принял.
+                    if body_data.get('accept'):
+                        cancelled_fbs = _accept_cancelled_fbs(cur, conn, code, actor_id, actor_name)
+                        if cancelled_fbs is not None:
+                            return _resp(200, cancelled_fbs)
                     if scan_err:
                         return _resp(502, {'error': f'OZON: {scan_err}'})
                     return _resp(404, {'error': _unknown_return_message(code)})

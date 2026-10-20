@@ -45,6 +45,10 @@ interface ScanRow {
   shelfName?: string;
   /** Номер заказа — печатаем на стикере хранения. */
   orderNumber?: string | null;
+  /** Отменённый FBS, который ПВЗ не принял. */
+  cancelledFbs?: boolean;
+  /** Пояснение сервера: почему ничего не заведено. */
+  note?: string;
   error?: string;
 }
 
@@ -110,6 +114,8 @@ const PickupReturnsDialog = ({ open, onOpenChange, onDone }: PickupReturnsDialog
           storageBarcode: a?.storageBarcode,
           already: res.alreadyPicked,
           route: res.route ?? null,
+          cancelledFbs: res.cancelledFbs,
+          note: res.note,
         },
         ...prev,
       ]);
@@ -205,7 +211,8 @@ const PickupReturnsDialog = ({ open, onOpenChange, onDone }: PickupReturnsDialog
             вещь сразу уходит «На проверке» — отвезите её в цех. Если заказ отменили в
             день отгрузки и вещь не была у покупателя, здесь появится кнопка «Стикер и на
             полку»: напечатается стикер хранения — наклейте его поверх ярлыка FBS, система
-            назовёт полку. Не тот товар в пакете — нажмите «Подмена на ПВЗ».
+            назовёт полку. Так же принимается отменённый FBS, который пункт выдачи не
+            взял — сканируйте его ярлык FBS. Не тот товар в пакете — нажмите «Подмена на ПВЗ».
           </p>
 
           <div className="space-y-1.5">
@@ -249,9 +256,17 @@ const PickupReturnsDialog = ({ open, onOpenChange, onDone }: PickupReturnsDialog
                         <>
                           <p className="font-medium leading-tight">{r.title}</p>
                           <p className="text-xs text-muted-foreground">
-                            {r.already ? 'Уже принята ранее · ' : ''}
+                            {r.already ? 'Уже принята ранее — повторно не заводим · ' : ''}
                             {r.storageBarcode || r.barcode}
                           </p>
+                          {r.cancelledFbs && (
+                            <p className="mt-0.5 text-xs font-medium text-sky-800">
+                              Отменённый FBS — пункт выдачи не принял
+                            </p>
+                          )}
+                          {r.note && (
+                            <p className="mt-0.5 text-xs text-muted-foreground">{r.note}</p>
+                          )}
                           <PickupRouteLine row={r} />
                           <div className="mt-1.5 flex flex-wrap gap-2">
                             {r.route === 'shelf' && !r.shelfName && r.storageBarcode && (
