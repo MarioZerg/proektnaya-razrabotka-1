@@ -117,7 +117,7 @@ interface FboSupplyStagesProps {
   supplyId: number;
   now: Date;
   readyGoods: GoodsWarehouseItem[];
-  load: (silent?: boolean) => void;
+  load: (silent?: boolean) => Promise<void> | void;
   fields: SupplyShowContentProps['fields'];
   flags: SupplyShowContentProps['flags'];
   actions: SupplyShowContentProps['actions'];
@@ -253,11 +253,7 @@ const FboSupplyStages = ({
 
       {stage === 'assemble' && (
         <div className="space-y-4">
-          <FboArticlesCheck rows={supply.fboArticles || []} onRefresh={async () => {
-              load(true);
-              // load не отдаёт обещание — даём спиннеру покрутиться, пока придут короба.
-              await new Promise((r) => setTimeout(r, 1200));
-            }}
+          <FboArticlesCheck rows={supply.fboArticles || []} onRefresh={() => load(true)}
           />
           <SupplyGroupsPanel
             groups={supply.groups || []}

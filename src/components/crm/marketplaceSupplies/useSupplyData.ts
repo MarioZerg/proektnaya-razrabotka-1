@@ -42,13 +42,13 @@ export const useSupplyData = (supplyId: number) => {
    * каждом фоновом обновлении, у кладовщика посреди сборки исчезает вся таблица и
    * теряется место в прокрутке.
    */
-  const load = (silent = false) => {
+  const load = (silent = false): Promise<void> => {
     if (!silent) setLoading(true);
     // «Готово к сборке» — это вещи, застикерованные и ждущие отгрузки: сшитые в цехе
     // (awaiting_supply, лежат в контейнере) и снятые с полок (picking).
     // Оба статуса берём ОДНИМ запросом: раньше на это уходило два вызова функции
     // подряд, хотя запрос к базе почти одинаковый.
-    Promise.all([
+    return Promise.all([
       fetchSupplyDetail(supplyId),
       fetchGoodsWarehouse('picking,awaiting_supply'),
     ])

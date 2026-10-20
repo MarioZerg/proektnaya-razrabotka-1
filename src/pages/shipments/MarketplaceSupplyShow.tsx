@@ -105,7 +105,7 @@ const SupplyShowLoaded = ({
   readyGoods: ReturnType<typeof useSupplyData>['readyGoods'];
   marketplaceItems: ReturnType<typeof useSupplyData>['marketplaceItems'];
   shops: ReturnType<typeof useSupplyData>['shops'];
-  load: (silent?: boolean) => void;
+  load: (silent?: boolean) => Promise<void> | void;
   fields: ReturnType<typeof useSupplyData>['fields'];
   actions: ReturnType<typeof useSupplyActions>;
 }) => {

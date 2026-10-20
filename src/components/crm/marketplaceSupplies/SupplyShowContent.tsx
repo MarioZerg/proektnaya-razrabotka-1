@@ -21,7 +21,7 @@ export interface SupplyShowContentProps {
   readyGoods: GoodsWarehouseItem[];
   marketplaceItems: MarketplaceItem[];
   shops?: Shop[];
-  load: (silent?: boolean) => void;
+  load: (silent?: boolean) => Promise<void> | void;
   fields: {
     supplyNumber: string;
     setSupplyNumber: Dispatch<SetStateAction<string>>;
