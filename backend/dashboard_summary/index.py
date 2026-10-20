@@ -261,7 +261,7 @@ def handler(event: dict, context) -> dict:
                 # checking (уже разбирает). Тогда оба числа сходятся всегда.
                 "returns_part AS (SELECT COUNT(*) AS picked_up "
                 "FROM goods_warehouse gw "
-                "WHERE gw.status IN ('mp_return', 'checking'))",
+                "WHERE gw.status = 'mp_return')",
             ]
             select_cols += [
                 "rolls_part.low_stock",

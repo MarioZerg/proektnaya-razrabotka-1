@@ -869,8 +869,8 @@ def _same_day_cancel(cur, gw_id):
         "WHERE gw.id = %s AND o.completed_at IS NOT NULL "
         "  AND (o.cancelled_at IS NOT NULL OR COALESCE(o.ozon_status, '') = 'cancelled' "
         "       OR r.return_reason ILIKE '%%отменил%%') "
-        "  AND (COALESCE(o.cancelled_at, r.mp_created_at, now()) AT TIME ZONE 'UTC' "
-        "       AT TIME ZONE 'Europe/Moscow')::date "
+        "  AND (COALESCE(o.cancelled_at, r.mp_created_at, now() AT TIME ZONE 'UTC') "
+        "       AT TIME ZONE 'UTC' AT TIME ZONE 'Europe/Moscow')::date "
         "    = (o.completed_at AT TIME ZONE 'UTC' AT TIME ZONE 'Europe/Moscow')::date "
         "LIMIT 1",
         (int(gw_id),),
@@ -1606,6 +1606,9 @@ def stock_picked_up_returns(cur, ids=None, limit=None):
         # Возврат ложится в историю вещи: по ней кладовщик увидит, сколько раз
         # эта вещь уже ездила к покупателям и возвращалась.
         log_return_history(cur, gw_id, r_id, order_id)
+        # Разбора больше нет: заведённая вещь сразу решается — в цех на проверку
+        # или (отмена в день отгрузки) ждёт полки.
+        _route_scanned_return(cur, gw_id, None, None)
         created += 1
 
     return created

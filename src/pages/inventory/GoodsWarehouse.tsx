@@ -91,8 +91,8 @@ const GoodsWarehouse = () => {
         />
         )}
 
-        {/* Привезли с ПВЗ, но ещё не осмотрели. Такой товар нельзя продавать:
-            он не проверен и в подбор не идёт, пока не ляжет на полку. */}
+        {/* Отмены в день отгрузки: проверка в цехе не нужна, но пока вещь не
+            легла на полку, в подбор она не идёт. */}
         {!s.stockOnly && s.uncheckedReturns > 0 && (
           <button
             type="button"
@@ -104,11 +104,11 @@ const GoodsWarehouse = () => {
             <Icon name="PackageOpen" size={24} className="shrink-0 text-violet-600" />
             <div className="min-w-0 flex-1">
               <p className="font-bold text-violet-900">
-                Непроверенные возвраты: {s.uncheckedReturns} шт.
+                Возвраты на полку: {s.uncheckedReturns} шт.
               </p>
               <p className="text-sm text-violet-900">
-                Забрали с пункта выдачи, но ещё не осмотрели. В подбор не попадут,
-                пока не разберёте и не положите на полку
+                Не были у покупателя (отмена в день отгрузки). В подбор не попадут,
+                пока не положите их на полку
               </p>
             </div>
             <Icon name="ChevronRight" size={18} className="shrink-0 text-violet-600" />

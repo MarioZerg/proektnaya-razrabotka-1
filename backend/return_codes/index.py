@@ -318,6 +318,39 @@ def next_storage_barcode(cur):
     return f"GW-{int(cur.fetchone()[0]):06d}"
 
 
+
+def _route_stocked_return(cur, gw_id):
+    """Разбора у кладовщика больше нет: забранная с ПВЗ вещь сразу «На проверке»
+    (едет в цех). Остаётся «Возврат с маркетплейса» только отмена в день отгрузки —
+    вещь не была у покупателя, кладовщик кладёт её на полку. То же правило, что в
+    сканере «Привёз с пункта выдачи» (marketplace_returns)."""
+    cur.execute(
+        "SELECT 1 FROM goods_warehouse gw "
+        "JOIN orders o ON o.id = gw.order_id "
+        "LEFT JOIN marketplace_returns r ON r.goods_warehouse_id = gw.id "
+        "WHERE gw.id = %s AND o.completed_at IS NOT NULL "
+        "  AND (o.cancelled_at IS NOT NULL OR COALESCE(o.ozon_status, '') = 'cancelled' "
+        "       OR r.return_reason ILIKE '%%отменил%%') "
+        "  AND (COALESCE(o.cancelled_at, r.mp_created_at, now() AT TIME ZONE 'UTC') "
+        "       AT TIME ZONE 'UTC' AT TIME ZONE 'Europe/Moscow')::date "
+        "    = (o.completed_at AT TIME ZONE 'UTC' AT TIME ZONE 'Europe/Moscow')::date "
+        "LIMIT 1",
+        (int(gw_id),),
+    )
+    if cur.fetchone():
+        return
+    cur.execute(
+        "UPDATE goods_warehouse SET status = 'repacking', received_at = now() "
+        "WHERE id = %s AND status = 'mp_return'",
+        (int(gw_id),),
+    )
+    cur.execute(
+        "UPDATE marketplace_returns SET status = 'processed', outcome = 'repack', "
+        "outcome_at = COALESCE(outcome_at, now()) "
+        "WHERE goods_warehouse_id = %s AND status = 'picked_up'",
+        (int(gw_id),),
+    )
+
 def stock_picked_up_returns(cur, ids=None):
     """Заводит забранные с ПВЗ возвраты на склад в «подвешенном» состоянии.
 
@@ -476,6 +509,7 @@ def stock_picked_up_returns(cur, ids=None):
             "WHERE id = %s",
             (gw_id, r_id),
         )
+        _route_stocked_return(cur, gw_id)
         created += 1
 
     return created
