@@ -112,6 +112,8 @@ export const fetchReturnByBarcode = (barcode: string) =>
     barcode: string;
   }>;
 
+export type PickupRoute = 'check' | 'shelf';
+
 /** Что приняли по отсканированной коробке — показываем кладовщику для сверки. */
 export interface AcceptedReturn {
   material: string | null;
@@ -135,12 +137,16 @@ export const scanPickupReturn = (
   accepted: AcceptedReturn | null;
   /** Вещь уже принимали раньше — повторный скан ничего не добавляет. */
   alreadyPicked: boolean;
+  /** Куда вещь дальше: 'check' — сразу «На проверке» в цех;
+   * 'shelf' — отмена в день отгрузки, не была у покупателя, кладём на полку. */
+  route?: PickupRoute | null;
 }> =>
   postAction({ action: 'fetch_by_barcode', barcode, accept: 1, actorId, actorName }) as Promise<{
     found: number;
     barcode: string;
     accepted: AcceptedReturn | null;
     alreadyPicked: boolean;
+    route?: PickupRoute | null;
   }>;
 
 /** Кладовщик вскрыл пакет: внутри не тот товар, покупатель подменил на ПВЗ. */

@@ -1997,7 +1997,7 @@ def _handler(event: dict, context) -> dict:
                 # Очередь на экране больше не совпадает с тележкой в цехе: цифры
                 # накопились, а кладовщик сегодня заново заводит только то, что
                 # реально забрал с маркетплейса. Вещи не удаляем и зарплату не
-                # трогаем — возвращаем на разбор (checking), снимаем закрепление
+                # трогаем — возвращаем в «Возврат с маркетплейса» (mp_return), снимаем закрепление
                 # за цехом и открываем заявку возврата, чтобы кладовщик снова
                 # нажал «в цех на осмотр» по живым коробкам.
                 #
@@ -2015,7 +2015,7 @@ def _handler(event: dict, context) -> dict:
                     }
 
                 cur.execute(
-                    "UPDATE goods_warehouse SET status = 'checking', "
+                    "UPDATE goods_warehouse SET status = 'mp_return', "
                     "repack_workshop_id = NULL "
                     "WHERE status = 'repacking' AND " + repack_since +
                     " RETURNING id"

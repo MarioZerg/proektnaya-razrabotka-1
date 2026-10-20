@@ -12,7 +12,12 @@ import Icon from '@/components/ui/icon';
 import { useAuth } from '@/context/AuthContext';
 import { useToast } from '@/hooks/use-toast';
 import { useScannerAutoSubmit } from '@/hooks/useScannerAutoSubmit';
-import { scanPickupReturn, markPvzSubstitution } from '@/lib/marketplaceReturnsApi';
+import {
+  scanPickupReturn,
+  markPvzSubstitution,
+  type PickupRoute,
+} from '@/lib/marketplaceReturnsApi';
+import { placeOnShelf } from '@/lib/goodsWarehouseApi';
 import { playScanSound, playScanErrorSound, primeScanSounds } from '@/lib/scanSound';
 import { fixScanLayout } from '@/lib/keyboardLayout';
 
@@ -33,22 +38,25 @@ interface ScanRow {
   already?: boolean;
   /** Кладовщик отметил подмену товара на пункте выдачи. */
   substituted?: boolean;
+  /** Куда вещь дальше: в цех на проверку или на полку. */
+  route?: PickupRoute | null;
+  /** Полка, на которую вещь положили из этого окна. */
+  shelfName?: string;
   error?: string;
 }
 
 /**
  * Приёмка возвратов, привезённых с пункта выдачи, — сканером.
  *
- * Кладовщик пикает наклейку на пакете, и вещь сразу встаёт на склад. Выбирать
- * галочками из списка не нужно: раньше он держал пакет в руках и всё равно искал
- * его в перечне из полусотни позиций — долго и легко отметить не ту вещь.
+ * Кладовщик пикает наклейку на пакете, и вещь сразу встаёт на склад. Разбора
+ * у кладовщика больше нет:
+ *   - вещь, которая была у покупателя, сразу «На проверке» — её везут в цех
+ *     к упаковщице;
+ *   - вещь, которую отменили в день отгрузки (до покупателя не доехала),
+ *     кладовщик кладёт на полку прямо здесь — кнопкой «Положить на полку»,
+ *     система сама называет полку.
  *
- * Возвраты приезжают штучно: одна вещь — один пакет со своей наклейкой. Коробками
- * ездят только поставки на склад маркетплейса, здесь их нет.
- *
- * Возврат ищется у самого маркетплейса, поэтому принимается любой пакет — даже тот,
- * которого ещё не было в нашем списке.
- *
+ * Возвраты приезжают штучно: одна вещь — один пакет со своей наклейкой.
  * Фокус из поля не уходит даже после ошибки: пикать можно пачку подряд.
  */
 const PickupReturnsDialog = ({ open, onOpenChange, onDone }: PickupReturnsDialogProps) => {
@@ -57,6 +65,7 @@ const PickupReturnsDialog = ({ open, onOpenChange, onDone }: PickupReturnsDialog
   const [barcode, setBarcode] = useState('');
   const [busy, setBusy] = useState(false);
   const [flagging, setFlagging] = useState<number | null>(null);
+  const [placing, setPlacing] = useState<number | null>(null);
   const [rows, setRows] = useState<ScanRow[]>([]);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -97,6 +106,7 @@ const PickupReturnsDialog = ({ open, onOpenChange, onDone }: PickupReturnsDialog
           title,
           storageBarcode: a?.storageBarcode,
           already: res.alreadyPicked,
+          route: res.route ?? null,
         },
         ...prev,
       ]);
@@ -142,9 +152,33 @@ const PickupReturnsDialog = ({ open, onOpenChange, onDone }: PickupReturnsDialog
     }
   };
 
-  useScannerAutoSubmit(barcode, handleScan, !busy && flagging == null);
+  const handlePlace = async (row: ScanRow) => {
+    if (placing != null || !row.storageBarcode) return;
+    setPlacing(row.key);
+    try {
+      const res = await placeOnShelf(row.storageBarcode);
+      playScanSound();
+      setRows((prev) =>
+        prev.map((r) => (r.key === row.key ? { ...r, shelfName: res.shelfName } : r))
+      );
+      onDone();
+    } catch (e) {
+      playScanErrorSound();
+      toast({
+        title: 'Не удалось положить на полку',
+        description: e instanceof Error ? e.message : undefined,
+        variant: 'destructive',
+      });
+    } finally {
+      setPlacing(null);
+      focusInput();
+    }
+  };
+
+  useScannerAutoSubmit(barcode, handleScan, !busy && flagging == null && placing == null);
 
   const okCount = rows.filter((r) => r.ok && !r.already).length;
+  const toCheck = rows.filter((r) => r.ok && r.route === 'check').length;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -155,12 +189,10 @@ const PickupReturnsDialog = ({ open, onOpenChange, onDone }: PickupReturnsDialog
 
         <div className="space-y-4">
           <p className="text-sm text-muted-foreground">
-            Сканируйте пакеты с товаром один за другим — OZON, Wildberries и Яндекс
-            Маркет. Подойдёт наклейка возврата OZON, стикер WB (со звёздочкой, номер
-            задания или srid) и номер заказа Яндекса с клиентского стикера. Каждая
-            вещь сразу встаёт на склад: дальше разберёте, в цех на осмотр или на полку.
-            Если в пакете не то, что заказывали — нажмите «Подмена на ПВЗ»: админ
-            увидит это на панели.
+            Сканируйте пакеты один за другим — OZON, Wildberries и Яндекс Маркет. Каждая
+            вещь сразу уходит «На проверке» — отвезите её в цех. Если заказ отменили в
+            день отгрузки и вещь не была у покупателя, здесь появится кнопка «Положить на
+            полку». Не тот товар в пакете — нажмите «Подмена на ПВЗ».
           </p>
 
           <div className="space-y-1.5">
@@ -179,8 +211,13 @@ const PickupReturnsDialog = ({ open, onOpenChange, onDone }: PickupReturnsDialog
 
           {rows.length > 0 && (
             <div className="space-y-1.5 rounded-md border border-border p-3">
-              <p className="text-sm font-medium">Принято: {okCount}</p>
-              <div className="max-h-64 space-y-1.5 overflow-y-auto">
+              <p className="text-sm font-medium">
+                Принято: {okCount}
+                {toCheck > 0 && (
+                  <span className="font-normal text-muted-foreground"> · в цех: {toCheck}</span>
+                )}
+              </p>
+              <div className="max-h-72 space-y-2 overflow-y-auto">
                 {rows.map((r) => (
                   <div key={r.key} className="flex items-start gap-2 text-sm">
                     <Icon
@@ -202,27 +239,46 @@ const PickupReturnsDialog = ({ open, onOpenChange, onDone }: PickupReturnsDialog
                             {r.already ? 'Уже принята ранее · ' : ''}
                             {r.storageBarcode || r.barcode}
                           </p>
-                          {r.substituted ? (
-                            <p className="mt-1 text-xs font-medium text-amber-800">
-                              Подмена отмечена · админ уведомлён
-                            </p>
-                          ) : (
-                            <Button
-                              type="button"
-                              size="sm"
-                              variant="outline"
-                              className="mt-1.5 h-8"
-                              disabled={flagging != null}
-                              onClick={() => handleSubstitution(r)}
-                            >
-                              <Icon
-                                name={flagging === r.key ? 'Loader2' : 'ArrowLeftRight'}
-                                size={14}
-                                className={`mr-1.5 ${flagging === r.key ? 'animate-spin' : ''}`}
-                              />
-                              Подмена на ПВЗ
-                            </Button>
-                          )}
+                          <PickupRouteLine row={r} />
+                          <div className="mt-1.5 flex flex-wrap gap-2">
+                            {r.route === 'shelf' && !r.shelfName && r.storageBarcode && (
+                              <Button
+                                type="button"
+                                size="sm"
+                                className="h-8"
+                                disabled={placing != null}
+                                onClick={() => handlePlace(r)}
+                              >
+                                <Icon
+                                  name={placing === r.key ? 'Loader2' : 'Archive'}
+                                  size={14}
+                                  className={`mr-1.5 ${placing === r.key ? 'animate-spin' : ''}`}
+                                />
+                                Положить на полку
+                              </Button>
+                            )}
+                            {r.substituted ? (
+                              <p className="text-xs font-medium text-amber-800">
+                                Подмена отмечена · админ уведомлён
+                              </p>
+                            ) : (
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="outline"
+                                className="h-8"
+                                disabled={flagging != null}
+                                onClick={() => handleSubstitution(r)}
+                              >
+                                <Icon
+                                  name={flagging === r.key ? 'Loader2' : 'ArrowLeftRight'}
+                                  size={14}
+                                  className={`mr-1.5 ${flagging === r.key ? 'animate-spin' : ''}`}
+                                />
+                                Подмена на ПВЗ
+                              </Button>
+                            )}
+                          </div>
                         </>
                       ) : (
                         <>
@@ -242,6 +298,32 @@ const PickupReturnsDialog = ({ open, onOpenChange, onDone }: PickupReturnsDialog
       </DialogContent>
     </Dialog>
   );
+};
+
+/** Куда идёт вещь после скана — одной строкой, цветом по действию. */
+const PickupRouteLine = ({ row }: { row: ScanRow }) => {
+  if (row.shelfName) {
+    return (
+      <p className="mt-1 text-xs font-semibold text-emerald-700">
+        Положите на полку {row.shelfName}
+      </p>
+    );
+  }
+  if (row.route === 'shelf') {
+    return (
+      <p className="mt-1 text-xs font-semibold text-emerald-700">
+        Не была у покупателя — на полку, без проверки
+      </p>
+    );
+  }
+  if (row.route === 'check') {
+    return (
+      <p className="mt-1 text-xs font-semibold text-amber-700">
+        На проверке — отвезите в цех
+      </p>
+    );
+  }
+  return null;
 };
 
 export default PickupReturnsDialog;

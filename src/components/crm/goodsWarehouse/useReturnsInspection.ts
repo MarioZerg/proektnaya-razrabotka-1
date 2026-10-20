@@ -21,7 +21,6 @@ import {
  * чтобы страница не открылась пустой на несуществующей вкладке. */
 const VALID_STAGES: InspectionStage[] = [
   'fromMarketplace',
-  'fromReturn',
   'atPackers',
   'inspected',
   'toDispose',
@@ -58,7 +57,7 @@ export const useReturnsInspection = () => {
   const [searchParams] = useSearchParams();
   const stageFromUrl = searchParams.get('stage') as InspectionStage | null;
   const [stage, setStage] = useState<InspectionStage>(
-    stageFromUrl && VALID_STAGES.includes(stageFromUrl) ? stageFromUrl : 'fromReturn',
+    stageFromUrl && VALID_STAGES.includes(stageFromUrl) ? stageFromUrl : 'atPackers',
   );
   const [loading, setLoading] = useState(true);
   const [listError, setListError] = useState<string | null>(null);

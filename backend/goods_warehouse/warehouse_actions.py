@@ -845,7 +845,34 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
             # или с дефектом — в цех на осмотр. Если разрешить укладку напрямую, это
             # решение подменяется сканированием, и бракованная вещь встаёт на полку
             # как годная — а потом уезжает покупателю.
-            if gw_status not in ('awaiting_shelf', 'taken', 'in_stock'):
+            # Исключение для mp_return: заказ отменили в день отгрузки — вещь не
+            # доехала до покупателя, осматривать нечего. Такую кладовщик кладёт на
+            # полку прямо из окна «Привёз с пункта выдачи».
+            same_day = False
+            if gw_status == 'mp_return':
+                cur.execute(
+                    "SELECT 1 FROM goods_warehouse gw "
+                    "JOIN orders o ON o.id = gw.order_id "
+                    "LEFT JOIN marketplace_returns r ON r.goods_warehouse_id = gw.id "
+                    "WHERE gw.id = %s AND o.completed_at IS NOT NULL "
+                    "  AND (o.cancelled_at IS NOT NULL OR COALESCE(o.ozon_status, '') = 'cancelled' "
+                    "       OR r.return_reason ILIKE '%%отменил%%') "
+                    "  AND (COALESCE(o.cancelled_at, r.mp_created_at, now()) AT TIME ZONE 'UTC' "
+                    "       AT TIME ZONE 'Europe/Moscow')::date "
+                    "    = (o.completed_at AT TIME ZONE 'UTC' AT TIME ZONE 'Europe/Moscow')::date "
+                    "LIMIT 1",
+                    (gw_id,),
+                )
+                same_day = cur.fetchone() is not None
+                if not same_day:
+                    return {
+                        'statusCode': 409,
+                        'headers': headers,
+                        'body': json.dumps({'error': f'Возврат {gw_order_number or ""} был у покупателя — '
+                                                     f'он едет в цех на проверку, не на полку'},
+                                           ensure_ascii=False),
+                    }
+            elif gw_status not in ('awaiting_shelf', 'taken', 'in_stock'):
                 return {
                     'statusCode': 409,
                     'headers': headers,
@@ -867,6 +894,13 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                 f"UPDATE goods_warehouse SET status = 'in_stock', shelf_id = {int(shelf_id)}, "
                 f"received_at = now() WHERE id = {gw_id}"
             )
+            if same_day:
+                cur.execute(
+                    "UPDATE marketplace_returns SET status = 'processed', outcome = 'stored', "
+                    "outcome_at = COALESCE(outcome_at, now()) "
+                    "WHERE goods_warehouse_id = %s AND status = 'picked_up'",
+                    (gw_id,),
+                )
             log_action(
                 cur, actor_id, actor_name, 'place_on_shelf', 'goods_warehouse', gw_id,
                 f'Положил на полку {shelf_name} ({shelf_reason}): '
@@ -1137,7 +1171,9 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
             # После осмотра её либо перепакуют и вернут в продажу, либо спишут.
             order_id = body_data.get('orderId')
             to_packer = bool(body_data.get('toPacker'))
-            new_status = 'repacking' if to_packer else 'checking'
+            # «На разборе с маркетплейса» больше нет: принятый возврат сразу едет
+            # в цех «На проверке». Флаг toPacker оставлен для старых экранов.
+            new_status = 'repacking'
             if not order_id:
                 return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Укажите orderId'})}
 
@@ -1178,7 +1214,7 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
             log_action(
                 cur, actor_id, actor_name, 'send_to_check', 'goods_warehouse', gw_id,
                 f'Принял возврат #{num}: '
-                + ('передал упаковщице на осмотр' if to_packer else 'взял на разбор'),
+                + 'передал упаковщице на осмотр',
             )
             conn.commit()
             cur.execute("SELECT storage_barcode FROM goods_warehouse WHERE id = %s", (int(gw_id),))

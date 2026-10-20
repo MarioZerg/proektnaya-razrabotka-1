@@ -846,6 +846,77 @@ def _attach_return_to_goods(cur, order_id, gw_id, marketplace, code, actor_id, a
     return linked[0]
 
 
+
+# ---------------------------------------------------------------------------
+# ПРИЁМКА С ПВЗ: КУДА ВЕЩЬ ИДЁТ СРАЗУ ПОСЛЕ СКАНА.
+#
+# Разбора у кладовщика больше нет (статусы «Возврат с маркетплейса» и «На разборе
+# с маркетплейса» убраны из работы). Отсканировал пакет — вещь сразу «На проверке»
+# и едет в цех к упаковщице.
+#
+# Исключение одно: заказ отменили в тот же день, когда отгрузили, — вещь не
+# доехала до покупателя, её никто не трогал. Осматривать её в цехе незачем:
+# кладовщик кладёт её на полку этим же сканером. Пока он не положил, вещь ждёт
+# его со статусом «Возврат с маркетплейса».
+# ---------------------------------------------------------------------------
+
+def _same_day_cancel(cur, gw_id):
+    """Вещь не была у покупателя: заказ отменили в день отгрузки (по Москве)."""
+    cur.execute(
+        "SELECT 1 FROM goods_warehouse gw "
+        "JOIN orders o ON o.id = gw.order_id "
+        "LEFT JOIN marketplace_returns r ON r.goods_warehouse_id = gw.id "
+        "WHERE gw.id = %s AND o.completed_at IS NOT NULL "
+        "  AND (o.cancelled_at IS NOT NULL OR COALESCE(o.ozon_status, '') = 'cancelled' "
+        "       OR r.return_reason ILIKE '%%отменил%%') "
+        "  AND (COALESCE(o.cancelled_at, r.mp_created_at, now()) AT TIME ZONE 'UTC' "
+        "       AT TIME ZONE 'Europe/Moscow')::date "
+        "    = (o.completed_at AT TIME ZONE 'UTC' AT TIME ZONE 'Europe/Moscow')::date "
+        "LIMIT 1",
+        (int(gw_id),),
+    )
+    return cur.fetchone() is not None
+
+
+def _route_scanned_return(cur, gw_id, actor_id, actor_name):
+    """Куда вещь после скана: 'shelf' — ждёт полки (отмена в день отгрузки),
+    'check' — сразу «На проверке» в цех. Только для вещей, ещё не разобранных."""
+    if not gw_id:
+        return None
+    cur.execute("SELECT status FROM goods_warehouse WHERE id = %s", (int(gw_id),))
+    row = cur.fetchone()
+    if not row or row[0] != 'mp_return':
+        return 'check' if row and row[0] == 'repacking' else None
+    if _same_day_cancel(cur, gw_id):
+        return 'shelf'
+    cur.execute(
+        "UPDATE goods_warehouse SET status = 'repacking', received_at = now() "
+        "WHERE id = %s AND status = 'mp_return'",
+        (int(gw_id),),
+    )
+    cur.execute(
+        "UPDATE marketplace_returns SET status = 'processed', outcome = 'repack', "
+        "outcome_at = COALESCE(outcome_at, now()) "
+        "WHERE goods_warehouse_id = %s AND status = 'picked_up'",
+        (int(gw_id),),
+    )
+    return 'check'
+
+
+def _with_route(cur, conn, result, actor_id, actor_name):
+    """Добавляет к ответу сканера, куда идёт вещь, и сохраняет решение."""
+    if not result or not result.get('accepted'):
+        return result
+    sb = result['accepted'].get('storageBarcode')
+    if not sb:
+        return result
+    cur.execute("SELECT id FROM goods_warehouse WHERE storage_barcode = %s", (sb,))
+    row = cur.fetchone()
+    route = _route_scanned_return(cur, row[0], actor_id, actor_name) if row else None
+    conn.commit()
+    result['route'] = route
+    return result
+
 def _stock_wb_yandex_order(cur, conn, row, code, actor_id, actor_name):
     """Ставит найденный заказ WB/Яндекса на склад как возврат и цепляет заявку."""
     order_id, order_number, marketplace, material, width, height, gw_id, gw_status, storage_barcode = row
@@ -1814,7 +1885,7 @@ def handler(event: dict, context) -> dict:
                 # заказ у себя: нашли — принимаем сразу, не тревожа чужую площадку.
                 accepted_other = _accept_return_by_order(cur, conn, code, actor_id, actor_name)
                 if accepted_other is not None:
-                    return _resp(200, accepted_other)
+                    return _resp(200, _with_route(cur, conn, accepted_other, actor_id, actor_name))
 
                 # Цифры с ярлыка WB не нашлись: скорее всего, у этого заказа стикер
                 # у нас не сохранён — его печатали не мы. Догружаем стикеры с WB и
@@ -1827,7 +1898,7 @@ def handler(event: dict, context) -> dict:
                             cur, conn, code, actor_id, actor_name,
                         )
                         if accepted_other is not None:
-                            return _resp(200, accepted_other)
+                            return _resp(200, _with_route(cur, conn, accepted_other, actor_id, actor_name))
 
                 # Заявки Яндекса обновляются по расписанию. Пакет может приехать
                 # раньше: спрашиваем площадку по номеру заказа и принимаем сразу.
@@ -1839,7 +1910,7 @@ def handler(event: dict, context) -> dict:
                             cur, conn, code, actor_id, actor_name,
                         )
                         if accepted_other is not None:
-                            return _resp(200, accepted_other)
+                            return _resp(200, _with_route(cur, conn, accepted_other, actor_id, actor_name))
 
                 # Стикер возврата WB с пакета ПВЗ: его нет в заказах, он есть только
                 # в отчёте WB о возвратах. Находим, заводим заявку и принимаем.
@@ -1849,7 +1920,7 @@ def handler(event: dict, context) -> dict:
                         cur, conn, code, actor_id, actor_name,
                     )
                     if accepted_other is not None:
-                        return _resp(200, accepted_other)
+                        return _resp(200, _with_route(cur, conn, accepted_other, actor_id, actor_name))
 
                 # Стикер WB и номер YM- в кабинете OZON не живут. Не спрашиваем
                 # чужую площадку и не пишем кладовщику «OZON не знает возврат».
@@ -2113,14 +2184,17 @@ def handler(event: dict, context) -> dict:
                                 'productName': info[4],
                             }
 
-                return _resp(200, {
+                result = {
                     'found': saved,
                     'barcode': code,
                     'accepted': accepted,
                     # Вещь уже была принята раньше — фронт покажет это отдельно и не
                     # прибавит её к счётчику принятого.
                     'alreadyPicked': already,
-                })
+                }
+                if body_data.get('accept'):
+                    result = _with_route(cur, conn, result, actor_id, actor_name)
+                return _resp(200, result)
 
             if action == 'sync_status':
                 # Догрузка возвратов с конкретным статусом. Нужна сканеру приёмки: коробку

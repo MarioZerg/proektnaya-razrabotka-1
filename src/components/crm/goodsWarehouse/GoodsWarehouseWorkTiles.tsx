@@ -79,8 +79,10 @@ const GoodsWarehouseWorkTiles = ({
       onClick: onPickup,
     },
     {
-      title: 'Разобрать возвраты',
-      hint: 'Решить: в цех на осмотр или на полку',
+      // Разбора больше нет: сюда попадают только отмены в день отгрузки —
+      // вещь не была у покупателя, её кладут на полку без проверки в цехе.
+      title: 'Возвраты на полку',
+      hint: 'Не были у покупателя — положить на полку',
       count: pendingReturnsCount,
       loading: queuesLoading,
       tone: 'white',
