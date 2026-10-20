@@ -252,6 +252,50 @@ def ozon_post(path, client_id, api_key, payload, timeout=None):
         return 0, str(e)
 
 
+
+# OZON ОТКЛЮЧИЛ /v3/posting/fbs/unfulfilled/list (19.10, ответ «obsolete method
+# cannot be used»). С этого момента загрузка новых заказов падала с ошибкой на
+# каждом запуске, и заказы OZON перестали попадать в систему.
+#
+# Замена — /v4/posting/fbs/unfulfilled/list. Отличия от v3:
+#  - статус передаётся списком: filter.statuses = [...] (а не filter.status);
+#  - листание по курсору: в ответе cursor и has_next, их передаём в следующий
+#    запрос (offset больше нет);
+#  - направление сортировки — sort_dir;
+#  - отправления лежат прямо в ответе (postings), без обёртки result.
+# Поля самого отправления (номер, статус, товары, даты, реквизиты) те же.
+OZON_UNFULFILLED_PATH = '/v4/posting/fbs/unfulfilled/list'
+
+
+def ozon_unfulfilled_page(client_id, api_key, statuses, limit, cursor='',
+                          legal_info=False, timeout=None):
+    """Одна страница очереди сборки OZON (v4).
+
+    Возвращает (status_code, postings, next_cursor, has_next, raw_data).
+    """
+    payload = {
+        'filter': {
+            'cutoff_from': '2020-01-01T00:00:00Z',
+            'cutoff_to': '2030-01-01T00:00:00Z',
+            'statuses': list(statuses),
+        },
+        'limit': int(limit),
+        'sort_dir': 'DESC',
+        'with': {'legal_info': bool(legal_info)},
+    }
+    if cursor:
+        payload['cursor'] = cursor
+    sc, data = ozon_post(OZON_UNFULFILLED_PATH, client_id, api_key, payload,
+                         timeout=timeout)
+    if sc != 200 or not isinstance(data, dict):
+        return sc, [], '', False, data
+    # Подстраховка на случай обёртки result, как было в v3.
+    body = data.get('result') if isinstance(data.get('result'), dict) else data
+    postings = body.get('postings') or []
+    next_cursor = body.get('cursor') or ''
+    has_next = bool(body.get('has_next')) and bool(next_cursor)
+    return sc, postings, next_cursor, has_next, data
+
 def ozon_post_raw(path, client_id, api_key, payload):
     """POST к OZON, ответ возвращается СЫРЫМИ БАЙТАМИ.
 
@@ -736,36 +780,20 @@ def _verify_and_pull(cur, client_id, api_key, chain, shop_id=None):
     Возвращаем итог сверки: сошлось или сколько недостаёт.
     """
     on_mp = set()
-    offset = 0
-    for _ in range(6):
-        sc, d = ozon_post(
-            '/v3/posting/fbs/unfulfilled/list', client_id, api_key,
-            {'dir': 'ASC',
-             # Даты обязательны: без них OZON отдаёт пустой список. Берём
-             # заведомо широкий отрезок — нам нужна вся очередь сборки.
-             #
-             # Статус обязателен. Без него лента — это все неотгруженные
-             # отправления, тысячи штук, а «ожидает сборки» лежит в хвосте.
-             # За пять секунд до хвоста не дойти, и сверка решала, что
-             # расхождения нет. Кнопка «Догрузить» находит их именно потому,
-             # что спрашивает только awaiting_packaging.
-             'filter': {'cutoff_from': '2020-01-01T00:00:00Z',
-                        'cutoff_to': '2030-01-01T00:00:00Z',
-                        'status': OZON_NEW_STATUS},
-             'limit': 1000, 'offset': offset,
-             'with': {'legal_info': False}},
+    cursor = ''
+    for _ in range(20):
+        sc, items, cursor, has_next, _d = ozon_unfulfilled_page(
+            client_id, api_key, [OZON_NEW_STATUS], 100, cursor=cursor,
         )
-        if sc != 200 or not isinstance(d, dict):
+        if sc != 200:
             break
-        items = ((d.get('result') or {}).get('postings')) or []
         for p in items:
             if (p.get('status') or '') in OZON_WORK_STATUSES:
                 num = p.get('posting_number')
                 if num:
                     on_mp.add(num)
-        if len(items) < 1000:
+        if not has_next:
             break
-        offset += 1000
 
     if not on_mp:
         return {'checked': False}
@@ -1112,7 +1140,7 @@ def handle_sync_orders(cur, conn, client_id, api_key, actor_id, actor_name,
                     any_status and st in ('awaiting_packaging', 'awaiting_deliver'))):
                 postings.append(res)
 
-    offset = 0
+    cursor = ''
     reached_end = False
     # Листание тоже под часами: каждая страница — это запрос к OZON, и на медленном
     # ответе десять страниц съедят всё время, не оставив его на сохранение заказов.
@@ -1120,57 +1148,44 @@ def handle_sync_orders(cur, conn, client_id, api_key, actor_id, actor_name,
     for _ in range(0 if only_numbers else OZON_SCAN_PAGES):
         if time.monotonic() - scan_started > OZON_SCAN_BUDGET_SEC:
             break
-        payload['offset'] = offset
         # Ждём ответа ровно столько, сколько осталось до общего дедлайна: иначе
         # медленный OZON утащит за собой весь запуск, и набранное не сохранится.
         left = OZON_RUN_DEADLINE_SEC - (time.monotonic() - run_started)
         if left < 0.5:
             break
-        status_code, data = ozon_post(
-            '/v3/posting/fbs/unfulfilled/list', client_id, api_key, payload,
-            timeout=min(OZON_HTTP_TIMEOUT_SEC, left),
+        page_cursor = cursor
+        status_code, page, next_cursor, has_next, data = ozon_unfulfilled_page(
+            client_id, api_key, [OZON_NEW_STATUS], OZON_SYNC_PAGE, cursor=page_cursor,
+            legal_info=True, timeout=min(OZON_HTTP_TIMEOUT_SEC, left),
         )
         # ВТОРАЯ ПОПЫТКА НА ПЕРВОЙ СТРАНИЦЕ.
         #
         # Первый запрос к OZON после паузы нередко идёт медленно: соединение
-        # устанавливается заново. Планировщик приходит раз в 15 минут, то есть
-        # КАЖДЫЙ его вызов такой — и загрузка сдавалась, не забрав ни одного
-        # заказа. Второй запрос по уже открытому соединению проходит быстро,
-        # поэтому даём ровно одну попытку, если время ещё есть.
+        # устанавливается заново. Второй по уже открытому соединению проходит
+        # быстро, поэтому даём ровно одну попытку, если время ещё есть.
         if status_code != 200 and not postings:
             left = OZON_RUN_DEADLINE_SEC - (time.monotonic() - run_started)
             if left > 1.0:
-                status_code, data = ozon_post(
-                    '/v3/posting/fbs/unfulfilled/list', client_id, api_key,
-                    payload, timeout=min(OZON_HTTP_TIMEOUT_SEC, left),
+                status_code, page, next_cursor, has_next, data = ozon_unfulfilled_page(
+                    client_id, api_key, [OZON_NEW_STATUS], OZON_SYNC_PAGE,
+                    cursor=page_cursor, legal_info=True,
+                    timeout=min(OZON_HTTP_TIMEOUT_SEC, left),
                 )
         if status_code in (401, 403):
             return _resp(400, {'error': 'OZON отклонил ключ (проверьте Client ID и API-ключ в настройках интеграции).'})
-        # ПЛОЩАДКА ПРОСИТ СБАВИТЬ ТЕМП (429).
-        #
-        # Кабинетов теперь два, и запросов к OZON стало вдвое больше: площадка
-        # ограничивает их частоту на секунду. Это не ошибка ключа и не повод
-        # ронять загрузку — выжидаем полсекунды и пробуем ту же страницу ещё раз.
-        # Не вышло со второй попытки — выходим с тем, что успели набрать:
-        # остаток заберёт следующий запуск.
+        # ПЛОЩАДКА ПРОСИТ СБАВИТЬ ТЕМП (429): полсекунды паузы и ещё раз.
         if status_code == 429:
             left = OZON_RUN_DEADLINE_SEC - (time.monotonic() - run_started)
             if left > 1.0:
                 time.sleep(0.5)
-                status_code, data = ozon_post(
-                    '/v3/posting/fbs/unfulfilled/list', client_id, api_key,
-                    payload, timeout=min(OZON_HTTP_TIMEOUT_SEC, left - 0.5),
+                status_code, page, next_cursor, has_next, data = ozon_unfulfilled_page(
+                    client_id, api_key, [OZON_NEW_STATUS], OZON_SYNC_PAGE,
+                    cursor=page_cursor, legal_info=True,
+                    timeout=min(OZON_HTTP_TIMEOUT_SEC, left - 0.5),
                 )
         if status_code != 200:
-            # МЕДЛЕННЫЙ ОТВЕТ — НЕ ПОВОД ВЫБРОСИТЬ НАБРАННОЕ.
-            #
-            # OZON нередко думает над страницей дольше, чем мы можем ждать.
-            # Раньше любая такая заминка обрывала весь запуск с ошибкой, и
-            # заказы, уже разобранные на предыдущих страницах, пропадали —
-            # загрузка вставала до тех пор, пока площадка не ответит быстро.
-            #
-            # Теперь прекращаем листать, но идём дальше: сохраняем то, что
-            # успели собрать. Остаток заберёт следующий запуск через 15 минут.
+            # Медленный или сбойный ответ — не повод выбросить набранное:
+            # сохраняем то, что успели собрать, остаток заберёт следующий запуск.
             if postings:
                 break
             if status_code == 429:
@@ -1178,16 +1193,14 @@ def handle_sync_orders(cur, conn, client_id, api_key, actor_id, actor_name,
                                             'Загрузка продолжится автоматически через несколько минут.'})
             return _resp(502, {'error': f'OZON вернул ошибку ({status_code}): {ozon_error_text(status_code, data)}'})
 
-        result = (data.get('result', {}) or {}) if isinstance(data, dict) else {}
-        page = result.get('postings', []) or []
+        cursor = next_cursor
+        # Конец списка: OZON сам говорит, есть ли ещё страницы.
+        if not has_next:
+            reached_end = True
+
         # В работу берём только отправления, которые ещё не уехали в доставку.
         work = [p for p in page if (p.get('status') or '') in OZON_WORK_STATUSES]
 
-        # Конец списка определяем по СЫРОЙ странице от OZON, а не по отобранным:
-        # после отбора страница почти всегда неполная, и загрузка обрывалась бы
-        # на первой же, так и не дойдя до остальных заказов.
-        if len(page) < OZON_SYNC_PAGE:
-            reached_end = True
 
         # С каждой страницы берём ТОЛЬКО НОВЫЕ отправления и идём дальше, пока не
         # наберём порцию на создание.
@@ -1216,7 +1229,6 @@ def handle_sync_orders(cur, conn, client_id, api_key, actor_id, actor_name,
         if len(postings) >= OZON_CREATE_PER_RUN or reached_end:
             break
 
-        offset += OZON_SYNC_PAGE
 
 
     created = 0
@@ -1761,7 +1773,8 @@ def handle_refresh_all(cur, conn, client_id, api_key, body_data=None, actor_id=N
     if not known:
         return _resp(200, {'updated': 0, 'checked': 0})
 
-    page_limit = 1000
+    # v4 отдаёт не больше 100 отправлений за страницу.
+    page_limit = 100
     found = {}  # posting_number -> status (накапливаем в память, БД обновим одним разом)
 
     # OZON ограничивает длину периода выборки (PERIOD_IS_TOO_LONG), поэтому идём окнами.
@@ -1779,33 +1792,41 @@ def handle_refresh_all(cur, conn, client_id, api_key, body_data=None, actor_id=N
         window_index = 0
     window_index = max(0, min(window_index, 2))
     windows = 1
-    max_pages_per_window = 3
+    max_pages_per_window = 12
     for _w in range(windows):
         w = window_index
         to_dt = now - timedelta(days=window_days * w)
         since_dt = now - timedelta(days=window_days * (w + 1))
-        offset = 0
+        # OZON отключил /v3/posting/fbs/list (19.10) — листаем /v4 по курсору.
+        cursor = ''
         for _ in range(max_pages_per_window):
-            status_code, data = ozon_post(
-                '/v3/posting/fbs/list', client_id, api_key,
-                {
-                    'dir': 'DESC',
-                    'filter': {
-                        'since': since_dt.strftime('%Y-%m-%dT%H:%M:%SZ'),
-                        'to': to_dt.strftime('%Y-%m-%dT%H:%M:%SZ'),
-                    },
-                    'limit': page_limit,
-                    'offset': offset,
-                    'with': {},
+            req = {
+                'filter': {
+                    'since': since_dt.strftime('%Y-%m-%dT%H:%M:%SZ'),
+                    'to': to_dt.strftime('%Y-%m-%dT%H:%M:%SZ'),
                 },
-            )
+                'limit': page_limit,
+                'sort_dir': 'DESC',
+                'with': {},
+            }
+            if cursor:
+                req['cursor'] = cursor
+            status_code, data = ozon_post('/v4/posting/fbs/list', client_id, api_key, req)
+            # Площадка просит сбавить темп — полсекунды паузы и ещё раз.
+            if status_code == 429:
+                time.sleep(0.6)
+                status_code, data = ozon_post('/v4/posting/fbs/list', client_id, api_key, req)
             if status_code in (401, 403):
                 return _resp(400, {'error': 'OZON отклонил ключ (проверьте Client ID и API-ключ).'})
             if status_code != 200:
+                if found:
+                    break
                 return _resp(502, {'error': f'OZON вернул ошибку ({status_code}): {ozon_error_text(status_code, data)}'})
 
-            result = data.get('result', {}) if isinstance(data, dict) else {}
-            postings = result.get('postings', []) or []
+            body = data if isinstance(data, dict) else {}
+            if isinstance(body.get('result'), dict):
+                body = body['result']
+            postings = body.get('postings', []) or []
             if not postings:
                 break
 
@@ -1815,9 +1836,9 @@ def handle_refresh_all(cur, conn, client_id, api_key, body_data=None, actor_id=N
                 if pn in known and st and pn not in found:
                     found[pn] = st
 
-            if len(found) >= len(known) or not result.get('has_next'):
+            cursor = body.get('cursor') or ''
+            if len(found) >= len(known) or not body.get('has_next') or not cursor:
                 break
-            offset += page_limit
 
         if len(found) >= len(known):
             break

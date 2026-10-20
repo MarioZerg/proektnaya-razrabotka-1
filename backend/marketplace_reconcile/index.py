@@ -69,26 +69,31 @@ def _ozon(cur, creds):
         for w in range(3):
             to_dt = now - timedelta(days=45 * w)
             since = now - timedelta(days=45 * (w + 1))
-            offset = 0
-            for _ in range(4):
-                sc, d = _request(OZON_API + '/v3/posting/fbs/list', headers, {
-                    'dir': 'DESC',
+            # OZON отключил /v3/posting/fbs/list (19.10) — /v4, листание по курсору.
+            cursor = ''
+            for _ in range(15):
+                req = {
                     'filter': {
                         'since': since.strftime('%Y-%m-%dT%H:%M:%SZ'),
                         'to': to_dt.strftime('%Y-%m-%dT%H:%M:%SZ'),
-                        'status': status,
+                        'statuses': [status],
                     },
-                    'limit': 1000, 'offset': offset, 'with': {},
-                })
+                    'limit': 100, 'sort_dir': 'DESC', 'with': {},
+                }
+                if cursor:
+                    req['cursor'] = cursor
+                sc, d = _request(OZON_API + '/v4/posting/fbs/list', headers, req)
                 if sc != 200:
                     return {'error': f'OZON не ответил ({sc})'}
-                res = d.get('result') or {}
+                res = d if isinstance(d, dict) else {}
+                if isinstance(res.get('result'), dict):
+                    res = res['result']
                 for p in (res.get('postings') or []):
                     if p.get('posting_number'):
                         found.add(p['posting_number'])
-                if not res.get('has_next'):
+                cursor = res.get('cursor') or ''
+                if not res.get('has_next') or not cursor:
                     break
-                offset += 1000
 
         nums = list(found)
         have_set = set()
