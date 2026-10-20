@@ -5,7 +5,6 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { lazy, Suspense } from "react";
 
-
 // Страницы загружаются по мере открытия, а не все сразу при входе.
 // Раньше в первый файл попадали все 45 страниц — он весил 2.4 МБ, и на телефоне
 // вход открывался очень долго. Экран входа и терминал цеха грузим сразу: это
