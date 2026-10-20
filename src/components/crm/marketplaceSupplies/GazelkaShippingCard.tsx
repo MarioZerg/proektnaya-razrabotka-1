@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import {
@@ -19,7 +18,6 @@ import { driverAssigned, plateLabel } from '@/lib/gazelkaPlate';
 import { updateSupply, type SupplyDetail } from '@/lib/marketplaceSuppliesApi';
 import { printGazelkaLabels } from '@/lib/gazelkaPackingLabel';
 import { gazelkaLabelsHold, gazelkaShipDay, marketplaceSlotHold, noteOverdueSupply } from '@/lib/fboShipDate';
-import { moscowYmd } from '@/lib/dateUtils';
 
 interface GazelkaShippingCardProps {
   supply: SupplyDetail;
@@ -44,20 +42,6 @@ const GazelkaShippingCard = ({ supply, onReload, isManager, gazelkaReady }: Gaze
   const [selected, setSelected] = useState(supply.gazelkaPlanId ? String(supply.gazelkaPlanId) : '');
   const [saving, setSaving] = useState(false);
   const [syncing, setSyncing] = useState(false);
-  // Дата отгрузки: Газелька присылает её не всегда (блок route в ответе бывает пуст),
-  // поэтому менеджер должен иметь возможность проставить её руками — иначе на этикетке
-  // в строке «Дата отгрузки» остаётся прочерк.
-  const [shipAt, setShipAt] = useState((supply.shipToGazelkaAt ?? '').slice(0, 10));
-  const [marketAt, setMarketAt] = useState((supply.supplyDate ?? '').slice(0, 10));
-  const [slot, setSlot] = useState(supply.timeslot ?? '');
-  const [savingShipAt, setSavingShipAt] = useState(false);
-
-  useEffect(() => {
-    setShipAt((supply.shipToGazelkaAt ?? '').slice(0, 10));
-    setMarketAt((supply.supplyDate ?? '').slice(0, 10));
-    setSlot(supply.timeslot ?? '');
-  }, [supply.shipToGazelkaAt, supply.supplyDate, supply.timeslot]);
-
   useEffect(() => {
     setLoading(true);
     fetchGazelkaPlansForSupply(supply.id)
@@ -117,39 +101,13 @@ const GazelkaShippingCard = ({ supply, onReload, isManager, gazelkaReady }: Gaze
         description: shipAt
           ? `ID отгрузки, дата, забор и ${linkedPlan.boxes ?? 0} коробов обновлены.`
           : `ID отгрузки, забор и ${linkedPlan.boxes ?? 0} коробов обновлены. `
-            + 'Дату отгрузки Газелька не прислала — проставьте её в поле «Отгрузка в Газельку».',
+            + 'Дата отгрузки появится сама, когда Газелька поставит заявку в рейс.',
       });
       onReload();
     } catch (e) {
       toast({ title: 'Ошибка', description: e instanceof Error ? e.message : undefined, variant: 'destructive' });
     } finally {
       setSyncing(false);
-    }
-  };
-
-  const handleSaveShipAt = async () => {
-    setSavingShipAt(true);
-    try {
-      const today = moscowYmd();
-      if ((shipAt && shipAt < today) || (marketAt && marketAt < today)) {
-        toast({
-          title: 'Дата уже прошла',
-          description: 'Поставьте актуальную дату отгрузки в Газельку и дату таймслота на маркетплейсе — не раньше сегодня.',
-          variant: 'destructive',
-        });
-        return;
-      }
-      await updateSupply(supply.id, {
-        shipToGazelkaAt: shipAt ? `${shipAt}T00:00:00` : '',
-        supplyDate: marketAt ? `${marketAt}T00:00:00` : '',
-        timeslot: slot,
-      });
-      toast({ title: 'Даты отгрузки обновлены' });
-      onReload();
-    } catch (e) {
-      toast({ title: 'Ошибка', description: e instanceof Error ? e.message : undefined, variant: 'destructive' });
-    } finally {
-      setSavingShipAt(false);
     }
   };
 
@@ -305,51 +263,28 @@ const GazelkaShippingCard = ({ supply, onReload, isManager, gazelkaReady }: Gaze
               </div>
             </div>
 
-            {/* ДАТА ОТГРУЗКИ — РУЧНОЕ ПОЛЕ.
-                Газелька отдаёт её в блоке route, которого в ответе часто нет. Без
-                ручного ввода на этикетке в строке «Дата отгрузки» оставался прочерк,
-                и исправить это было нечем — синхронизация тянула то же пустое поле. */}
-            {isManager && (
-              <div className="space-y-1.5">
-                <Label className="text-xs leading-snug">
-                  Дата отгрузки
-                  {!linkedPlan.shipDate && (
-                    <span className="block font-normal text-muted-foreground">
-                      Газелька не прислала — проставьте вручную
-                    </span>
-                  )}
-                </Label>
-                <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
-                  <Input
-                    type="date"
-                    className="w-full sm:w-44"
-                    value={shipAt}
-                    onChange={(e) => setShipAt(e.target.value)}
-                  />
-                </div>
-                <Label className="text-xs leading-snug">Дата таймслота на маркетплейсе</Label>
-                <Input
-                  type="date"
-                  className="w-full sm:w-44"
-                  value={marketAt}
-                  onChange={(e) => setMarketAt(e.target.value)}
-                />
-                <Label className="text-xs leading-snug">Таймслот</Label>
-                <Input
-                  value={slot}
-                  onChange={(e) => setSlot(e.target.value)}
-                  placeholder="Например: 10:00–12:00"
-                />
-                <Button
-                  variant="outline"
-                  className="w-full sm:w-auto"
-                  onClick={handleSaveShipAt}
-                  disabled={savingShipAt}
-                >
-                  {savingShipAt ? <Icon name="Loader2" size={14} className="animate-spin" /> : 'Сохранить даты'}
-                </Button>
+            {/* ДАТЫ ТОЛЬКО ДЛЯ ЧТЕНИЯ. Дату в Газельку система берёт из рейса заявки
+                Газельки, дату и время слота — из заявки OZON. Проверяет сама каждые
+                10 минут; вручную их больше не ставят. */}
+            <div className="space-y-1.5 rounded-md bg-muted/40 p-3 text-xs">
+              <div className="flex justify-between gap-2">
+                <span className="text-muted-foreground">Отгрузка в Газельку</span>
+                <span className="font-medium">
+                  {supply.shipToGazelkaAt ? formatDate(supply.shipToGazelkaAt) : 'ждём рейс Газельки'}
+                </span>
               </div>
-            )}
+              <div className="flex justify-between gap-2">
+                <span className="text-muted-foreground">Слот на маркетплейсе</span>
+                <span className="font-medium">
+                  {supply.supplyDate ? formatDate(supply.supplyDate) : '—'}
+                  {supply.timeslot ? `, ${supply.timeslot}` : ''}
+                </span>
+              </div>
+              <p className="text-muted-foreground">
+                Даты подтягиваются сами из Газельки и {supply.marketplace === 'OZON' ? 'OZON' : 'маркетплейса'}.
+                Менять их нужно в кабинетах площадок.
+              </p>
+            </div>
 
           </>
         )}
