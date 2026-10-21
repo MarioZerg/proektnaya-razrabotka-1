@@ -369,7 +369,9 @@ def accrue_shift_salary(cur, user_id, session_id, session_workshop_id, accrual_d
     cur.execute(
         "INSERT INTO salary_accruals (user_id, type, amount, shift_session_id, accrued_for, description) "
         "VALUES (%s, %s, %s, %s, %s, 'Оклад за смену') "
-        "ON CONFLICT (shift_session_id, type) WHERE shift_session_id IS NOT NULL DO NOTHING",
+        # Любой уникальный индекс (по смене или «один оклад в день») — молча
+        # пропускаем: два одновременных закрытия не должны ронять запрос.
+        "ON CONFLICT DO NOTHING",
         (int(user_id), accrual_type, rate, int(session_id), accrual_day),
     )
     return True
