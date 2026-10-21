@@ -259,36 +259,74 @@ def notify_admin(cur, kind, title, message, actor_id, actor_name, link=None,
     )
 
 
+PENALTY_ROLL_SQL = (
+    "SELECT r.initial_quantity, r.shortage_quantity, "
+    "COALESCE(r.shortage_norm_percent, s.shortage_norm_percent), "
+    "r.cost_per_unit, mt.name, r.barcode, m.name, m.unit, r.penalty_total, "
+    "r.remaining_at_close, r.closed_by_name, r.completed_at, "
+    "COALESCE(r.packer_returned_quantity, 0), r.id, "
+    "r.closed_by_user_id, COALESCE(cu.full_name, r.closed_by_name) "
+    "FROM rolls r "
+    "JOIN materials m ON m.id = r.material_id "
+    "LEFT JOIN material_types mt ON mt.id = m.type_id "
+    "LEFT JOIN suppliers s ON s.id = r.supplier_id "
+    "LEFT JOIN users cu ON cu.id = r.closed_by_user_id "
+)
+
+
+def calc_shortage_penalties(cur, roll_ids):
+    """Штрафы по многим рулонам сразу — для очереди на дашборде.
+
+    Раньше очередь считала каждый рулон отдельно: 2–3 запроса на рулон, на 67
+    рулонах — под 200 запросов подряд. База отвечала «rate limit exceeded», и
+    дашборд показывал «Не удалось загрузить очередь недостач». Теперь всего три
+    запроса на всю очередь, а расчёт тот же самый.
+    """
+    ids = [int(i) for i in roll_ids]
+    if not ids:
+        return []
+    cur.execute(PENALTY_ROLL_SQL + "WHERE r.id = ANY(%s)", (ids,))
+    rows = {r[13]: r for r in cur.fetchall()}
+    usage = {}
+    for role_column in ('cutter_user_id', 'sewer_user_id'):
+        cur.execute(
+            f"SELECT omu.roll_id, o.{role_column}, u.full_name, "
+            f"COALESCE(SUM(omu.quantity), 0), COUNT(*) "
+            f"FROM order_material_usage omu "
+            f"JOIN orders o ON o.id = omu.order_id "
+            f"LEFT JOIN users u ON u.id = o.{role_column} "
+            f"WHERE omu.roll_id = ANY(%s) AND o.{role_column} IS NOT NULL "
+            f"GROUP BY omu.roll_id, o.{role_column}, u.full_name "
+            f"ORDER BY 4 DESC",
+            (ids,),
+        )
+        for rid, uid, name, qty, cnt in cur.fetchall():
+            usage.setdefault((role_column, rid), []).append((uid, name, qty, cnt))
+    out = []
+    for rid in ids:
+        row = rows.get(rid)
+        if not row:
+            continue
+        out.append(_penalty_from_row(rid, row, usage))
+    return out
+
+
 def calc_shortage_penalty(cur, roll_id):
     """Считает штраф по рулону, НИЧЕГО не начисляя — для предпросмотра на дашборде.
 
     Возвращает словарь с суммой, превышением над нормой и списком сотрудников,
     которых коснётся удержание, либо причину, по которой штрафовать нельзя.
     """
+    res = calc_shortage_penalties(cur, [roll_id])
+    return res[0] if res else None
+
+
+def _penalty_from_row(roll_id, row, usage):
+    """Расчёт штрафа по уже загруженным данным рулона (без запросов в базу)."""
     # Норму берём с рулона — это снимок на момент приёмки. Если снимка нет
     # (рулон заводили вручную на терминале, там поставщик не спрашивается),
     # подставляем действующую норму поставщика, иначе рулон навсегда завис бы
     # с отговоркой «норма не задана» и недостача по нему не считалась бы вовсе.
-    cur.execute(
-        "SELECT r.initial_quantity, r.shortage_quantity, "
-        "COALESCE(r.shortage_norm_percent, s.shortage_norm_percent), "
-        "r.cost_per_unit, mt.name, r.barcode, m.name, m.unit, r.penalty_total, "
-        # Сколько метров числилось на рулоне, когда закройщик назвал недостачу.
-        # Без этой цифры администратор не может перепроверить заявленную недостачу.
-        "r.remaining_at_close, r.closed_by_name, r.completed_at, "
-        # Метраж, возвращённый упаковщицами при перепаковке. В недостачу он не
-        # входит — см. ниже, где он вычитается.
-        "COALESCE(r.packer_returned_quantity, 0) "
-        "FROM rolls r "
-        "JOIN materials m ON m.id = r.material_id "
-        "LEFT JOIN material_types mt ON mt.id = m.type_id "
-        "LEFT JOIN suppliers s ON s.id = r.supplier_id "
-        "WHERE r.id = %s",
-        (roll_id,),
-    )
-    row = cur.fetchone()
-    if not row:
-        return None
 
     initial_qty = float(row[0] or 0)
     declared_shortage = float(row[1] or 0)
@@ -380,35 +418,19 @@ def calc_shortage_penalty(cur, roll_id):
     # Сразу считаем, сколько метража списал на себя каждый: по коробке тесьмы в 1500 м
     # работают семь швей, и администратору перед удержанием нужно видеть не просто
     # список фамилий, а кто сколько с неё отшил.
-    cur.execute(
-        f"SELECT o.{role_column}, u.full_name, COALESCE(SUM(omu.quantity), 0), COUNT(*) "
-        f"FROM order_material_usage omu "
-        f"JOIN orders o ON o.id = omu.order_id "
-        f"LEFT JOIN users u ON u.id = o.{role_column} "
-        f"WHERE omu.roll_id = %s AND o.{role_column} IS NOT NULL "
-        f"GROUP BY o.{role_column}, u.full_name "
-        f"ORDER BY 3 DESC",
-        (roll_id,),
-    )
     users = [
         {
-            'id': r[0],
-            'name': r[1] or 'Без имени',
-            'usedQuantity': round(float(r[2] or 0), 2),
-            'ordersCount': int(r[3] or 0),
+            'id': uid,
+            'name': name or 'Без имени',
+            'usedQuantity': round(float(qty or 0), 2),
+            'ordersCount': int(cnt or 0),
         }
-        for r in cur.fetchall()
+        for uid, name, qty, cnt in usage.get((role_column, roll_id), [])
     ]
 
-    if not users:
-        cur.execute(
-            "SELECT r.closed_by_user_id, COALESCE(u.full_name, r.closed_by_name) "
-            "FROM rolls r LEFT JOIN users u ON u.id = r.closed_by_user_id WHERE r.id = %s",
-            (roll_id,),
-        )
-        closed_row = cur.fetchone()
-        if closed_row and closed_row[0]:
-            users = [{'id': closed_row[0], 'name': closed_row[1] or 'Без имени'}]
+    # Никто не списывал на себя метраж — штраф на того, кто закрыл рулон.
+    if not users and row[14]:
+        users = [{'id': row[14], 'name': row[15] or 'Без имени'}]
 
     if not users:
         info['reason'] = 'Не удалось определить, кто работал с рулоном'
@@ -1126,7 +1148,7 @@ def handler(event: dict, context) -> dict:
                     "AND (r.shortage_quantity > 0 OR r.remaining_at_close > 0) "
                     "ORDER BY r.completed_at DESC LIMIT 100"
                 )
-                pending = [calc_shortage_penalty(cur, r[0]) for r in cur.fetchall()]
+                pending = calc_shortage_penalties(cur, [r[0] for r in cur.fetchall()])
                 pending = [p for p in pending if p]
             finally:
                 conn.close()
