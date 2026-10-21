@@ -14,6 +14,7 @@ import psycopg2
 from authz import AuthError, auth_error_response, require_role
 
 from shared import (
+    unfinished_workshop_message,
     log_stock_release,
     shippable_in_supply_sql,
     OZON_DEAD_STATUSES,
@@ -631,6 +632,10 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                         gw_row = cur.fetchone()
                         break
             if not gw_row:
+                unfinished = unfinished_workshop_message(cur, storage_barcode, resolved_code)
+                if unfinished:
+                    return {'statusCode': 409, 'headers': headers, 'body': json.dumps(
+                        {'error': unfinished, 'unfinishedInWorkshop': True}, ensure_ascii=False)}
                 return {
                     'statusCode': 404,
                     'headers': headers,
@@ -2276,6 +2281,10 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                         gw_row = cur.fetchone()
                         break
             if not gw_row:
+                unfinished = unfinished_workshop_message(cur, order_number, box_resolved_code)
+                if unfinished:
+                    return {'statusCode': 409, 'headers': headers, 'body': json.dumps(
+                        {'error': unfinished, 'unfinishedInWorkshop': True}, ensure_ascii=False)}
                 return {
                     'statusCode': 404,
                     'headers': headers,

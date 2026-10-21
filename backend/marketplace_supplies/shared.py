@@ -108,6 +108,47 @@ def keep_fbs_label(cur, goods_id):
     return True
 
 
+def unfinished_workshop_message(cur, *codes):
+    """Почему отсканированный ярлык не найден: заказ не доведён в цехе.
+
+    Ярлык напечатан и наклеен, но упаковщица (или швея) не нажала «Закрыть
+    заказ» — для склада вещи ещё нет. Кладовщику называем этап и сотрудника,
+    чтобы он вернул вещь в цех, а не искал её по полкам. Иначе None.
+    """
+    for code in codes:
+        if not code:
+            continue
+        cur.execute(
+            "SELECT o.order_number, o.sewing_status, "
+            "       (SELECT full_name FROM users WHERE id = COALESCE(o.packer_user_id, o.sewer_user_id, o.assigned_user_id)) "
+            "FROM orders o "
+            "WHERE (o.order_number = %s OR o.ozon_posting_number = %s "
+            "       OR o.order_number = %s) "
+            "  AND o.sewing_status IN ('Новый', 'На раскрое', 'Раскроено', 'В работе', "
+            "                          'На пошиве', 'Сшито', 'Оверлок', 'Стикеровка') "
+            "ORDER BY (o.sewing_status = 'Стикеровка') DESC, o.id LIMIT 1",
+            (code, code, f'YM-{code}'),
+        )
+        row = cur.fetchone()
+        if not row:
+            continue
+        num, stage, who = row
+        who_txt = f' (сотрудник: {who})' if who else ''
+        if stage == 'Стикеровка':
+            return (
+                f'Заказ {num} не завершён в цехе: упаковщица не закрыла этап '
+                f'стикеровки{who_txt}. Ярлык напечатан, но «Закрыть заказ» на '
+                f'терминале не нажато — для склада вещи ещё нет. Отнесите вещь в '
+                f'цех, пусть закроют заказ, и отсканируйте снова'
+            )
+        return (
+            f'Заказ {num} ещё в цехе на этапе «{stage}»{who_txt}: швея или упаковщица '
+            f'не довели его до конца. Верните вещь в цех — после закрытия заказа '
+            f'на терминале она отсканируется в поставку'
+        )
+    return None
+
+
 def restore_missing_workshop_goods(cur, code) -> bool:
     """Заводит складскую запись вещи, сшитой в цехе, если её потеряли при закрытии.
 
