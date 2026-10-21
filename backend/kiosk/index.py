@@ -2415,9 +2415,12 @@ def _handler(event: dict, context) -> dict:
                     if packer_workshop_id:
                         cur.execute(
                             # Перепаковка — фиксировано за штуку, размер не важен. Берём
-                            # максимальную заполненную ставку по цеху: значение могло
-                            # остаться в старых строках по ширинам.
-                            "SELECT MAX(rate) FROM salary_rates WHERE role = 'packer_repack' "
+                            # ту ставку, что видна в тарифах (без ширины). Старые строки по
+                            # ширинам скрыты и не должны платить: иначе 0 ₽ в тарифах не
+                            # выключал бы сделку, и оклад упаковщицы-возвратов не включался.
+                            # Строки без ширины нет — по-старому берём максимум.
+                            "SELECT COALESCE(MAX(rate) FILTER (WHERE width IS NULL), MAX(rate)) "
+                            "FROM salary_rates WHERE role = 'packer_repack' "
                             "AND workshop_id = %s",
                             (packer_workshop_id,),
                         )

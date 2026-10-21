@@ -475,6 +475,8 @@ def handler(event: dict, context) -> dict:
       - packer (упаковщик)     — ставка за пог.м. на стикеровке (общая по цеху, material_id/width = NULL)
       - storekeeper (кладовщик)— оклад за смену (общая ставка по цеху)
       - cleaner (уборщица)     — оклад за смену (общая ставка по цеху)
+      - packer_returns (упаковщица-возвраты) — оклад за смену; начисляется,
+                                   только если packer_repack в цехе = 0
       - admin (администратор)  — оклад за день (общая ставка по цеху; берётся по цеху из профиля
                                    администратора users.workshop, если не указан — по первому цеху)
 
@@ -769,6 +771,15 @@ def handler(event: dict, context) -> dict:
                     cur.execute(
                         "INSERT INTO salary_rates (role, material_id, width, rate, workshop_id) "
                         "VALUES ('packer_repack', NULL, NULL, 0, %s) "
+                        "ON CONFLICT (workshop_id, role, COALESCE(material_id, 0), COALESCE(width, 0)) "
+                        "DO NOTHING",
+                        (int(workshop_id_filter),),
+                    )
+                    # Оклад за смену упаковщицы-возвратов. Работает, только когда
+                    # перепаковка за штуку стоит 0 ₽ — платим одним из двух способов.
+                    cur.execute(
+                        "INSERT INTO salary_rates (role, material_id, width, rate, workshop_id) "
+                        "VALUES ('packer_returns', NULL, NULL, 0, %s) "
                         "ON CONFLICT (workshop_id, role, COALESCE(material_id, 0), COALESCE(width, 0)) "
                         "DO NOTHING",
                         (int(workshop_id_filter),),

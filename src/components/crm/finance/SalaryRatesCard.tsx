@@ -93,11 +93,36 @@ const ROLE_ORDER: string[] = [
   'packer',
   'packer_overlock',
   'packer_repack',
+  'packer_returns',
   'storekeeper',
   'senior_storekeeper',
   'cleaner',
   'admin',
 ];
+
+/**
+ * Упаковщице-возвратам платим одним из двух способов — подсказываем, каким именно.
+ * Переключатель — ставка перепаковки за штуку: больше 0 ₽ — сделка, 0 ₽ — оклад.
+ */
+const PackerReturnsPayMode = ({ rates }: { rates: SalaryRate[] }) => {
+  const piece = Math.max(0, ...rates.filter((r) => r.role === 'packer_repack' && r.width === null).map((r) => r.rate));
+  const salary = Math.max(0, ...rates.filter((r) => r.role === 'packer_returns').map((r) => r.rate));
+  const text =
+    piece > 0
+      ? `Сейчас работает сделка: ${piece} ₽ за вещь. Оклад за смену не начисляется. Чтобы платить окладом — поставьте перепаковку 0 ₽.`
+      : salary > 0
+        ? `Сейчас работает оклад: ${salary} ₽ за смену. За штуку не платим.`
+        : 'Сейчас упаковщице-возвратам ничего не начисляется: и перепаковка, и оклад — 0 ₽.';
+  return (
+    <p
+      className={`mb-2 rounded-md px-2.5 py-1.5 text-xs ${
+        piece > 0 || salary > 0 ? 'bg-muted text-muted-foreground' : 'bg-amber-50 text-amber-800'
+      }`}
+    >
+      {text}
+    </p>
+  );
+};
 
 const pluralRates = (n: number) => (n === 1 ? 'ставка' : n < 5 ? 'ставки' : 'ставок');
 
@@ -108,6 +133,7 @@ const ratesForRole = (rates: SalaryRate[], role: string): SalaryRate[] =>
     if (role === 'cutter') return r.width === null;
     if (role === 'packer') return r.materialId === null && r.width === null;
     if (role === 'packer_repack') return r.width === null;
+    if (role === 'packer_returns') return r.materialId === null && r.width === null;
     if (role.includes('overlock')) return r.materialId === null && r.width === null;
     return true;
   });
@@ -274,6 +300,9 @@ const SalaryRatesCard = ({ onUpdate }: SalaryRatesCardProps) => {
 
                         {open && (
                           <div className="border-t border-border bg-background px-3 py-3">
+                            {(role === 'packer_returns' || role === 'packer_repack') && (
+                              <PackerReturnsPayMode rates={rates} />
+                            )}
                             <div className="grid gap-1.5 sm:grid-cols-2">
                               {roleRates.map((rate) => (
                                 <RateRow key={rate.id} rate={rate} onUpdate={handleUpdate} />

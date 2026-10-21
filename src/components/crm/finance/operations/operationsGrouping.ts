@@ -44,6 +44,7 @@ const ROLE_FOLDER: Record<string, { key: string; label: string; order: number }>
     label: roleLabels.senior_storekeeper,
     order: 7,
   },
+  packer_returns_shift: { key: 'packer_returns', label: roleLabels.packer_returns, order: 5 },
   cleaner_shift: { key: 'cleaner', label: roleLabels.cleaner, order: 8 },
   admin_daily: { key: 'admin', label: roleLabels.admin, order: 9 },
   bonus: { key: 'bonus', label: 'Бонусы', order: 10 },

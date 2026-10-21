@@ -58,6 +58,7 @@ const SALARY_TYPES = new Set([
   'storekeeper_shift',
   'senior_storekeeper_shift',
   'cleaner_shift',
+  'packer_returns_shift',
   'admin_daily',
 ]);
 

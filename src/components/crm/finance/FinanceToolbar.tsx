@@ -136,6 +136,7 @@ const FinanceToolbar = ({
             <SelectItem value="packer_repack">Перепаковка возврата</SelectItem>
             <SelectItem value="storekeeper_shift">Оклад кладовщика</SelectItem>
             <SelectItem value="cleaner_shift">Оклад уборщицы</SelectItem>
+            <SelectItem value="packer_returns_shift">Оклад упаковщицы-возвратов</SelectItem>
             <SelectItem value="admin_daily">Оклад администратора</SelectItem>
             <SelectItem value="manual">Ручное начисление</SelectItem>
             <SelectItem value="penalty">Штраф</SelectItem>

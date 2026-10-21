@@ -291,7 +291,7 @@ def accrue_shift_salary(cur, user_id, session_id, session_workshop_id, accrual_d
     sess_role_row = cur.fetchone()
     shift_role = (sess_role_row[0] if sess_role_row and sess_role_row[0]
                   else (user_row[0] if user_row else None))
-    if shift_role not in ('cleaner', 'storekeeper', 'senior_storekeeper'):
+    if shift_role not in ('cleaner', 'storekeeper', 'senior_storekeeper', 'packer_returns'):
         return False
 
     # Ставка берётся из тарифов цеха этой смены; если у смены цех не указан —
@@ -313,6 +313,22 @@ def accrue_shift_salary(cur, user_id, session_id, session_workshop_id, accrual_d
     rate = float(rate_row[0]) if rate_row else 0
     if rate <= 0:
         return False
+
+    # УПАКОВЩИЦА-ВОЗВРАТЫ: ОКЛАД ИЛИ СДЕЛКА — НА ВЫБОР ЦЕХА.
+    #
+    # Платим либо за каждую перепакованную вещь, либо окладом за смену — не
+    # обоими сразу. Переключатель — сама ставка за штуку: пока она больше нуля,
+    # цех платит сделкой и оклад не начисляется. Поставили перепаковку 0 ₽ —
+    # включается оклад.
+    if shift_role == 'packer_returns':
+        cur.execute(
+            # Та же ставка, что платит касса: видимая в тарифах (без ширины).
+            "SELECT COALESCE(MAX(rate) FILTER (WHERE width IS NULL), MAX(rate), 0) "
+            "FROM salary_rates WHERE role = 'packer_repack' AND workshop_id = %s",
+            (rate_workshop_id,),
+        )
+        if float(cur.fetchone()[0] or 0) > 0:
+            return False
 
     accrual_type = f'{shift_role}_shift'
 
