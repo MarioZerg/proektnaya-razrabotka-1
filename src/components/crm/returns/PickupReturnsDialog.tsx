@@ -17,7 +17,7 @@ import {
   markPvzSubstitution,
   type PickupRoute,
 } from '@/lib/marketplaceReturnsApi';
-import { placeOnShelf } from '@/lib/goodsWarehouseApi';
+import { placeOnShelf, moveToWorkshop } from '@/lib/goodsWarehouseApi';
 import { printStorageSticker } from '@/lib/printStorageSticker';
 import { playScanSound, playScanErrorSound, primeScanSounds } from '@/lib/scanSound';
 import { fixScanLayout } from '@/lib/keyboardLayout';
@@ -43,6 +43,8 @@ interface ScanRow {
   route?: PickupRoute | null;
   /** Полка, на которую вещь положили из этого окна. */
   shelfName?: string;
+  /** Кладовщик отправил вещь на осмотр в цех. */
+  toWorkshop?: boolean;
   /** Номер заказа — печатаем на стикере хранения. */
   orderNumber?: string | null;
   /** Отменённый FBS, который ПВЗ не принял. */
@@ -77,6 +79,22 @@ const PickupReturnsDialog = ({ open, onOpenChange, onDone }: PickupReturnsDialog
   const inputRef = useRef<HTMLInputElement>(null);
 
   const focusInput = () => setTimeout(() => inputRef.current?.focus(), 0);
+  /** После печати фокус уходит в окно принтера — возвращаем его в строку скана. */
+  const focusAfterPrint = () => {
+    focusInput();
+    [600, 1500, 3000].forEach((ms) => setTimeout(() => inputRef.current?.focus(), ms));
+  };
+
+  useEffect(() => {
+    if (!open) return;
+    const back = () => setTimeout(() => inputRef.current?.focus(), 50);
+    window.addEventListener('focus', back);
+    window.addEventListener('afterprint', back);
+    return () => {
+      window.removeEventListener('focus', back);
+      window.removeEventListener('afterprint', back);
+    };
+  }, [open]);
 
   useEffect(() => {
     if (open) {
@@ -189,7 +207,35 @@ const PickupReturnsDialog = ({ open, onOpenChange, onDone }: PickupReturnsDialog
       });
     } finally {
       setPlacing(null);
-      focusInput();
+      focusAfterPrint();
+    }
+  };
+
+  const handleToWorkshop = async (row: ScanRow) => {
+    if (placing != null || !row.storageBarcode) return;
+    setPlacing(row.key);
+    try {
+      await moveToWorkshop([], user?.id, user?.name, [row.storageBarcode]);
+      printStorageSticker({
+        storageBarcode: row.storageBarcode,
+        title: row.title,
+        orderNumber: row.orderNumber,
+      });
+      playScanSound();
+      setRows((prev) =>
+        prev.map((r) => (r.key === row.key ? { ...r, toWorkshop: true, route: 'check' } : r))
+      );
+      onDone();
+    } catch (e) {
+      playScanErrorSound();
+      toast({
+        title: 'Не удалось отправить в цех',
+        description: e instanceof Error ? e.message : undefined,
+        variant: 'destructive',
+      });
+    } finally {
+      setPlacing(null);
+      focusAfterPrint();
     }
   };
 
@@ -209,9 +255,9 @@ const PickupReturnsDialog = ({ open, onOpenChange, onDone }: PickupReturnsDialog
           <p className="text-sm text-muted-foreground">
             Сканируйте пакеты один за другим — OZON, Wildberries и Яндекс Маркет. Каждая
             вещь сразу уходит «На проверке» — отвезите её в цех. Если заказ отменили в
-            день отгрузки и вещь не была у покупателя, здесь появится кнопка «Стикер и на
-            полку»: напечатается стикер хранения — наклейте его поверх ярлыка FBS, система
-            назовёт полку. Так же принимается отменённый FBS, который пункт выдачи не
+            день отгрузки и вещь не была у покупателя, выберите сами: «Стикер и на полку»
+            (система назовёт полку) или «Повреждён — на осмотр в цех». В обоих случаях
+            напечатается стикер хранения — наклейте его поверх ярлыка FBS. Так же принимается отменённый FBS, который пункт выдачи не
             взял — сканируйте его ярлык FBS. Не тот товар в пакете — нажмите «Подмена на ПВЗ».
           </p>
 
@@ -273,6 +319,19 @@ const PickupReturnsDialog = ({ open, onOpenChange, onDone }: PickupReturnsDialog
                               <Button
                                 type="button"
                                 size="sm"
+                                variant="outline"
+                                className="h-8 border-amber-300 text-amber-800 hover:bg-amber-50"
+                                disabled={placing != null}
+                                onClick={() => handleToWorkshop(r)}
+                              >
+                                <Icon name="Wrench" size={14} className="mr-1.5" />
+                                Повреждён — на осмотр в цех
+                              </Button>
+                            )}
+                            {r.route === 'shelf' && !r.shelfName && r.storageBarcode && (
+                              <Button
+                                type="button"
+                                size="sm"
                                 className="h-8"
                                 disabled={placing != null}
                                 onClick={() => handlePlace(r)}
@@ -297,7 +356,7 @@ const PickupReturnsDialog = ({ open, onOpenChange, onDone }: PickupReturnsDialog
                                     title: r.title,
                                     orderNumber: r.orderNumber,
                                   });
-                                  focusInput();
+                                  focusAfterPrint();
                                 }}
                               >
                                 <Icon name="Printer" size={14} className="mr-1.5" />
@@ -359,7 +418,14 @@ const PickupRouteLine = ({ row }: { row: ScanRow }) => {
   if (row.route === 'shelf') {
     return (
       <p className="mt-1 text-xs font-semibold text-emerald-700">
-        Не была у покупателя — на полку, без проверки
+        Не была у покупателя — проверьте упаковку и выберите: на полку или на осмотр в цех
+      </p>
+    );
+  }
+  if (row.toWorkshop) {
+    return (
+      <p className="mt-1 text-xs font-semibold text-amber-700">
+        Наклейте стикер хранения и отвезите в цех на осмотр
       </p>
     );
   }

@@ -648,8 +648,13 @@ export const fetchInspection = async (
 };
 
 /** Передать принятые возвраты упаковщицам на осмотр. */
-export const moveToWorkshop = (ids: number[], actorId?: number, actorName?: string) =>
-  postAction({ action: 'move_to_workshop', ids, actorId, actorName }) as Promise<{
+export const moveToWorkshop = (
+  ids: number[],
+  actorId?: number,
+  actorName?: string,
+  storageBarcodes?: string[],
+) =>
+  postAction({ action: 'move_to_workshop', ids, actorId, actorName, storageBarcodes }) as Promise<{
     success: true;
     moved: number;
   }>;

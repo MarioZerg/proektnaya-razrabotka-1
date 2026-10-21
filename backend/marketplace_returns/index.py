@@ -1575,6 +1575,109 @@ def _pull_wb_item_return_for_scan(cur, code):
     return False
 
 
+def _ozon_removal_box_id(code):
+    """Номер коробки со стикера вывоза FBO OZON (boxId / bx…). Иначе None."""
+    raw = (code or '').strip()
+    m = re.fullmatch(r'(?i)(?:bx|boxid:?\s*)?(\d{10,12})', raw)
+    return m.group(1) if m else None
+
+
+def _pull_ozon_removal_for_scan(cur, code):
+    """Стикер вывоза FBO OZON: «FBO bx…», «boxId: 20268144438», «НЕ ВСКРЫВАТЬ!».
+
+    Это не возврат покупателя, а вывоз брака со стока OZON — в списке
+    возвратов его нет, сканер отвечал «не найден». Ищем коробку в отчёте
+    вывозов со стока и с поставки и заводим заявку: дальше она принимается
+    обычным путём. Возвращает id заявки или None.
+    """
+    box = _ozon_removal_box_id(code)
+    if not box:
+        return None
+    raw = (code or '').strip()
+    date_to = (datetime.now(timezone.utc) + timedelta(days=1)).strftime('%Y-%m-%d')
+    date_from = (datetime.now(timezone.utc) - timedelta(days=90)).strftime('%Y-%m-%d')
+    deadline = time.monotonic() + 8.0
+    for sid in (list_return_shops(cur) or [None]):
+        creds, enabled = get_credentials(cur, 'ozon', sid)
+        if not enabled:
+            continue
+        hdr = {'Client-Id': (creds.get('clientId') or '').strip(),
+               'Api-Key': (creds.get('apiKey') or '').strip()}
+        if not hdr['Client-Id'] or not hdr['Api-Key']:
+            continue
+        for ep in ('/v1/removal/from-stock/list', '/v1/removal/from-supply/list'):
+            last_id = ''
+            for _ in range(5):
+                if time.monotonic() > deadline:
+                    return None
+                st, data = http_json(OZON_API_BASE + ep, 'POST', hdr, {
+                    'limit': 500, 'last_id': last_id,
+                    'date_from': date_from, 'date_to': date_to,
+                })
+                if st != 200:
+                    break
+                rows = (data or {}).get('returns_summary_report_rows') or []
+                hit = next((r for r in rows
+                            if str(r.get('box_id') or '') == box
+                            or (r.get('box_barcode') or '') in (raw, box)), None)
+                if hit:
+                    ext = f"RM-{hit.get('return_id') or box}-{hit.get('box_id') or box}"
+                    save_return(cur, 'OZON', {
+                        'externalId': ext,
+                        'postingNumber': f"FBO-вывоз {hit.get('box_id') or box}",
+                        'offerId': hit.get('offer_id'),
+                        'sku': hit.get('sku'),
+                        'productName': hit.get('name'),
+                        'quantity': hit.get('quantity_for_return') or 1,
+                        'mpStatus': hit.get('box_state') or hit.get('return_state'),
+                        'reason': hit.get('stock_type') or 'Вывоз FBO со склада OZON',
+                        'createdAt': hit.get('return_created_at') or None,
+                        'returnBarcode': str(hit.get('box_id') or box),
+                    }, sid)
+                    cur.execute(
+                        "SELECT id FROM marketplace_returns "
+                        "WHERE marketplace = 'OZON' AND external_id = %s", (ext,),
+                    )
+                    row = cur.fetchone()
+                    return row[0] if row else None
+                last_id = (data or {}).get('last_id') or ''
+                if not rows or not last_id:
+                    break
+    return None
+
+
+def _accept_ozon_removal(cur, conn, r_id, code, actor_id):
+    """Принимает вывоз FBO по id заявки: заводит вещь на склад и отдаёт ответ сканера."""
+    cur.execute(
+        "SELECT status FROM marketplace_returns WHERE id = %s", (int(r_id),),
+    )
+    st = cur.fetchone()
+    already = bool(st and st[0] not in ('new', 'approved'))
+    if not already:
+        cur.execute(
+            "UPDATE marketplace_returns SET status = 'picked_up', "
+            "picked_up_at = COALESCE(picked_up_at, now()), picked_up_by = %s "
+            "WHERE id = %s AND status IN ('new', 'approved')",
+            (int(actor_id) if actor_id else None, int(r_id)),
+        )
+        stock_picked_up_returns(cur, [int(r_id)])
+    conn.commit()
+    cur.execute(
+        "SELECT o.material, o.width, o.height, gw.storage_barcode, r.product_name "
+        "FROM marketplace_returns r "
+        "LEFT JOIN goods_warehouse gw ON gw.id = r.goods_warehouse_id "
+        "LEFT JOIN orders o ON o.id = gw.order_id WHERE r.id = %s",
+        (int(r_id),),
+    )
+    info = cur.fetchone()
+    accepted = None
+    if info:
+        accepted = {'material': info[0], 'width': info[1], 'height': info[2],
+                    'storageBarcode': info[3], 'productName': info[4]}
+    return {'found': 1, 'barcode': code, 'accepted': accepted, 'alreadyPicked': already,
+            'note': 'Вывоз FBO со склада OZON'}
+
+
 def _unknown_return_message(code):
     # Цифры с ярлыка WB мы теперь понимаем, но сам ярлык может быть не нашим:
     # такой стикер печатается только на наши FBS-отправления. Говорим об этом
@@ -2080,6 +2183,26 @@ def handler(event: dict, context) -> dict:
                 accepted_other = _accept_return_by_order(cur, conn, code, actor_id, actor_name)
                 if accepted_other is not None:
                     return _resp(200, _with_route(cur, conn, accepted_other, actor_id, actor_name))
+
+                # СТИКЕР ВЫВОЗА FBO OZON («FBO bx…», «boxId: …», «НЕ ВСКРЫВАТЬ!»).
+                # Его 11 цифр похожи на стикер WB, поэтому проверяем до отсечки WB.
+                if _ozon_removal_box_id(code):
+                    cur.execute(
+                        "SELECT id FROM marketplace_returns WHERE marketplace = 'OZON' "
+                        "AND return_barcode = %s AND external_id LIKE 'RM-%%' "
+                        "ORDER BY (status IN ('new', 'approved')) DESC, id LIMIT 1",
+                        (_ozon_removal_box_id(code),),
+                    )
+                    rm = cur.fetchone()
+                    rm_id = rm[0] if rm else _pull_ozon_removal_for_scan(cur, code)
+                    if rm_id:
+                        conn.commit()
+                        if not body_data.get('accept'):
+                            return _resp(200, {'found': 1, 'barcode': code})
+                        return _resp(200, _with_route(
+                            cur, conn, _accept_ozon_removal(cur, conn, rm_id, code, actor_id),
+                            actor_id, actor_name,
+                        ))
 
                 # Цифры с ярлыка WB не нашлись: скорее всего, у этого заказа стикер
                 # у нас не сохранён — его печатали не мы. Догружаем стикеры с WB и

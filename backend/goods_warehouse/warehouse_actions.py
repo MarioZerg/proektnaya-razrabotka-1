@@ -1267,6 +1267,12 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
             # Кладовщик отобрал принятые возвраты и передал их упаковщицам на осмотр.
             # Работаем пачкой: обычно за раз уезжает целая тележка, а не одна вещь.
             ids = body_data.get('ids') or []
+            # Из окна «Привёз с пункта выдачи» вещь приходит по стикеру хранения.
+            sbs = [str(b).strip().upper() for b in (body_data.get('storageBarcodes') or []) if str(b).strip()]
+            if sbs:
+                sb_sql = ','.join("'" + b.replace("'", "''") + "'" for b in sbs)
+                cur.execute(f"SELECT id FROM goods_warehouse WHERE storage_barcode IN ({sb_sql})")
+                ids = list(ids) + [r[0] for r in cur.fetchall()]
             if not ids:
                 return {'statusCode': 400, 'headers': headers, 'body': json.dumps({'error': 'Выберите товары'})}
             ids_csv = ','.join(str(int(i)) for i in ids)

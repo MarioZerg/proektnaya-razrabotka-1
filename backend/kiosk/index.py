@@ -2111,8 +2111,12 @@ def _handler(event: dict, context) -> dict:
                     f"   OR o.wb_sticker_number = {sticker_num} "
                     if sticker_num is not None else ""
                 )
+                # Стикер вывоза FBO OZON: «bx…»/«boxId: …» — номер коробки в заявке.
+                box_esc = re.sub(r'(?i)^(bx|boxid:?\s*)', '', scan_code.strip()).replace("'", "''")
                 code_match = (
                     f"      mr.return_barcode = '{code_esc}' "
+                    f"   OR gw.storage_barcode = '{code_esc.upper()}' "
+                    f"   OR mr.return_barcode = '{box_esc}' "
                     f"   OR mr.posting_number = '{code_esc}' "
                     f"   OR o.order_number = '{code_esc}' "
                     f"   OR o.ozon_posting_number = '{code_esc}' "
