@@ -1083,6 +1083,16 @@ def auto_release_stock(cur):
             "UPDATE goods_warehouse SET status = 'shipped', shipped_at = now(), "
             f"shelf_id = NULL WHERE id IN ({ids_csv})"
         )
+        # Заказ покупателя закрываем вместе с вещью: раньше вещь становилась
+        # «отгружена», а заказ оставался «Новый» со статусом «Со склада» и висел
+        # в работе, хотя посылка уже у покупателя.
+        cur.execute(
+            "UPDATE orders SET status = 'Отгружен', "
+            "  completed_at = COALESCE(completed_at, now()) "
+            "WHERE COALESCE(status, '') NOT IN ('Отгружен', 'Доставлен', 'Отменён') "
+            f"  AND id IN (SELECT reserved_order_id FROM goods_warehouse "
+            f"             WHERE id IN ({ids_csv}) AND reserved_order_id IS NOT NULL)"
+        )
         log_bulk(cur, None, 'Система', 'auto_close_shipped', 'goods_warehouse', ids,
                  'Автоматически: отправление уехало к покупателю, ярлык был наклеен '
                  'на эту вещь — закрыта как отгруженная')

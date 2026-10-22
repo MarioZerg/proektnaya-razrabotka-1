@@ -12,6 +12,7 @@
 
 import json
 import os
+import psycopg2
 
 from orders_read import handle_get
 from orders_actions import handle_post
@@ -178,11 +179,20 @@ def handler(event: dict, context) -> dict:
     headers = {'Access-Control-Allow-Origin': '*', 'Content-Type': 'application/json'}
     dsn = os.environ['DATABASE_URL']
 
-    if method == 'GET':
-        return handle_get(event, headers, dsn)
+    # Пик нагрузки: база отвечает «rate limit exceeded», транзакция откатывается,
+    # ничего не записано. Отвечаем 503 — экран сам повторит чтение через секунду,
+    # а не покажет «нет связи с сервером».
+    try:
+        if method == 'GET':
+            return handle_get(event, headers, dsn)
 
-    if method == 'POST':
-        return handle_post(event, headers, dsn)
+        if method == 'POST':
+            return handle_post(event, headers, dsn)
+    except psycopg2.OperationalError:
+        return {'statusCode': 503, 'headers': headers, 'body': json.dumps(
+            {'error': 'Сервер перегружен и не ответил. Подождите 2–3 секунды и повторите '
+                      '— повтор безопасен, дважды операция не пройдёт', 'serverBusy': True},
+            ensure_ascii=False)}
 
     return {'statusCode': 405, 'headers': headers, 'body': json.dumps({'error': 'Method not allowed'})}
 # release: packer_returns

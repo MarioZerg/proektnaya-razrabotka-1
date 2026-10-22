@@ -1,3 +1,4 @@
+import { usePolling } from '@/hooks/usePolling';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import {
@@ -188,11 +189,13 @@ const ToMarketplace = () => {
   useEffect(() => {
     if (!shopId) return;
     load();
-    // Счётчик ПВЗ растёт по мере сканирования — список обновляем, не мигая загрузкой.
-    const id = window.setInterval(() => load(true), 15_000);
-    return () => window.clearInterval(id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [shopId, statusFilter, marketplaceFilter, dateFrom, dateTo]);
+
+  // Счётчик ПВЗ растёт по мере сканирования — список обновляем, не мигая загрузкой.
+  // Раз в 30 секунд и только пока вкладка открыта: раньше каждые 15 секунд со всех
+  // компьютеров склада, даже со свёрнутых вкладок, — база упиралась в лимит запросов.
+  usePolling(() => (shopId ? load(true) : undefined), 30_000, !!shopId);
 
   // Плашки FBS/FBO считаем по полному списку: выбрав FBS, кладовщик должен
   // видеть в плашке FBO реальное число, а не ноль — иначе кажется, что поставки
