@@ -1,4 +1,6 @@
 import { useState } from 'react';
+
+const MATRIX_OPEN_KEY = 'dash-flow-matrix-open';
 import Icon from '@/components/ui/icon';
 import LiveCountBoard from '@/components/crm/LiveCountBoard';
 import SceneImage from '@/components/crm/SceneImage';
@@ -78,6 +80,17 @@ const ProductionFlowCard = ({
   onCapacity?: () => void;
 }) => {
   const [pressed, setPressed] = useState(false);
+  // Путь товара по этапам свёрнут по умолчанию: на главной видна только строка
+  // «всего». Выбор запоминаем — кто раскрыл, тот и дальше видит таблицу.
+  const [matrixOpen, setMatrixOpen] = useState(
+    () => typeof window !== 'undefined' && window.localStorage.getItem(MATRIX_OPEN_KEY) === '1',
+  );
+  const toggleMatrix = () =>
+    setMatrixOpen((prev) => {
+      window.localStorage.setItem(MATRIX_OPEN_KEY, prev ? '0' : '1');
+      return !prev;
+    });
+  const totalRow = widget.matrix?.rows.find((row) => row.label === 'всего');
   const scene = sceneOf(widget.label);
   const alive = !loading && widget.value > 0;
   const shell = `group flex h-full w-full min-w-0 flex-col overflow-hidden rounded-xl border bg-[#f7f4ee] text-left shadow-sm transition duration-200 hover:-translate-y-1 hover:shadow-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring active:translate-y-0 motion-reduce:transition-none motion-reduce:hover:translate-y-0 sm:rounded-2xl ${
@@ -93,7 +106,11 @@ const ProductionFlowCard = ({
       <SceneImage
         name={scene.src}
         className={scene.pos}
-        sizes="(min-width: 1024px) 25vw, (min-width: 640px) 50vw, 100vw"
+        sizes={
+          widget.spotlight
+            ? '(min-width: 640px) 640px, 100vw'
+            : '(min-width: 1024px) 25vw, (min-width: 640px) 50vw, 100vw'
+        }
       />
     </div>
   );
@@ -132,7 +149,42 @@ const ProductionFlowCard = ({
           size={widget.spotlight ? 'md' : 'sm'}
         />
       </div>
-      {widget.matrix && !loading && <Matrix matrix={widget.matrix} />}
+      {widget.matrix && !loading && (
+        <div className="min-w-0">
+          <button
+            type="button"
+            onClick={toggleMatrix}
+            aria-expanded={matrixOpen}
+            className="flex w-full items-center gap-2 rounded-md border border-border/70 bg-background/70 px-2 py-1.5 text-left text-xs transition-colors hover:bg-background sm:text-sm"
+          >
+            <span className="font-medium">Где товар</span>
+            {totalRow && widget.matrix.columns.length >= 3 && (
+              <span className="flex min-w-0 flex-1 flex-wrap justify-end gap-x-3 gap-y-0.5 tabular-nums text-muted-foreground">
+                <span>
+                  {widget.matrix.columns[0]} <b className="text-foreground">{totalRow.values[0]}</b>
+                </span>
+                <span>
+                  {widget.matrix.columns[1]} <b className="text-foreground">{totalRow.values[1]}</b>
+                </span>
+              </span>
+            )}
+            <Icon
+              name="ChevronDown"
+              size={16}
+              className={`shrink-0 transition-transform duration-300 ${matrixOpen ? 'rotate-180' : ''}`}
+            />
+          </button>
+          <div
+            className={`grid transition-[grid-template-rows,opacity] duration-300 ease-out motion-reduce:transition-none ${
+              matrixOpen ? 'mt-1.5 grid-rows-[1fr] opacity-100' : 'grid-rows-[0fr] opacity-0'
+            }`}
+          >
+            <div className="min-h-0 overflow-hidden">
+              <Matrix matrix={widget.matrix} />
+            </div>
+          </div>
+        </div>
+      )}
       {widget.spotlight && (
         <div className="flex flex-wrap gap-1.5">
           <button

@@ -207,7 +207,7 @@ html {
     width: 40%;
     max-width: 20rem;
     min-width: 9rem;
-    max-height: none;
+    max-height: 16rem;
     aspect-ratio: auto;
     align-self: stretch;
     min-height: 11rem;
