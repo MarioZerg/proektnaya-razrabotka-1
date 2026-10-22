@@ -76,11 +76,11 @@ export const buildDashboardWidgets = ({
           summary.newPickingFbs != null &&
           summary.newOnConveyor != null &&
           summary.newOnPicking != null;
-        // Крупная цифра — работа, которую ещё никто не взял: новые на конвейере и
-        // вещи с полок без стикера. Отстикерованное сюда больше не входит.
+        // Крупная цифра — ровно строка «новые» таблицы (FBS + FBO): заказы, которые
+        // ждут раскроя. Подбор с полок — отдельная строка, в счётчик не входит,
+        // иначе цифра расходилась с таблицей (214 против 201).
         if (summary.flow) {
-          const pick = (summary.flow.pick?.fbs ?? 0) + (summary.flow.pick?.fbo ?? 0);
-          return (summary.newOnConveyor ?? 0) + pick;
+          return (summary.newConveyorFbs ?? 0) + (summary.newConveyorFbo ?? 0);
         }
         if (fromServer) return (summary.newOnConveyor ?? 0) + (summary.newOnPicking ?? 0);
         if (!orderSchemes) return summary.newOrders;
