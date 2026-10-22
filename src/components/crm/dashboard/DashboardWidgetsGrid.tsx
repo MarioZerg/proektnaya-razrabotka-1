@@ -19,7 +19,7 @@ const WidgetMatrix = ({
   matrix: NonNullable<DashboardWidgetData['matrix']>;
 }) => (
   <div className="min-w-0 overflow-x-auto rounded-md border border-border/70 text-[11px] leading-tight">
-    <div className="grid min-w-[17rem] grid-cols-[2.5rem_repeat(3,minmax(4.4rem,1fr))]">
+    <div className="grid min-w-[17rem] grid-cols-[6.5rem_repeat(3,minmax(3rem,1fr))]">
       <div className="bg-muted/60" />
       {matrix.columns.map((column) => (
         <div key={column} className="whitespace-nowrap bg-muted/60 px-1 py-1 text-center text-muted-foreground">
@@ -29,7 +29,7 @@ const WidgetMatrix = ({
       {matrix.rows.flatMap((row) => [
         <div
           key={`${row.label}-name`}
-          className={`border-t border-border/70 px-1.5 py-1 ${row.label === 'всего' ? 'font-semibold' : ''}`}
+          className={`whitespace-nowrap border-t border-border/70 px-1.5 py-1 ${row.label === 'всего' ? 'font-semibold' : ''}`}
         >
           {row.label}
         </div>,
@@ -95,8 +95,9 @@ const DashboardWidgetsGrid = ({ widgets, loading }: DashboardWidgetsGridProps) =
   const [capacityOpen, setCapacityOpen] = useState(false);
   const canPlan = user?.role === 'admin' || user?.role === 'manager';
   const spotlight = widgets.find((widget) => widget.spotlight);
+  // Очередь на раскрой — строка «новые»: первая колонка FBS, вторая FBO.
   const conveyorCount = (label: string) =>
-    spotlight?.matrix?.rows.find((row) => row.label === label)?.values[0] ?? 0;
+    spotlight?.matrix?.rows.find((row) => row.label === 'новые')?.values[label === 'FBS' ? 0 : 1] ?? 0;
 
   // Два блока: производство и склад. Пустые не показываем — у швеи нет складских
   // показателей, и заголовок без единой плитки был бы просто шумом.

@@ -44,52 +44,31 @@ export const buildDashboardWidgets = ({
       path: '/crm/marketplace/sewing-items',
       stage: 'production',
       spotlight: true,
-      hint: 'Заказы приняты и ждут, когда их возьмут в работу',
+      hint: 'Где сейчас товар: каждая вещь посчитана ровно в одном этапе',
       parts: undefined,
       matrix: (() => {
-        const fromServer =
-          summary.newConveyorFbs != null &&
-          summary.newConveyorFbo != null &&
-          summary.newPickingFbs != null &&
-          summary.newPickingFbo != null;
-        const conveyor = fromServer
-          ? {
-              fbs: summary.newConveyorFbs!,
-              fbo: summary.newConveyorFbo!,
-              other: Math.max(
-                0,
-                (summary.newOnConveyor ?? summary.newOrders) -
-                  summary.newConveyorFbs! -
-                  summary.newConveyorFbo!,
-              ),
-            }
-          : orderSchemes?.conveyor;
-        const picking = fromServer
-          ? {
-              fbs: summary.newPickingFbs!,
-              fbo: summary.newPickingFbo!,
-              other: Math.max(
-                0,
-                (summary.newOnPicking ?? 0) - summary.newPickingFbs! - summary.newPickingFbo!,
-              ),
-            }
-          : orderSchemes?.picking;
-        if (!conveyor || !picking) return undefined;
-        const line = (label: string, left: number, right: number) => ({
-          label,
-          values: [left, right, left + right],
-        });
-        const rows = [
-          line('FBS', conveyor.fbs, picking.fbs),
-          line('FBO', conveyor.fbo, picking.fbo),
-        ];
-        if (conveyor.other + picking.other > 0) {
-          rows.push(line('другие', conveyor.other, picking.other));
+        // ПУТЬ ТОВАРА: строка — этап, где вещь сейчас. Каждая вещь ровно в одной
+        // строке, поэтому строки складываются и ничего не дублируется. Раньше в
+        // «подбор» попадали и уже отстикерованные вещи — цифра стояла на месте.
+        const flow = summary.flow;
+        if (!flow || summary.newConveyorFbs == null || summary.newConveyorFbo == null) {
+          return undefined;
         }
-        const conveyorSum = conveyor.fbs + conveyor.fbo + conveyor.other;
-        const pickingSum = picking.fbs + picking.fbo + picking.other;
-        rows.push(line('всего', conveyorSum, pickingSum));
-        return { columns: ['конвейер', 'подбор', 'всего'], rows };
+        const pair = (v?: { fbs: number; fbo: number }) => ({ fbs: v?.fbs ?? 0, fbo: v?.fbo ?? 0 });
+        const stages: [string, { fbs: number; fbo: number }][] = [
+          ['новые', { fbs: summary.newConveyorFbs, fbo: summary.newConveyorFbo }],
+          ['крой', pair(flow.cut)],
+          ['пошив', pair(flow.sew)],
+          ['стикеровка', pair(flow.stick)],
+          ['подбор с полок', pair(flow.pick)],
+          ['ждёт поставку', pair(flow.ready)],
+          ['в поставке', pair(flow.supply)],
+        ];
+        const rows = stages.map(([label, v]) => ({ label, values: [v.fbs, v.fbo, v.fbs + v.fbo] }));
+        const tf = stages.reduce((a, [, v]) => a + v.fbs, 0);
+        const to = stages.reduce((a, [, v]) => a + v.fbo, 0);
+        rows.push({ label: 'всего', values: [tf, to, tf + to] });
+        return { columns: ['FBS', 'FBO', 'всего'], rows };
       })(),
       value: (() => {
         const fromServer =
@@ -97,6 +76,12 @@ export const buildDashboardWidgets = ({
           summary.newPickingFbs != null &&
           summary.newOnConveyor != null &&
           summary.newOnPicking != null;
+        // Крупная цифра — работа, которую ещё никто не взял: новые на конвейере и
+        // вещи с полок без стикера. Отстикерованное сюда больше не входит.
+        if (summary.flow) {
+          const pick = (summary.flow.pick?.fbs ?? 0) + (summary.flow.pick?.fbo ?? 0);
+          return (summary.newOnConveyor ?? 0) + pick;
+        }
         if (fromServer) return (summary.newOnConveyor ?? 0) + (summary.newOnPicking ?? 0);
         if (!orderSchemes) return summary.newOrders;
         const c = orderSchemes.conveyor;

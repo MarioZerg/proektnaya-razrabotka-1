@@ -32,7 +32,7 @@ const matrixHeader = (column: string) => {
 /** Таблица FBS/FBO — крупный текст, иначе на телефоне штуки не читаются. */
 const Matrix = ({ matrix }: { matrix: NonNullable<DashboardWidgetData['matrix']> }) => (
   <div className="min-w-0 overflow-x-auto rounded-md border border-border/70">
-    <div className="grid w-full grid-cols-[minmax(2.75rem,auto)_repeat(3,minmax(0,1fr))] text-sm leading-snug">
+    <div className="grid w-full grid-cols-[minmax(6.5rem,auto)_repeat(3,minmax(0,1fr))] text-sm leading-snug">
       <div className="bg-muted/60" />
       {matrix.columns.map((column) => (
         <div
@@ -45,7 +45,7 @@ const Matrix = ({ matrix }: { matrix: NonNullable<DashboardWidgetData['matrix']>
       {matrix.rows.flatMap((row) => [
         <div
           key={`${row.label}-name`}
-          className={`border-t border-border/70 px-1.5 py-1.5 text-xs font-medium uppercase sm:text-sm ${
+          className={`whitespace-nowrap border-t border-border/70 px-1.5 py-1.5 text-xs font-medium sm:text-sm ${
             row.label === 'всего' ? 'font-semibold' : ''
           }`}
         >

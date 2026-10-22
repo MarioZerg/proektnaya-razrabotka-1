@@ -387,7 +387,7 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                 f"AND NOT ({cancelled_sql('')}) "
                 "AND material IN (" + names_csv + ") "
                 + single_sql +
-                "ORDER BY " + cut_ozon_last_sql + cut_queue_order_sql()
+                "ORDER BY (order_type = 'FBS') DESC, " + cut_ozon_last_sql + cut_queue_order_sql()
                 + " LIMIT %s FOR UPDATE SKIP LOCKED",
                 (stack_size,),
             )
@@ -2216,11 +2216,12 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
             # уходит швее, как только другой работы не осталось. Иначе цех вставал бы
             # на пустом месте в дни, когда WB и Яндекс молчат.
             ozon_last = ozon_cutoff_passed(cur, session_workshop_id)
+            # FBS-заказы ВСЕГДА идут первыми в очереди — это жёсткое правило, оно важнее
+            # любых настроек приоритета цеха и отсечки OZON: раньше после отсечки
+            # FBO с WB/Яндекса обгонял OZON FBS.
+            order_parts.append("(order_type = 'FBS') DESC")
             if ozon_last:
                 order_parts.append("(marketplace = 'OZON') ASC")
-            # FBS-заказы ВСЕГДА идут первыми в очереди — это жёсткое правило, оно важнее
-            # любых настроек приоритета цеха (у FBS сжатые сроки отгрузки на маркетплейс).
-            order_parts.append("(order_type = 'FBS') DESC")
             if cluster_priority:
                 cluster_esc = cluster_priority.replace("'", "''")
                 order_parts.append(f"(cluster = '{cluster_esc}') DESC")

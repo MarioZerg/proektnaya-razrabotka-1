@@ -32,6 +32,9 @@ NOT_CANCELLED = (
     "AND strpos(upper(COALESCE(ym_status, '')), 'CANCEL') = 0"
 )
 
+FLOW_ORDER_COLS = ['flow_cut_fbs', 'flow_cut_fbo', 'flow_sew_fbs', 'flow_sew_fbo', 'flow_stick_fbs', 'flow_stick_fbo']
+FLOW_GOODS_COLS = ['flow_pick_fbs', 'flow_pick_fbo', 'flow_ready_fbs', 'flow_ready_fbo', 'flow_supply_fbs', 'flow_supply_fbo']
+
 # Рулон считается заканчивающимся, если в нём меньше 20 погонных метров.
 ROLL_LOW_STOCK_THRESHOLD = 20
 
@@ -167,8 +170,44 @@ def handler(event: dict, context) -> dict:
             "COUNT(*) FILTER (WHERE order_type = 'FBS' "
             "  AND sewing_status IN ('Новый', 'На раскрое', 'Раскроено', 'В работе', 'Стикеровка') "
             f"  AND {NOT_CANCELLED} "
-            f"  AND COALESCE(ozon_status, '') NOT IN ({not_urgent})) AS urgent_fbs "
+            f"  AND COALESCE(ozon_status, '') NOT IN ({not_urgent})) AS urgent_fbs, "
+            # ПУТЬ ТОВАРА ДЛЯ ГЛАВНОГО ВИДЖЕТА — каждая вещь ровно в одной клетке.
+            # Конвейер считаем по заказам (крой, пошив, стикеровка), дальше вещь
+            # живёт на складе и считается в flow_part — так клетки не пересекаются.
+            + ''.join(
+                f"COUNT(*) FILTER (WHERE order_type = '{t}' AND sewing_status IN {st} "
+                f"  AND {NOT_CANCELLED} AND COALESCE(status, '') NOT IN ('Отгружен', 'Доставлен', 'Выполнен')) AS {k}_{t.lower()}, "
+                for k, st in (('flow_cut', "('На раскрое', 'Раскроено')"),
+                              ('flow_sew', "('В работе')"),
+                              ('flow_stick', "('Стикеровка')"))
+                for t in ('FBS', 'FBO')
+            ) +
+            "0 AS _end "
             "FROM orders)",
+
+            # Вещи на складе под живыми заказами: подбор → собрано → в поставке.
+            "flow_part AS (SELECT "
+            + ''.join(
+                f"COUNT(*) FILTER (WHERE o.order_type = '{t}' AND {cond}) AS {k}_{t.lower()}, "
+                for k, cond in (
+                    ('flow_pick', "NOT x.live AND g.status = 'picking' AND g.shipping_labeled_at IS NULL"),
+                    ('flow_ready', "NOT x.live AND NOT (g.status = 'picking' AND g.shipping_labeled_at IS NULL)"),
+                    ('flow_supply', "x.live"),
+                )
+                for t in ('FBS', 'FBO')
+            ) +
+            "0 AS _end "
+            "FROM goods_warehouse g "
+            "JOIN (SELECT id, order_type FROM orders "
+            f"      WHERE {NOT_CANCELLED} "
+            "        AND COALESCE(status, '') NOT IN ('Отгружен', 'Доставлен', 'Выполнен')) o "
+            "  ON o.id = g.reserved_order_id "
+            "CROSS JOIN LATERAL (SELECT EXISTS (SELECT 1 FROM marketplace_supply_items si "
+            "  JOIN marketplace_supplies s ON s.id = si.supply_id "
+            "  WHERE si.goods_warehouse_id = g.id "
+            "    AND COALESCE(s.status, '') NOT IN ('Выполнена', 'Отменена')) AS live) x "
+            "WHERE g.shipped_at IS NULL "
+            "  AND g.status IN ('picking', 'awaiting_supply', 'reserved'))",
 
             # Поставки в цех: их всего пара сотен, но и это лишние 126 КБ ради двух чисел.
             "ship_part AS (SELECT "
@@ -203,8 +242,8 @@ def handler(event: dict, context) -> dict:
             "ship_part.not_shipped", "ship_part.not_received", "dup_part.duplicates",
             "orders_part.new_on_conveyor", "orders_part.new_conveyor_fbs", "orders_part.new_conveyor_fbo",
             "orders_part.new_on_picking", "orders_part.new_picking_fbs", "orders_part.new_picking_fbo",
-        ]
-        from_parts = ["orders_part", "ship_part", "dup_part"]
+        ] + [f"orders_part.{c}" for c in FLOW_ORDER_COLS] + [f"flow_part.{c}" for c in FLOW_GOODS_COLS]
+        from_parts = ["orders_part", "ship_part", "dup_part", "flow_part"]
 
         if warehouse:
             # Убираем ВСЕ пробелы, а не только крайние: в базе встречается
@@ -294,12 +333,22 @@ def handler(event: dict, context) -> dict:
             'newPickingFbs': int(row[13] or 0),
             'newPickingFbo': int(row[14] or 0),
         }
+        flow_cols = FLOW_ORDER_COLS + FLOW_GOODS_COLS
+        flow_vals = row[15:15 + len(flow_cols)]
+        # {stage: {fbs, fbo}} — путь товара: крой, пошив, стикеровка, подбор,
+        # собрано (ждёт скан в поставку), в поставке.
+        flow = {}
+        for col, val in zip(flow_cols, flow_vals):
+            stage, kind = col[len('flow_'):].rsplit('_', 1)
+            flow.setdefault(stage, {})[kind] = int(val or 0)
+        result['flow'] = flow
+        base = 15 + len(flow_cols)
 
         if warehouse:
-            result['lowStockRolls'] = row[15]
-            result['awaitingShelf'] = row[16]
-            result['awaitingShipLabel'] = row[17]
-            result['returnsPickedUp'] = row[18]
+            result['lowStockRolls'] = row[base]
+            result['awaitingShelf'] = row[base + 1]
+            result['awaitingShipLabel'] = row[base + 2]
+            result['returnsPickedUp'] = row[base + 3]
 
         cur.execute(
             "SELECT value FROM system_settings WHERE key = 'conveyor_issue_enabled'"
