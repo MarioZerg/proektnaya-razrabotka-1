@@ -32,6 +32,8 @@ NOT_CANCELLED = (
     "AND strpos(upper(COALESCE(ym_status, '')), 'CANCEL') = 0"
 )
 
+ON_OVERLOCK = ("(COALESCE(requires_overlock, false) AND overlocked_at IS NULL "
+               "AND overlock_user_id IS NOT NULL)")
 FLOW_ORDER_COLS = ['flow_cut_fbs', 'flow_cut_fbo', 'flow_sew_fbs', 'flow_sew_fbo', 'flow_stick_fbs', 'flow_stick_fbo']
 FLOW_GOODS_COLS = ['flow_pick_fbs', 'flow_pick_fbo', 'flow_ready_fbs', 'flow_ready_fbo', 'flow_supply_fbs', 'flow_supply_fbo']
 
@@ -175,11 +177,14 @@ def handler(event: dict, context) -> dict:
             # Конвейер считаем по заказам (крой, пошив, стикеровка), дальше вещь
             # живёт на складе и считается в flow_part — так клетки не пересекаются.
             + ''.join(
-                f"COUNT(*) FILTER (WHERE order_type = '{t}' AND sewing_status IN {st} "
+                f"COUNT(*) FILTER (WHERE order_type = '{t}' AND {st} "
                 f"  AND {NOT_CANCELLED} AND COALESCE(status, '') NOT IN ('Отгружен', 'Доставлен', 'Выполнен')) AS {k}_{t.lower()}, "
-                for k, st in (('flow_cut', "('На раскрое', 'Раскроено')"),
-                              ('flow_sew', "('В работе')"),
-                              ('flow_stick', "('Стикеровка')"))
+                # Вещь, выданная швее на оверлок (вкладка «Оверлок»), уже в пошиве,
+                # хотя статус у неё ещё «Раскроено». Отменённый крой (своя вкладка)
+                # сюда не входит вовсе — NOT_CANCELLED.
+                for k, st in (('flow_cut', f"(sewing_status = 'На раскрое' OR (sewing_status = 'Раскроено' AND NOT {ON_OVERLOCK}))"),
+                              ('flow_sew', f"(sewing_status = 'В работе' OR (sewing_status = 'Раскроено' AND {ON_OVERLOCK}))"),
+                              ('flow_stick', "sewing_status = 'Стикеровка'"))
                 for t in ('FBS', 'FBO')
             ) +
             "0 AS _end "
