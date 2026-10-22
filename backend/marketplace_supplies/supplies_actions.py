@@ -1860,16 +1860,41 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                     )
                     st = cur.fetchone()
                     if st:
+                        # Своя запись склада у заказа может уже быть, но подбор отдал
+                        # её соседнему заказу. Вторую запись на тот же заказ база не
+                        # примет (один заказ — одна запись), а пустой заказ-владелец
+                        # запрещён. Тогда заводим служебную карточку WH-…, как при
+                        # ручной приёмке, а резерв ставим на заказ поставки.
+                        cur.execute("SELECT 1 FROM goods_warehouse WHERE order_id = %s",
+                                    (int(st[0]),))
+                        owner_id = int(st[0])
+                        if cur.fetchone():
+                            cur.execute(
+                                "SELECT order_number FROM orders WHERE order_number ~ '^WH-[0-9]+$' "
+                                "ORDER BY (split_part(order_number, '-', 2))::int DESC LIMIT 1"
+                            )
+                            last_wh = cur.fetchone()
+                            wh_num = f"WH-{(int(last_wh[0].split('-')[1]) + 1) if last_wh else 1:05d}"
+                            cur.execute(
+                                "INSERT INTO orders (order_number, marketplace, order_type, status, "
+                                "  product, quantity, source, material, width, height, "
+                                "  marketplace_item_id, product_barcode, product_ozon_sku, "
+                                "  sewing_status, shop_id) "
+                                "SELECT %s, marketplace, order_type, 'Новый', product, 1, 'manual', "
+                                "  material, width, height, marketplace_item_id, product_barcode, "
+                                "  product_ozon_sku, 'Готовые', shop_id FROM orders WHERE id = %s "
+                                "RETURNING id",
+                                (wh_num, int(st[0])),
+                            )
+                            owner_id = int(cur.fetchone()[0])
                         cur.execute(
                             "INSERT INTO goods_warehouse (order_id, reserved_order_id, status, "
                             "  storage_barcode, receive_reason, shipping_labeled_at, matched_at) "
-                            "VALUES ((SELECT CASE WHEN EXISTS (SELECT 1 FROM goods_warehouse "
-                            "          WHERE order_id = %s) THEN NULL ELSE %s END), "
-                            "  %s, 'awaiting_supply', "
+                            "VALUES (%s, %s, 'awaiting_supply', "
                             "  'GW-' || lpad(nextval('goods_warehouse_storage_seq')::text, 6, '0'), "
                             "  'fbs_ready', now(), now()) "
                             "RETURNING id, status, storage_barcode",
-                            (int(st[0]), int(st[0]), int(st[0])),
+                            (owner_id, int(st[0])),
                         )
                         new_gw = cur.fetchone()
                         cur.execute(
@@ -1914,6 +1939,43 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                         "  ) LIMIT 1"
                     )
                     busy_fbs = cur.fetchone()
+                    # Если по заявке этот товар уже собран целиком, вещь в руках —
+                    # просто лишняя. Говорить про «заказ FBS» тут неверно: кладовщик
+                    # ищет проблему не там (Лен 300x265, #1487: 43 из 43, 22.10).
+                    if busy_fbs:
+                        cur.execute(
+                            "SELECT "
+                            " (SELECT COUNT(*) FROM orders o "
+                            "  LEFT JOIN marketplace_items mi ON mi.id = o.marketplace_item_id "
+                            "  WHERE o.supply_id = %s AND COALESCE(o.status, '') <> 'Отменён' AND ("
+                            f"   upper(trim(coalesce(o.product_ozon_sku, ''))) IN ({vals}) "
+                            f"   OR upper(trim(coalesce(o.product_barcode, ''))) IN ({vals}) "
+                            f"   OR upper(trim(coalesce(mi.ozon_sku, ''))) IN ({vals}) "
+                            f"   OR upper(trim(coalesce(mi.barcode, ''))) IN ({vals}))), "
+                            " (SELECT COUNT(*) FROM marketplace_supply_items msi "
+                            "  JOIN goods_warehouse g ON g.id = msi.goods_warehouse_id "
+                            "  JOIN orders o ON o.id = COALESCE(g.reserved_order_id, g.order_id) "
+                            "  LEFT JOIN marketplace_items mi ON mi.id = o.marketplace_item_id "
+                            "  WHERE msi.supply_id = %s AND ("
+                            f"   upper(trim(coalesce(o.product_ozon_sku, ''))) IN ({vals}) "
+                            f"   OR upper(trim(coalesce(o.product_barcode, ''))) IN ({vals}) "
+                            f"   OR upper(trim(coalesce(mi.ozon_sku, ''))) IN ({vals}) "
+                            f"   OR upper(trim(coalesce(mi.barcode, ''))) IN ({vals})))",
+                            (int(supply_id), int(supply_id)),
+                        )
+                        plan_n, boxed_n = cur.fetchone()
+                        if plan_n and boxed_n >= plan_n:
+                            return {
+                                'statusCode': 409,
+                                'headers': headers,
+                                'body': json.dumps({
+                                    'error': f'«{busy_fbs[2] or "Товар"}»: по заявке {plan_n} шт., '
+                                             f'в коробах уже {boxed_n} — этот товар собран полностью. '
+                                             f'Эта штука лишняя: в короб не кладите, '
+                                             f'верните её на склад',
+                                    'overPlan': True,
+                                }, ensure_ascii=False),
+                            }
                     if busy_fbs:
                         return {
                             'statusCode': 409,
