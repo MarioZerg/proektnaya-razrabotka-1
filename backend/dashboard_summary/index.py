@@ -140,13 +140,13 @@ def handler(event: dict, context) -> dict:
             # «Новые задания» — общая очередь, её разбирают все. Считаем только
             # заказы, реально пришедшие с площадок: ручной импорт сюда попадать
             # не должен, иначе цифра расходится с кабинетом маркетплейса.
-            f"COUNT(*) FILTER (WHERE sewing_status = 'Новый' AND source = 'api' AND {NOT_CANCELLED}) AS new_orders, "
+            f"COUNT(*) FILTER (WHERE sewing_status = 'Новый' AND source = 'api' AND COALESCE(status, '') NOT IN ('Отгружен', 'Доставлен', 'Выполнен') AND {NOT_CANCELLED}) AS new_orders, "
             # На конвейере остаются только «Новый»: их ещё разбирает цех.
             # Ушедшие на подбор получают статус «Со склада» и из этой цифры выпадают,
             # хотя кладовщик их ещё не собрал.
-            f"COUNT(*) FILTER (WHERE sewing_status = 'Новый' AND source = 'api' AND {NOT_CANCELLED}) AS new_on_conveyor, "
-            f"COUNT(*) FILTER (WHERE sewing_status = 'Новый' AND source = 'api' AND order_type = 'FBS' AND {NOT_CANCELLED}) AS new_conveyor_fbs, "
-            f"COUNT(*) FILTER (WHERE sewing_status = 'Новый' AND source = 'api' AND order_type = 'FBO' AND {NOT_CANCELLED}) AS new_conveyor_fbo, "
+            f"COUNT(*) FILTER (WHERE sewing_status = 'Новый' AND source = 'api' AND COALESCE(status, '') NOT IN ('Отгружен', 'Доставлен', 'Выполнен') AND {NOT_CANCELLED}) AS new_on_conveyor, "
+            f"COUNT(*) FILTER (WHERE sewing_status = 'Новый' AND source = 'api' AND COALESCE(status, '') NOT IN ('Отгружен', 'Доставлен', 'Выполнен') AND order_type = 'FBS' AND {NOT_CANCELLED}) AS new_conveyor_fbs, "
+            f"COUNT(*) FILTER (WHERE sewing_status = 'Новый' AND source = 'api' AND COALESCE(status, '') NOT IN ('Отгружен', 'Доставлен', 'Выполнен') AND order_type = 'FBO' AND {NOT_CANCELLED}) AS new_conveyor_fbo, "
             f"COUNT(*) FILTER (WHERE sewing_status = 'Со склада' AND source = 'api' AND {NOT_CANCELLED} "
             "  AND EXISTS (SELECT 1 FROM goods_warehouse gw "
             "    WHERE gw.reserved_order_id = orders.id "
