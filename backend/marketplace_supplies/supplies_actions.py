@@ -1839,8 +1839,14 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                         # заказ закрыт, а своей вещи у него нет. Так в Пушкино 5
                         # штук «Лён 200×245» не принимались при пакетах в руках.
                         "  AND o.sewing_status IN ('Стикеровка', 'Со склада', 'Готовые', 'В работе') "
+                        # У заказа нет СВОЕЙ живой вещи. Раньше смотрели на любую
+                        # запись, где заказ упомянут: вещь, сшитую под заказ, но
+                        # переставленную подбором под соседний заказ заявки, считали
+                        # «его». Заказ оставался без вещи, а пакет с ярлыком в руках
+                        # кладовщика не принимался: «сшита под FBS» (#1487, 22.10).
                         "  AND NOT EXISTS (SELECT 1 FROM goods_warehouse g "
-                        "                  WHERE g.order_id = o.id OR g.reserved_order_id = o.id) "
+                        "                  WHERE COALESCE(g.reserved_order_id, g.order_id) = o.id "
+                        "                    AND g.status NOT IN ('shipped', 'lost')) "
                         "  AND ("
                         f"       upper(trim(coalesce(o.product_ozon_sku, ''))) IN ({vals}) "
                         f"    OR upper(trim(coalesce(o.product_barcode, ''))) IN ({vals}) "
@@ -1857,11 +1863,13 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                         cur.execute(
                             "INSERT INTO goods_warehouse (order_id, reserved_order_id, status, "
                             "  storage_barcode, receive_reason, shipping_labeled_at, matched_at) "
-                            "VALUES (%s, %s, 'awaiting_supply', "
+                            "VALUES ((SELECT CASE WHEN EXISTS (SELECT 1 FROM goods_warehouse "
+                            "          WHERE order_id = %s) THEN NULL ELSE %s END), "
+                            "  %s, 'awaiting_supply', "
                             "  'GW-' || lpad(nextval('goods_warehouse_storage_seq')::text, 6, '0'), "
                             "  'fbs_ready', now(), now()) "
                             "RETURNING id, status, storage_barcode",
-                            (int(st[0]), int(st[0])),
+                            (int(st[0]), int(st[0]), int(st[0])),
                         )
                         new_gw = cur.fetchone()
                         cur.execute(
