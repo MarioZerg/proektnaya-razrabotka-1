@@ -4130,7 +4130,22 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                 "WHERE goods_warehouse_id = %s",
                 (int(item_id),),
             )
+            cur.execute("SELECT order_id FROM goods_warehouse WHERE id = %s", (int(item_id),))
+            src_row = cur.fetchone()
             cur.execute("DELETE FROM goods_warehouse WHERE id = %s", (int(item_id),))
+            # Служебная карточка ручного приёма (WH-…) живёт только ради этой вещи.
+            # Раньше после удаления вещи она оставалась «Готовые» без товара и
+            # путала остатки: так накопились 19 пустых карточек.
+            if src_row and src_row[0]:
+                cur.execute(
+                    "UPDATE orders SET status = 'Отменён', "
+                    "  cancelled_at = COALESCE(cancelled_at, now()) "
+                    "WHERE id = %s AND source = 'manual' AND order_number LIKE 'WH-%%' "
+                    "  AND COALESCE(status, '') NOT IN ('Отгружен', 'Доставлен', 'Отменён') "
+                    "  AND NOT EXISTS (SELECT 1 FROM goods_warehouse g "
+                    "                  WHERE g.order_id = orders.id OR g.reserved_order_id = orders.id)",
+                    (int(src_row[0]),),
+                )
             conn.commit()
             return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True})}
 
