@@ -1305,7 +1305,11 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                                   'вещь убрали из поставки и вернули на полку',
                                   actor_id, body_data.get('actorName'))
                 cur.execute(
-                    "UPDATE orders SET fulfilled_from_stock_id = NULL, sewing_status = 'Новый' "
+                    "UPDATE orders SET fulfilled_from_stock_id = NULL, "
+                    "  sewing_status = CASE WHEN COALESCE(status, '') IN "
+                    "      ('Отгружен', 'Доставлен', 'Выполнен', 'Отменён') "
+                    "    OR COALESCE(ozon_status, '') IN ('delivering', 'delivered', 'driver_pickup') "
+                    "    THEN sewing_status ELSE 'Новый' END "
                     "WHERE fulfilled_from_stock_id = %s",
                     (int(goods_id),),
                 )
@@ -2534,7 +2538,11 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                                   'вещь убрали из поставки и вернули на полку',
                                   actor_id, body_data.get('actorName'))
                 cur.execute(
-                    "UPDATE orders SET fulfilled_from_stock_id = NULL, sewing_status = 'Новый' "
+                    "UPDATE orders SET fulfilled_from_stock_id = NULL, "
+                    "  sewing_status = CASE WHEN COALESCE(status, '') IN "
+                    "      ('Отгружен', 'Доставлен', 'Выполнен', 'Отменён') "
+                    "    OR COALESCE(ozon_status, '') IN ('delivering', 'delivered', 'driver_pickup') "
+                    "    THEN sewing_status ELSE 'Новый' END "
                     "WHERE fulfilled_from_stock_id = %s",
                     (int(goods_id),),
                 )

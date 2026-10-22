@@ -834,8 +834,18 @@ def try_match_orders_from_stock(cur, gw_id=None):
             log_stock_release(cur, "o.fulfilled_from_stock_id = %s AND o.id <> %s",
                               (pick_id, int(order_id)),
                               'автоподбор отдал вещь другому заказу')
+            # УЕХАВШИЙ ЗАКАЗ В ЦЕХ НЕ ВОЗВРАЩАЕМ. Ссылку снимаем, но отгруженный,
+            # доставленный или отменённый заказ остаётся как есть. Раньше его
+            # переводили в «Новый», и цех шил вещь заново для покупателя, который
+            # её уже получил (05746293-0498-3, 0134429262-0714-1 — 22.10).
             cur.execute(
-                "UPDATE orders SET fulfilled_from_stock_id = NULL, sewing_status = 'Новый' "
+                "UPDATE orders SET fulfilled_from_stock_id = NULL, "
+                "  sewing_status = CASE WHEN COALESCE(status, '') IN "
+                "      ('Отгружен', 'Доставлен', 'Выполнен', 'Отменён') "
+                "    OR COALESCE(ozon_status, '') IN ('delivering', 'delivered', 'driver_pickup') "
+                "    OR lower(COALESCE(ozon_status, '')) LIKE 'cancel%%' "
+                "    OR upper(COALESCE(ym_status, '')) LIKE '%%CANCEL%%' "
+                "    THEN sewing_status ELSE 'Новый' END "
                 "WHERE fulfilled_from_stock_id = %s AND id <> %s",
                 (pick_id, int(order_id)),
             )

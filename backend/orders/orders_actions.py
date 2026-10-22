@@ -361,6 +361,9 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                 "SELECT id, group_key, group_size, COALESCE(width, 0) FROM orders "
                 "WHERE sewing_status = 'Новый' "
                 "AND fulfilled_from_stock_id IS NULL "
+                # Уехавший к покупателю заказ не кроим ни при каких условиях.
+                "AND COALESCE(status, '') NOT IN ('Отгружен', 'Доставлен', 'Выполнен') "
+                "AND COALESCE(ozon_status, '') NOT IN ('delivering', 'delivered', 'driver_pickup') "
                 f"AND {HELD_BY_SHELF_SQL}"
                 # ПО ЗАКАЗУ УЖЕ ЕСТЬ СШИТАЯ ВЕЩЬ — В РАСКРОЙ ОН НЕ ИДЁТ.
                 #
