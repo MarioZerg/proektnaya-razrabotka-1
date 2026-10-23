@@ -85,7 +85,7 @@ const ToMarketplaceCards = ({ supplies, onOpen }: ToMarketplaceCardsProps) => (
               : 'border-border'
         }`}
       >
-        <div className={fboIncomplete(s) ? 'opacity-50 transition-opacity group-hover:opacity-100' : ''}>
+        <div className={`w-full min-w-0 ${fboIncomplete(s) ? 'opacity-50 transition-opacity group-hover:opacity-100' : ''}`}>
         <div className="flex min-w-0 items-start gap-3 px-3 py-2.5">
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-start gap-x-2 gap-y-0.5">
