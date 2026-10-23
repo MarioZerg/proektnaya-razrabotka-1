@@ -1910,6 +1910,52 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                         )
                         fbo_row = (new_gw[0], new_gw[1], new_gw[2], st[2], st[3], st[4], st[5])
 
+                # ТОВАР ПО ЗАЯВКЕ УЖЕ СОБРАН ЦЕЛИКОМ — штука в руках лишняя.
+                # Проверяем раньше всех прочих отказов: и «сшита под FBS», и «нет
+                # отстикерованной вещи» в этом случае уводят кладовщика не туда
+                # (Лен 300x245 и 300x265, #1487, 23.10).
+                if not fbo_row:
+                    cur.execute(
+                        "SELECT "
+                        " (SELECT COUNT(*) FROM orders o "
+                        "  LEFT JOIN marketplace_items mi ON mi.id = o.marketplace_item_id "
+                        "  WHERE o.supply_id = %s AND COALESCE(o.status, '') <> 'Отменён' AND ("
+                        f"   upper(trim(coalesce(o.product_ozon_sku, ''))) IN ({vals}) "
+                        f"   OR upper(trim(coalesce(o.product_barcode, ''))) IN ({vals}) "
+                        f"   OR upper(trim(coalesce(mi.ozon_sku, ''))) IN ({vals}) "
+                        f"   OR upper(trim(coalesce(mi.barcode, ''))) IN ({vals}))), "
+                        " (SELECT COUNT(*) FROM marketplace_supply_items msi "
+                        "  JOIN goods_warehouse g ON g.id = msi.goods_warehouse_id "
+                        "  JOIN orders o ON o.id = COALESCE(g.reserved_order_id, g.order_id) "
+                        "  LEFT JOIN marketplace_items mi ON mi.id = o.marketplace_item_id "
+                        "  WHERE msi.supply_id = %s AND ("
+                        f"   upper(trim(coalesce(o.product_ozon_sku, ''))) IN ({vals}) "
+                        f"   OR upper(trim(coalesce(o.product_barcode, ''))) IN ({vals}) "
+                        f"   OR upper(trim(coalesce(mi.ozon_sku, ''))) IN ({vals}) "
+                        f"   OR upper(trim(coalesce(mi.barcode, ''))) IN ({vals}))), "
+                        " (SELECT o.product FROM orders o "
+                        "  LEFT JOIN marketplace_items mi ON mi.id = o.marketplace_item_id "
+                        "  WHERE o.supply_id = %s AND ("
+                        f"   upper(trim(coalesce(o.product_ozon_sku, ''))) IN ({vals}) "
+                        f"   OR upper(trim(coalesce(o.product_barcode, ''))) IN ({vals}) "
+                        f"   OR upper(trim(coalesce(mi.ozon_sku, ''))) IN ({vals}) "
+                        f"   OR upper(trim(coalesce(mi.barcode, ''))) IN ({vals})) LIMIT 1)",
+                        (int(supply_id), int(supply_id), int(supply_id)),
+                    )
+                    plan_n, boxed_n, plan_name = cur.fetchone()
+                    if plan_n and boxed_n >= plan_n:
+                        return {
+                            'statusCode': 409,
+                            'headers': headers,
+                            'body': json.dumps({
+                                'error': f'«{plan_name or "Товар"}»: по заявке {plan_n} шт., '
+                                         f'в коробах уже {boxed_n} — этот товар собран полностью. '
+                                         f'Эта штука лишняя: в короб не кладите, '
+                                         f'верните её на склад',
+                                'overPlan': True,
+                            }, ensure_ascii=False),
+                        }
+
                 # Подходящая вещь есть, но она занята живым заказом FBS.
                 # Молчать нельзя: кладовщик держит пакет в руках и должен
                 # понять, что эту штуку в короб класть не надо, — иначе он
@@ -1939,43 +1985,6 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                         "  ) LIMIT 1"
                     )
                     busy_fbs = cur.fetchone()
-                    # Если по заявке этот товар уже собран целиком, вещь в руках —
-                    # просто лишняя. Говорить про «заказ FBS» тут неверно: кладовщик
-                    # ищет проблему не там (Лен 300x265, #1487: 43 из 43, 22.10).
-                    if busy_fbs:
-                        cur.execute(
-                            "SELECT "
-                            " (SELECT COUNT(*) FROM orders o "
-                            "  LEFT JOIN marketplace_items mi ON mi.id = o.marketplace_item_id "
-                            "  WHERE o.supply_id = %s AND COALESCE(o.status, '') <> 'Отменён' AND ("
-                            f"   upper(trim(coalesce(o.product_ozon_sku, ''))) IN ({vals}) "
-                            f"   OR upper(trim(coalesce(o.product_barcode, ''))) IN ({vals}) "
-                            f"   OR upper(trim(coalesce(mi.ozon_sku, ''))) IN ({vals}) "
-                            f"   OR upper(trim(coalesce(mi.barcode, ''))) IN ({vals}))), "
-                            " (SELECT COUNT(*) FROM marketplace_supply_items msi "
-                            "  JOIN goods_warehouse g ON g.id = msi.goods_warehouse_id "
-                            "  JOIN orders o ON o.id = COALESCE(g.reserved_order_id, g.order_id) "
-                            "  LEFT JOIN marketplace_items mi ON mi.id = o.marketplace_item_id "
-                            "  WHERE msi.supply_id = %s AND ("
-                            f"   upper(trim(coalesce(o.product_ozon_sku, ''))) IN ({vals}) "
-                            f"   OR upper(trim(coalesce(o.product_barcode, ''))) IN ({vals}) "
-                            f"   OR upper(trim(coalesce(mi.ozon_sku, ''))) IN ({vals}) "
-                            f"   OR upper(trim(coalesce(mi.barcode, ''))) IN ({vals})))",
-                            (int(supply_id), int(supply_id)),
-                        )
-                        plan_n, boxed_n = cur.fetchone()
-                        if plan_n and boxed_n >= plan_n:
-                            return {
-                                'statusCode': 409,
-                                'headers': headers,
-                                'body': json.dumps({
-                                    'error': f'«{busy_fbs[2] or "Товар"}»: по заявке {plan_n} шт., '
-                                             f'в коробах уже {boxed_n} — этот товар собран полностью. '
-                                             f'Эта штука лишняя: в короб не кладите, '
-                                             f'верните её на склад',
-                                    'overPlan': True,
-                                }, ensure_ascii=False),
-                            }
                     if busy_fbs:
                         return {
                             'statusCode': 409,
