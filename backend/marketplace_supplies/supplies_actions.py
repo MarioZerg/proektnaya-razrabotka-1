@@ -331,6 +331,100 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
             conn.commit()
             return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'id': supply_id})}
 
+        if action == 'fbo_missing_trace':
+            # ГДЕ ИСКАТЬ ТО, ЧЕГО НЕ ХВАТАЕТ В КОРОБАХ FBO (решение 23.10).
+            #
+            # По каждому товару, которого в коробах меньше, чем по заявке, —
+            # все вещи, которые могут закрыть недостачу:
+            #   * заказы этой поставки, ещё не уложенные: где они на конвейере
+            #     (новый, крой, пошив, стикеровка) или где лежит их вещь;
+            #   * свободные вещи этого товара на складе — с полкой и стикером.
+            # Только чтение: кладовщику нужно найти пакет, а не менять учёт.
+            sid = int(body_data.get('supplyId') or 0)
+            only_item = body_data.get('itemId')
+            if not sid:
+                return {'statusCode': 400, 'headers': headers,
+                        'body': json.dumps({'error': 'Нет поставки'}, ensure_ascii=False)}
+            cur.execute(
+                "WITH plan AS ("
+                "  SELECT COALESCE(o.marketplace_item_id, 0) mi, COUNT(*) n FROM orders o "
+                "  WHERE o.supply_id = %s AND COALESCE(o.status, '') <> 'Отменён' GROUP BY 1"
+                "), boxed AS ("
+                "  SELECT COALESCE(o.marketplace_item_id, 0) mi, COUNT(*) n "
+                "  FROM marketplace_supply_items msi "
+                "  JOIN goods_warehouse g ON g.id = msi.goods_warehouse_id "
+                "  JOIN orders o ON o.id = COALESCE(g.reserved_order_id, g.order_id) "
+                "  WHERE msi.supply_id = %s AND msi.box_id IS NOT NULL GROUP BY 1"
+                ") SELECT p.mi, m.sku, COALESCE(m.name, ''), p.n, COALESCE(x.n, 0) "
+                "FROM plan p LEFT JOIN boxed x ON x.mi = p.mi "
+                "LEFT JOIN marketplace_items m ON m.id = p.mi "
+                "WHERE p.n > COALESCE(x.n, 0)",
+                (sid, sid),
+            )
+            short = cur.fetchall()
+            if only_item not in (None, ''):
+                short = [r for r in short if int(r[0]) == int(only_item)]
+            result = []
+            for mi, sku, name, planned, boxed in short:
+                # 1) Заказы поставки по этому товару, чья вещь ещё не в коробе.
+                cur.execute(
+                    "SELECT o.id, o.order_number, o.sewing_status, o.product, "
+                    "       (SELECT full_name FROM users WHERE id = COALESCE(o.sewer_user_id, "
+                    "          o.cutter_user_id, o.assigned_user_id)), "
+                    "       g.storage_barcode, g.status, sh.name, g.shipping_labeled_at IS NOT NULL "
+                    "FROM orders o "
+                    "LEFT JOIN goods_warehouse g ON COALESCE(g.reserved_order_id, g.order_id) = o.id "
+                    "     AND g.status NOT IN ('shipped', 'lost') "
+                    "LEFT JOIN shelves sh ON sh.id = g.shelf_id "
+                    "WHERE o.supply_id = %s AND COALESCE(o.marketplace_item_id, 0) = %s "
+                    "  AND COALESCE(o.status, '') NOT IN ('Отменён', 'Отгружен', 'Доставлен') "
+                    "  AND NOT EXISTS (SELECT 1 FROM goods_warehouse g2 "
+                    "       JOIN marketplace_supply_items si ON si.goods_warehouse_id = g2.id "
+                    "        AND si.supply_id = %s "
+                    "       WHERE COALESCE(g2.reserved_order_id, g2.order_id) = o.id) "
+                    "ORDER BY o.id",
+                    (sid, int(mi), sid),
+                )
+                orders_rows = [{
+                    'orderId': r[0], 'orderNumber': r[1], 'sewingStatus': r[2],
+                    'product': r[3], 'worker': r[4], 'storageBarcode': r[5],
+                    'goodsStatus': r[6], 'shelf': r[7], 'labeled': bool(r[8]),
+                } for r in cur.fetchall()]
+                # 2) Свободные вещи этого товара на складе: не в живой поставке и
+                #    не под живым заказом FBS.
+                cur.execute(
+                    "SELECT g.storage_barcode, g.status, sh.name, "
+                    "       g.shipping_labeled_at IS NOT NULL, own.order_number, own.order_type "
+                    "FROM goods_warehouse g "
+                    "JOIN orders own ON own.id = COALESCE(g.reserved_order_id, g.order_id) "
+                    "LEFT JOIN shelves sh ON sh.id = g.shelf_id "
+                    "WHERE COALESCE(own.marketplace_item_id, 0) = %s "
+                    "  AND g.shipped_at IS NULL "
+                    "  AND g.status IN ('in_stock', 'awaiting_supply', 'picking', 'awaiting_shelf') "
+                    "  AND COALESCE(own.supply_id, 0) <> %s "
+                    "  AND (own.order_number LIKE 'WH-%%' OR own.order_type = 'FBO' "
+                    "       OR COALESCE(own.status, '') IN ('Отменён', 'Отгружен', 'Доставлен') "
+                    "       OR lower(COALESCE(own.ozon_status, '')) LIKE 'cancel%%') "
+                    "  AND NOT EXISTS (SELECT 1 FROM marketplace_supply_items si "
+                    "       JOIN marketplace_supplies s ON s.id = si.supply_id "
+                    "       WHERE si.goods_warehouse_id = g.id "
+                    "         AND COALESCE(s.status, '') NOT IN ('Выполнена', 'Отменена')) "
+                    "ORDER BY (g.shelf_id IS NULL), sh.name, g.storage_barcode LIMIT 30",
+                    (int(mi), sid),
+                )
+                stock_rows = [{
+                    'storageBarcode': r[0], 'goodsStatus': r[1], 'shelf': r[2],
+                    'labeled': bool(r[3]),
+                } for r in cur.fetchall()]
+                result.append({
+                    'itemId': int(mi) or None, 'offerId': sku, 'name': name,
+                    'planned': int(planned), 'inBoxes': int(boxed),
+                    'missing': int(planned) - int(boxed),
+                    'orders': orders_rows, 'stock': stock_rows,
+                })
+            return {'statusCode': 200, 'headers': headers,
+                    'body': json.dumps({'items': result}, ensure_ascii=False, default=str)}
+
         if action == 'scan_bundle_label':
             # ВТОРОЙ ШАГ сборки связки: общий ярлык маркетплейса на коробку.
             #

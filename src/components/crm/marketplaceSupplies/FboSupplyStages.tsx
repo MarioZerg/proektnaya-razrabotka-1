@@ -14,6 +14,7 @@ import WbFboSupplyCard from '@/components/crm/marketplaceSupplies/WbFboSupplyCar
 import WaybillCard from '@/components/crm/marketplaceSupplies/WaybillCard';
 import SupplyAcceptanceCard from '@/components/crm/marketplaceSupplies/SupplyAcceptanceCard';
 import FboArticlesCheck from '@/components/crm/marketplaceSupplies/FboArticlesCheck';
+import FboMissingTrace from '@/components/crm/marketplaceSupplies/FboMissingTrace';
 import type { GoodsWarehouseItem } from '@/lib/goodsWarehouseApi';
 import type { SupplyShowContentProps } from '@/components/crm/marketplaceSupplies/SupplyShowContent';
 
@@ -255,6 +256,7 @@ const FboSupplyStages = ({
         <div className="space-y-4">
           <FboArticlesCheck rows={supply.fboArticles || []} onRefresh={() => load(true)}
           />
+          <FboMissingTrace supplyId={supply.id} />
           <SupplyGroupsPanel
             groups={supply.groups || []}
             cancelledCount={supply.items.filter((i) => i.isCancelled).length}

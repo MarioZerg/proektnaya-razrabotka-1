@@ -1,3 +1,4 @@
+import FboMissingTrace from '@/components/crm/marketplaceSupplies/FboMissingTrace';
 import { useParams } from 'react-router-dom';
 import CrmLayout from '@/components/crm/CrmLayout';
 import Icon from '@/components/ui/icon';
@@ -143,6 +144,10 @@ const MarketplaceSupplyAssemble = () => {
         {/* Листы Газельки клеятся на короба во время сборки — держим печать
             здесь, а не только в карточке поставки у блока перевозки. */}
         {supply.type === 'FBO' && <GazelkaLabelsCard supply={supply} />}
+
+        {supply.type === 'FBO' && (
+          <FboMissingTrace supplyId={supply.id} refreshKey={totalBoxedItems} />
+        )}
 
         <SupplyCandidatesPanel
           open={candidatesOpen}

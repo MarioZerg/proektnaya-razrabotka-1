@@ -876,3 +876,38 @@ export const confirmGazelkaShip = async (supplyId: number, shipped: boolean) => 
   if (!res.ok) throw new Error(data.error || 'Не удалось сохранить');
   return data;
 };
+/** Где искать недостающее по заявке FBO: заказы поставки и свободные вещи склада. */
+export interface FboMissingOrder {
+  orderId: number;
+  orderNumber: string;
+  sewingStatus: string;
+  product: string | null;
+  worker: string | null;
+  storageBarcode: string | null;
+  goodsStatus: string | null;
+  shelf: string | null;
+  labeled: boolean;
+}
+
+export interface FboMissingStock {
+  storageBarcode: string;
+  goodsStatus: string;
+  shelf: string | null;
+  labeled: boolean;
+}
+
+export interface FboMissingItem {
+  itemId: number | null;
+  offerId: string | null;
+  name: string;
+  planned: number;
+  inBoxes: number;
+  missing: number;
+  orders: FboMissingOrder[];
+  stock: FboMissingStock[];
+}
+
+export const fetchFboMissingTrace = async (supplyId: number): Promise<FboMissingItem[]> => {
+  const data = await postAction({ action: 'fbo_missing_trace', supplyId });
+  return (data.items || []) as FboMissingItem[];
+};
