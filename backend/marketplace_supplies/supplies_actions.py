@@ -1389,7 +1389,7 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                 # Вещь брали с полки склада — возвращаем её туда. Ярлык маркетплейса
                 # аннулируем: он выписан под конкретное отправление.
                 cur.execute(
-                    "UPDATE goods_warehouse SET status = 'in_stock', "
+                    "UPDATE goods_warehouse SET status = CASE WHEN shelf_id IS NULL THEN 'awaiting_shelf' ELSE 'in_stock' END, "
                     "shipping_labeled_at = NULL, shipping_labeled_by = NULL, shipping_labeled_by_name = NULL, reserved_order_id = NULL, matched_at = NULL "
                     f"WHERE id = {int(goods_id)}"
                 )
@@ -2753,7 +2753,7 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                 return_wb_order_to_accumulator(cur, goods_id)
             else:
                 cur.execute(
-                    "UPDATE goods_warehouse SET status = 'in_stock', "
+                    "UPDATE goods_warehouse SET status = CASE WHEN shelf_id IS NULL THEN 'awaiting_shelf' ELSE 'in_stock' END, "
                     "shipping_labeled_at = NULL, shipping_labeled_by = NULL, shipping_labeled_by_name = NULL, reserved_order_id = NULL, matched_at = NULL "
                     f"WHERE id = {int(goods_id)}"
                 )
@@ -2875,7 +2875,7 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                     return_wb_order_to_accumulator(cur, goods_id)
                 else:
                     cur.execute(
-                        "UPDATE goods_warehouse SET status = 'in_stock', "
+                        "UPDATE goods_warehouse SET status = CASE WHEN shelf_id IS NULL THEN 'awaiting_shelf' ELSE 'in_stock' END, "
                         "shipping_labeled_at = NULL, shipping_labeled_by = NULL, "
                         "shipping_labeled_by_name = NULL, reserved_order_id = NULL, "
                         f"matched_at = NULL WHERE id = {int(goods_id)}"
@@ -3674,7 +3674,7 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
             # Вещь была подобрана с полки — возвращаем её обратно в свободный остаток.
             if o_from_stock:
                 cur.execute(
-                    "UPDATE goods_warehouse SET status = 'in_stock', "
+                    "UPDATE goods_warehouse SET status = CASE WHEN shelf_id IS NULL THEN 'awaiting_shelf' ELSE 'in_stock' END, "
                     "  reserved_order_id = NULL, matched_at = NULL "
                     "WHERE id = %s AND status <> 'shipped'",
                     (int(o_from_stock),),
@@ -3926,7 +3926,7 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                 # с чужим заказом на борту, пропадает из подбора и мешает работе
                 # сканера — он находит её, но застикеровать её нельзя.
                 cur.execute(
-                    "UPDATE goods_warehouse SET status = 'in_stock', "
+                    "UPDATE goods_warehouse SET status = CASE WHEN shelf_id IS NULL THEN 'awaiting_shelf' ELSE 'in_stock' END, "
                     "reserved_order_id = NULL, matched_at = NULL, "
                     f"shipping_labeled_at = NULL WHERE id = {gid}"
                 )

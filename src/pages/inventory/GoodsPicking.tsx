@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button';
 import PickingScanDialog from '@/components/crm/goodsWarehouse/PickingScanDialog';
 import ShippedStuckPanel from '@/components/crm/goodsWarehouse/ShippedStuckPanel';
 import ExtraFboPanel from '@/components/crm/goodsWarehouse/ExtraFboPanel';
+import NoShelfPanel from '@/components/crm/goodsWarehouse/NoShelfPanel';
 import GoodsPickingHeader from '@/components/crm/goodsWarehouse/GoodsPickingHeader';
 import GoodsPickingFilters from '@/components/crm/goodsWarehouse/GoodsPickingFilters';
 import GoodsPickingTable from '@/components/crm/goodsWarehouse/GoodsPickingTable';
@@ -69,6 +70,10 @@ const GoodsPicking = () => {
           setShelfFilter={setShelfFilter}
           shelfStats={shelfStats}
         />
+
+        {/* Вещь не может лежать без полки: такие показываем первыми, с выбором
+            полки прямо в строке. */}
+        <NoShelfPanel />
 
         <PickingScanDialog
           open={scanOpen}

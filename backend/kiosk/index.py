@@ -172,7 +172,7 @@ def release_shelf_reserve(cur, order_id, actor_id=None, actor_name=None):
     Вещь, уже отстикерованную ярлыком отправления, не трогаем.
     """
     cur.execute(
-        "UPDATE goods_warehouse SET status = 'in_stock', reserved_order_id = NULL, "
+        "UPDATE goods_warehouse SET status = CASE WHEN shelf_id IS NULL THEN 'awaiting_shelf' ELSE 'in_stock' END, reserved_order_id = NULL, "
         "  matched_at = NULL "
         "WHERE reserved_order_id = %s AND order_id <> %s "
         "  AND shipped_at IS NULL AND shipping_labeled_at IS NULL "

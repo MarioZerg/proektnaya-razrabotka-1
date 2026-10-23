@@ -1106,3 +1106,23 @@ export const downloadStockExcel = async (
   document.body.removeChild(a);
   URL.revokeObjectURL(url);
 };
+/** Вещь на складе без полки — её нужно найти и уложить. */
+export interface NoShelfItem {
+  id: number;
+  storageBarcode: string;
+  status: string;
+  product: string | null;
+  orderNumber: string | null;
+  receivedAt: string | null;
+}
+
+export const fetchNoShelfItems = async (): Promise<NoShelfItem[]> => {
+  const data = await postAction({ action: 'no_shelf_list' });
+  return (data.items || []) as NoShelfItem[];
+};
+
+export const placeNoShelfItem = (id: number, shelfId: number, actorId?: number, actorName?: string) =>
+  postAction({ action: 'place_no_shelf', id, shelfId, actorId, actorName }) as Promise<{
+    success: true;
+    shelf: string;
+  }>;

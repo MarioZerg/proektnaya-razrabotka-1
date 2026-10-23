@@ -1061,7 +1061,7 @@ def release_cancelled_item(cur, goods_id):
     """
     cur.execute(
         "UPDATE goods_warehouse SET "
-        "  status = 'in_stock', "
+        "  status = CASE WHEN shelf_id IS NULL THEN 'awaiting_shelf' ELSE 'in_stock' END, "
         # Вещь физически у нас — отметку об отгрузке снимаем, иначе склад
         # продолжит считать её уехавшей и не даст ни печати, ни полки.
         "  shipped_at = NULL, "
@@ -1290,13 +1290,13 @@ def release_fbo_underfill_leftovers(cur, supply_id):
             # Вещь с полки: бронь снимаем, статус обратно в свободный остаток.
             if from_stock_id:
                 cur.execute(
-                    "UPDATE goods_warehouse SET status = 'in_stock', "
+                    "UPDATE goods_warehouse SET status = CASE WHEN shelf_id IS NULL THEN 'awaiting_shelf' ELSE 'in_stock' END, "
                     "  reserved_order_id = NULL, matched_at = NULL "
                     "WHERE id = %s AND status <> 'shipped'",
                     (int(from_stock_id),),
                 )
             cur.execute(
-                "UPDATE goods_warehouse SET status = 'in_stock', "
+                "UPDATE goods_warehouse SET status = CASE WHEN shelf_id IS NULL THEN 'awaiting_shelf' ELSE 'in_stock' END, "
                 "  reserved_order_id = NULL, matched_at = NULL "
                 "WHERE reserved_order_id = %s AND status <> 'shipped'",
                 (oid,),

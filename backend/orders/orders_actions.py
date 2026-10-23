@@ -674,7 +674,7 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
             # отстикерованную под FBO — свободной «к поставке» без брони.
             cur.execute(
                 "UPDATE goods_warehouse SET reserved_order_id = NULL, matched_at = NULL, "
-                "  status = CASE WHEN shipping_labeled_at IS NULL THEN 'in_stock' ELSE status END "
+                "  status = CASE WHEN shipping_labeled_at IS NULL THEN (CASE WHEN shelf_id IS NULL THEN 'awaiting_shelf' ELSE 'in_stock' END) ELSE status END "
                 f"WHERE reserved_order_id IN ({ids_csv}) "
                 "  AND order_id <> reserved_order_id "
                 "  AND shipped_at IS NULL "

@@ -988,7 +988,7 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                     continue
 
                 cur.execute(
-                    f"UPDATE goods_warehouse SET status = 'in_stock', "
+                    f"UPDATE goods_warehouse SET status = CASE WHEN shelf_id IS NULL THEN 'awaiting_shelf' ELSE 'in_stock' END, "
                     f"shelf_id = {int(shelf_id)}, taken_at = COALESCE(taken_at, now()), "
                     f"taken_by = COALESCE(taken_by, {int(actor_id) if actor_id else 'NULL'}), "
                     f"received_at = now() WHERE id = {gid}"
@@ -1403,6 +1403,112 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
             )
             conn.commit()
             return _ok(shelf_name, popular)
+
+        # ВЕЩЬ НЕ МОЖЕТ ЛЕЖАТЬ БЕЗ ПОЛКИ (решение 23.10).
+        #
+        # Без полки вещь теряется: подбор её не видит, кладовщик не знает, где
+        # искать, и под заказ шьют вторую такую же. Сюда попадает всё, что по
+        # учёту на складе, но без места:
+        #   * «на хранении» / «ждёт полку» / «в подборе» без полки;
+        #   * «ждёт поставку» без живой поставки, если ярлык не наклеен или
+        #     заказ, под который её готовили, уже отменён или уехал.
+        # Вещи в контейнере FBS с ярлыком живого заказа и вещи в живой поставке
+        # сюда не входят — их место контейнер и короб.
+        NO_SHELF_SQL = (
+            "g.shelf_id IS NULL AND g.shipped_at IS NULL "
+            "AND NOT " + GOODS_IN_LIVE_SUPPLY_SQL.format(gw='g') + " "
+            "AND ("
+            "  g.status IN ('in_stock', 'awaiting_shelf', 'picking') "
+            "  OR (g.status = 'awaiting_supply' AND ("
+            "       g.shipping_labeled_at IS NULL "
+            "       OR COALESCE(own.status, '') IN ('Отменён', 'Отгружен', 'Доставлен') "
+            "       OR lower(COALESCE(own.ozon_status, '')) LIKE 'cancel%%'))"
+            ")"
+        )
+
+        if action == 'no_shelf_list':
+            # «На хранении» без полки быть не может — такие сразу в «Ждёт полку».
+            cur.execute(
+                "UPDATE goods_warehouse SET status = 'awaiting_shelf' "
+                "WHERE status = 'in_stock' AND shelf_id IS NULL AND shipped_at IS NULL"
+            )
+            cur.execute(
+                "SELECT g.id, g.storage_barcode, g.status, "
+                "  COALESCE(own.product, src.product), own.order_number, g.received_at "
+                "FROM goods_warehouse g "
+                "JOIN orders src ON src.id = g.order_id "
+                "LEFT JOIN orders own ON own.id = COALESCE(g.reserved_order_id, g.order_id) "
+                f"WHERE {NO_SHELF_SQL} "
+                "ORDER BY g.received_at NULLS LAST LIMIT 200"
+            )
+            items = [{
+                'id': r[0], 'storageBarcode': r[1], 'status': r[2], 'product': r[3],
+                'orderNumber': r[4], 'receivedAt': r[5].isoformat() if r[5] else None,
+            } for r in cur.fetchall()]
+            conn.commit()
+            return {'statusCode': 200, 'headers': headers,
+                    'body': json.dumps({'items': items}, ensure_ascii=False)}
+
+        if action == 'place_no_shelf':
+            gid = body_data.get('id')
+            shelf_id = body_data.get('shelfId')
+            if not gid or not shelf_id:
+                return {'statusCode': 400, 'headers': headers,
+                        'body': json.dumps({'error': 'Выберите полку'}, ensure_ascii=False)}
+            cur.execute("SELECT name FROM shelves WHERE id = %s", (int(shelf_id),))
+            sh = cur.fetchone()
+            if not sh:
+                return {'statusCode': 404, 'headers': headers,
+                        'body': json.dumps({'error': 'Полка не найдена'}, ensure_ascii=False)}
+            cur.execute(
+                "SELECT g.id, g.storage_barcode, g.status, "
+                "  (COALESCE(own.status, '') IN ('Отменён', 'Отгружен', 'Доставлен') "
+                "   OR lower(COALESCE(own.ozon_status, '')) LIKE 'cancel%%' "
+                "   OR g.shipping_labeled_at IS NULL) "
+                "FROM goods_warehouse g "
+                "LEFT JOIN orders own ON own.id = COALESCE(g.reserved_order_id, g.order_id) "
+                f"WHERE g.id = %s AND {NO_SHELF_SQL} FOR UPDATE OF g",
+                (int(gid),),
+            )
+            row = cur.fetchone()
+            if not row:
+                return {'statusCode': 409, 'headers': headers,
+                        'body': json.dumps({'error': 'Вещь уже на месте или в поставке — обновите список'},
+                                           ensure_ascii=False)}
+            _, bc, st, free_it = row
+            if st == 'awaiting_supply' and free_it:
+                # Под мёртвый заказ или без ярлыка — вещь снова свободный остаток.
+                log_stock_release(cur, "o.fulfilled_from_stock_id = %s", (int(gid),),
+                                  'вещь без полки уложена на полку', actor_id, actor_name)
+                cur.execute(
+                    "UPDATE orders SET fulfilled_from_stock_id = NULL, "
+                    "  sewing_status = CASE WHEN COALESCE(status, '') IN "
+                    "      ('Отгружен', 'Доставлен', 'Выполнен', 'Отменён') "
+                    "    OR COALESCE(ozon_status, '') IN ('delivering', 'delivered', 'driver_pickup') "
+                    "    OR lower(COALESCE(ozon_status, '')) LIKE 'cancel%%' "
+                    "    THEN sewing_status ELSE 'Новый' END "
+                    "WHERE fulfilled_from_stock_id = %s",
+                    (int(gid),),
+                )
+                cur.execute(
+                    "UPDATE goods_warehouse SET status = 'in_stock', shelf_id = %s, "
+                    "  reserved_order_id = NULL, matched_at = NULL, shipping_labeled_at = NULL, "
+                    "  shipping_labeled_by = NULL, shipping_labeled_by_name = NULL "
+                    "WHERE id = %s",
+                    (int(shelf_id), int(gid)),
+                )
+            elif st == 'picking':
+                cur.execute("UPDATE goods_warehouse SET shelf_id = %s WHERE id = %s",
+                            (int(shelf_id), int(gid)))
+            else:
+                cur.execute("UPDATE goods_warehouse SET status = 'in_stock', shelf_id = %s WHERE id = %s",
+                            (int(shelf_id), int(gid)))
+            log_action(cur, actor_id, actor_name, 'place_no_shelf', 'goods_warehouse', int(gid),
+                       f'Вещь {bc} лежала без полки — уложена на полку «{sh[0]}»')
+            try_match_orders_from_stock(cur, gw_id=int(gid))
+            conn.commit()
+            return {'statusCode': 200, 'headers': headers,
+                    'body': json.dumps({'success': True, 'shelf': sh[0]}, ensure_ascii=False)}
 
         if action == 'to_shelf_from_inspection':
             # Вещь вернулась с маркетплейса в порядке — осматривать её в цехе незачем.
@@ -2079,7 +2185,7 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
             released = []
             for sid, barcode_v, num, oz_status, o_status in stale:
                 cur.execute(
-                    "UPDATE goods_warehouse SET status = 'in_stock', "
+                    "UPDATE goods_warehouse SET status = CASE WHEN shelf_id IS NULL THEN 'awaiting_shelf' ELSE 'in_stock' END, "
                     "reserved_order_id = NULL, matched_at = NULL WHERE id = %s",
                     (int(sid),),
                 )
@@ -2475,7 +2581,7 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                 # печатают заново.
                 if lbl and lbl[4]:
                     cur.execute(
-                        "UPDATE goods_warehouse SET status = 'in_stock', "
+                        "UPDATE goods_warehouse SET status = CASE WHEN shelf_id IS NULL THEN 'awaiting_shelf' ELSE 'in_stock' END, "
                         "reserved_order_id = NULL, matched_at = NULL, "
                         "shipping_labeled_at = NULL, shipping_labeled_by = NULL, "
                         "shipping_labeled_by_name = NULL WHERE id = %s",
@@ -2922,7 +3028,7 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
 
             target_shelf = int(shelf_id) if shelf_id else rs_shelf
             cur.execute(
-                "UPDATE goods_warehouse SET status = 'in_stock', "
+                "UPDATE goods_warehouse SET status = CASE WHEN shelf_id IS NULL THEN 'awaiting_shelf' ELSE 'in_stock' END, "
                 "  reserved_order_id = NULL, matched_at = NULL, "
                 "  picked_confirmed_at = NULL, picked_confirmed_by = NULL, "
                 "  shipping_labeled_at = NULL, shipping_labeled_by = NULL, "
@@ -3010,7 +3116,7 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
             # не видно, а на складе она выглядит свободной. Кладовщик пикал такую
             # вещь сканером и упирался в «товар принадлежит другому заказу».
             cur.execute(
-                "UPDATE goods_warehouse SET status = 'in_stock', reserved_order_id = NULL, "
+                "UPDATE goods_warehouse SET status = CASE WHEN shelf_id IS NULL THEN 'awaiting_shelf' ELSE 'in_stock' END, reserved_order_id = NULL, "
                 f"matched_at = NULL, shipping_labeled_at = NULL, shipping_labeled_by = NULL, shipping_labeled_by_name = NULL WHERE id = {int(item_id)}"
             )
             conn.commit()
@@ -3135,7 +3241,7 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                 if group_key:
                     cur.execute(
                         "UPDATE goods_warehouse gw SET reserved_order_id = NULL, "
-                        "matched_at = NULL, status = 'in_stock' "
+                        "matched_at = NULL, status = CASE WHEN shelf_id IS NULL THEN 'awaiting_shelf' ELSE 'in_stock' END "
                         "FROM orders o "
                         "WHERE o.id = gw.reserved_order_id AND o.group_key = %s "
                         "  AND gw.status = 'picking' AND gw.id <> %s",
@@ -3467,7 +3573,7 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                         cur.execute(
                             # Освободилась — снова свободный остаток на полке.
                             "UPDATE goods_warehouse SET reserved_order_id = NULL, "
-                            "status = 'in_stock', matched_at = NULL, "
+                            "status = CASE WHEN shelf_id IS NULL THEN 'awaiting_shelf' ELSE 'in_stock' END, matched_at = NULL, "
                             "shipping_labeled_at = NULL, shipping_labeled_by = NULL, shipping_labeled_by_name = NULL WHERE id = %s",
                             (sib,),
                         )
@@ -3558,7 +3664,7 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
 
             if with_shelf:
                 cur.execute(
-                    "UPDATE goods_warehouse SET status = 'in_stock', "
+                    "UPDATE goods_warehouse SET status = CASE WHEN shelf_id IS NULL THEN 'awaiting_shelf' ELSE 'in_stock' END, "
                     "  reserved_order_id = NULL, matched_at = NULL, "
                     "  shipping_labeled_at = NULL, shipping_labeled_by = NULL, "
                     "  shipping_labeled_by_name = NULL "
@@ -3772,7 +3878,7 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
             # остаток товар, которого на складе нет, — и он тут же попадёт под
             # новый заказ, который кладовщику будет нечем собрать.
             cur.execute(
-                "UPDATE goods_warehouse gw SET status = 'in_stock', "
+                "UPDATE goods_warehouse gw SET status = CASE WHEN gw.shelf_id IS NULL THEN 'awaiting_shelf' ELSE 'in_stock' END, "
                 "  reserved_order_id = NULL, matched_at = NULL, "
                 "  shipping_labeled_at = NULL, shipping_labeled_by = NULL, "
                 "  shipping_labeled_by_name = NULL "
@@ -3914,7 +4020,7 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                 )
             else:
                 cur.execute(
-                    "UPDATE goods_warehouse SET status = 'in_stock', "
+                    "UPDATE goods_warehouse SET status = CASE WHEN shelf_id IS NULL THEN 'awaiting_shelf' ELSE 'in_stock' END, "
                     "lost_reason = NULL, lost_at = NULL, shipped_at = NULL, "
                     # Снимаем и пометку утилизации: вещь вернулась в оборот
                     # целой, причина списания к ней больше не относится.
