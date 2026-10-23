@@ -64,6 +64,9 @@ export const printFboSticker = (order: Order): void => {
   const barcodeSvg = barcodeText ? svgBarcode(barcodeText) : '';
   const productName = order.material || order.product || '—';
   const stickerNumber = shortOrderNumber(order.orderNumber);
+  // Вещь взята с полки склада, а не сшита под заказ — пометка на стикере, чтобы
+  // при сборке коробов было видно, откуда товар (решение 23.10).
+  const fromStock = order.sewingStatus === 'Со склада';
 
   const html = `<!doctype html><html><head><meta charset="utf-8">
     <title>Стикер FBO — ${esc(order.orderNumber)}</title>
@@ -87,6 +90,7 @@ export const printFboSticker = (order: Order): void => {
       .right .order { font-weight: 400; }
       .right .cluster { font-weight: 700; margin-top: 1mm; }
       .foot { text-align: right; font-size: 7.5pt; font-weight: 700; margin-top: auto; }
+      .foot.stock { font-size: 10pt; letter-spacing: 0.3px; }
       .nobc { font-size: 8pt; color: #b00; text-align: center; padding: 4mm 0; }
     </style></head><body>
     <div class="label">
@@ -107,8 +111,12 @@ export const printFboSticker = (order: Order): void => {
           <div class="cluster">${esc(order.cluster)}</div>
         </div>
       </div>
-      <div class="foot">
-        закройщик № ${order.cutterUserId ?? '—'} | швея № ${order.sewerUserId ?? '—'}
+      <div class="foot${fromStock ? ' stock' : ''}">
+        ${
+          fromStock
+            ? 'FBO склада'
+            : `закройщик № ${order.cutterUserId ?? '—'} | швея № ${order.sewerUserId ?? '—'}`
+        }
       </div>
     </div>
     </body></html>`;

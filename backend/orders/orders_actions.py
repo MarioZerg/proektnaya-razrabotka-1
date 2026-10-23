@@ -665,6 +665,37 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                 f"UPDATE orders SET sewing_status = 'На раскрое', assigned_user_id = {int(user_id)}, "
                 f"workshop_id = {int(workshop_id)} WHERE id IN ({ids_csv})"
             )
+            # ВЗЯЛИ В РАСКРОЙ — ПОДБОР СО СКЛАДА ОСВОБОЖДАЕМ ОБЯЗАТЕЛЬНО.
+            #
+            # Заказ теперь даст свою вещь из цеха. Если за ним ещё числится вещь
+            # со склада, под поставку уедет две штуки вместо одной: пошив и подбор
+            # закрывают один и тот же заказ (Пушкино #1487, 23.10). Полочную вещь
+            # возвращаем свободной: неотстикерованную — на хранение, уже
+            # отстикерованную под FBO — свободной «к поставке» без брони.
+            cur.execute(
+                "UPDATE goods_warehouse SET reserved_order_id = NULL, matched_at = NULL, "
+                "  status = CASE WHEN shipping_labeled_at IS NULL THEN 'in_stock' ELSE status END "
+                f"WHERE reserved_order_id IN ({ids_csv}) "
+                "  AND order_id <> reserved_order_id "
+                "  AND shipped_at IS NULL "
+                "  AND status IN ('picking', 'in_stock', 'awaiting_supply') "
+                "  AND NOT EXISTS (SELECT 1 FROM marketplace_supply_items si "
+                "                  JOIN marketplace_supplies s ON s.id = si.supply_id "
+                "                  WHERE si.goods_warehouse_id = goods_warehouse.id "
+                "                    AND COALESCE(s.status, '') NOT IN ('Выполнена', 'Отменена')) "
+                "RETURNING id, storage_barcode"
+            )
+            for rel_id, rel_bc in cur.fetchall():
+                log_action(
+                    cur, actor_id, actor_name, 'release_shelf_reserve', 'goods_warehouse',
+                    int(rel_id),
+                    f'Вещь {rel_bc} снята с подбора: заказ взят в раскрой, '
+                    f'вещь со склада снова свободна',
+                )
+            cur.execute(
+                f"UPDATE orders SET fulfilled_from_stock_id = NULL WHERE id IN ({ids_csv}) "
+                "  AND fulfilled_from_stock_id IS NOT NULL"
+            )
             log_action(
                 cur, actor_id, actor_name, 'take_stack', 'order', None,
                 (f'Взял в раскрой 1 заказ' if single_mode

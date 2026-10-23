@@ -2218,9 +2218,16 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                     "LEFT JOIN marketplace_items mi ON mi.id = o.marketplace_item_id "
                     "WHERE o.supply_id = %s "
                     "  AND COALESCE(o.status, '') <> 'Отменён' "
+                    # Своя живая вещь у заказа уже есть (сшитая или подобранная) —
+                    # вторую под него не ставим, иначе под поставку уедет больше.
                     "  AND NOT EXISTS (SELECT 1 FROM goods_warehouse g2 "
-                    "                  WHERE g2.reserved_order_id = o.id "
-                    "                    AND g2.shipped_at IS NULL) "
+                    "                  WHERE COALESCE(g2.reserved_order_id, g2.order_id) = o.id "
+                    "                    AND g2.shipped_at IS NULL "
+                    "                    AND g2.status NOT IN ('shipped', 'lost')) "
+                    # Заказ уже в цехе (крой, пошив, стикеровка) — он даст свою
+                    # вещь сам. Складскую под него не ставим (решение 23.10).
+                    "  AND o.sewing_status NOT IN ('На раскрое', 'Раскроено', "
+                    "                              'В работе', 'Стикеровка') "
                     "  AND ("
                     f"       upper(trim(coalesce(o.product_ozon_sku, ''))) IN ({vals}) "
                     f"    OR upper(trim(coalesce(mi.ozon_sku, ''))) IN ({vals}) "
