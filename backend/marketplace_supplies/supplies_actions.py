@@ -1525,6 +1525,49 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
             if (supply_type or '').upper() == 'FBO':
                 code = order_number.strip().strip('\r\n\t ').upper()
 
+                # ОДИН СКАН — ОДНА ШТУКА, ДАЖЕ ЕСЛИ СЕРВЕР ОТВЕТИЛ С ЗАДЕРЖКОЙ.
+                #
+                # Ярлык OZN одинаковый на весь артикул. Сервер долго не отвечал,
+                # кладовщик пикал пакет повторно — и в короб ложились ДВЕ штуки,
+                # хотя в руках одна (#1487, Лен 300x245: 17 в коробе 6, 23.10).
+                #
+                # 1) Сканы одной поставки идут строго по очереди: блокируем
+                #    строку поставки до конца транзакции. Два одновременных
+                #    запроса больше не выбирают вещи параллельно.
+                # 2) Каждый скан приходит с номером (scanId). Повторная отправка
+                #    того же скана (сеть, повтор запроса) не добавляет штуку,
+                #    а возвращает уже записанную.
+                cur.execute("SELECT id FROM marketplace_supplies WHERE id = %s FOR UPDATE",
+                            (int(supply_id),))
+                scan_id = str(body_data.get('scanId') or '').strip()[:64] or None
+                if scan_id:
+                    cur.execute(
+                        "SELECT si.id, si.goods_warehouse_id, si.box_id, gw.storage_barcode, "
+                        "       o.product, o.material, o.width, o.height "
+                        "FROM marketplace_supply_items si "
+                        "JOIN goods_warehouse gw ON gw.id = si.goods_warehouse_id "
+                        "LEFT JOIN orders o ON o.id = COALESCE(gw.reserved_order_id, gw.order_id) "
+                        "WHERE si.scan_id = %s",
+                        (scan_id,),
+                    )
+                    dup = cur.fetchone()
+                    if dup:
+                        conn.rollback()
+                        return {
+                            'statusCode': 200,
+                            'headers': headers,
+                            'body': json.dumps({
+                                'success': True,
+                                'duplicate': True,
+                                'item': {
+                                    'id': dup[0], 'goodsWarehouseId': dup[1], 'boxId': dup[2],
+                                    'orderNumber': dup[3], 'storageBarcode': dup[3],
+                                    'product': dup[4] or 'Товар', 'material': dup[5],
+                                    'width': dup[6], 'height': dup[7],
+                                },
+                            }, ensure_ascii=False),
+                        }
+
                 # Складской стикер — это конкретная вещь в руках. В короб пишем её,
                 # а не соседнюю штуку того же размера. Неотстикерованную (ещё на
                 # полке, без ярлыка OZN) по-прежнему не принимаем: на приёмке
@@ -2152,9 +2195,9 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
 
                 cur.execute(
                     "INSERT INTO marketplace_supply_items "
-                    "  (supply_id, goods_warehouse_id, box_id) "
-                    "VALUES (%s, %s, %s) RETURNING id",
-                    (int(supply_id), int(fbo_gid), int(box_id)),
+                    "  (supply_id, goods_warehouse_id, box_id, scan_id) "
+                    "VALUES (%s, %s, %s, %s) RETURNING id",
+                    (int(supply_id), int(fbo_gid), int(box_id), scan_id),
                 )
                 new_item_id = cur.fetchone()[0]
 

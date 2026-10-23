@@ -1,0 +1,2 @@
+ALTER TABLE t_p86119184_proektnaya_razrabotk.marketplace_supply_items ADD COLUMN IF NOT EXISTS scan_id varchar(64);
+CREATE UNIQUE INDEX IF NOT EXISTS uq_msi_scan_id ON t_p86119184_proektnaya_razrabotk.marketplace_supply_items (scan_id) WHERE scan_id IS NOT NULL;

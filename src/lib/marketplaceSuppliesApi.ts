@@ -666,8 +666,53 @@ export interface FboArticleRow {
 /** Кладёт товар в короб поставки по ШТРИХКОДУ ХРАНЕНИЯ (GW-XXXXXX). Параметр называется
  * orderNumber ради совместимости, но номер заказа маркетплейса сюда передавать нельзя —
  * в поставку попадает только реально отсканированная вещь. */
-export const addOrderToBox = (boxId: number, orderNumber: string): Promise<AddOrderToBoxResult> =>
-  postAction({ action: 'add_order_to_box', boxId, orderNumber });
+export const addOrderToBox = async (
+  boxId: number,
+  orderNumber: string,
+  onRetry?: (attempt: number) => void,
+): Promise<AddOrderToBoxResult> => {
+  // Номер скана: повторная отправка того же скана сервер узнаёт и вторую штуку
+  // не добавляет. Связь пропала — терминал сам повторяет ЭТОТ ЖЕ скан, кладовщику
+  // пикать пакет ещё раз не нужно (иначе в короб ложились две штуки вместо одной).
+  const scanId =
+    typeof crypto !== 'undefined' && 'randomUUID' in crypto
+      ? crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  const payload = { actorRole: currentRole(), actorId: currentUserId(), action: 'add_order_to_box', boxId, orderNumber, scanId };
+  const delays = [0, 1500, 3000, 5000, 8000];
+  let lastError: unknown = null;
+  for (let attempt = 0; attempt < delays.length; attempt += 1) {
+    if (delays[attempt]) {
+      onRetry?.(attempt);
+      await new Promise((r) => setTimeout(r, delays[attempt]));
+    }
+    let res: Response;
+    try {
+      res = await fetch(SUPPLIES_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+    } catch (e) {
+      lastError = e;
+      continue;
+    }
+    if (res.status >= 500) {
+      lastError = new Error('Сервер не ответил');
+      continue;
+    }
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      if (data.cancelled) throw new CancelledOrderError(data.error || 'Заказ отменён', data);
+      throw new Error(data.error || 'Ошибка запроса');
+    }
+    return data;
+  }
+  console.error('addOrderToBox failed', lastError);
+  throw new Error(
+    'Нет связи с сервером — скан НЕ записан. Проверьте интернет и отсканируйте этот пакет ещё раз',
+  );
+};
 
 export const removeBoxItem = (itemId: number) => postAction({ action: 'remove_box_item', itemId });
 

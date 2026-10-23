@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useToast } from '@/hooks/use-toast';
 import {
@@ -182,9 +182,34 @@ export const useSupplyAssemble = (supplyId: number) => {
     }
   };
 
+  // Ярлыки, скан которых ещё в пути. Ярлык OZN одинаковый на весь артикул: если
+  // сервер задумался и кладовщик пикнул тот же пакет ещё раз, это повтор, а не
+  // вторая штука. Пока первый скан не записан, такой же код не отправляем.
+  const inFlightCodes = useRef<Set<string>>(new Set());
+
   const handleAddOrderToBox = async (boxId: number, orderNumber: string) => {
+    const code = orderNumber.trim().toUpperCase();
+    if (inFlightCodes.current.has(code)) {
+      playScanErrorSound();
+      toast({
+        title: 'Подождите — этот товар ещё записывается',
+        description: 'Повторный скан не засчитан. Дождитесь звука и следующую штуку сканируйте после него',
+        variant: 'destructive',
+      });
+      return;
+    }
+    inFlightCodes.current.add(code);
+    const retry: { toast: ReturnType<typeof toast> | null } = { toast: null };
     try {
-      const res = await addOrderToBox(boxId, orderNumber);
+      const res = await addOrderToBox(boxId, orderNumber, () => {
+        if (!retry.toast) {
+          retry.toast = toast({
+            title: 'Сервер отвечает медленно — повторяю сам',
+            description: 'Пакет повторно НЕ сканируйте, дождитесь звука',
+          });
+        }
+      });
+      retry.toast?.dismiss();
       playScanSound();
       toast({ title: `Заказ ${orderNumber} добавлен в короб` });
 
@@ -242,6 +267,9 @@ export const useSupplyAssemble = (supplyId: number) => {
       }
       playScanErrorSound();
       toast({ title: 'Ошибка', description: e instanceof Error ? e.message : undefined, variant: 'destructive' });
+    } finally {
+      retry.toast?.dismiss();
+      inFlightCodes.current.delete(code);
     }
   };
 
