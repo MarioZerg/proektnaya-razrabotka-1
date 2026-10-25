@@ -1,0 +1,5 @@
+UPDATE t_p86119184_proektnaya_razrabotk.salary_accruals SET paid_at = NULL, payout_id = NULL WHERE id IN (51704, 53844) AND user_id = 29 AND payout_id = 92;
+
+INSERT INTO t_p86119184_proektnaya_razrabotk.salary_accruals (user_id, type, amount, description, accrued_for, carry_from_payout_id) SELECT 29, 'manual', 2000.00, 'Остаток зарплаты за 2026-10-01—2026-10-19: при выплате ошибочно удержаны штрафы за 21.10 и 24.10 (вне периода), сумма возвращена', DATE '2026-10-19', 92 WHERE NOT EXISTS (SELECT 1 FROM t_p86119184_proektnaya_razrabotk.salary_accruals WHERE carry_from_payout_id = 92 AND user_id = 29 AND amount = 2000.00);
+
+INSERT INTO t_p86119184_proektnaya_razrabotk.audit_log (user_name, category, action, entity_type, entity_id, description) VALUES ('Система', 'salary', 'fix_payout', 'salary_payout', 92, 'Выплата #92 Егору Мальцеву (01.10—19.10): штрафы #51704 и #53844 за 21.10 и 24.10 сняты с выплаты, 2000 ₽ возвращены остатком к выплате');
