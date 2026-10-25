@@ -15,8 +15,38 @@ from datetime import date, datetime, timedelta
 OZON_API = 'https://api-seller.ozon.ru'
 MIN_PIECES = 50
 DEMAND_DAYS = 30
-# Не раньше чем через столько дней: сборка на складе + дорога газелью.
+# Газелька — не раньше чем через 2 рабочих дня (сборка на складе).
 MIN_LEAD_DAYS = 2
+# Ворота Ozon — через 2 рабочих дня после газельки (дорога). Выходные не считаем.
+GATE_GAP_DAYS = 2
+
+
+def _is_weekend(day):
+    return day.weekday() >= 5
+
+
+def _add_workdays(start, days):
+    day = start if isinstance(start, date) else date.fromisoformat(str(start)[:10])
+    left = days
+    while left > 0:
+        day += timedelta(days=1)
+        if not _is_weekend(day):
+            left -= 1
+    while _is_weekend(day):
+        day += timedelta(days=1)
+    return day
+
+
+def _sub_workdays(start, days):
+    day = start if isinstance(start, date) else date.fromisoformat(str(start)[:10])
+    left = days
+    while left > 0:
+        day -= timedelta(days=1)
+        if not _is_weekend(day):
+            left -= 1
+    while _is_weekend(day):
+        day -= timedelta(days=1)
+    return day
 # Ходовой товар: продан хотя бы столько раз за месяц (любая схема Ozon).
 # Неликвид в предложку не берём — иначе он просто переедет на склад Ozon
 # и будет лежать там за наши деньги.
@@ -219,7 +249,7 @@ def _probe_cluster(client_id, api_key, items, cluster_id):
     return {'draftId': int(draft_id), 'clusters': clusters}, None
 
 
-def _slot_window(client_id, api_key, draft_id, warehouse_id, cluster_id=None):
+def _slot_window(client_id, api_key, draft_id, warehouse_id, cluster_id=None, earliest=None):
     """Ближайшее свободное окно приёмки: (начало, конец) строками Ozon."""
     today = date.today()
     status, data = _ozon_post('/v2/draft/timeslot/info', client_id, api_key, {
@@ -236,36 +266,41 @@ def _slot_window(client_id, api_key, draft_id, warehouse_id, cluster_id=None):
         return None, None
     nodes = []
     _walk(data, nodes)
-    earliest = (today + timedelta(days=MIN_LEAD_DAYS)).isoformat()
+    if earliest is None:
+        earliest = _add_workdays(_add_workdays(today, MIN_LEAD_DAYS), GATE_GAP_DAYS)
+    earliest = str(earliest)[:10]
     best = None
     for node in nodes:
         begin = node.get('from_in_timezone')
         end = node.get('to_in_timezone')
         if not begin or not isinstance(begin, str) or len(begin) < 10:
             continue
-        # Слот сегодня-завтра бесполезен: поставку надо собрать и довезти.
+        # Раньше газельки + 2 рабочих дня не бронируем, на выходные — тоже.
         if begin[:10] < earliest:
+            continue
+        try:
+            if _is_weekend(date.fromisoformat(begin[:10])):
+                continue
+        except ValueError:
             continue
         if best is None or begin < best[0]:
             best = (begin, end if isinstance(end, str) else None)
     return best if best else (None, None)
 
 
-def _nearest_slot(client_id, api_key, draft_id, warehouse_id, cluster_id=None):
-    best, _end = _slot_window(client_id, api_key, draft_id, warehouse_id, cluster_id)
+def _nearest_slot(client_id, api_key, draft_id, warehouse_id, cluster_id=None, earliest=None):
+    best, _end = _slot_window(client_id, api_key, draft_id, warehouse_id, cluster_id, earliest)
     if not best:
         return None, None
     slot = best[11:16] if len(best) >= 16 and best[10] in ('T', ' ') else None
     return best[:10], slot
 
 
-def _gazelka_date(cluster, gate_day):
-    """Ближайший рейс в этот город не позже ворот. Без ключа — день слота."""
-    if not gate_day:
-        return None
+def _gazelka_trips(cluster, first_day):
+    """Даты рейсов газельки в этот город, не раньше first_day, по возрастанию."""
     token = (os.environ.get('GAZELKA_API_KEY') or '').strip()
     if not token:
-        return gate_day
+        return []
     req = urllib.request.Request(
         'https://gazelka.space/api/my-plans',
         method='POST',
@@ -277,10 +312,10 @@ def _gazelka_date(cluster, gate_day):
         with urllib.request.urlopen(req, timeout=15) as resp:
             payload = json.loads(resp.read().decode('utf-8') or '[]')
     except Exception:
-        return gate_day
+        return []
     plans = payload if isinstance(payload, list) else (payload.get('plans') or payload.get('data') or [])
-    today = date.today().isoformat()
-    chosen = None
+    first = str(first_day)[:10]
+    found = set()
     for plan in plans:
         if not isinstance(plan, dict):
             continue
@@ -289,11 +324,36 @@ def _gazelka_date(cluster, gate_day):
             continue
         route = plan.get('route') if isinstance(plan.get('route'), dict) else {}
         ship = (route.get('date') or plan.get('delivery_date') or '')[:10]
-        if not ship or ship < today or ship > gate_day:
-            continue
-        if chosen is None or ship < chosen:
-            chosen = ship
-    return chosen or gate_day
+        if ship and ship >= first:
+            found.add(ship)
+    return sorted(found)
+
+
+def _schedule(client_id, api_key, draft_id, warehouse_id, cluster_id, cluster):
+    """Газелька и ворота с интервалом.
+
+    Газелька — ближайший рейс не раньше чем через 2 рабочих дня.
+    Ворота — не раньше чем через 2 рабочих дня после газельки, без выходных.
+    Если ближайший свободный слот позже — газельку сдвигаем к последнему
+    рейсу, который всё ещё успевает за 2 рабочих дня до ворот.
+    """
+    first_ship = _add_workdays(date.today(), MIN_LEAD_DAYS)
+    trips = _gazelka_trips(cluster, first_ship)
+    ship = date.fromisoformat(trips[0]) if trips else first_ship
+    gate_from = _add_workdays(ship, GATE_GAP_DAYS)
+    gate_date, gate_slot = _nearest_slot(
+        client_id, api_key, draft_id, warehouse_id, cluster_id, gate_from)
+    if not gate_date:
+        return None, None, ship.isoformat()
+    latest_ship = _sub_workdays(gate_date, GATE_GAP_DAYS).isoformat()
+    fitting = [t for t in trips if t <= latest_ship]
+    if fitting:
+        ship_day = fitting[-1]
+    elif trips:
+        ship_day = ship.isoformat()
+    else:
+        ship_day = latest_ship
+    return gate_date, gate_slot, ship_day
 
 
 def _popular_sizes(cur):
@@ -545,8 +605,8 @@ def build(cur, shop_id):
             continue
         match = probe['clusters'][0]
         warehouse_id = match['warehouses'][0]['id']
-        gate_date, gate_slot = _nearest_slot(client_id, api_key, probe['draftId'], warehouse_id, cluster_id)
-        gazelka = _gazelka_date(plan['cluster'], gate_date)
+        gate_date, gate_slot, gazelka = _schedule(
+            client_id, api_key, probe['draftId'], warehouse_id, cluster_id, plan['cluster'])
         cur.execute(
             "INSERT INTO fbo_supply_proposals "
             "(shop_id, cluster, ozon_draft_id, ozon_warehouse_id, gate_date, gate_timeslot, gazelka_date, "
@@ -690,11 +750,10 @@ def accept(cur, proposal_id, actor_id, actor_name, shop_id):
             if probe:
                 draft_id = probe['draftId']
                 warehouse_id = probe['clusters'][0]['warehouses'][0]['id']
-                fresh_date, fresh_slot = _nearest_slot(
-                    client_id, api_key, draft_id, warehouse_id, ozon_cluster_id)
+                fresh_date, fresh_slot, fresh_ship = _schedule(
+                    client_id, api_key, draft_id, warehouse_id, ozon_cluster_id, cluster)
                 if fresh_date:
-                    gate_date, gate_slot = fresh_date, fresh_slot
-                    gazelka_date = _gazelka_date(cluster, gate_date)
+                    gate_date, gate_slot, gazelka_date = fresh_date, fresh_slot, fresh_ship
 
     cur.execute(
         "INSERT INTO marketplace_supplies "
@@ -757,7 +816,8 @@ def accept(cur, proposal_id, actor_id, actor_name, shop_id):
     if draft_id and warehouse_id and client_id and api_key and gate_date:
         # Окно берём у Ozon целиком (начало и конец). Раньше начало и конец
         # были одним и тем же временем — нулевое окно Ozon не принимает.
-        win_from, win_to = _slot_window(client_id, api_key, draft_id, warehouse_id, ozon_cluster_id)
+        win_from, win_to = _slot_window(
+            client_id, api_key, draft_id, warehouse_id, ozon_cluster_id, gate_date)
         if win_from and win_to:
             slot_from, slot_to = win_from, win_to
         else:
