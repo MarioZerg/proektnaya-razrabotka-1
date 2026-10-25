@@ -1069,7 +1069,7 @@ def handle_proposal_action(cur, conn, body, headers):
                                    'ozonError': 'База ответила с задержкой, но поставка создана целиком'},
                              headers)
             if state == 'rolled_back':
-                return _resp(503, {'error': 'База не ответила вовремя. Ничего не создано: '
+                return _resp(503, {'error': 'Поставку создать не удалось. Ничего не записано: '
                                             'предложка снова открыта, вещи свободны. Подтвердите ещё раз',
                                    'rolledBack': True}, headers)
             return _resp(503, {'error': 'База не ответила. Обновите список через минуту и проверьте, '

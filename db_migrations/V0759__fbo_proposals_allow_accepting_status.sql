@@ -1,0 +1,2 @@
+ALTER TABLE t_p86119184_proektnaya_razrabotk.fbo_supply_proposals DROP CONSTRAINT fbo_supply_proposals_status;
+ALTER TABLE t_p86119184_proektnaya_razrabotk.fbo_supply_proposals ADD CONSTRAINT fbo_supply_proposals_status CHECK (status IN ('open', 'accepting', 'accepted', 'rejected'));
