@@ -14,7 +14,11 @@ from datetime import date, datetime, timedelta
 
 OZON_API = 'https://api-seller.ozon.ru'
 MIN_PIECES = 50
-DEMAND_DAYS = 14
+DEMAND_DAYS = 30
+# Ходовой товар: продан хотя бы столько раз за месяц (любая схема Ozon).
+# Неликвид в предложку не берём — иначе он просто переедет на склад Ozon
+# и будет лежать там за наши деньги.
+LIQUID_MIN_SALES = 2
 
 
 def _resp(status, body, headers):
@@ -299,12 +303,14 @@ def _free_goods(cur, shop_id):
 
 
 def _demand(cur, shop_id):
+    """Продажи FBO по кластерам за месяц: где и что покупают со склада Ozon."""
     cur.execute(
         "SELECT o.cluster, o.marketplace_item_id, COUNT(*) "
         "FROM orders o "
         "WHERE o.order_type = 'FBO' AND o.marketplace = 'OZON' "
         "  AND o.shop_id = %s AND o.cluster IS NOT NULL AND o.cluster <> '' "
-        "  AND o.created_at > now() - interval '14 days' "
+        "  AND o.marketplace_item_id IS NOT NULL "
+        f"  AND o.created_at > now() - interval '{DEMAND_DAYS} days' "
         "GROUP BY o.cluster, o.marketplace_item_id",
         (int(shop_id),),
     )
@@ -312,6 +318,20 @@ def _demand(cur, shop_id):
     for cluster, item_id, qty in cur.fetchall():
         demand.setdefault(cluster, {})[int(item_id)] = int(qty)
     return demand
+
+
+def _monthly_sales(cur, shop_id):
+    """Сколько раз артикул продался на Ozon за месяц — FBS и FBO вместе."""
+    cur.execute(
+        "SELECT o.marketplace_item_id, COUNT(*) "
+        "FROM orders o "
+        "WHERE o.marketplace = 'OZON' AND o.shop_id = %s "
+        "  AND o.marketplace_item_id IS NOT NULL "
+        f"  AND o.created_at > now() - interval '{DEMAND_DAYS} days' "
+        "GROUP BY o.marketplace_item_id",
+        (int(shop_id),),
+    )
+    return {int(r[0]): int(r[1]) for r in cur.fetchall()}
 
 
 def _ozon_stock(client_id, api_key, clusters):
@@ -348,7 +368,8 @@ def build(cur, shop_id):
     goods = _free_goods(cur, shop_id)
     demand = _demand(cur, shop_id)
     if not demand:
-        return {'created': [], 'skipped': ['Нет отгрузок FBO за 14 дней — нечего сравнивать с кластерами']}
+        return {'created': [], 'skipped': [f'Нет отгрузок FBO за {DEMAND_DAYS} дней — нечего сравнивать с кластерами']}
+    sales = _monthly_sales(cur, shop_id)
     client_id, api_key = _creds(cur, shop_id)
     if not client_id or not api_key:
         return {'error': 'У магазина нет ключей Ozon'}
@@ -365,34 +386,73 @@ def build(cur, shop_id):
             'popular': (width, height) in popular,
         })
 
-    planned = []
+    plans = {c: {'goods': [], 'draft': {}} for c in demand}
+
+    def on_ozon(cluster, sku):
+        return stock.get(cluster, {}).get(str(sku), 0) if sku else 0
+
+    def give(cluster, item_id, qty):
+        pieces = by_item.get(item_id) or []
+        sku = next((p['sku'] for p in pieces if p['sku']), None)
+        take = min(len(pieces), qty)
+        if take <= 0 or not sku:
+            return 0
+        plans[cluster]['goods'].extend(pieces[:take])
+        del pieces[:take]
+        plans[cluster]['draft'][sku] = plans[cluster]['draft'].get(sku, 0) + take
+        return take
+
+    # ШАГ 1. ДЕФИЦИТ: в кластере артикул продаётся, а на складе Ozon его
+    # меньше, чем ушло за месяц. Везём недостающее.
     for cluster, need in demand.items():
-        chosen = []
-        draft_items = {}
         for item_id, needed in need.items():
+            if sales.get(item_id, 0) < LIQUID_MIN_SALES:
+                continue
             pieces = by_item.get(item_id) or []
-            on_ozon = 0
             sku = next((p['sku'] for p in pieces if p['sku']), None)
-            if sku:
-                on_ozon = stock.get(cluster, {}).get(str(sku), 0)
-            if on_ozon >= needed:
-                continue
-            take = min(len(pieces), needed - on_ozon)
-            if take <= 0 or not sku:
-                continue
-            chosen.extend(pieces[:take])
-            del pieces[:take]
-            draft_items[sku] = draft_items.get(sku, 0) + take
+            give(cluster, item_id, needed - on_ozon(cluster, sku))
+
+    # ШАГ 2. ХОДОВОЙ ТОВАР (от LIQUID_MIN_SALES продаж за месяц), который по
+    # FBO в кластере ещё не продавался — например, уходит только с FBS.
+    # Делим месячные продажи между кластерами пропорционально их обороту FBO
+    # и докладываем то, чего на Ozon не хватает. Неликвид не трогаем.
+    weight = {c: sum(n.values()) for c, n in demand.items()}
+    total_weight = sum(weight.values()) or 1
+    ordered = sorted(demand, key=lambda c: weight[c], reverse=True)
+    liquid = sorted(
+        (i for i, q in sales.items() if q >= LIQUID_MIN_SALES and by_item.get(i)),
+        key=lambda i: sales[i], reverse=True,
+    )
+    for item_id in liquid:
+        for cluster in ordered:
+            if not by_item.get(item_id):
+                break
+            sku = next((p['sku'] for p in by_item[item_id] if p['sku']), None)
+            share = sales[item_id] * weight[cluster] / total_weight
+            target = max(1, int(share + 0.999))
+            already = sum(1 for g in plans[cluster]['goods'] if g['itemId'] == item_id)
+            give(cluster, item_id, target - on_ozon(cluster, sku) - already)
+
+    planned = []
+    too_small = []
+    for cluster in ordered:
+        chosen = plans[cluster]['goods']
+        if not chosen:
+            continue
         if len(chosen) < MIN_PIECES:
+            too_small.append(f'{cluster}: набралось {len(chosen)} шт. из {MIN_PIECES} — ходового товара в дефиците мало')
+            # Не занимаем вещи: пусть достанутся кластеру, где поставка соберётся.
+            for g in chosen:
+                by_item.setdefault(g['itemId'], []).append(g)
             continue
         planned.append({
             'cluster': cluster,
-            'items': [{'sku': sku, 'quantity': qty} for sku, qty in draft_items.items()],
+            'items': [{'sku': sku, 'quantity': qty} for sku, qty in plans[cluster]['draft'].items()],
             'goods': chosen,
         })
 
     created = []
-    skipped = []
+    skipped = list(too_small)
     for plan in planned:
         cur.execute(
             "SELECT id FROM fbo_supply_proposals "
