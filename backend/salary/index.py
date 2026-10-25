@@ -1711,17 +1711,17 @@ def handler(event: dict, context) -> dict:
                 # нажатия кнопки и сам решал, гасить сейчас или отложить.
                 debts = []
                 debts_total = 0.0
-                if p_from or p_to:
-                    # «Снаружи» — всё, что не попало в выбранные даты: раньше
-                    # начала периода или позже его конца.
-                    outside = []
-                    out_params = [int(user_id)]
-                    if p_from:
-                        outside.append("accrued_for < %s")
-                        out_params.append(p_from)
-                    if p_to:
-                        outside.append("accrued_for > %s")
-                        out_params.append(p_to)
+                if p_from:
+                    # «Снаружи» — только то, что РАНЬШЕ начала периода.
+                    #
+                    # Раньше сюда попадали и штрафы ПОСЛЕ конца периода, и они
+                    # были отмечены галочкой по умолчанию. Админ платил с 1 по 19
+                    # число, а из выплаты молча удерживались штрафы от 21-го и
+                    # 24-го (Егор, 25.10): выглядело так, будто удалённые штрафы
+                    # остались в окне. Штрафы после периода спишутся в своём
+                    # периоде — следующей выплатой.
+                    outside = ["accrued_for < %s"]
+                    out_params = [int(user_id), p_from]
                     out_where = (
                         "user_id = %s AND paid_at IS NULL AND amount < 0 "
                         f"AND ({' OR '.join(outside)})"
@@ -1830,8 +1830,11 @@ def handler(event: dict, context) -> dict:
                         f"FROM salary_accruals "
                         f"WHERE id IN ({ids_csv}) AND user_id = %s "
                         f"  AND paid_at IS NULL AND amount < 0 "
-                        f"ORDER BY accrued_for",
-                        (int(user_id),),
+                        # Долги ПОСЛЕ периода не гасим даже если их прислали:
+                        # они спишутся своей выплатой (Егор, 25.10).
+                        + ("  AND accrued_for < %s " if p_from else "  AND false ")
+                        + f"ORDER BY accrued_for",
+                        (int(user_id), p_from) if p_from else (int(user_id),),
                     )
                     for d_id, d_type, d_amount, d_for, d_desc in cur.fetchall():
                         if balance <= 0:
