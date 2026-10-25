@@ -50,7 +50,6 @@ const ToMarketplaceFilters = ({
   const [open, setOpen] = useState(false);
   const active =
     (statusFilter !== 'open' ? 1 : 0) +
-    (typeFilter !== 'all' ? 1 : 0) +
     (marketplaceFilter !== 'all' ? 1 : 0) +
     (dateFrom ? 1 : 0) +
     (dateTo ? 1 : 0) +
@@ -98,7 +97,6 @@ const ToMarketplaceFilters = ({
           <SelectValue />
         </SelectTrigger>
         <SelectContent>
-          <SelectItem value="all">Все типы</SelectItem>
           <SelectItem value="FBS">FBS</SelectItem>
           <SelectItem value="FBO">FBO</SelectItem>
         </SelectContent>

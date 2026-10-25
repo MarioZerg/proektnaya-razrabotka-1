@@ -77,7 +77,16 @@ const ToMarketplace = () => {
   const [shopId, setShopId] = useState<number | null>(null);
 
   const [statusFilter, setStatusFilter] = useState('open');
-  const [typeFilter, setTypeFilter] = useState('all');
+  // Список всегда разделён по схеме: FBS и FBO вперемешку путают склад.
+  // По умолчанию — FBS (с ними работают каждый день), выбор запоминаем.
+  const [typeFilter, setTypeFilterRaw] = useState<string>(() =>
+    localStorage.getItem('supplies_type') === 'FBO' ? 'FBO' : 'FBS',
+  );
+  const setTypeFilter = (v: string) => {
+    const next = v === 'FBO' ? 'FBO' : 'FBS';
+    localStorage.setItem('supplies_type', next);
+    setTypeFilterRaw(next);
+  };
   const [feed, setFeed] = useState<'supplies' | 'proposals'>('supplies');
   const [marketplaceFilter, setMarketplaceFilter] = useState('all');
   const [dateFrom, setDateFrom] = useState('');
@@ -201,7 +210,7 @@ const ToMarketplace = () => {
   // видеть в плашке FBO реальное число, а не ноль — иначе кажется, что поставки
   // пропали. А таблица показывает только выбранную схему.
   const supplies = useMemo(
-    () => (typeFilter === 'all' ? allSupplies : allSupplies.filter((s) => s.type === typeFilter)),
+    () => allSupplies.filter((s) => s.type === typeFilter),
     [allSupplies, typeFilter],
   );
 
@@ -343,7 +352,6 @@ const ToMarketplace = () => {
 
   const resetFilters = () => {
     setStatusFilter('open');
-    setTypeFilter('all');
     setMarketplaceFilter('all');
     setDateFrom('');
     setDateTo('');

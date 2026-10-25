@@ -5,7 +5,8 @@ import type { Supply, SupplyType } from '@/lib/marketplaceSuppliesApi';
 
 /**
  * Плашки FBS и FBO: крупная картинка схемы и число поставок.
- * Клик фильтрует список, повторный клик снимает фильтр.
+ * Клик переключает список на эту схему. Общего списка нет: FBS и FBO
+ * вперемешку путают склад.
  */
 
 type Group = {
@@ -49,7 +50,7 @@ const SupplyTypeWidgets = ({
         group={g}
         supplies={supplies.filter((s) => s.type === g.type)}
         active={activeType === g.type}
-        onSelect={() => onSelectType(activeType === g.type ? 'all' : g.type)}
+        onSelect={() => onSelectType(g.type)}
       />
     ))}
   </div>
