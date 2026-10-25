@@ -447,6 +447,9 @@ const proposalAction = (payload: Record<string, unknown>) =>
     ozonError?: string | null;
     fromStock?: number;
     toSewing?: number;
+    /** Склад, который Ozon сам назначил заявке (может отличаться от предложки). */
+    ozonStorage?: string | null;
+    proposedStorage?: string | null;
     error?: string;
   }>;
 

@@ -1723,6 +1723,29 @@ def _gazelka_plans(timeout):
     return {str(p.get('id')): p for p in plans if isinstance(p, dict) and p.get('id')}
 
 
+def ozon_storage_name(order):
+    """Склад, на который Ozon реально принимает заявку (/v3/supply-order/get)."""
+    for sup in order.get('supplies') or []:
+        name = ((sup or {}).get('storage_warehouse') or {}).get('name')
+        if name:
+            return str(name).strip()
+    name = (order.get('drop_off_warehouse') or {}).get('name')
+    return str(name).strip() if name else None
+
+
+def apply_ozon_storage(cur, supply_id, old_cluster, new_cluster):
+    """Ставит поставке и её заказам склад, который назначил Ozon."""
+    cur.execute("UPDATE marketplace_supplies SET cluster = %s WHERE id = %s",
+                (new_cluster, int(supply_id)))
+    cur.execute(
+        "UPDATE orders SET cluster = %s WHERE supply_id = %s AND order_type = 'FBO' "
+        "AND COALESCE(status, '') <> 'Отменён'",
+        (new_cluster, int(supply_id)),
+    )
+    log_action(cur, None, 'Планировщик', 'supply_cluster', 'marketplace_supply', supply_id,
+               f"Склад Ozon: {old_cluster or '—'} → {new_cluster} (назначил Ozon)")
+
+
 def sync_fbo_dates(cur, conn, deadline, timeout=3):
     """Подтягивает даты «в Газельку» и «на маркетплейс». Возвращает число изменённых дат."""
     import time as _t
@@ -1751,10 +1774,23 @@ def sync_fbo_dates(cur, conn, deadline, timeout=3):
             data = _ozon_quick('/v3/supply-order/get', client_id, api_key,
                                {'order_ids': [int(r[1]) for r in rows]}, timeout=timeout)
             slots = {}
+            stores = {}
             for o in ((data or {}).get('orders') or []):
                 ts = ((o.get('timeslot') or {}).get('timeslot') or {}).get('from') or ''
                 if ts:
                     slots[int(o.get('order_id') or 0)] = ts
+                name = ozon_storage_name(o)
+                if name:
+                    stores[int(o.get('order_id') or 0)] = name
+            # Склад назначает Ozon (мы выбираем только регион): если он
+            # отличается от записанного у нас — переписываем поставку и её заказы.
+            for sid, order_id, _d, _s, number, cluster in rows:
+                real = stores.get(int(order_id))
+                if real and real != (cluster or ''):
+                    apply_ozon_storage(cur, sid, cluster, real)
+                    shifts.append((sid, number, 'OZON', real, 'Склад приёмки Ozon',
+                                   cluster or '—', real, 'Ozon назначил другой склад'))
+                    changed += 1
             for sid, order_id, cur_date, cur_slot, number, cluster in rows:
                 ts = slots.get(int(order_id))
                 if not ts:

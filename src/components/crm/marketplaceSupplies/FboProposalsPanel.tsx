@@ -83,6 +83,9 @@ const FboProposalsPanel = ({
         title: 'Поставка создана',
         description:
           [
+            res.ozonStorage
+              ? `Ozon назначил склад ${res.ozonStorage} (в предложке был ${res.proposedStorage}) — поставка переписана на него`
+              : '',
             res.toSewing
               ? `Со склада: ${res.fromStock ?? 0} шт., недостающие ${res.toSewing} шт. ушли в пошив`
               : '',
@@ -137,8 +140,9 @@ const FboProposalsPanel = ({
     <div className="space-y-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="text-sm text-muted-foreground">
-          Кластер, который сейчас не принимает поставку, сюда не попадает. Вещи в предложке
-          не уходят в подбор, пока её не подтвердят или не отклонят.
+          Предложка собирается на регион Ozon: конкретный склад внутри региона Ozon назначает
+          сам при бронировании, и поставка автоматически переписывается на него. Вещи в
+          предложке не уходят в подбор, пока её не подтвердят или не отклонят.
         </p>
         <Button type="button" onClick={form} disabled={busy || !shopId}>
           <Icon name={busy ? 'Loader2' : 'Sparkles'} size={16} className={`mr-2 ${busy ? 'animate-spin' : ''}`} />
@@ -154,7 +158,7 @@ const FboProposalsPanel = ({
         <article key={row.id} className="space-y-3 rounded-xl border-2 border-teal-600 bg-card p-4 shadow-sm">
           <div className="flex flex-wrap items-start justify-between gap-2">
             <div>
-              <h2 className="text-lg font-bold underline">{row.cluster}</h2>
+              <h2 className="text-lg font-bold underline">Регион: {row.cluster}</h2>
               <p className="text-sm">
                 {row.pieces} шт.
                 {row.pieces < 50 ? ' — меньше 50, подтвердить нельзя' : ''}

@@ -598,6 +598,31 @@ def build(cur, shop_id):
     stock, stock_error = _ozon_stock(client_id, api_key, list(demand))
     if stock_error:
         return {'error': stock_error}
+
+    # Ozon больше не даёт выбрать склад — только регион (кластер), а склад
+    # внутри него назначает сам. Поэтому продажи и остатки складов одного
+    # региона (Пушкино, Петровское, Хоругвино…) складываем в одну предложку.
+    ozon_clusters = _ozon_clusters(client_id, api_key)
+    region_id = {}
+    region_demand = {}
+    region_stock = {}
+    no_region = []
+    for our_name, need in demand.items():
+        cid = _cluster_id_for(ozon_clusters, our_name)
+        region = next((c['name'] for c in ozon_clusters if c['id'] == cid), None) if cid else None
+        if not region:
+            no_region.append(our_name)
+            continue
+        region_id[region] = cid
+        bucket = region_demand.setdefault(region, {})
+        for item_id, qty in need.items():
+            bucket[item_id] = bucket.get(item_id, 0) + qty
+        sbucket = region_stock.setdefault(region, {})
+        for sku, qty in (stock.get(our_name) or {}).items():
+            sbucket[sku] = sbucket.get(sku, 0) + qty
+    demand, stock = region_demand, region_stock
+    if not demand:
+        return {'created': [], 'skipped': [f'{n}: не нашли регион в справочнике Ozon' for n in no_region]}
     popular = _popular_sizes(cur)
     by_item = {}
     for gw_id, item_id, ozon_sku, width, height in goods:
@@ -674,8 +699,7 @@ def build(cur, shop_id):
         })
 
     created = []
-    skipped = list(too_small)
-    ozon_clusters = _ozon_clusters(client_id, api_key) if planned else []
+    skipped = list(too_small) + [f'{n}: не нашли регион в справочнике Ozon' for n in no_region]
     for plan in planned:
         cur.execute(
             "SELECT id FROM fbo_supply_proposals "
@@ -685,7 +709,7 @@ def build(cur, shop_id):
         if cur.fetchone():
             skipped.append(f'{plan["cluster"]}: предложка уже открыта')
             continue
-        cluster_id = _cluster_id_for(ozon_clusters, plan['cluster'])
+        cluster_id = region_id.get(plan['cluster'])
         if not cluster_id:
             skipped.append(f'{plan["cluster"]}: не нашли этот кластер в справочнике Ozon')
             continue
@@ -948,6 +972,7 @@ def accept(cur, proposal_id, actor_id, actor_name, shop_id):
          gate_date, gate_slot, gazelka_date, int(proposal_id)),
     )
     ozon_error = None
+    real_store = None
     if draft_id and warehouse_id and client_id and api_key and gate_date:
         # Окно берём у Ozon целиком (начало и конец). Раньше начало и конец
         # были одним и тем же временем — нулевое окно Ozon не принимает.
@@ -997,6 +1022,13 @@ def accept(cur, proposal_id, actor_id, actor_name, shop_id):
                 "WHERE id = %s",
                 (int(order_id), str(order_id), str(order_id), int(supply_id)),
             )
+            # Ozon сам выбирает склад внутри региона: читаем, куда он забронировал,
+            # и записываем ЭТОТ склад, а не тот, что был в предложке.
+            real = _ozon_real_storage(client_id, api_key, order_id)
+            if real and real != cluster:
+                from shared import apply_ozon_storage
+                apply_ozon_storage(cur, supply_id, cluster, real)
+                real_store = real
         else:
             message = data.get('message') if isinstance(data, dict) else str(data)
             if reasons:
@@ -1006,7 +1038,23 @@ def accept(cur, proposal_id, actor_id, actor_name, shop_id):
                 else 'Ozon не создал заявку. Этикетки коробов появятся после привязки номера'
             )
     return {'supplyId': supply_id, 'ozonError': ozon_error,
-            'fromStock': int(from_stock_cnt), 'toSewing': int(to_sew_cnt)}
+            'fromStock': int(from_stock_cnt), 'toSewing': int(to_sew_cnt),
+            'ozonStorage': real_store, 'proposedStorage': cluster}
+
+
+def _ozon_real_storage(client_id, api_key, order_id):
+    """Склад, который Ozon назначил заявке."""
+    from shared import ozon_storage_name
+    for _ in range(2):
+        st, data = _ozon_post('/v3/supply-order/get', client_id, api_key,
+                              {'order_ids': [int(order_id)]}, timeout=8)
+        if st == 200 and isinstance(data, dict):
+            for o in data.get('orders') or []:
+                name = ozon_storage_name(o)
+                if name:
+                    return name
+        time.sleep(1)
+    return None
 
 
 def _accepted_supply(proposal_id):

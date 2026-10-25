@@ -1,0 +1,1 @@
+UPDATE t_p86119184_proektnaya_razrabotk.system_settings SET updated_at = now() - interval '1 day' WHERE key = 'fbo_dates_synced_at';
