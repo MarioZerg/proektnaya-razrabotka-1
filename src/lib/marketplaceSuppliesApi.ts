@@ -445,6 +445,8 @@ const proposalAction = (payload: Record<string, unknown>) =>
     skipped?: string[];
     supplyId?: number;
     ozonError?: string | null;
+    fromStock?: number;
+    toSewing?: number;
     error?: string;
   }>;
 

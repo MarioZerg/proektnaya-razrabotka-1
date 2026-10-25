@@ -162,7 +162,8 @@ def _probe_cluster(client_id, api_key, items):
     return {'draftId': int(draft_id), 'clusters': clusters}, None
 
 
-def _nearest_slot(client_id, api_key, draft_id, warehouse_id):
+def _slot_window(client_id, api_key, draft_id, warehouse_id):
+    """Ближайшее свободное окно приёмки: (начало, конец) строками Ozon."""
     start = datetime.utcnow()
     status, data = _ozon_post('/v1/draft/timeslot/info', client_id, api_key, {
         'draft_id': int(draft_id),
@@ -177,10 +178,16 @@ def _nearest_slot(client_id, api_key, draft_id, warehouse_id):
     best = None
     for node in nodes:
         begin = node.get('from_in_timezone') or node.get('from') or node.get('begin')
+        end = node.get('to_in_timezone') or node.get('to') or node.get('end')
         if not begin or not isinstance(begin, str) or len(begin) < 10:
             continue
-        if best is None or begin < best:
-            best = begin
+        if best is None or begin < best[0]:
+            best = (begin, end if isinstance(end, str) else None)
+    return best if best else (None, None)
+
+
+def _nearest_slot(client_id, api_key, draft_id, warehouse_id):
+    best, _end = _slot_window(client_id, api_key, draft_id, warehouse_id)
     if not best:
         return None, None
     slot = best[11:16] if len(best) >= 16 and best[10] in ('T', ' ') else None
@@ -538,17 +545,54 @@ def accept(cur, proposal_id, actor_id, actor_name, shop_id):
         return {'error': 'Открытая предложка не найдена'}
     cluster, draft_id, warehouse_id, gate_date, gate_slot, gazelka_date = proposal
     cur.execute(
-        "SELECT i.goods_warehouse_id, i.marketplace_item_id, gw.status "
+        "SELECT i.goods_warehouse_id, i.marketplace_item_id, gw.status, gw.reserved_order_id "
         "FROM fbo_supply_proposal_items i "
         "JOIN goods_warehouse gw ON gw.id = i.goods_warehouse_id "
-        "WHERE i.proposal_id = %s AND i.open_hold "
+        # Все строки предложки, а не только «удерживаемые»: потерянная вещь
+        # снимается с удержания, но в черновике Ozon она осталась — её
+        # нужно заменить или отшить, а не молча выкинуть из поставки.
+        "WHERE i.proposal_id = %s "
         "FOR UPDATE OF gw",
         (int(proposal_id),),
     )
     rows = cur.fetchall()
-    ready = [row for row in rows if row[2] == 'in_stock']
-    if len(ready) < MIN_PIECES:
-        return {'error': f'В предложке осталось {len(ready)} шт. Нужно не меньше {MIN_PIECES}. Сформируйте заново'}
+    # Вещь годится, только если всё ещё лежит на полке и НИКЕМ не забронирована.
+    # Без проверки брони одна вещь могла уйти и в FBS-заказ, и в эту поставку.
+    ready = [(r[0], r[1]) for r in rows if r[2] == 'in_stock' and r[3] is None]
+    if not rows:
+        return {'error': 'В предложке не осталось вещей. Сформируйте заново'}
+
+    # Чего не хватает (вещь потеряли, продали, забронировали под другой заказ):
+    # сначала ищем замену того же артикула на полках, остальное — в пошив.
+    # Так поставка остаётся ровно того состава, который ушёл в черновик Ozon.
+    missing = {}
+    for r in rows:
+        if not (r[2] == 'in_stock' and r[3] is None):
+            missing[int(r[1])] = missing.get(int(r[1]), 0) + 1
+    taken = {int(gw) for gw, _ in ready}
+    to_sew = []
+    for item_id, qty in missing.items():
+        cur.execute(
+            "SELECT gw.id FROM goods_warehouse gw "
+            "JOIN orders src ON src.id = gw.order_id "
+            "WHERE gw.status = 'in_stock' AND gw.shelf_id IS NOT NULL "
+            "  AND gw.reserved_order_id IS NULL "
+            "  AND src.marketplace_item_id = %s AND src.shop_id = %s "
+            "  AND NOT EXISTS (SELECT 1 FROM marketplace_supply_items msi "
+            "                  JOIN marketplace_supplies ms ON ms.id = msi.supply_id "
+            "                  WHERE msi.goods_warehouse_id = gw.id "
+            "                    AND COALESCE(ms.status, '') NOT IN ('Выполнена', 'Отменена')) "
+            "  AND NOT EXISTS (SELECT 1 FROM fbo_supply_proposal_items _fpi "
+            "                  WHERE _fpi.goods_warehouse_id = gw.id AND _fpi.open_hold) "
+            "ORDER BY gw.received_at ASC LIMIT %s "
+            "FOR UPDATE OF gw SKIP LOCKED",
+            (item_id, int(shop_id), qty + len(taken)),
+        )
+        subs = [int(x[0]) for x in cur.fetchall() if int(x[0]) not in taken][:qty]
+        for gw_id in subs:
+            taken.add(gw_id)
+            ready.append((gw_id, item_id))
+        to_sew.extend([item_id] * (qty - len(subs)))
 
     client_id, api_key = _creds(cur, shop_id)
     if draft_id and client_id and api_key and gate_date and str(gate_date) < date.today().isoformat():
@@ -568,7 +612,8 @@ def accept(cur, proposal_id, actor_id, actor_name, shop_id):
     )
     supply_id = cur.fetchone()[0]
     seq = _next_order_number(cur)
-    for gw_id, item_id, _status in ready:
+    plan = [(gw, it) for gw, it in ready] + [(None, it) for it in to_sew]
+    for gw_id, item_id in plan:
         cur.execute(
             "SELECT name, material, width, height, barcode, ozon_sku "
             "FROM marketplace_items WHERE id = %s",
@@ -585,19 +630,23 @@ def accept(cur, proposal_id, actor_id, actor_name, shop_id):
             "product_barcode, product_ozon_sku, supply_id, shop_id, "
             "fulfilled_from_stock_id, sewing_status) "
             "VALUES (%s, 'OZON', 'FBO', 'Новый', %s, %s, 1, 'proposal', %s, %s, %s, %s, %s, %s, "
-            "%s, %s, %s, 'Со склада') RETURNING id",
+            "%s, %s, %s, %s) RETURNING id",
             (
                 f'00000-{seq:02d}', cluster, product, material,
                 int(width) if width else None, int(height) if height else None,
-                int(item_id), barcode, ozon_sku, int(supply_id), int(shop_id), int(gw_id),
+                int(item_id), barcode, ozon_sku, int(supply_id), int(shop_id),
+                int(gw_id) if gw_id else None,
+                # Вещи на полке нет — заказ уходит в цех, как в обычной поставке.
+                'Со склада' if gw_id else 'Новый',
             ),
         )
         order_id = cur.fetchone()[0]
         seq += 1
-        cur.execute(
-            "UPDATE goods_warehouse SET reserved_order_id = %s, matched_at = now() WHERE id = %s",
-            (order_id, int(gw_id)),
-        )
+        if gw_id:
+            cur.execute(
+                "UPDATE goods_warehouse SET reserved_order_id = %s, matched_at = now() WHERE id = %s",
+                (order_id, int(gw_id)),
+            )
     cur.execute(
         "UPDATE fbo_supply_proposal_items SET open_hold = false WHERE proposal_id = %s",
         (int(proposal_id),),
@@ -611,8 +660,16 @@ def accept(cur, proposal_id, actor_id, actor_name, shop_id):
     )
     ozon_error = None
     if draft_id and warehouse_id and client_id and api_key and gate_date:
-        slot_from = f'{gate_date}T{(gate_slot or "10:00")}:00Z'
-        slot_to = f'{gate_date}T{(gate_slot or "12:00")}:00Z'
+        # Окно берём у Ozon целиком (начало и конец). Раньше начало и конец
+        # были одним и тем же временем — нулевое окно Ozon не принимает.
+        win_from, win_to = _slot_window(client_id, api_key, draft_id, warehouse_id)
+        if win_from and win_to:
+            slot_from, slot_to = win_from, win_to
+        else:
+            begin = gate_slot or '10:00'
+            end_h = min(int(begin[:2]) + 1, 23)
+            slot_from = f'{gate_date}T{begin}:00Z'
+            slot_to = f'{gate_date}T{end_h:02d}:{begin[3:5]}:00Z'
         status, data = _ozon_post('/v1/draft/supply/create', client_id, api_key, {
             'draft_id': int(draft_id),
             'warehouse_id': int(warehouse_id),
@@ -632,7 +689,8 @@ def accept(cur, proposal_id, actor_id, actor_name, shop_id):
         else:
             message = data.get('message') if isinstance(data, dict) else str(data)
             ozon_error = message or 'Ozon не создал заявку. Этикетки коробов появятся после привязки номера'
-    return {'supplyId': supply_id, 'ozonError': ozon_error}
+    return {'supplyId': supply_id, 'ozonError': ozon_error,
+            'fromStock': len(ready), 'toSewing': len(to_sew)}
 
 
 def handle_proposal_action(cur, conn, body, headers):

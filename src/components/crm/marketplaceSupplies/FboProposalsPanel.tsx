@@ -81,7 +81,15 @@ const FboProposalsPanel = ({
       const res = await acceptFboProposal(shopId, id, actorId, actorName, 'admin');
       toast({
         title: 'Поставка создана',
-        description: res.ozonError || undefined,
+        description:
+          [
+            res.toSewing
+              ? `Со склада: ${res.fromStock ?? 0} шт., недостающие ${res.toSewing} шт. ушли в пошив`
+              : '',
+            res.ozonError || '',
+          ]
+            .filter(Boolean)
+            .join('. ') || undefined,
         variant: res.ozonError ? 'destructive' : 'default',
       });
       if (res.supplyId) onOpenSupply(res.supplyId);
@@ -160,7 +168,7 @@ const FboProposalsPanel = ({
               <Button type="button" variant="outline" disabled={busy} onClick={() => reject(row.id)}>
                 Отклонить
               </Button>
-              <Button type="button" disabled={busy || row.pieces < 50} onClick={() => accept(row.id)}>
+              <Button type="button" disabled={busy} onClick={() => accept(row.id)}>
                 Создать поставку
               </Button>
             </div>
