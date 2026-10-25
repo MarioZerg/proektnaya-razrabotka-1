@@ -15,6 +15,8 @@ from datetime import date, datetime, timedelta
 OZON_API = 'https://api-seller.ozon.ru'
 MIN_PIECES = 50
 DEMAND_DAYS = 30
+# Не раньше чем через столько дней: сборка на складе + дорога газелью.
+MIN_LEAD_DAYS = 2
 # Ходовой товар: продан хотя бы столько раз за месяц (любая схема Ozon).
 # Неликвид в предложку не берём — иначе он просто переедет на склад Ozon
 # и будет лежать там за наши деньги.
@@ -100,7 +102,8 @@ def _draft_clusters(info):
         for warehouse in warehouses:
             if not isinstance(warehouse, dict):
                 continue
-            status = warehouse.get('status') or warehouse.get('availability') or {}
+            status = (warehouse.get('availability_status') or warehouse.get('status')
+                      or warehouse.get('availability') or {})
             if isinstance(status, dict):
                 state = str(status.get('state') or status.get('invalid_reason') or '')
                 if status.get('is_available') is False:
@@ -109,85 +112,147 @@ def _draft_clusters(info):
                     continue
             warehouse_id = (
                 warehouse.get('warehouse_id')
+                or (warehouse.get('storage_warehouse') or {}).get('warehouse_id')
                 or (warehouse.get('supply_warehouse') or {}).get('warehouse_id')
                 or (warehouse.get('warehouse') or {}).get('warehouse_id')
             )
             warehouse_name = (
                 warehouse.get('name')
+                or (warehouse.get('storage_warehouse') or {}).get('name')
                 or (warehouse.get('supply_warehouse') or {}).get('name')
                 or (warehouse.get('warehouse') or {}).get('name')
                 or name
             )
             if warehouse_id:
-                available.append({'id': int(warehouse_id), 'name': warehouse_name})
+                available.append({'id': int(warehouse_id), 'name': warehouse_name,
+                                  'rank': int(warehouse.get('total_rank') or 999)})
+        # Первым — склад, который Ozon сам рекомендует (меньший ранг).
+        available.sort(key=lambda w: w['rank'])
         if available:
             found.append({'name': str(name), 'warehouses': available})
     return found
 
 
-def _probe_cluster(client_id, api_key, items):
-    """Считает черновик прямой поставки и возвращает живые кластеры со слотом.
+def _ozon_clusters(client_id, api_key):
+    """Справочник кластеров Ozon: название → macrolocal_cluster_id."""
+    status, data = _ozon_post('/v1/cluster/list', client_id, api_key, {
+        'cluster_type': 'CLUSTER_TYPE_OZON',
+    })
+    found = []
+    if status == 200 and isinstance(data, dict):
+        for c in data.get('clusters') or []:
+            cid = c.get('macrolocal_cluster_id') or c.get('id')
+            names = [c.get('name') or '']
+            for lc in c.get('logistic_clusters') or []:
+                for w in lc.get('warehouses') or []:
+                    names.append(w.get('name') or '')
+            if cid:
+                found.append({'id': int(cid), 'name': c.get('name') or '', 'names': names})
+    return found
+
+
+def _cluster_id_for(clusters, our_name):
+    """Ищем кластер Ozon, к которому относится наш кластер (склад) из заказов."""
+    for c in clusters:
+        if any(_same_place(our_name, n) for n in c['names'] if n):
+            return c['id']
+    return None
+
+
+def _probe_cluster(client_id, api_key, items, cluster_id):
+    """Черновик прямой поставки в один кластер и его доступные склады.
 
     items: [{sku: int, quantity: int}]
+    Старый /v1/draft/create Ozon отключил («obsolete method») — теперь
+    /v1/draft/direct/create + /v2/draft/create/info.
     """
-    status, data = _ozon_post('/v1/draft/create', client_id, api_key, {
-        'items': items,
-        'type': 'CREATE_TYPE_DIRECT',
+    status, data = _ozon_post('/v1/draft/direct/create', client_id, api_key, {
+        'cluster_info': {'items': items, 'macrolocal_cluster_id': int(cluster_id)},
+        # Не прошедшие проверку единицы Ozon уберёт, остальное оставит.
+        'deletion_sku_mode': 'PARTIAL',
     })
-    if status != 200:
+    if status != 200 or not isinstance(data, dict):
         message = data.get('message') if isinstance(data, dict) else str(data)
         return None, f'Ozon не принял расчёт прямой поставки: {message}'
-    draft_id = None
-    if isinstance(data, dict):
-        draft_id = data.get('draft_id') or (data.get('result') or {}).get('draft_id')
+    draft_id = data.get('draft_id')
     if not draft_id:
-        return None, 'Ozon не вернул номер расчёта поставки'
+        message = data.get('message') or ''
+        errs = data.get('errors') or []
+        if errs and isinstance(errs[0], dict):
+            message = message or errs[0].get('error_message') or ''
+        return None, f'Ozon не создал расчёт поставки {message}'.strip()
     info = None
     for _ in range(8):
-        status, info = _ozon_post('/v1/draft/create/info', client_id, api_key, {
+        status, info = _ozon_post('/v2/draft/create/info', client_id, api_key, {
             'draft_id': int(draft_id),
         })
-        if status != 200:
+        if status != 200 or not isinstance(info, dict):
             break
-        calc = ''
-        if isinstance(info, dict):
-            calc = str(info.get('status') or (info.get('result') or {}).get('status') or '')
-        if 'IN_PROGRESS' not in calc:
+        if str(info.get('status') or '') != 'IN_PROGRESS':
             break
         time.sleep(1)
-    clusters = _draft_clusters(info or {})
+    if not isinstance(info, dict) or info.get('status') == 'FAILED':
+        errs = (info or {}).get('errors') if isinstance(info, dict) else None
+        reason = ''
+        if errs and isinstance(errs[0], dict):
+            reason = errs[0].get('error_message') or ', '.join(errs[0].get('error_reasons') or [])
+        return None, f'Ozon не рассчитал поставку {reason}'.strip()
+    clusters = _draft_clusters(info)
     if not clusters:
-        _ozon_post('/v1/draft/delete', client_id, api_key, {'draft_id': int(draft_id)})
-        return None, 'Ozon не показал ни одного кластера, который сейчас принимает прямую поставку'
+        # Причину берём из ответа Ozon: склады есть, но закрыты — почему.
+        why = []
+        for c in info.get('clusters') or []:
+            for w in c.get('warehouses') or []:
+                av = w.get('availability_status') or {}
+                r = av.get('invalid_reason') or av.get('state')
+                if r and r not in why:
+                    why.append(str(r))
+        for e in info.get('errors') or []:
+            if isinstance(e, dict):
+                for r in (e.get('error_reasons') or []) + [e.get('error_message')]:
+                    if r and r != 'UNSPECIFIED' and r not in why:
+                        why.append(str(r))
+        raw = json.dumps(info, ensure_ascii=False)[:600]
+        print(f'draft {draft_id} без складов: {raw}')
+        return None, ('Ozon не показал ни одного склада, который сейчас принимает прямую поставку'
+                      + (f' ({", ".join(why[:5])})' if why else ''))
     return {'draftId': int(draft_id), 'clusters': clusters}, None
 
 
-def _slot_window(client_id, api_key, draft_id, warehouse_id):
+def _slot_window(client_id, api_key, draft_id, warehouse_id, cluster_id=None):
     """Ближайшее свободное окно приёмки: (начало, конец) строками Ozon."""
-    start = datetime.utcnow()
-    status, data = _ozon_post('/v1/draft/timeslot/info', client_id, api_key, {
+    today = date.today()
+    status, data = _ozon_post('/v2/draft/timeslot/info', client_id, api_key, {
         'draft_id': int(draft_id),
-        'warehouse_ids': [int(warehouse_id)],
-        'date_from': start.strftime('%Y-%m-%dT%H:%M:%SZ'),
-        'date_to': (start + timedelta(days=21)).strftime('%Y-%m-%dT%H:%M:%SZ'),
+        'supply_type': 'DIRECT',
+        'date_from': today.isoformat(),
+        'date_to': (today + timedelta(days=27)).isoformat(),
+        'selected_cluster_warehouses': [{
+            'macrolocal_cluster_id': int(cluster_id or 0),
+            'storage_warehouse_id': int(warehouse_id),
+        }],
     })
     if status != 200 or not isinstance(data, dict):
         return None, None
     nodes = []
     _walk(data, nodes)
+    earliest = (today + timedelta(days=MIN_LEAD_DAYS)).isoformat()
     best = None
     for node in nodes:
-        begin = node.get('from_in_timezone') or node.get('from') or node.get('begin')
-        end = node.get('to_in_timezone') or node.get('to') or node.get('end')
+        begin = node.get('from_in_timezone')
+        end = node.get('to_in_timezone')
         if not begin or not isinstance(begin, str) or len(begin) < 10:
+            continue
+        # Слот сегодня-завтра бесполезен: поставку надо собрать и довезти.
+        if begin[:10] < earliest:
             continue
         if best is None or begin < best[0]:
             best = (begin, end if isinstance(end, str) else None)
     return best if best else (None, None)
 
 
-def _nearest_slot(client_id, api_key, draft_id, warehouse_id):
-    best, _end = _slot_window(client_id, api_key, draft_id, warehouse_id)
+def _nearest_slot(client_id, api_key, draft_id, warehouse_id, cluster_id=None):
+    best, _end = _slot_window(client_id, api_key, draft_id, warehouse_id, cluster_id)
     if not best:
         return None, None
     slot = best[11:16] if len(best) >= 16 and best[10] in ('T', ' ') else None
@@ -460,6 +525,7 @@ def build(cur, shop_id):
 
     created = []
     skipped = list(too_small)
+    ozon_clusters = _ozon_clusters(client_id, api_key) if planned else []
     for plan in planned:
         cur.execute(
             "SELECT id FROM fbo_supply_proposals "
@@ -469,24 +535,25 @@ def build(cur, shop_id):
         if cur.fetchone():
             skipped.append(f'{plan["cluster"]}: предложка уже открыта')
             continue
-        probe, error = _probe_cluster(client_id, api_key, plan['items'])
+        cluster_id = _cluster_id_for(ozon_clusters, plan['cluster'])
+        if not cluster_id:
+            skipped.append(f'{plan["cluster"]}: не нашли этот кластер в справочнике Ozon')
+            continue
+        probe, error = _probe_cluster(client_id, api_key, plan['items'], cluster_id)
         if error:
             skipped.append(f'{plan["cluster"]}: {error}')
             continue
-        match = next((c for c in probe['clusters'] if _same_place(plan['cluster'], c['name'])), None)
-        if not match:
-            _ozon_post('/v1/draft/delete', client_id, api_key, {'draft_id': probe['draftId']})
-            skipped.append(f'{plan["cluster"]}: кластер сейчас не принимает прямую поставку')
-            continue
+        match = probe['clusters'][0]
         warehouse_id = match['warehouses'][0]['id']
-        gate_date, gate_slot = _nearest_slot(client_id, api_key, probe['draftId'], warehouse_id)
+        gate_date, gate_slot = _nearest_slot(client_id, api_key, probe['draftId'], warehouse_id, cluster_id)
         gazelka = _gazelka_date(plan['cluster'], gate_date)
         cur.execute(
             "INSERT INTO fbo_supply_proposals "
-            "(shop_id, cluster, ozon_draft_id, ozon_warehouse_id, gate_date, gate_timeslot, gazelka_date) "
-            "VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING id",
+            "(shop_id, cluster, ozon_draft_id, ozon_warehouse_id, gate_date, gate_timeslot, gazelka_date, "
+            " ozon_cluster_id) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s) RETURNING id",
             (int(shop_id), plan['cluster'], probe['draftId'], warehouse_id,
-             gate_date, gate_slot, gazelka),
+             gate_date, gate_slot, gazelka, int(cluster_id)),
         )
         proposal_id = cur.fetchone()[0]
         for piece in plan['goods']:
@@ -518,9 +585,7 @@ def reject(cur, proposal_id, actor_id, shop_id):
         "WHERE id = %s",
         (int(actor_id) if actor_id else None, int(proposal_id)),
     )
-    client_id, api_key = _creds(cur, shop_id)
-    if row[0] and client_id and api_key:
-        _ozon_post('/v1/draft/delete', client_id, api_key, {'draft_id': int(row[0])})
+    # Черновик Ozon сам исчезает через 30 минут — удалять нечего.
     return {'rejected': True}
 
 
@@ -535,7 +600,8 @@ def _next_order_number(cur):
 
 def accept(cur, proposal_id, actor_id, actor_name, shop_id):
     cur.execute(
-        "SELECT cluster, ozon_draft_id, ozon_warehouse_id, gate_date, gate_timeslot, gazelka_date "
+        "SELECT cluster, ozon_draft_id, ozon_warehouse_id, gate_date, gate_timeslot, gazelka_date, "
+        "       ozon_cluster_id, created_at "
         "FROM fbo_supply_proposals WHERE id = %s AND shop_id = %s AND status = 'open' "
         "FOR UPDATE",
         (int(proposal_id), int(shop_id)),
@@ -543,7 +609,8 @@ def accept(cur, proposal_id, actor_id, actor_name, shop_id):
     proposal = cur.fetchone()
     if not proposal:
         return {'error': 'Открытая предложка не найдена'}
-    cluster, draft_id, warehouse_id, gate_date, gate_slot, gazelka_date = proposal
+    (cluster, draft_id, warehouse_id, gate_date, gate_slot, gazelka_date,
+     ozon_cluster_id, proposal_created) = proposal
     cur.execute(
         "SELECT i.goods_warehouse_id, i.marketplace_item_id, gw.status, gw.reserved_order_id "
         "FROM fbo_supply_proposal_items i "
@@ -595,11 +662,39 @@ def accept(cur, proposal_id, actor_id, actor_name, shop_id):
         to_sew.extend([item_id] * (qty - len(subs)))
 
     client_id, api_key = _creds(cur, shop_id)
-    if draft_id and client_id and api_key and gate_date and str(gate_date) < date.today().isoformat():
-        fresh_date, fresh_slot = _nearest_slot(client_id, api_key, draft_id, warehouse_id)
-        if fresh_date:
-            gate_date, gate_slot = fresh_date, fresh_slot
-            gazelka_date = _gazelka_date(cluster, gate_date)
+
+    # Черновик Ozon живёт 30 минут. Предложку подтверждают позже — поэтому
+    # перед созданием заявки считаем черновик заново по фактическому составу
+    # (с заменами и пошивом), иначе Ozon ответит «черновик не существует».
+    if client_id and api_key and ozon_cluster_id:
+        counts = {}
+        for gw_id, item_id in ready:
+            counts[int(item_id)] = counts.get(int(item_id), 0) + 1
+        for item_id in to_sew:
+            counts[int(item_id)] = counts.get(int(item_id), 0) + 1
+        sku_qty = {}
+        if counts:
+            ids_csv = ','.join(str(i) for i in counts)
+            cur.execute(
+                f"SELECT id, ozon_sku FROM marketplace_items WHERE id IN ({ids_csv})"
+            )
+            for mid, osku in cur.fetchall():
+                if osku and str(osku).isdigit():
+                    sku_qty[int(osku)] = sku_qty.get(int(osku), 0) + counts[int(mid)]
+        if sku_qty:
+            probe, _err = _probe_cluster(
+                client_id, api_key,
+                [{'sku': k, 'quantity': v} for k, v in sku_qty.items()],
+                ozon_cluster_id,
+            )
+            if probe:
+                draft_id = probe['draftId']
+                warehouse_id = probe['clusters'][0]['warehouses'][0]['id']
+                fresh_date, fresh_slot = _nearest_slot(
+                    client_id, api_key, draft_id, warehouse_id, ozon_cluster_id)
+                if fresh_date:
+                    gate_date, gate_slot = fresh_date, fresh_slot
+                    gazelka_date = _gazelka_date(cluster, gate_date)
 
     cur.execute(
         "INSERT INTO marketplace_supplies "
@@ -662,7 +757,7 @@ def accept(cur, proposal_id, actor_id, actor_name, shop_id):
     if draft_id and warehouse_id and client_id and api_key and gate_date:
         # Окно берём у Ozon целиком (начало и конец). Раньше начало и конец
         # были одним и тем же временем — нулевое окно Ozon не принимает.
-        win_from, win_to = _slot_window(client_id, api_key, draft_id, warehouse_id)
+        win_from, win_to = _slot_window(client_id, api_key, draft_id, warehouse_id, ozon_cluster_id)
         if win_from and win_to:
             slot_from, slot_to = win_from, win_to
         else:
@@ -670,15 +765,35 @@ def accept(cur, proposal_id, actor_id, actor_name, shop_id):
             end_h = min(int(begin[:2]) + 1, 23)
             slot_from = f'{gate_date}T{begin}:00Z'
             slot_to = f'{gate_date}T{end_h:02d}:{begin[3:5]}:00Z'
-        status, data = _ozon_post('/v1/draft/supply/create', client_id, api_key, {
+        status, data = _ozon_post('/v2/draft/supply/create', client_id, api_key, {
             'draft_id': int(draft_id),
-            'warehouse_id': int(warehouse_id),
+            'supply_type': 'DIRECT',
+            'selected_cluster_warehouses': [{
+                'macrolocal_cluster_id': int(ozon_cluster_id or 0),
+                'storage_warehouse_id': int(warehouse_id),
+            }],
             'timeslot': {'from_in_timezone': slot_from, 'to_in_timezone': slot_to},
         })
         order_id = None
-        if isinstance(data, dict):
-            order_id = data.get('order_id') or (data.get('result') or {}).get('order_id')
-        if status == 200 and order_id:
+        reasons = []
+        if status == 200 and isinstance(data, dict):
+            reasons = [r for r in (data.get('error_reasons') or []) if r != 'UNSPECIFIED']
+            # Заявка создаётся в фоне: ждём номер до ~8 секунд.
+            for _ in range(8):
+                st, res = _ozon_post('/v2/draft/supply/create/status', client_id, api_key, {
+                    'draft_id': int(draft_id),
+                })
+                if st != 200 or not isinstance(res, dict):
+                    break
+                order_id = res.get('order_id') or None
+                state = str(res.get('status') or '')
+                if state == 'FAILED':
+                    reasons = [r for r in (res.get('error_reasons') or []) if r != 'UNSPECIFIED']
+                    break
+                if order_id or state == 'SUCCESS':
+                    break
+                time.sleep(1)
+        if order_id:
             cur.execute(
                 "UPDATE marketplace_supplies SET ozon_supply_order_id = %s, "
                 "supply_number = COALESCE(supply_number, %s), "
@@ -688,7 +803,12 @@ def accept(cur, proposal_id, actor_id, actor_name, shop_id):
             )
         else:
             message = data.get('message') if isinstance(data, dict) else str(data)
-            ozon_error = message or 'Ozon не создал заявку. Этикетки коробов появятся после привязки номера'
+            if reasons:
+                message = ', '.join(reasons)
+            ozon_error = (
+                f'Ozon не создал заявку: {message}' if message
+                else 'Ozon не создал заявку. Этикетки коробов появятся после привязки номера'
+            )
     return {'supplyId': supply_id, 'ozonError': ozon_error,
             'fromStock': len(ready), 'toSewing': len(to_sew)}
 

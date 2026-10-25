@@ -1,0 +1,1 @@
+ALTER TABLE t_p86119184_proektnaya_razrabotk.fbo_supply_proposals ADD COLUMN IF NOT EXISTS ozon_cluster_id bigint;
