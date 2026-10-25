@@ -28,10 +28,15 @@ const STAGES: { id: StageId; title: string; who: string }[] = [
 ];
 
 const SHIPPED = ['Отгрузка', 'Отгружено', 'Принята', 'Выполнена'];
-const SEWN = ['Готовые', 'Со склада'];
+const SEWN = ['Готовые'];
 
-const sewingActive = (supply: SupplyDetail) =>
+/** Заказы поставки без отменённых — и сшитые, и взятые со склада. */
+const compositionActive = (supply: SupplyDetail) =>
   (supply.sewingOrders || []).filter((o) => !o.isCancelled);
+
+/** Только то, что реально шьётся: взятое готовым с полки пошивом не считаем. */
+const sewingActive = (supply: SupplyDetail) =>
+  compositionActive(supply).filter((o) => o.sewingStatus !== 'Со склада');
 
 /**
  * Какой шаг открыть сразу.
@@ -49,8 +54,9 @@ const pickStage = (supply: SupplyDetail, isManager: boolean): StageId => {
   // Печать стикеров открывается кладовщику только когда есть и заявка, и ID отгрузки.
   const gazelkaReady = !!supply.gazelkaPlanId && !!supply.gazelkaId;
 
+  const composition = compositionActive(supply);
   if (isManager) {
-    if (!hasIdentity || sewing.length === 0) return 'request';
+    if (!hasIdentity || composition.length === 0) return 'request';
     if (sewn < sewing.length) return 'sewing';
     if (!gazelkaReady) return 'ship';
     return 'assemble';
@@ -63,6 +69,8 @@ const pickStage = (supply: SupplyDetail, isManager: boolean): StageId => {
 
 const stageFacts = (supply: SupplyDetail) => {
   const sewing = sewingActive(supply);
+  const composition = compositionActive(supply);
+  const fromStock = composition.length - sewing.length;
   const sewn = sewing.filter((o) => SEWN.includes(o.sewingStatus)).length;
   const hasIdentity = !!(supply.supplyNumber || supply.ozonApplicationNumber || supply.cluster);
   const boxed = supply.boxes.reduce((sum, b) => sum + boxPackedCount(b), 0);
@@ -74,8 +82,8 @@ const stageFacts = (supply: SupplyDetail) => {
   return {
     sewing,
     sewn,
-    requestDone: hasIdentity && sewing.length > 0,
-    sewingDone: sewing.length > 0 && sewn === sewing.length,
+    requestDone: hasIdentity && composition.length > 0,
+    sewingDone: composition.length > 0 && sewn === sewing.length,
     assembleDone:
       SHIPPED.includes(supply.status) ||
       (supply.boxes.length > 0 &&
@@ -86,15 +94,17 @@ const stageFacts = (supply: SupplyDetail) => {
     shipDone: supply.status === 'Принята' || supply.status === 'Выполнена',
     requestText: !hasIdentity
       ? 'Нужны данные'
-      : sewing.length === 0
+      : composition.length === 0
         ? 'Нет состава'
         : supply.supplyNumber || supply.cluster || 'Состав есть',
     sewingText:
-      sewing.length === 0
+      composition.length === 0
         ? 'Состава нет'
-        : sewn === sewing.length
-          ? 'Всё сшито'
-          : `Сшито ${sewn} из ${sewing.length}`,
+        : sewing.length === 0
+          ? `Всё со склада: ${fromStock}`
+          : sewn === sewing.length
+            ? 'Всё сшито'
+            : `Сшито ${sewn} из ${sewing.length}`,
     assembleText: SHIPPED.includes(supply.status)
       ? 'Собрана'
       : supply.boxes.length === 0

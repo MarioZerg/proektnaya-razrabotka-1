@@ -52,18 +52,32 @@ const SupplySewingSection = ({
   onRemove,
   defaultOpen = false,
 }: SupplySewingSectionProps) => {
-  const active = orders.filter((o) => !o.isCancelled);
-  const done = active.filter((o) => o.sewingStatus === 'Готовые' || o.sewingStatus === 'Со склада');
+  const all = orders.filter((o) => !o.isCancelled);
+  // Взятое готовым с полки — не пошив: считаем отдельно, чтобы не было
+  // «Сшито 33 из 33», когда никто ничего не шил.
+  const fromStock = all.filter((o) => o.sewingStatus === 'Со склада');
+  const active = all.filter((o) => o.sewingStatus !== 'Со склада');
+  const done = active.filter((o) => o.sewingStatus === 'Готовые');
   const inWork = active.filter((o) => IN_PROGRESS.includes(o.sewingStatus));
   const fresh = active.filter((o) => o.sewingStatus === 'Новый');
 
   return (
     <SupplySection
-      title={`Пошив по поставке (${active.length})`}
+      title={`Состав поставки (${all.length})`}
       summary={
-        active.length > 0 ? (
+        all.length > 0 ? (
           <span>
-            Сшито <b className="text-emerald-700">{done.length}</b> из {active.length}
+            {active.length > 0 && (
+              <>
+                Сшито <b className="text-emerald-700">{done.length}</b> из {active.length}
+              </>
+            )}
+            {active.length > 0 && fromStock.length > 0 && ' · '}
+            {fromStock.length > 0 && (
+              <>
+                Со склада <b className="text-emerald-700">{fromStock.length}</b>
+              </>
+            )}
           </span>
         ) : undefined
       }
@@ -79,8 +93,13 @@ const SupplySewingSection = ({
         </div>
       )}
 
-      {active.length > 0 && (
+      {all.length > 0 && (
         <div className="flex flex-wrap gap-3 text-sm">
+          {fromStock.length > 0 && (
+            <span className="rounded-md border border-border px-3 py-1.5">
+              Со склада (готовое): <b className="text-emerald-700">{fromStock.length}</b>
+            </span>
+          )}
           <span className="rounded-md border border-border px-3 py-1.5">
             Сшито: <b className="text-emerald-700">{done.length}</b> из {active.length}
           </span>

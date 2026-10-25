@@ -1,0 +1,1 @@
+UPDATE t_p86119184_proektnaya_razrabotk.marketplace_supplies SET status = 'Отменена' WHERE id = 1518;

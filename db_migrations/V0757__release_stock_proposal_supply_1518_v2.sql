@@ -1,0 +1,2 @@
+UPDATE t_p86119184_proektnaya_razrabotk.goods_warehouse SET status = 'in_stock', reserved_order_id = NULL, matched_at = NULL WHERE reserved_order_id IN (SELECT id FROM t_p86119184_proektnaya_razrabotk.orders WHERE supply_id = 1518 AND source = 'proposal') AND picked_confirmed_at IS NULL AND shipping_labeled_at IS NULL;
+UPDATE t_p86119184_proektnaya_razrabotk.orders SET status = 'Отменён', fulfilled_from_stock_id = NULL WHERE supply_id = 1518 AND source = 'proposal';

@@ -854,11 +854,14 @@ def handle_get(event: dict, headers: dict, dsn: str) -> dict:
             f"(SELECT COUNT(*) FROM wb_supply_orders wso WHERE wso.supply_id = s.id), "
             # Прогресс пошива по поставке: всего изделий в производстве и сколько уже
             # готово. Считаем подзапросами, чтобы список грузился одним обращением к базе.
-            f"(SELECT COUNT(*) FROM orders o WHERE o.supply_id = s.id "
-            f" AND COALESCE(o.status, '') <> 'Отменён'), "
+            # Взятое со склада готовым — НЕ пошив: иначе поставка из полки
+            # показывала «Сшито 33 из 33», хотя никто ничего не шил.
             f"(SELECT COUNT(*) FROM orders o WHERE o.supply_id = s.id "
             f" AND COALESCE(o.status, '') <> 'Отменён' "
-            f" AND o.sewing_status IN ('Готовые', 'Со склада')), "
+            f" AND o.sewing_status <> 'Со склада'), "
+            f"(SELECT COUNT(*) FROM orders o WHERE o.supply_id = s.id "
+            f" AND COALESCE(o.status, '') <> 'Отменён' "
+            f" AND o.sewing_status = 'Готовые'), "
             # Кто сейчас собирает поставку — чтобы кладовщик видел занятость
             # прямо в списке и не заходил внутрь впустую.
             f"s.locked_by, lu.full_name, "

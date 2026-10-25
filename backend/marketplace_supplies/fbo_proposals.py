@@ -76,6 +76,19 @@ def _same_place(left, right):
 
 
 def _ozon_post(path, client_id, api_key, payload, timeout=20):
+    """Запрос к Ozon. При «rate limit per second» ждём и повторяем до 3 раз."""
+    for attempt in range(3):
+        status, data = _ozon_post_once(path, client_id, api_key, payload, timeout)
+        limited = status == 429 or (
+            isinstance(data, dict) and 'rate limit' in str(data.get('message') or '').lower()
+        )
+        if not limited:
+            return status, data
+        time.sleep(1.2 * (attempt + 1))
+    return status, data
+
+
+def _ozon_post_once(path, client_id, api_key, payload, timeout=20):
     body = json.dumps(payload).encode('utf-8')
     req = urllib.request.Request(OZON_API + path, method='POST', data=body)
     req.add_header('Client-Id', client_id)
@@ -373,6 +386,46 @@ def _popular_sizes(cur):
     }
 
 
+def _recover_stuck(cur, shop_id):
+    """Подтверждение оборвалось (база/Ozon не ответили) — откатываем недописанное.
+
+    Предложка висит в 'accepting' дольше 3 минут: её поставку отменяем, заказы
+    снимаем, вещи возвращаем на полку, предложку открываем снова.
+    """
+    cur.execute(
+        "SELECT id, supply_id FROM fbo_supply_proposals "
+        "WHERE shop_id = %s AND status = 'accepting' "
+        "  AND COALESCE(decided_at, created_at) < now() - interval '3 minutes'",
+        (int(shop_id),),
+    )
+    for pid, sid in cur.fetchall():
+        if sid:
+            cur.execute(
+                "UPDATE goods_warehouse SET status = CASE WHEN status = 'picking' THEN 'in_stock' ELSE status END, "
+                "reserved_order_id = NULL, matched_at = NULL "
+                "WHERE reserved_order_id IN (SELECT id FROM orders WHERE supply_id = %s AND source = 'proposal') "
+                "  AND shipping_labeled_at IS NULL AND shipped_at IS NULL",
+                (int(sid),),
+            )
+            cur.execute(
+                "UPDATE orders SET status = 'Отменён', fulfilled_from_stock_id = NULL "
+                "WHERE supply_id = %s AND source = 'proposal'",
+                (int(sid),),
+            )
+            cur.execute(
+                "UPDATE marketplace_supplies SET status = 'Отменена' WHERE id = %s",
+                (int(sid),),
+            )
+        cur.execute(
+            "UPDATE fbo_supply_proposals SET status = 'open', supply_id = NULL WHERE id = %s",
+            (int(pid),),
+        )
+        cur.execute(
+            "UPDATE fbo_supply_proposal_items SET open_hold = true WHERE proposal_id = %s",
+            (int(pid),),
+        )
+
+
 def list_open(cur, shop_id):
     cur.execute(
         "SELECT p.id, p.cluster, p.gate_date, p.gate_timeslot, p.gazelka_date, "
@@ -660,15 +713,17 @@ def _next_order_number(cur):
 
 def accept(cur, proposal_id, actor_id, actor_name, shop_id):
     cur.execute(
-        "SELECT cluster, ozon_draft_id, ozon_warehouse_id, gate_date, gate_timeslot, gazelka_date, "
-        "       ozon_cluster_id, created_at "
-        "FROM fbo_supply_proposals WHERE id = %s AND shop_id = %s AND status = 'open' "
-        "FOR UPDATE",
+        # Сначала «захватываем» предложку одним запросом: повторное нажатие
+        # или второй администратор получат отказ, а не вторую поставку.
+        "UPDATE fbo_supply_proposals SET status = 'accepting', decided_at = now() "
+        "WHERE id = %s AND shop_id = %s AND status = 'open' "
+        "RETURNING cluster, ozon_draft_id, ozon_warehouse_id, gate_date, gate_timeslot, gazelka_date, "
+        "          ozon_cluster_id, created_at",
         (int(proposal_id), int(shop_id)),
     )
     proposal = cur.fetchone()
     if not proposal:
-        return {'error': 'Открытая предложка не найдена'}
+        return {'error': 'Предложка уже подтверждена или отклонена — обновите список'}
     (cluster, draft_id, warehouse_id, gate_date, gate_slot, gazelka_date,
      ozon_cluster_id, proposal_created) = proposal
     cur.execute(
@@ -687,6 +742,7 @@ def accept(cur, proposal_id, actor_id, actor_name, shop_id):
     # Без проверки брони одна вещь могла уйти и в FBS-заказ, и в эту поставку.
     ready = [(r[0], r[1]) for r in rows if r[2] == 'in_stock' and r[3] is None]
     if not rows:
+        cur.execute("UPDATE fbo_supply_proposals SET status = 'open' WHERE id = %s", (int(proposal_id),))
         return {'error': 'В предложке не осталось вещей. Сформируйте заново'}
 
     # Чего не хватает (вещь потеряли, продали, забронировали под другой заказ):
@@ -765,42 +821,84 @@ def accept(cur, proposal_id, actor_id, actor_name, shop_id):
          gate_date, gate_slot, gazelka_date),
     )
     supply_id = cur.fetchone()[0]
+    # Сразу привязываем поставку к предложке: если запись оборвётся на полпути,
+    # по этой связи недописанную поставку найдут и откатят (_recover_stuck).
+    cur.execute(
+        "UPDATE fbo_supply_proposals SET supply_id = %s WHERE id = %s",
+        (int(supply_id), int(proposal_id)),
+    )
     seq = _next_order_number(cur)
     plan = [(gw, it) for gw, it in ready] + [(None, it) for it in to_sew]
-    for gw_id, item_id in plan:
+
+    # Всё пишем ПАКЕТОМ: один INSERT заказов и один UPDATE склада.
+    # Раньше было по 2–3 запроса на каждую вещь — база на пике отвечала
+    # «rate limit», и поставка оставалась записанной наполовину.
+    item_ids = sorted({int(it) for _, it in plan})
+    cards = {}
+    if item_ids:
         cur.execute(
-            "SELECT name, material, width, height, barcode, ozon_sku "
-            "FROM marketplace_items WHERE id = %s",
-            (int(item_id),),
+            "SELECT id, name, material, width, height, barcode, ozon_sku "
+            f"FROM marketplace_items WHERE id IN ({','.join(str(i) for i in item_ids)})"
         )
-        item = cur.fetchone()
-        if not item:
+        cards = {int(r[0]): r[1:] for r in cur.fetchall()}
+
+    def q(value):
+        if value is None:
+            return 'NULL'
+        return "'" + str(value).replace("'", "''") + "'"
+
+    values = []
+    gw_order = []
+    for gw_id, item_id in plan:
+        card = cards.get(int(item_id))
+        if not card:
             continue
-        name, material, width, height, barcode, ozon_sku = item
-        product = f'{material} {width}x{height}' if material and width and height else name
+        name, material, width, height, barcode, ozon_sku = card
+        product = f'{material} {width}x{height}' if material and width and height else (name or 'Товар')
+        number = f'00000-{seq:02d}'
+        seq += 1
+        values.append(
+            f"({q(number)}, 'OZON', 'FBO', 'Новый', {q(cluster)}, {q(product)}, 1, 'proposal', "
+            f"{q(material)}, {int(width) if width else 'NULL'}, {int(height) if height else 'NULL'}, "
+            f"{int(item_id)}, {q(barcode)}, {q(ozon_sku)}, {int(supply_id)}, {int(shop_id)}, "
+            f"{int(gw_id) if gw_id else 'NULL'}, {q('Со склада' if gw_id else 'Новый')})"
+        )
+        if gw_id:
+            gw_order.append((number, int(gw_id)))
+    if values:
         cur.execute(
             "INSERT INTO orders (order_number, marketplace, order_type, status, cluster, "
             "product, quantity, source, material, width, height, marketplace_item_id, "
             "product_barcode, product_ozon_sku, supply_id, shop_id, "
-            "fulfilled_from_stock_id, sewing_status) "
-            "VALUES (%s, 'OZON', 'FBO', 'Новый', %s, %s, 1, 'proposal', %s, %s, %s, %s, %s, %s, "
-            "%s, %s, %s, %s) RETURNING id",
-            (
-                f'00000-{seq:02d}', cluster, product, material,
-                int(width) if width else None, int(height) if height else None,
-                int(item_id), barcode, ozon_sku, int(supply_id), int(shop_id),
-                int(gw_id) if gw_id else None,
-                # Вещи на полке нет — заказ уходит в цех, как в обычной поставке.
-                'Со склада' if gw_id else 'Новый',
-            ),
+            "fulfilled_from_stock_id, sewing_status) VALUES " + ', '.join(values)
         )
-        order_id = cur.fetchone()[0]
-        seq += 1
-        if gw_id:
+    if gw_order:
+        pairs = ', '.join(f"({q(n)}, {g})" for n, g in gw_order)
+        # Бронь ставим только если вещь всё ещё свободна — иначе её успел
+        # забрать FBS, и одна вещь ушла бы в два заказа.
+        cur.execute(
+            "UPDATE goods_warehouse gw SET reserved_order_id = o.id, matched_at = now() "
+            f"FROM (VALUES {pairs}) AS v(num, gw_id) "
+            "JOIN orders o ON o.order_number = v.num AND o.supply_id = " + str(int(supply_id)) + " "
+            "WHERE gw.id = v.gw_id AND gw.reserved_order_id IS NULL AND gw.status = 'in_stock'"
+        )
+        if cur.rowcount != len(gw_order):
+            # Кто-то забрал часть вещей прямо сейчас: такие заказы — в пошив.
             cur.execute(
-                "UPDATE goods_warehouse SET reserved_order_id = %s, matched_at = now() WHERE id = %s",
-                (order_id, int(gw_id)),
+                "UPDATE orders o SET fulfilled_from_stock_id = NULL, sewing_status = 'Новый' "
+                "WHERE o.supply_id = %s AND o.fulfilled_from_stock_id IS NOT NULL "
+                "  AND NOT EXISTS (SELECT 1 FROM goods_warehouse gw "
+                "                  WHERE gw.id = o.fulfilled_from_stock_id AND gw.reserved_order_id = o.id)",
+                (int(supply_id),),
             )
+    # Итог считаем по базе, а не по плану — чтобы «со склада / в пошив» был честным.
+    cur.execute(
+        "SELECT COUNT(*) FILTER (WHERE fulfilled_from_stock_id IS NOT NULL), "
+        "       COUNT(*) FILTER (WHERE fulfilled_from_stock_id IS NULL) "
+        "FROM orders WHERE supply_id = %s",
+        (int(supply_id),),
+    )
+    from_stock_cnt, to_sew_cnt = cur.fetchone()
     cur.execute(
         "UPDATE fbo_supply_proposal_items SET open_hold = false WHERE proposal_id = %s",
         (int(proposal_id),),
@@ -838,8 +936,9 @@ def accept(cur, proposal_id, actor_id, actor_name, shop_id):
         reasons = []
         if status == 200 and isinstance(data, dict):
             reasons = [r for r in (data.get('error_reasons') or []) if r != 'UNSPECIFIED']
-            # Заявка создаётся в фоне: ждём номер до ~8 секунд.
-            for _ in range(8):
+            # Заявка создаётся в фоне: ждём номер несколько секунд. Не дождались —
+            # номер подтянет синхронизация поставок Ozon.
+            for _ in range(4):
                 st, res = _ozon_post('/v2/draft/supply/create/status', client_id, api_key, {
                     'draft_id': int(draft_id),
                 })
@@ -870,7 +969,7 @@ def accept(cur, proposal_id, actor_id, actor_name, shop_id):
                 else 'Ozon не создал заявку. Этикетки коробов появятся после привязки номера'
             )
     return {'supplyId': supply_id, 'ozonError': ozon_error,
-            'fromStock': len(ready), 'toSewing': len(to_sew)}
+            'fromStock': int(from_stock_cnt), 'toSewing': int(to_sew_cnt)}
 
 
 def handle_proposal_action(cur, conn, body, headers):
@@ -881,6 +980,8 @@ def handle_proposal_action(cur, conn, body, headers):
     if not shop_id:
         return _resp(400, {'error': 'Укажите магазин'}, headers)
     actor_id = body.get('actorId')
+    _recover_stuck(cur, shop_id)
+    conn.commit()
     if action == 'fbo_proposal_list':
         return _resp(200, {'proposals': list_open(cur, shop_id)}, headers)
     if action == 'fbo_proposal_build':
