@@ -386,44 +386,81 @@ def _popular_sizes(cur):
     }
 
 
+def _rollback_proposal(cur, pid, sid):
+    """Отменяет недописанную поставку предложки и возвращает вещи на полку."""
+    if sid:
+        cur.execute(
+            "UPDATE goods_warehouse SET status = CASE WHEN status = 'picking' THEN 'in_stock' ELSE status END, "
+            "reserved_order_id = NULL, matched_at = NULL "
+            "WHERE reserved_order_id IN (SELECT id FROM orders WHERE supply_id = %s AND source = 'proposal') "
+            "  AND shipping_labeled_at IS NULL AND shipped_at IS NULL",
+            (int(sid),),
+        )
+        cur.execute(
+            "UPDATE orders SET status = 'Отменён', fulfilled_from_stock_id = NULL "
+            "WHERE supply_id = %s AND source = 'proposal'",
+            (int(sid),),
+        )
+        cur.execute("UPDATE marketplace_supplies SET status = 'Отменена' WHERE id = %s", (int(sid),))
+    cur.execute(
+        "UPDATE fbo_supply_proposals SET status = 'open', supply_id = NULL, decided_at = NULL "
+        "WHERE id = %s",
+        (int(pid),),
+    )
+    cur.execute(
+        "UPDATE fbo_supply_proposal_items SET open_hold = true WHERE proposal_id = %s",
+        (int(pid),),
+    )
+
+
+def recover_after_failure(dsn, proposal_id):
+    """Подтверждение упало на полпути — сразу откатываем, не ждём 3 минуты.
+
+    База платформы фиксирует каждый запрос сразу, поэтому при обрыве
+    поставка оставалась записанной частично (33 из 78) и предложка висела.
+    Откатываем, только если предложка так и не дошла до 'accepted'.
+    """
+    import psycopg2
+    for _ in range(3):
+        try:
+            conn = psycopg2.connect(dsn)
+            try:
+                cur = conn.cursor()
+                cur.execute(
+                    "SELECT status, supply_id FROM fbo_supply_proposals WHERE id = %s",
+                    (int(proposal_id),),
+                )
+                row = cur.fetchone()
+                if not row:
+                    return 'none'
+                if row[0] == 'accepted':
+                    conn.commit()
+                    return 'accepted'
+                if row[0] == 'accepting':
+                    _rollback_proposal(cur, int(proposal_id), row[1])
+                conn.commit()
+                return 'rolled_back'
+            finally:
+                conn.close()
+        except psycopg2.OperationalError:
+            time.sleep(1.5)
+    return 'unknown'
+
+
 def _recover_stuck(cur, shop_id):
     """Подтверждение оборвалось (база/Ozon не ответили) — откатываем недописанное.
 
-    Предложка висит в 'accepting' дольше 3 минут: её поставку отменяем, заказы
+    Предложка висит в 'accepting' дольше 90 секунд (функцию оборвал таймаут): её поставку отменяем, заказы
     снимаем, вещи возвращаем на полку, предложку открываем снова.
     """
     cur.execute(
         "SELECT id, supply_id FROM fbo_supply_proposals "
         "WHERE shop_id = %s AND status = 'accepting' "
-        "  AND COALESCE(decided_at, created_at) < now() - interval '3 minutes'",
+        "  AND COALESCE(decided_at, created_at) < now() - interval '90 seconds'",
         (int(shop_id),),
     )
     for pid, sid in cur.fetchall():
-        if sid:
-            cur.execute(
-                "UPDATE goods_warehouse SET status = CASE WHEN status = 'picking' THEN 'in_stock' ELSE status END, "
-                "reserved_order_id = NULL, matched_at = NULL "
-                "WHERE reserved_order_id IN (SELECT id FROM orders WHERE supply_id = %s AND source = 'proposal') "
-                "  AND shipping_labeled_at IS NULL AND shipped_at IS NULL",
-                (int(sid),),
-            )
-            cur.execute(
-                "UPDATE orders SET status = 'Отменён', fulfilled_from_stock_id = NULL "
-                "WHERE supply_id = %s AND source = 'proposal'",
-                (int(sid),),
-            )
-            cur.execute(
-                "UPDATE marketplace_supplies SET status = 'Отменена' WHERE id = %s",
-                (int(sid),),
-            )
-        cur.execute(
-            "UPDATE fbo_supply_proposals SET status = 'open', supply_id = NULL WHERE id = %s",
-            (int(pid),),
-        )
-        cur.execute(
-            "UPDATE fbo_supply_proposal_items SET open_hold = true WHERE proposal_id = %s",
-            (int(pid),),
-        )
+        _rollback_proposal(cur, pid, sid)
 
 
 def list_open(cur, shop_id):
@@ -972,6 +1009,21 @@ def accept(cur, proposal_id, actor_id, actor_name, shop_id):
             'fromStock': int(from_stock_cnt), 'toSewing': int(to_sew_cnt)}
 
 
+def _accepted_supply(proposal_id):
+    import psycopg2
+    try:
+        conn = psycopg2.connect(os.environ['DATABASE_URL'])
+        try:
+            cur = conn.cursor()
+            cur.execute("SELECT supply_id FROM fbo_supply_proposals WHERE id = %s", (int(proposal_id),))
+            row = cur.fetchone()
+            return row[0] if row else None
+        finally:
+            conn.close()
+    except Exception:
+        return None
+
+
 def handle_proposal_action(cur, conn, body, headers):
     if (body.get('actorRole') or '') != 'admin':
         return _resp(403, {'error': 'Предложку подтверждает и отклоняет администратор'}, headers)
@@ -1003,7 +1055,25 @@ def handle_proposal_action(cur, conn, body, headers):
         conn.commit()
         return _resp(200, result, headers)
     if action == 'fbo_proposal_accept':
-        result = accept(cur, proposal_id, actor_id, body.get('actorName'), shop_id)
+        try:
+            result = accept(cur, proposal_id, actor_id, body.get('actorName'), shop_id)
+        except Exception as err:
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+            state = recover_after_failure(os.environ['DATABASE_URL'], proposal_id)
+            print(f'fbo_proposal_accept {proposal_id} упал: {err!r}, итог: {state}')
+            if state == 'accepted':
+                return _resp(200, {'supplyId': _accepted_supply(proposal_id),
+                                   'ozonError': 'База ответила с задержкой, но поставка создана целиком'},
+                             headers)
+            if state == 'rolled_back':
+                return _resp(503, {'error': 'База не ответила вовремя. Ничего не создано: '
+                                            'предложка снова открыта, вещи свободны. Подтвердите ещё раз',
+                                   'rolledBack': True}, headers)
+            return _resp(503, {'error': 'База не ответила. Обновите список через минуту и проверьте, '
+                                        'создалась ли поставка — повторно не нажимайте'}, headers)
         if result.get('error'):
             conn.rollback()
             return _resp(409, result, headers)

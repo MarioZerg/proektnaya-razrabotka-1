@@ -100,6 +100,8 @@ const FboProposalsPanel = ({
         description: e instanceof Error ? e.message : undefined,
         variant: 'destructive',
       });
+      // Список обновляем и при ошибке: видно, открыта ли предложка снова.
+      load();
     } finally {
       setBusy(false);
     }
