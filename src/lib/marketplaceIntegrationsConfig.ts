@@ -65,6 +65,16 @@ export const marketplaceIntegrationsConfig: MarketplaceConfigItem[] = [
       { key: 'clientSecret', label: 'Client Secret', secret: true },
     ],
   },
+  {
+    code: 'internet_shop',
+    name: 'Интернет-магазин',
+    className: 'text-[#0F766E]',
+    hint: 'Заказы с сайта попадают на конвейер так же, как заказы OZON, с пометкой «ИМ».',
+    fields: [
+      { key: 'siteUrl', label: 'Адрес сайта', placeholder: 'https://shop.example.ru' },
+      { key: 'apiKey', label: 'Ключ доступа', secret: true },
+    ],
+  },
 ];
 
 /** Учёт: не площадка, те же ключи магазина — у МЕГАТЮЛЬ и ДЮНЫ могут быть разные базы. */

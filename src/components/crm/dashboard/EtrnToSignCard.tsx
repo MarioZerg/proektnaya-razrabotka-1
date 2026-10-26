@@ -12,6 +12,7 @@ const mpLabel: Record<string, string> = {
   OZON: 'OZON',
   WB: 'WB',
   Yandex: 'Я.Маркет',
+  IM: 'ИМ',
 };
 
 const fmtDate = (iso: string | null) => {

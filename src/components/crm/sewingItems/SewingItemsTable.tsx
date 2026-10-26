@@ -63,12 +63,14 @@ const marketplaceCornerClass: Record<string, string> = {
   OZON: 'bg-[#005BFF] text-white',
   WB: 'bg-[#CB11AB] text-white',
   Yandex: 'bg-neutral-900 text-[#FFCC00]',
+  IM: 'bg-[#0F766E] text-white',
 };
 
 const marketplaceCornerLabel: Record<string, string> = {
   OZON: 'OZON',
   WB: 'WB',
   Yandex: 'Яндекс',
+  IM: 'ИМ',
 };
 
 const railOf = (o: Order) => {

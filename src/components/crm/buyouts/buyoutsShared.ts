@@ -11,6 +11,7 @@ export const MP: Record<string, { label: string; className: string }> = {
   OZON: { label: 'OZON', className: 'text-blue-700' },
   WB: { label: 'WB', className: 'text-fuchsia-700' },
   Yandex: { label: 'Яндекс', className: 'text-amber-600' },
+  IM: { label: 'ИМ заказ', className: 'text-teal-700' },
 };
 
 export const money = (v: number | null | undefined) =>

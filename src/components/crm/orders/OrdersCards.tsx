@@ -27,6 +27,7 @@ const marketplaceCornerClass: Record<string, string> = {
   OZON: 'bg-[#005BFF] text-white',
   WB: 'bg-[#CB11AB] text-white',
   Yandex: 'bg-[#FFCC00] text-slate-900',
+  IM: 'bg-[#0F766E] text-white',
 };
 
 const orderStatusClass: Record<string, string> = {

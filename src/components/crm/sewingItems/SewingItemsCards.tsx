@@ -38,6 +38,7 @@ const ribbonClass: Record<string, string> = {
   OZON: 'bg-[#005BFF]',
   WB: 'bg-[#CB11AB]',
   Yandex: 'bg-[#FFCC00]',
+  IM: 'bg-[#0F766E]',
 };
 
 /** Водяной знак площадки: слово-логотип боком в правой белой полосе. */
@@ -45,6 +46,7 @@ const marketplaceWatermark: Record<string, { color: string; full: string; short?
   OZON: { color: '#005BFF', full: 'OZON', short: 'OZ' },
   WB: { color: '#CB11AB', full: 'WB' },
   Yandex: { color: '#1a1a1a', full: 'Яндекс' },
+  IM: { color: '#0F766E', full: 'ИМ' },
 };
 
 const MarketplaceCardWatermark = ({

@@ -61,12 +61,14 @@ const outcomeLabels: Record<string, { label: string; className: string }> = {
 const marketplaceNames: Record<string, string> = {
   WB: 'Wildberries',
   Yandex: 'Яндекс Маркет',
+  IM: 'Интернет-магазин',
 };
 
 const marketplaceClass: Record<string, string> = {
   OZON: 'text-[#005BFF] font-bold',
   WB: 'text-[#CB11AB] font-bold',
   Yandex: 'text-[#FC3F1D] font-bold',
+  IM: 'text-[#0F766E] font-bold',
 };
 
 const formatDate = (iso: string | null) =>

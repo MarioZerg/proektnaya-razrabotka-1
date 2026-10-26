@@ -9,7 +9,8 @@ export type MarketplaceCode =
   | 'megamarket'
   | 'lemana_pro'
   | 'avito'
-  | 'onec_buh';
+  | 'onec_buh'
+  | 'internet_shop';
 
 export interface MarketplaceIntegration {
   marketplaceCode: MarketplaceCode;

@@ -4,6 +4,7 @@ export const marketplaceLogo: Record<string, { label: string; className: string 
   OZON: { label: 'OZON', className: 'text-[#005BFF] font-bold' },
   WB: { label: 'Wildberries', className: 'text-[#CB11AB] font-bold' },
   Yandex: { label: 'Яндекс.Маркет', className: 'text-[#FFCC00] font-bold' },
+  IM: { label: 'ИМ заказ', className: 'text-[#0F766E] font-bold' },
 };
 
 export const statusVariant: Record<string, { className: string }> = {
