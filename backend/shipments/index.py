@@ -764,7 +764,7 @@ def handler(event: dict, context) -> dict:
                     # поставки и расчёты с поставщиком. Но позицию подписываем, иначе
                     # приёмка обещает рулон, которого на складе нет.
                     "r.removed_at, r.removed_by_name, r.removed_reason, "
-                    "r.shipment_id, r.purchase_price, r.purchase_currency "
+                    "r.shipment_id, r.purchase_price, r.purchase_currency, r.accepted_at "
                     "FROM shipment_items si "
                     "LEFT JOIN materials m ON m.id = si.material_id "
                     "LEFT JOIN rolls r ON r.id = si.roll_id "
@@ -822,6 +822,8 @@ def handler(event: dict, context) -> dict:
                         'originShipmentId': int(r[24]) if r[24] is not None else None,
                         'rollPurchasePrice': float(r[25]) if r[25] is not None else None,
                         'rollPurchaseCurrency': r[26],
+                        # Цех уже принял ЭТОТ рулон: ткани в заявке принимают по отдельности.
+                        'rollAcceptedAt': (r[27].isoformat() + 'Z') if r[27] else None,
                     }
                     for r in cur.fetchall()
                 ]
@@ -3022,28 +3024,62 @@ def handler(event: dict, context) -> dict:
                             ):
                                 return {'statusCode': 403, 'headers': headers, 'body': json.dumps({'error': 'Эта заявка отправлена в другой цех/смену'})}
 
-                cur.execute(
-                    f"UPDATE shipments SET status = 'Получено', completed_at = now(), reject_reason = NULL "
-                    f"WHERE id = {int(shipment_id)}"
-                )
+                # ТКАНИ ПРИНИМАЮТ ПО ОТДЕЛЬНОСТИ. В одной заявке бывает несколько
+                # разных тканей, и раньше одно нажатие «Принять» принимало их все разом —
+                # смена не пересчитывала каждую. Теперь приходит materialId: принимаем
+                # только рулоны этой ткани. Заявка закрывается, когда принята последняя.
+                material_id_in = body_data.get('materialId')
+                if material_id_in is None:
+                    cur.execute(
+                        "SELECT COUNT(DISTINCT si.material_id) FROM shipment_items si "
+                        "JOIN rolls r ON r.id = si.roll_id "
+                        "WHERE si.shipment_id = %s AND r.accepted_at IS NULL",
+                        (int(shipment_id),),
+                    )
+                    if (cur.fetchone()[0] or 0) > 1:
+                        return {'statusCode': 409, 'headers': headers, 'body': json.dumps(
+                            {'error': 'В заявке несколько тканей — примите каждую отдельно'},
+                            ensure_ascii=False)}
 
-                # Только теперь рулоны заявки становятся рабочими: до подтверждения они
+                mat_sql = ""
+                mat_params = (int(shipment_id),)
+                if material_id_in is not None:
+                    mat_sql = " AND material_id = %s"
+                    mat_params = (int(shipment_id), int(material_id_in))
+
+                # Только теперь рулоны становятся рабочими: до подтверждения они
                 # числились «в пути» и в раскрой не шли. Смена пересчитала привезённое —
                 # значит, материал реально доехал и его можно резать.
                 cur.execute(
                     "UPDATE rolls SET accepted_at = now() "
                     "WHERE id IN (SELECT roll_id FROM shipment_items "
-                    "WHERE shipment_id = %s AND roll_id IS NOT NULL) "
+                    f"WHERE shipment_id = %s AND roll_id IS NOT NULL{mat_sql}) "
                     "AND accepted_at IS NULL",
+                    mat_params,
+                )
+                if cur.rowcount == 0 and material_id_in is not None:
+                    return {'statusCode': 409, 'headers': headers, 'body': json.dumps(
+                        {'error': 'Эта ткань уже принята или её нет в заявке'}, ensure_ascii=False)}
+
+                cur.execute(
+                    "SELECT COUNT(*) FROM shipment_items si JOIN rolls r ON r.id = si.roll_id "
+                    "WHERE si.shipment_id = %s AND r.accepted_at IS NULL",
                     (int(shipment_id),),
                 )
+                left_rolls = int(cur.fetchone()[0] or 0)
+                if left_rolls == 0:
+                    cur.execute(
+                        "UPDATE shipments SET status = 'Получено', completed_at = now(), reject_reason = NULL "
+                        "WHERE id = %s",
+                        (int(shipment_id),),
+                    )
 
-                # Успешное получение этой заявки снимает блокировку автозаказа (если она
-                # была наложена ранее удалением админом предыдущей автозаявки на этот же
-                # материал/цех/смену) — автозаказ снова сможет создавать заявки для этой комбинации.
+                # Получение ткани снимает блокировку автозаказа (если она была наложена
+                # ранее удалением админом предыдущей автозаявки на этот же
+                # материал/цех/смену) — автозаказ снова сможет создавать заявки.
                 cur.execute(
-                    "SELECT DISTINCT material_id FROM shipment_items WHERE shipment_id = %s",
-                    (int(shipment_id),),
+                    f"SELECT DISTINCT material_id FROM shipment_items WHERE shipment_id = %s{mat_sql}",
+                    mat_params,
                 )
                 material_ids = [r[0] for r in cur.fetchall()]
                 shift_condition = "shift_number = %s" if shift_number is not None else "shift_number IS NULL"
@@ -3054,12 +3090,19 @@ def handler(event: dict, context) -> dict:
                         query_params,
                     )
 
+                if material_id_in is not None:
+                    cur.execute("SELECT name FROM materials WHERE id = %s", (int(material_id_in),))
+                    mrow = cur.fetchone()
+                    what = f'ткань «{mrow[0] if mrow else material_id_in}» из заявки #{shipment_id}'
+                else:
+                    what = f'заявку #{shipment_id}'
                 log_action(
                     cur, actor_id, actor_name, 'receive', 'shipment', shipment_id,
-                    f'Принял заявку #{shipment_id} в цехе',
+                    f'Принял в цехе {what}' + ('' if left_rolls == 0 else f' (ещё не принято рулонов: {left_rolls})'),
                 )
                 conn.commit()
-                return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True})}
+                return {'statusCode': 200, 'headers': headers, 'body': json.dumps(
+                    {'success': True, 'completed': left_rolls == 0, 'rollsLeft': left_rolls})}
 
             if action == 'reject_receive':
                 # Сотрудник цеха отказывается принять заявку — состав не в порядке (например,

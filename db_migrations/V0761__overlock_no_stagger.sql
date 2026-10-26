@@ -1,0 +1,1 @@
+UPDATE t_p86119184_proektnaya_razrabotk.workshop_settings SET value = '0' WHERE key = 'overlock_stagger_minutes';

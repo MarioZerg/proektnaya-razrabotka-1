@@ -82,6 +82,8 @@ export interface ShipmentItem {
   barcode: string | null;
   rollId: number | null;
   rollBarcode: string | null;
+  /** Цех уже принял этот рулон (ткани в заявке принимают по отдельности). */
+  rollAcceptedAt?: string | null;
   quantity: number | null;
   requestedQuantity: number | null;
   numberRolls: number | null;
@@ -400,7 +402,12 @@ export const removeScannedRoll = (itemId: number) => postAction({ action: 'remov
 
 export const shipToWorkshop = (shipmentId: number) => postAction({ action: 'ship', shipmentId });
 
-export const receiveAtWorkshop = (shipmentId: number) => postAction({ action: 'receive', shipmentId });
+export const receiveAtWorkshop = (shipmentId: number, materialId?: number) =>
+  postAction({ action: 'receive', shipmentId, materialId }) as Promise<{
+    success: boolean;
+    completed?: boolean;
+    rollsLeft?: number;
+  }>;
 
 // Сотрудник цеха отказывается принять заявку (состав не в порядке). Заявка ОСТАЁТСЯ в
 // статусе "Отправлено" с указанной причиной — кладовщик/админ смогут открыть экран сборки,

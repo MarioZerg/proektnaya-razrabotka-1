@@ -175,13 +175,18 @@ export const useToWorkshopActions = (state: ToWorkshopState) => {
     setReceiveShipment(detail);
   };
 
-  const handleAcceptReceive = async () => {
+  const handleAcceptReceive = async (materialId?: number) => {
     if (!receiveShipment) return;
     setReceiving(true);
     try {
-      await receiveAtWorkshop(receiveShipment.id);
-      toast({ title: 'Заявка принята в цехе' });
-      setReceiveShipment(null);
+      const res = await receiveAtWorkshop(receiveShipment.id, materialId);
+      if (res.completed === false) {
+        toast({ title: 'Ткань принята', description: `Осталось принять рулонов: ${res.rollsLeft}` });
+        setReceiveShipment(await fetchShipmentDetail(receiveShipment.id));
+      } else {
+        toast({ title: 'Заявка принята в цехе полностью' });
+        setReceiveShipment(null);
+      }
       load();
     } catch (e) {
       toast({ title: 'Ошибка', description: e instanceof Error ? e.message : undefined, variant: 'destructive' });

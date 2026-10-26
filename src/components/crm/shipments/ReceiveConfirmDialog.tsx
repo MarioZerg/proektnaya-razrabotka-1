@@ -24,7 +24,7 @@ interface ReceiveConfirmDialogProps {
   shipment: ShipmentDetail | null;
   onOpenChange: (open: boolean) => void;
   saving: boolean;
-  onAccept: () => void;
+  onAccept: (materialId: number) => void;
   onReject: (reason: string) => Promise<void>;
 }
 
@@ -53,6 +53,16 @@ const ReceiveConfirmDialog = ({ shipment, onOpenChange, saving, onAccept, onReje
   if (!shipment) return null;
 
   const rolls = shipment.items.filter((i) => i.rollId !== null);
+  // Каждую ткань смена пересчитывает и принимает отдельной кнопкой.
+  const groups = Array.from(
+    rolls.reduce((map, i) => {
+      const list = map.get(i.materialId) || [];
+      list.push(i);
+      map.set(i.materialId, list);
+      return map;
+    }, new Map<number, typeof rolls>()),
+  );
+  const anyAccepted = rolls.some((i) => i.rollAcceptedAt);
 
   return (
     <Dialog open={!!shipment} onOpenChange={close}>
@@ -62,7 +72,7 @@ const ReceiveConfirmDialog = ({ shipment, onOpenChange, saving, onAccept, onReje
         </DialogHeader>
         <div className="space-y-4">
           <p className="text-sm text-muted-foreground">
-            Проверьте состав перед подтверждением: {rolls.length}{' '}
+            Пересчитайте каждую ткань и примите её отдельно. Всего {rolls.length}{' '}
             {rolls.length === 1 ? 'рулон' : 'рулонов'}
             {rolls.length > 0
               ? ` · ${formatQuantity(rolls.reduce((sum, i) => sum + (Number(i.quantity) || 0), 0))} ${rolls[0]?.unit || ''}`
@@ -73,28 +83,56 @@ const ReceiveConfirmDialog = ({ shipment, onOpenChange, saving, onAccept, onReje
           {rolls.length === 0 ? (
             <p className="text-sm text-muted-foreground">В заявке нет рулонов</p>
           ) : (
-            <div className="min-w-0 overflow-hidden rounded-md border border-border">
-              <Table className="min-w-0 table-fixed">
-                <TableHeader>
-                  <TableRow className="bg-primary hover:bg-primary">
-                    <TableHead className="w-[34%] whitespace-normal text-primary-foreground">Рулон</TableHead>
-                    <TableHead className="w-[40%] whitespace-normal text-primary-foreground">Материал</TableHead>
-                    <TableHead className="w-[26%] whitespace-normal text-primary-foreground">Кол-во</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {rolls.map((i) => (
-                    <TableRow key={i.id}>
-                      <TableCell className="whitespace-normal break-all font-mono-tech">{i.rollBarcode}</TableCell>
-                      <TableCell className="whitespace-normal break-words">{i.materialName}</TableCell>
-                      <TableCell className="whitespace-normal">
-                        {formatQuantity(i.quantity)} {i.unit}
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </div>
+            groups.map(([materialId, list]) => {
+              const accepted = list.every((i) => i.rollAcceptedAt);
+              const total = list.reduce((sum, i) => sum + (Number(i.quantity) || 0), 0);
+              return (
+                <div
+                  key={materialId}
+                  className={`space-y-2 rounded-md border p-3 ${accepted ? 'border-emerald-500 bg-emerald-50' : 'border-border'}`}
+                >
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="min-w-0">
+                      <p className="break-words font-semibold">{list[0].materialName || 'Ткань'}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {list.length} {list.length === 1 ? 'рулон' : 'рулонов'} · {formatQuantity(total)} {list[0].unit || ''}
+                      </p>
+                    </div>
+                    {accepted ? (
+                      <span className="inline-flex items-center gap-1 text-sm font-semibold text-emerald-700">
+                        <Icon name="CheckCircle2" size={16} />
+                        Принято
+                      </span>
+                    ) : (
+                      <Button size="sm" onClick={() => onAccept(materialId)} disabled={saving || rejecting}>
+                        <Icon name="Check" size={14} className="mr-1.5" />
+                        Принять эту ткань
+                      </Button>
+                    )}
+                  </div>
+                  <div className="min-w-0 overflow-hidden rounded-md border border-border bg-background">
+                    <Table className="min-w-0 table-fixed">
+                      <TableHeader>
+                        <TableRow className="bg-primary hover:bg-primary">
+                          <TableHead className="w-[60%] whitespace-normal text-primary-foreground">Рулон</TableHead>
+                          <TableHead className="w-[40%] whitespace-normal text-primary-foreground">Кол-во</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {list.map((i) => (
+                          <TableRow key={i.id}>
+                            <TableCell className="whitespace-normal break-all font-mono-tech">{i.rollBarcode}</TableCell>
+                            <TableCell className="whitespace-normal">
+                              {formatQuantity(i.quantity)} {i.unit}
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
+                </div>
+              );
+            })
           )}
 
           {!rejecting ? (
@@ -106,15 +144,7 @@ const ReceiveConfirmDialog = ({ shipment, onOpenChange, saving, onAccept, onReje
                 disabled={saving}
               >
                 <Icon name="X" size={16} className="mr-2" />
-                Отказать
-              </Button>
-              <Button className="flex-1" onClick={onAccept} disabled={saving || rolls.length === 0}>
-                {saving ? 'Сохранение...' : (
-                  <>
-                    <Icon name="Check" size={16} className="mr-2" />
-                    Принять
-                  </>
-                )}
+                {anyAccepted ? 'Отказать по остальным тканям' : 'Отказать'}
               </Button>
             </div>
           ) : (
