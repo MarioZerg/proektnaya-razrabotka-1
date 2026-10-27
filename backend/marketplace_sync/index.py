@@ -400,6 +400,22 @@ SITE_SHOP_CODE = 'megatul_site'
 DEFAULT_SITE_URL = 'https://xn--80aff0ab3b6do.xn--p1ai'
 
 
+def normalize_site_url(raw):
+    """Адрес сайта в виде, понятном серверу: «мегатюль.рф» -> xn--...; без слеша в конце."""
+    url = (raw or '').strip().rstrip('/')
+    if not url:
+        return url
+    if '://' not in url:
+        url = 'https://' + url
+    scheme, rest = url.split('://', 1)
+    host, _, path = rest.partition('/')
+    try:
+        host = host.encode('idna').decode('ascii')
+    except UnicodeError:
+        pass
+    return f"{scheme}://{host}" + (f"/{path}" if path else '')
+
+
 def _site_settings(cur, shop_id):
     """Если магазин — интернет-магазин мегатюль.рф, вернёт (site_url, api_key, enabled)."""
     cur.execute("SELECT code FROM shops WHERE id = %s", (int(shop_id),))
@@ -417,7 +433,7 @@ def _site_settings(cur, shop_id):
     if r:
         enabled = bool(r[0])
         creds = r[1] if isinstance(r[1], dict) else json.loads(r[1] or '{}')
-    site_url = (creds.get('siteUrl') or DEFAULT_SITE_URL).strip().rstrip('/')
+    site_url = normalize_site_url(creds.get('siteUrl') or DEFAULT_SITE_URL)
     return site_url, (creds.get('apiKey') or '').strip(), enabled
 
 
