@@ -14,7 +14,7 @@ const PendingApprovalScreen = ({ roles, onLogout }: PendingApprovalScreenProps) 
         <Icon name="Clock" size={22} />
       </div>
     </div>
-    <div>
+    <div className="login-plate px-4 py-3">
       <h2 className="text-base font-semibold">Ждём подтверждения администратора</h2>
       <p className="mt-1 text-sm text-muted-foreground">
         {roles.length > 0
@@ -22,7 +22,7 @@ const PendingApprovalScreen = ({ roles, onLogout }: PendingApprovalScreenProps) 
           : 'Как только администратор утвердит вашу должность, вы получите доступ к разделам системы.'}
       </p>
     </div>
-    <Button variant="outline" className="w-full" onClick={onLogout}>
+    <Button variant="outline" className="w-full bg-background/90" onClick={onLogout}>
       Выйти
     </Button>
   </div>

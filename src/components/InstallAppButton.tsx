@@ -72,14 +72,14 @@ const InstallAppButton = () => {
       <div className="space-y-1.5">
         <Button
           variant="outline"
-          className="h-12 w-full rounded-sm"
+          className="h-12 w-full rounded-sm bg-background/90"
           onClick={() => setShowIosHint((v) => !v)}
         >
           <Icon name="Smartphone" size={18} className="mr-2" />
           Установить приложение
         </Button>
         {showIosHint && (
-          <p className="text-center text-xs text-muted-foreground">
+          <p className="login-plate text-center text-xs text-muted-foreground">
             Нажмите «Поделиться» внизу браузера, затем «На экран "Домой"» — приложение
             появится на главном экране
           </p>
@@ -94,11 +94,11 @@ const InstallAppButton = () => {
 
   return (
     <div className="space-y-1.5">
-      <Button variant="outline" className="h-12 w-full rounded-sm" onClick={handleInstall}>
+      <Button variant="outline" className="h-12 w-full rounded-sm bg-background/90" onClick={handleInstall}>
         <Icon name="Download" size={18} className="mr-2" />
         Установить приложение
       </Button>
-      <p className="text-center text-xs text-muted-foreground">
+      <p className="login-plate text-center text-xs text-muted-foreground">
         Появится на экране как обычное приложение и будет обновляться само
       </p>
     </div>

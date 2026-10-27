@@ -230,19 +230,19 @@ const LoginCode = () => {
               disabled={entering}
               onSelect={handlePickActiveRole}
             />
-            {error && <p className="mt-3 text-center text-sm text-destructive">{error}</p>}
+            {error && <p className="login-plate mt-3 text-center text-sm text-destructive">{error}</p>}
           </>
         )}
 
         {!pendingUser && (
           <form onSubmit={handleVerifyCode} className="space-y-3">
             {autoCode ? (
-              <p className="flex items-center justify-center gap-2 text-center text-sm text-emerald-600">
+              <p className="login-plate flex items-center justify-center gap-2 text-center text-sm text-emerald-600">
                 <Icon name="Check" size={15} />
                 Код получен, входим…
               </p>
             ) : (
-              <p className="text-center text-sm text-muted-foreground font-medium">
+              <p className="login-plate text-center text-sm font-medium text-muted-foreground">
                 {awaitingContact
                   ? 'Нажмите в чате кнопку «Поделиться номером» — и возвращайтесь сюда, код подставится сам.'
                   : 'Ожидаем код из чата с ботом — он подставится сам. Или введите его вручную.'}
@@ -255,14 +255,14 @@ const LoginCode = () => {
               placeholder="Код из MAX"
               value={code}
               onChange={(e) => setCode(e.target.value)}
-              className="h-11 rounded-sm border-border bg-transparent text-center font-mono-tech text-lg tracking-[0.3em]"
+              className="h-11 rounded-sm border-border bg-background/90 text-center font-mono-tech text-lg tracking-[0.3em]"
               maxLength={6}
               required
               autoFocus
               disabled={autoCode}
             />
 
-            {error && <p className="text-center text-sm text-destructive">{error}</p>}
+            {error && <p className="login-plate text-center text-sm text-destructive">{error}</p>}
 
             <Button
               type="submit"
@@ -283,7 +283,7 @@ const LoginCode = () => {
                 href={botUrl}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="flex h-11 w-full items-center justify-center gap-2 rounded-sm border border-border text-sm hover:bg-muted"
+                className="flex h-11 w-full items-center justify-center gap-2 rounded-sm border border-border bg-background/90 text-sm hover:bg-muted"
               >
                 <Icon name="MessageCircle" size={16} />
                 Открыть чат с ботом
@@ -293,7 +293,7 @@ const LoginCode = () => {
             <button
               type="button"
               onClick={() => navigate('/')}
-              className="w-full text-center text-xs text-muted-foreground hover:text-foreground"
+              className="login-plate w-full text-center text-xs text-muted-foreground hover:text-foreground"
             >
               Назад
             </button>

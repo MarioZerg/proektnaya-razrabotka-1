@@ -708,3 +708,8 @@ input[type="month"]::-webkit-calendar-picker-indicator {
   cursor: pointer;
 }
 
+
+/* Плашка под текст на экранах входа: текст лежит поверх фото цеха и без подложки теряется. */
+.login-plate {
+  @apply rounded-md border border-border/60 bg-background/85 px-3 py-2 shadow-sm backdrop-blur-sm;
+}

@@ -202,7 +202,7 @@ const Index = () => {
               <Icon name="MessageCircle" size={18} className="mr-2" />
               Войти через MAX
             </Button>
-            <p className="text-center text-xs text-muted-foreground">
+            <p className="login-plate text-center text-xs text-muted-foreground">
               Откроется бот МЕГАТЮЛЬ — поделитесь номером телефона, и бот пришлёт код для входа
             </p>
 
@@ -216,7 +216,7 @@ const Index = () => {
             <InstallAppButton />
 
             {/* Реквизиты компании и юридические документы. */}
-            <div className="space-y-0.5 pt-2 text-center text-[11px] leading-relaxed text-muted-foreground">
+            <div className="login-plate mt-2 space-y-0.5 text-center text-[11px] leading-relaxed text-muted-foreground">
               <p className="pb-1">
                 <Link to="/privacy" className="underline underline-offset-2 hover:text-foreground">
                   Политика конфиденциальности
@@ -252,7 +252,7 @@ const Index = () => {
               disabled={entering}
               onSelect={handlePickActiveRole}
             />
-            {error && <p className="mt-3 text-center text-sm text-destructive">{error}</p>}
+            {error && <p className="login-plate mt-3 text-center text-sm text-destructive">{error}</p>}
           </>
         )}
       </div>

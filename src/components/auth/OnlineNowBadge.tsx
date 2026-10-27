@@ -54,7 +54,7 @@ const OnlineNowBadge = () => {
       </div>
 
       {data.byWorkshop.length > 0 && (
-        <p className="text-[11px] text-muted-foreground">
+        <p className="login-plate py-1 text-[11px] text-muted-foreground">
           {data.byWorkshop.map((w) => `${w.workshop} — ${w.count}`).join(' · ')}
         </p>
       )}
