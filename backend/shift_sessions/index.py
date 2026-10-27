@@ -126,9 +126,26 @@ def is_day_off_today(cur, workshop_id, shift_number) -> bool:
     return False
 
 
+_SETTINGS_CACHE: dict = {}
+_SETTINGS_TTL = 30.0
+
+
 def get_setting(cur, workshop_id, key, default=None):
-    """Читает значение настройки: сначала переопределение цеха (workshop_settings),
-    если его нет — глобальное значение (system_settings), если и его нет — default."""
+    """Значение настройки: сначала переопределение цеха, потом глобальное, потом default.
+
+    Настройки меняются раз в недели, а читаются десятки раз за каждый запрос
+    терминала (таймеры по ширинам, лимиты, сдвиги). В пик эти мелкие чтения
+    упирались в лимит запросов базы, и терминалы теряли связь. Держим ответ
+    в памяти тёплой копии функции 30 секунд — правка в настройках цеха
+    доходит до терминалов не позже чем через полминуты.
+    """
+    import time as _t
+    ck = (int(workshop_id) if workshop_id else 0, key)
+    hit = _SETTINGS_CACHE.get(ck)
+    now_m = _t.monotonic()
+    if hit and now_m - hit[1] < _SETTINGS_TTL:
+        return hit[0] if hit[0] is not None else default
+    value = None
     if workshop_id:
         cur.execute(
             "SELECT value FROM workshop_settings WHERE workshop_id = %s AND key = %s",
@@ -136,12 +153,14 @@ def get_setting(cur, workshop_id, key, default=None):
         )
         row = cur.fetchone()
         if row and row[0] not in (None, ''):
-            return row[0]
-    cur.execute("SELECT value FROM system_settings WHERE key = %s", (key,))
-    row = cur.fetchone()
-    if row and row[0] not in (None, ''):
-        return row[0]
-    return default
+            value = row[0]
+    if value is None:
+        cur.execute("SELECT value FROM system_settings WHERE key = %s", (key,))
+        row = cur.fetchone()
+        if row and row[0] not in (None, ''):
+            value = row[0]
+    _SETTINGS_CACHE[ck] = (value, now_m)
+    return value if value is not None else default
 
 
 def shift_close_allowed_at(cur, user_id, opened_at):

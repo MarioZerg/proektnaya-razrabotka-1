@@ -122,7 +122,12 @@ export const useSewingItemsQueueActions = ({
   /** Забрать с сервера актуальные остатки. Дёргаем редко: при открытии страницы,
    * после взятия заказа и когда очередной отсчёт добежал до нуля. Между этими точками
    * фронт тикает сам — опрашивать сервер каждую секунду незачем. */
+  // Один запрос за раз: таймеры пошива и оверлока часто добегают до нуля в одну
+  // секунду, и каждый слал свой запрос — вдвое больше обращений в пик смены.
+  const waitsInFlight = useRef(false);
   const refreshSewWaits = async (uid: number) => {
+    if (waitsInFlight.current) return;
+    waitsInFlight.current = true;
     try {
       const res = await fetchSewingWaits(uid);
       const until: Record<number, number> = {};
@@ -162,6 +167,8 @@ export const useSewingItemsQueueActions = ({
       setOverlockInWork(0);
       setMaxOverlockOrders(0);
       setOverlockBusyBy(null);
+    } finally {
+      waitsInFlight.current = false;
     }
   };
 

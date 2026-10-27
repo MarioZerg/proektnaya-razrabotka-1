@@ -1155,10 +1155,26 @@ def can_work_as(cur, actor_id, needed_role):
     return 'admin' in roles or needed_role in roles
 
 
+_SETTINGS_CACHE: dict = {}
+_SETTINGS_TTL = 30.0
+
+
 def get_setting(cur, workshop_id, key, default=None):
-    """Читает значение настройки: сначала переопределение цеха (workshop_settings),
-    если его нет — глобальное значение (system_settings), если и его нет — default.
-    Возвращает строку (как хранится в БД) или default."""
+    """Значение настройки: сначала переопределение цеха, потом глобальное, потом default.
+
+    Настройки меняются раз в недели, а читаются десятки раз за каждый запрос
+    терминала (таймеры по ширинам, лимиты, сдвиги). В пик эти мелкие чтения
+    упирались в лимит запросов базы, и терминалы теряли связь. Держим ответ
+    в памяти тёплой копии функции 30 секунд — правка в настройках цеха
+    доходит до терминалов не позже чем через полминуты.
+    """
+    import time as _t
+    ck = (int(workshop_id) if workshop_id else 0, key)
+    hit = _SETTINGS_CACHE.get(ck)
+    now_m = _t.monotonic()
+    if hit and now_m - hit[1] < _SETTINGS_TTL:
+        return hit[0] if hit[0] is not None else default
+    value = None
     if workshop_id:
         cur.execute(
             "SELECT value FROM workshop_settings WHERE workshop_id = %s AND key = %s",
@@ -1166,12 +1182,14 @@ def get_setting(cur, workshop_id, key, default=None):
         )
         row = cur.fetchone()
         if row and row[0] not in (None, ''):
-            return row[0]
-    cur.execute("SELECT value FROM system_settings WHERE key = %s", (key,))
-    row = cur.fetchone()
-    if row and row[0] not in (None, ''):
-        return row[0]
-    return default
+            value = row[0]
+    if value is None:
+        cur.execute("SELECT value FROM system_settings WHERE key = %s", (key,))
+        row = cur.fetchone()
+        if row and row[0] not in (None, ''):
+            value = row[0]
+    _SETTINGS_CACHE[ck] = (value, now_m)
+    return value if value is not None else default
 
 
 def get_setting_float(cur, workshop_id, key, default=0.0):
@@ -1191,18 +1209,23 @@ def get_setting_int(cur, workshop_id, key, default=0):
 
 
 HAT_BOOST_ORDERS = 3
+_HAT_COL: dict = {}
 
 
 def hat_boost_limit(cur, user_id, max_orders):
     """Кейс бокс: 30 дней можно держать минимум 3 заказа вместо 2."""
     if not user_id or max_orders <= 0:
         return max_orders
-    cur.execute(
-        "SELECT 1 FROM information_schema.columns "
-        "WHERE table_schema = 'public' AND table_name = 'users' "
-        "  AND column_name = 'hat_boost_until'"
-    )
-    if not cur.fetchone():
+    # Есть ли колонка — проверяем один раз на копию функции: схема не меняется
+    # между запросами, а этот запрос к справочнику шёл при каждом опросе швеи.
+    if _HAT_COL.get('has') is None:
+        cur.execute(
+            "SELECT 1 FROM information_schema.columns "
+            "WHERE table_schema = 'public' AND table_name = 'users' "
+            "  AND column_name = 'hat_boost_until'"
+        )
+        _HAT_COL['has'] = cur.fetchone() is not None
+    if not _HAT_COL['has']:
         return max_orders
     cur.execute(
         "SELECT 1 FROM users WHERE id = %s AND hat_boost_until IS NOT NULL "
@@ -1320,7 +1343,7 @@ def nearest_timeout_width(width):
     return TIMEOUT_WIDTHS[-1]
 
 
-def sewing_wait_for_order(cur, workshop_id, width, taken_at, stagger_index=0):
+def sewing_wait_for_order(cur, workshop_id, width, taken_at, stagger_index=0, elapsed=None):
     """Сколько секунд ещё шить ЭТУ вещь, прежде чем сдать её на стикеровку.
 
     Время берётся из настроек цеха по ширине изделия (timeout_200…800, в МИНУТАХ) и
@@ -1358,8 +1381,11 @@ def sewing_wait_for_order(cur, workshop_id, width, taken_at, stagger_index=0):
             cur, workshop_id, 'sewing_stagger_minutes', 0
         )
 
-    cur.execute("SELECT EXTRACT(EPOCH FROM (now() - %s))::float", (taken_at,))
-    elapsed = float(cur.fetchone()[0] or 0)
+    # Сколько прошло — можно передать готовым из общего запроса: при опросе
+    # швеи это экономит по отдельному обращению к базе на каждую вещь.
+    if elapsed is None:
+        cur.execute("SELECT EXTRACT(EPOCH FROM (now() - %s))::float", (taken_at,))
+        elapsed = float(cur.fetchone()[0] or 0)
     wait_sec = int(round(minutes * 60 - elapsed))
     if wait_sec <= 0:
         return 0, None
@@ -1367,7 +1393,7 @@ def sewing_wait_for_order(cur, workshop_id, width, taken_at, stagger_index=0):
     return wait_sec, next_at.isoformat()
 
 
-def overlock_wait_for_order(cur, workshop_id, width, taken_at, stagger_index=0):
+def overlock_wait_for_order(cur, workshop_id, width, taken_at, stagger_index=0, elapsed=None):
     """Сколько секунд ещё обмётывать ЭТУ вещь, прежде чем сдать её с оверлока.
 
     ЗАЧЕМ ОТДЕЛЬНЫЙ ТАЙМЕР, А НЕ ТОТ ЖЕ, ЧТО У ПОШИВА. Обмётка и прямострочка —
@@ -1403,8 +1429,11 @@ def overlock_wait_for_order(cur, workshop_id, width, taken_at, stagger_index=0):
             cur, workshop_id, 'overlock_stagger_minutes', 0
         )
 
-    cur.execute("SELECT EXTRACT(EPOCH FROM (now() - %s))::float", (taken_at,))
-    elapsed = float(cur.fetchone()[0] or 0)
+    # Сколько прошло — можно передать готовым из общего запроса: при опросе
+    # швеи это экономит по отдельному обращению к базе на каждую вещь.
+    if elapsed is None:
+        cur.execute("SELECT EXTRACT(EPOCH FROM (now() - %s))::float", (taken_at,))
+        elapsed = float(cur.fetchone()[0] or 0)
     wait_sec = int(round(minutes * 60 - elapsed))
     if wait_sec <= 0:
         return 0, None

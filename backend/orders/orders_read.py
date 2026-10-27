@@ -717,17 +717,19 @@ def handle_get(event: dict, headers: dict, dsn: str) -> dict:
             # Все вещи «В работе» у этой швеи. Цех берём у заказа, а если он не
             # проставлен (FBO мимо раскроя) — из её открытой смены.
             cur.execute(
-                "SELECT id, width, workshop_id, taken_at, COALESCE(sew_stagger_index, 0) "
+                "SELECT id, width, workshop_id, taken_at, COALESCE(sew_stagger_index, 0), "
+                "       EXTRACT(EPOCH FROM (now() - taken_at))::float "
                 "FROM orders "
                 "WHERE assigned_user_id = %s AND sewing_status = 'В работе'",
                 (waits_user_id,),
             )
             waits = {}
             in_work_count = 0
-            for w_id, w_width, w_ws, w_taken, w_stagger in cur.fetchall():
+            for w_id, w_width, w_ws, w_taken, w_stagger, w_el in cur.fetchall():
                 in_work_count += 1
                 w_sec, w_next = sewing_wait_for_order(
-                    cur, w_ws or session_ws, w_width, w_taken, w_stagger
+                    cur, w_ws or session_ws, w_width, w_taken, w_stagger,
+                    elapsed=float(w_el) if w_el is not None else None,
                 )
                 if w_sec > 0:
                     waits[str(w_id)] = {'waitSeconds': w_sec, 'nextAt': w_next}
@@ -748,7 +750,8 @@ def handle_get(event: dict, headers: dict, dsn: str) -> dict:
             # словарь, иначе на экране оверлока показывался бы таймер пошива.
             cur.execute(
                 "SELECT id, width, workshop_id, overlock_taken_at, "
-                "       COALESCE(overlock_stagger_index, 0) "
+                "       COALESCE(overlock_stagger_index, 0), "
+                "       EXTRACT(EPOCH FROM (now() - overlock_taken_at))::float "
                 "FROM orders "
                 "WHERE overlock_user_id = %s AND overlocked_at IS NULL "
                 "  AND requires_overlock = true AND sewing_status = 'Раскроено'",
@@ -756,10 +759,11 @@ def handle_get(event: dict, headers: dict, dsn: str) -> dict:
             )
             overlock_waits = {}
             overlock_in_work = 0
-            for o_id, o_width, o_ws, o_taken, o_stagger in cur.fetchall():
+            for o_id, o_width, o_ws, o_taken, o_stagger, o_el in cur.fetchall():
                 overlock_in_work += 1
                 o_sec, o_next = overlock_wait_for_order(
-                    cur, o_ws or session_ws, o_width, o_taken, o_stagger
+                    cur, o_ws or session_ws, o_width, o_taken, o_stagger,
+                    elapsed=float(o_el) if o_el is not None else None,
                 )
                 if o_sec > 0:
                     overlock_waits[str(o_id)] = {'waitSeconds': o_sec, 'nextAt': o_next}

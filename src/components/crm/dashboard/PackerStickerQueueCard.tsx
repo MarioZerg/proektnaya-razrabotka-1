@@ -19,7 +19,7 @@ interface SewerPile {
   items: LiveOrder[];
 }
 
-const POLL_MS = 20000;
+const POLL_MS = 30000;
 
 const pileKey = (pile: SewerPile, index: number) =>
   pile.sewerId != null ? String(pile.sewerId) : `none-${index}`;
