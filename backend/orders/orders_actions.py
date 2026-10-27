@@ -17,6 +17,7 @@ from bulk_cancel import (
     restore_single_order,
 )
 from shared import (
+    order_item_id,
     GROUP_CUT_BATCH,
     STATUS_ORDER,
     apply_penalty,
@@ -563,18 +564,14 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                 # остатком рулонов, доступных этому цеху.
                 group_need = {}
                 cur.execute(
-                    "SELECT material, width, height FROM orders WHERE id IN ("
+                    "SELECT id, material, width, height FROM orders WHERE id IN ("
                     + ','.join(str(int(i)) for i in order_ids) + ")"
                 )
-                for g_material, g_width, g_height in cur.fetchall():
+                for g_oid, g_material, g_width, g_height in cur.fetchall():
                     if not (g_material and g_width and g_height):
                         continue
-                    cur.execute(
-                        "SELECT id FROM marketplace_items WHERE material = %s AND width = %s "
-                        "AND height = %s ORDER BY id LIMIT 1",
-                        (g_material, g_width, g_height),
-                    )
-                    gi_row = cur.fetchone()
+                    _gid = order_item_id(cur, g_oid)
+                    gi_row = (_gid,) if _gid else None
                     if not gi_row:
                         continue
                     cur.execute(
@@ -1621,11 +1618,8 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                                 u_row = cur.fetchone()
                                 order_shift_number = u_row[0] if u_row else None
 
-                cur.execute(
-                        "SELECT id FROM marketplace_items WHERE material = %s AND width = %s AND height = %s ORDER BY id LIMIT 1",
-                        (material, width, height),
-                )
-                item_row = cur.fetchone()
+                _iid = order_item_id(cur, item_id)
+                item_row = (_iid,) if _iid else None
                 if not item_row:
                         conn.rollback()
                         return {
@@ -2442,11 +2436,8 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
             o_row = cur.fetchone()
             is_manual_order = bool(o_row) and o_row[3] == 'import'
             if o_row and o_row[0] and o_row[1] and o_row[2] and not is_manual_order:
-                cur.execute(
-                    "SELECT id FROM marketplace_items WHERE material = %s AND width = %s AND height = %s ORDER BY id LIMIT 1",
-                    (o_row[0], o_row[1], o_row[2]),
-                )
-                mi_row = cur.fetchone()
+                _iid = order_item_id(cur, order_id)
+                mi_row = (_iid,) if _iid else None
                 if mi_row:
                     # Берём ВЕСЬ состав товара из карточки «Товары на маркетплейсе»,
                     # а не только аксессуары.
@@ -2737,11 +2728,8 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
             # Цех для сверки рулона: где швея работает сейчас, иначе — цех заказа.
             check_workshop_id = sewer_workshop_id or order_workshop_id
 
-            cur.execute(
-                "SELECT id FROM marketplace_items WHERE material = %s AND width = %s AND height = %s ORDER BY id LIMIT 1",
-                (material, width, height),
-            )
-            item_row = cur.fetchone()
+            _iid = order_item_id(cur, item_id)
+            item_row = (_iid,) if _iid else None
             if not item_row:
                 return {
                     'statusCode': 404,

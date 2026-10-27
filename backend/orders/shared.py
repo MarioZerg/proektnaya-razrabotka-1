@@ -433,11 +433,8 @@ def write_off_materials_once(cur, order_id, material, width, height, workshop_id
     if not (material and width and height):
         return None
 
-    cur.execute(
-        "SELECT id FROM marketplace_items WHERE material = %s AND width = %s AND height = %s ORDER BY id LIMIT 1",
-        (material, width, height),
-    )
-    item_row = cur.fetchone()
+    _iid = order_item_id(cur, order_id)
+    item_row = (_iid,) if _iid else None
     if not item_row:
         return None
     cur.execute(
@@ -579,6 +576,37 @@ def write_off_materials_once(cur, order_id, material, width, height, workshop_id
 #
 # Словарь двусторонний: и справочник→заказ, и заказ→справочник. Иначе фильтр
 # конвейера (имя из справочника) не находил заказы с сокращённым названием.
+
+# КАРТОЧКА РАСХОДА ДЛЯ ЗАКАЗА.
+#
+# Заказ интернет-магазина мегатюль.рф (marketplace = 'IM') берёт расход ТОЛЬКО из
+# «Товаров для интеграций» своего магазина: сначала по артикулу размера, потом по
+# ткани и размеру. Заказы маркетплейсов — только из карточек НЕ сайта, как раньше
+# (самая старая карточка с той же тканью и размером). Так магазин настраивается
+# отдельно, и расход сайта не смешивается с расходом маркетплейсов.
+ORDER_ITEM_SQL = (
+    "SELECT mi.id FROM orders o "
+    "JOIN marketplace_items mi ON mi.material = o.material "
+    "  AND mi.width = o.width AND mi.height = o.height "
+    "LEFT JOIN shops ms ON ms.id = mi.shop_id "
+    "WHERE o.id = %s AND ("
+    "  (o.marketplace = 'IM' AND mi.shop_id = o.shop_id) "
+    "  OR (COALESCE(o.marketplace, '') <> 'IM' AND COALESCE(ms.code, '') <> 'megatul_site')) "
+    "ORDER BY (o.marketplace = 'IM' AND mi.id = o.marketplace_item_id) DESC, "
+    "  (mi.archived_at IS NULL) DESC, mi.id "
+    "LIMIT 1"
+)
+
+
+def order_item_id(cur, order_id):
+    """id карточки товара, из которой берётся расход по этому заказу (или None)."""
+    if not order_id:
+        return None
+    cur.execute(ORDER_ITEM_SQL, (int(order_id),))
+    row = cur.fetchone()
+    return row[0] if row else None
+
+
 MATERIAL_NAME_ALIASES = {
     'Вуаль без утяжелителя': ['Вуаль (без ут)'],
     'Вуаль (без ут)': ['Вуаль без утяжелителя'],
@@ -627,11 +655,8 @@ def consume_trim_roll(
     Если товару тесьма не нужна — сразу None, roll_id можно не передавать.
     Если нужна, а рулон не выбран — ошибка 400.
     """
-    cur.execute(
-        "SELECT id FROM marketplace_items WHERE material = %s AND width = %s AND height = %s ORDER BY id LIMIT 1",
-        (material, width, height),
-    )
-    item_row = cur.fetchone()
+    _iid = order_item_id(cur, order_id)
+    item_row = (_iid,) if _iid else None
     if not item_row:
         return {
             'error': 'Не найден товар маркетплейса для этого материала/размера',
@@ -810,12 +835,8 @@ def consume_fabric_roll(
         fabric_material_id = None
         fabric_qty = 0.0
         if material and width and height and tul_type_id:
-            cur.execute(
-                "SELECT id FROM marketplace_items "
-                "WHERE material = %s AND width = %s AND height = %s ORDER BY id LIMIT 1",
-                (material, width, height),
-            )
-            item_row = cur.fetchone()
+            _iid = order_item_id(cur, order_id)
+            item_row = (_iid,) if _iid else None
             if item_row:
                 cur.execute(
                     "SELECT mim.material_id, mim.quantity FROM marketplace_item_materials mim "
@@ -847,11 +868,8 @@ def consume_fabric_roll(
             'status': 409,
         }
 
-    cur.execute(
-        "SELECT id FROM marketplace_items WHERE material = %s AND width = %s AND height = %s ORDER BY id LIMIT 1",
-        (material, width, height),
-    )
-    item_row = cur.fetchone()
+    _iid = order_item_id(cur, order_id)
+    item_row = (_iid,) if _iid else None
     if not item_row:
         return {
             'error': 'Не найден товар маркетплейса для этого материала/размера',

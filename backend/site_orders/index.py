@@ -84,13 +84,18 @@ def site_get(url, api_key):
 
 
 def find_item(cur, shop_id, sku, barcode, name):
-    """Товар справочника магазина по артикулу, штрихкоду или точному названию."""
+    """Товар «Товаров для интеграций» магазина по артикулу размера, штрихкоду или названию.
+
+    Ищем и среди архивных: заказ мог прийти на товар, который только что сняли с сайта.
+    Живая карточка — первой.
+    """
     for field, value in (('sku', sku), ('barcode', barcode), ('name', name)):
         if not value or not str(value).strip():
             continue
         cur.execute(
             f"SELECT material, width, height, name, id FROM marketplace_items "
-            f"WHERE {field} = %s AND {field} <> '' AND shop_id = %s LIMIT 1",
+            f"WHERE lower({field}) = lower(%s) AND {field} <> '' AND shop_id = %s "
+            f"ORDER BY (archived_at IS NULL) DESC, id LIMIT 1",
             (str(value).strip(), int(shop_id)),
         )
         row = cur.fetchone()
@@ -205,7 +210,7 @@ def sync_orders(cur, shop_id, site_url, api_key, actor_id, actor_name):
             item = find_item(cur, shop_id, it.get('sku'), it.get('barcode'), it.get('name'))
             if not item:
                 width, height = to_int(it.get('width')), to_int(it.get('height'))
-                material = (it.get('material') or '').strip()
+                material = (it.get('material') or it.get('fabric') or '').strip()
                 if material and width and height:
                     item = (material, width, height, it.get('name') or '', None)
             if not item:

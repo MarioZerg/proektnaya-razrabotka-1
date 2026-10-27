@@ -289,9 +289,19 @@ def write_off_packaging(cur, order_id: int, workshop_id=None) -> str | None:
     if not o or not (o[0] and o[1] and o[2]):
         return None
 
+    # Карточка расхода: заказ сайта — из «Товаров для интеграций» мегатюль.рф,
+    # заказ маркетплейса — из карточек маркетплейсов (как в orders/shared.order_item_id).
     cur.execute(
-        "SELECT id FROM marketplace_items WHERE material = %s AND width = %s AND height = %s ORDER BY id LIMIT 1",
-        (o[0], o[1], o[2]),
+        "SELECT mi.id FROM orders o "
+        "JOIN marketplace_items mi ON mi.material = o.material "
+        "  AND mi.width = o.width AND mi.height = o.height "
+        "LEFT JOIN shops ms ON ms.id = mi.shop_id "
+        "WHERE o.id = %s AND ("
+        "  (o.marketplace = 'IM' AND mi.shop_id = o.shop_id) "
+        "  OR (COALESCE(o.marketplace, '') <> 'IM' AND COALESCE(ms.code, '') <> 'megatul_site')) "
+        "ORDER BY (o.marketplace = 'IM' AND mi.id = o.marketplace_item_id) DESC, "
+        "  (mi.archived_at IS NULL) DESC, mi.id LIMIT 1",
+        (int(order_id),),
     )
     item_row = cur.fetchone()
     if not item_row:

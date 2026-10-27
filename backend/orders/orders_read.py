@@ -18,6 +18,7 @@ import psycopg2
 
 from floor_race import build_race
 from shared import (
+    order_item_id,
     CANCELLED_ORDERS_LIMIT,
     CANCELLED_SQL,
     CLOSED_ORDERS_LIMIT,
@@ -991,11 +992,8 @@ def handle_get(event: dict, headers: dict, dsn: str) -> dict:
             required_trim_material_id = None
             required_trim_material_name = None
             if material_name and width_val and height_val:
-                cur.execute(
-                    "SELECT id FROM marketplace_items WHERE material = %s AND width = %s AND height = %s ORDER BY id LIMIT 1",
-                    (material_name, width_val, height_val),
-                )
-                mi_row = cur.fetchone()
+                _iid = order_item_id(cur, order_id)
+                mi_row = (_iid,) if _iid else None
                 if mi_row:
                     cur.execute(
                         # quantity — норма расхода из состава: по ней считается,
