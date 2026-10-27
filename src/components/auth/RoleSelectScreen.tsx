@@ -35,7 +35,7 @@ const RoleSelectScreen = ({ title, description, roles, disabled, onSelect }: Rol
           type="button"
           disabled={disabled}
           onClick={() => onSelect(role)}
-          className="flex flex-col items-center gap-1.5 rounded-sm border border-border bg-background/90 px-3 py-3 text-center transition-colors hover:border-primary hover:bg-primary/5 disabled:opacity-50"
+          className="flex flex-col items-center gap-1.5 rounded-sm border border-border bg-white shadow-md px-3 py-3 text-center transition-colors hover:border-primary hover:bg-primary/5 disabled:opacity-50"
         >
           <Icon name={roleIcons[role] || 'User'} size={20} className="text-muted-foreground" />
           <span className="text-xs font-medium leading-tight">{roleLabels[role]}</span>

@@ -711,5 +711,11 @@ input[type="month"]::-webkit-calendar-picker-indicator {
 
 /* Плашка под текст на экранах входа: текст лежит поверх фото цеха и без подложки теряется. */
 .login-plate {
-  @apply rounded-md border border-border/60 bg-background/85 px-3 py-2 shadow-sm backdrop-blur-sm;
+  @apply rounded-md border border-white bg-white px-3 py-2 text-foreground shadow-md;
+}
+/* Внутри плашки серый «второстепенный» текст на светлом фото выглядел блёкло —
+   делаем его тёмным, ссылки и цветные статусы (ошибка, «код получен») не трогаем. */
+.login-plate.text-muted-foreground,
+.login-plate .text-muted-foreground {
+  color: hsl(var(--foreground) / 0.85);
 }

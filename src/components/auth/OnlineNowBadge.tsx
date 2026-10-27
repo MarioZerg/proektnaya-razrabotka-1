@@ -31,7 +31,7 @@ const OnlineNowBadge = () => {
 
   return (
     <div className="flex flex-col items-center gap-1">
-      <div className="flex items-center gap-2 rounded-full border border-border px-3 py-1">
+      <div className="flex items-center gap-2 rounded-full border border-white bg-white px-3 py-1 shadow-md">
         <span className="relative flex h-2 w-2">
           {data.total > 0 && (
             <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-500 opacity-70" />
@@ -42,7 +42,7 @@ const OnlineNowBadge = () => {
             }`}
           />
         </span>
-        <span className="text-xs text-muted-foreground">
+        <span className="text-xs text-foreground/85">
           {data.total > 0 ? (
             <>
               Online: <b className="text-foreground">{data.total}</b> {word}

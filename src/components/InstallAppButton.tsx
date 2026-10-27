@@ -72,7 +72,7 @@ const InstallAppButton = () => {
       <div className="space-y-1.5">
         <Button
           variant="outline"
-          className="h-12 w-full rounded-sm bg-background/90"
+          className="h-12 w-full rounded-sm bg-white shadow-md"
           onClick={() => setShowIosHint((v) => !v)}
         >
           <Icon name="Smartphone" size={18} className="mr-2" />
@@ -94,7 +94,7 @@ const InstallAppButton = () => {
 
   return (
     <div className="space-y-1.5">
-      <Button variant="outline" className="h-12 w-full rounded-sm bg-background/90" onClick={handleInstall}>
+      <Button variant="outline" className="h-12 w-full rounded-sm bg-white shadow-md" onClick={handleInstall}>
         <Icon name="Download" size={18} className="mr-2" />
         Установить приложение
       </Button>

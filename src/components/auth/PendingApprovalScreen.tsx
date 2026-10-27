@@ -22,7 +22,7 @@ const PendingApprovalScreen = ({ roles, onLogout }: PendingApprovalScreenProps) 
           : 'Как только администратор утвердит вашу должность, вы получите доступ к разделам системы.'}
       </p>
     </div>
-    <Button variant="outline" className="w-full bg-background/90" onClick={onLogout}>
+    <Button variant="outline" className="w-full bg-white shadow-md" onClick={onLogout}>
       Выйти
     </Button>
   </div>

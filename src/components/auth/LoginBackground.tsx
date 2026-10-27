@@ -11,8 +11,8 @@ const LoginBackground = () => (
         decoding="async"
       />
     </picture>
-    <div className="absolute inset-0 bg-background/75 backdrop-blur-[2px]" />
-    <div className="absolute inset-0 bg-gradient-to-b from-background/40 via-transparent to-background/60" />
+    <div className="absolute inset-0 bg-background/45 backdrop-blur-[1px]" />
+    <div className="absolute inset-0 bg-gradient-to-b from-background/30 via-transparent to-background/40" />
   </div>
 );
 

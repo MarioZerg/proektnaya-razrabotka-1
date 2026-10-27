@@ -255,7 +255,7 @@ const LoginCode = () => {
               placeholder="Код из MAX"
               value={code}
               onChange={(e) => setCode(e.target.value)}
-              className="h-11 rounded-sm border-border bg-background/90 text-center font-mono-tech text-lg tracking-[0.3em]"
+              className="h-11 rounded-sm border-border bg-white shadow-md text-center font-mono-tech text-lg tracking-[0.3em]"
               maxLength={6}
               required
               autoFocus
@@ -283,7 +283,7 @@ const LoginCode = () => {
                 href={botUrl}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="flex h-11 w-full items-center justify-center gap-2 rounded-sm border border-border bg-background/90 text-sm hover:bg-muted"
+                className="flex h-11 w-full items-center justify-center gap-2 rounded-sm border border-border bg-white shadow-md text-sm hover:bg-muted"
               >
                 <Icon name="MessageCircle" size={16} />
                 Открыть чат с ботом
