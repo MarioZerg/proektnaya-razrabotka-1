@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import CrmLayout from '@/components/crm/CrmLayout';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -67,9 +68,13 @@ const MarketplaceItemsSettings = () => {
       .catch(() => {});
     // Кружок загрузки снимаем по главному запросу страницы.
     fetchMarketplaceItems()
-      .then(({ items: list, shops: shopList }) => {
+      .then(({ items: list, shops: allShops }) => {
+        // Товары мегатюль.рф живут в «Интеграциях» → «Товары для интеграций».
+        // Здесь — только магазины маркетплейсов, чтобы расход не правили в двух местах.
+        const siteIds = new Set(allShops.filter((s) => s.code === 'megatul_site').map((s) => s.id));
+        const shopList = allShops.filter((s) => !siteIds.has(s.id));
         setListError(null);
-        setItems(list);
+        setItems(list.filter((i) => !siteIds.has(i.shopId)));
         setShops(shopList);
         // При первом заходе открываем первый магазин, а не «все»: работают
         // всегда в контексте одного кабинета.
@@ -324,6 +329,14 @@ const MarketplaceItemsSettings = () => {
           />
           </div>
         </div>
+
+        <p className="text-xs text-muted-foreground">
+          Товары интернет-магазина мегатюль.рф и их расход —{' '}
+          <Link to="/crm/settings/marketplace-integrations" className="text-primary underline">
+            в «Интеграциях» → «Товары для интеграций»
+          </Link>
+          .
+        </p>
 
         {!loading && (
           <ShopTabs
