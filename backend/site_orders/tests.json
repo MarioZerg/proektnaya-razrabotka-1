@@ -1,0 +1,6 @@
+{"tests": [
+  {"name": "OPTIONS preflight", "method": "OPTIONS", "path": "/", "expectedStatus": 200},
+  {"name": "Status", "method": "GET", "path": "/?action=status", "expectedStatus": 200, "expectedBody": {"shopId": 3, "connected": false}, "bodyMatcher": "partial"},
+  {"name": "Sync via GET needs cron key", "method": "GET", "path": "/?action=sync", "expectedStatus": 403},
+  {"name": "Label for unknown order", "method": "POST", "path": "/", "body": {"action": "label", "orderNumber": "NO-SUCH-ORDER"}, "expectedStatus": 404}
+]}

@@ -101,7 +101,17 @@ export const useKioskOrderActions = ({
       // после передачи кроя на бирке старый номер, а ярлык нужен нового отправления.
       if (order.orderType === 'FBS') {
         const mp = (order.marketplace || '').toUpperCase();
-        if (mp === 'WB') {
+        if (mp === 'IM') {
+          // Заказ с мегатюль.рф: этикетка Ozon Доставки от магазина, одна на заказ клиента.
+          const { printSiteLabel } = await import('@/lib/siteOrdersApi');
+          await printSiteLabel({ orderId: order.id });
+          if ((order.groupSize || 0) > 1) {
+            toast({
+              title: `Заказ магазина: вещь ${order.groupPosition || 1} из ${order.groupSize}`,
+              description: 'Этикетка Ozon Доставки одна на весь заказ — клейте её на общую упаковку',
+            });
+          }
+        } else if (mp === 'WB') {
           printLabelPng(await fetchWbLabel(order.orderNumber), 'Стикер WB');
         } else if (mp === 'OZON') {
           await printLabelPdf(await fetchOzonLabel(order.orderNumber), 'Ярлык OZON');

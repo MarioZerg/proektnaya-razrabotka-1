@@ -22,6 +22,12 @@ export const printOrderMarketplaceLabel = async (order: {
   orderType?: string | null;
 }) => {
   const isFbs = (order.orderType || '').toUpperCase() === 'FBS';
+  // Заказ с мегатюль.рф: этикетку Ozon Доставки передаёт сам магазин.
+  if ((order.marketplace || '').toUpperCase() === 'IM') {
+    const { printSiteLabel } = await import('@/lib/siteOrdersApi');
+    await printSiteLabel({ orderId: order.id });
+    return;
+  }
   if (!isFbs) {
     printFboSticker(await fetchOrderDetail(order.id));
     return;

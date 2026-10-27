@@ -42,6 +42,7 @@ CRON_LINES = {
     'ozon_sync_orders': '1-59/15 * * * *',
     'wb_sync_orders': '4-59/15 * * * *',
     'ym_sync': '7-59/15 * * * *',
+    'site_sync': '9-59/10 * * * *',
     'stock_auto_release': '10-59/15 * * * *',
     'supplies_auto_statuses': '13-59/30 * * * *',
     'ozon_refresh_statuses': '27 * * * *',
@@ -85,6 +86,16 @@ JOBS = [
         'purpose': 'Забирает с Яндекса новые заказы и ставит их на конвейер',
         'group': 'orders',
         'everyMin': 15,
+        'lateAfter': 60,
+    },
+    {
+        'key': 'site_sync',
+        'title': 'мегатюль.рф — новые заказы',
+        'func': 'site_orders',
+        'urlAction': 'sync',
+        'purpose': 'Забирает оплаченные заказы интернет-магазина и ставит их на конвейер',
+        'group': 'orders',
+        'everyMin': 10,
         'lateAfter': 60,
     },
     # --- ОТМЕНЫ. Молчит — цех шьёт то, от чего покупатель уже отказался.
@@ -293,6 +304,7 @@ FUNC_IDS = {
     'ad_spend': '29442dba-b5a9-4e15-b9ba-5fdc52eef574',
     'manager_finance': '406daf92-dd75-4e27-946d-e90aa720fe70',
     'marketplace_supplies': 'd0a75e82-2c63-440c-8eae-dd036df61fac',
+    'site_orders': 'dbc4d229-e722-40bc-aa47-f47bed23dab5',
 }
 
 # Разделы страницы: заголовок и пояснение, чем грозит молчание.

@@ -44,6 +44,12 @@ const ToMarketplace = () => {
 
   const creation = useSupplyCreation(allSupplies, shopId);
 
+  // Магазин мегатюль.рф: у него одна поставка в день — «Отгрузка» в Ozon Доставку.
+  const isSiteShop = currentShop?.code === 'megatul_site';
+  const shopCreateOptions = isSiteShop
+    ? [{ marketplace: 'IM', type: 'FBS' as const, label: 'Отгрузка' }]
+    : availableCreateOptions;
+
   const [feed, setFeed] = useState<'supplies' | 'proposals'>('supplies');
 
   return (
@@ -52,7 +58,7 @@ const ToMarketplace = () => {
         <ToMarketplaceHeader
           currentShop={currentShop}
           creating={creation.creating}
-          availableCreateOptions={availableCreateOptions}
+          availableCreateOptions={shopCreateOptions}
           onCreate={creation.handleCreate}
         />
 
@@ -61,6 +67,7 @@ const ToMarketplace = () => {
             отсканируется. Пока магазин один, вкладки не рисуются. */}
         <ShopTabs shops={shops} value={shopId} onChange={setShopId} />
 
+        {!isSiteShop && (
         <div className="flex gap-2">
           <Button
             type="button"
@@ -77,8 +84,9 @@ const ToMarketplace = () => {
             Авто предложения поставки FBO
           </Button>
         </div>
+        )}
 
-        {feed === 'proposals' ? (
+        {feed === 'proposals' && !isSiteShop ? (
           <FboProposalsPanel
             shopId={shopId}
             actorId={user?.id}
@@ -93,7 +101,7 @@ const ToMarketplace = () => {
         <>
         {/* Создание, схема и фильтры — одна верхняя полоса, список сразу под ней. */}
         <div className="space-y-3">
-          {!loading && allSupplies.length > 0 && (
+          {!loading && allSupplies.length > 0 && !isSiteShop && (
             <SupplyTypeWidgets
               supplies={allSupplies}
               activeType={typeFilter}

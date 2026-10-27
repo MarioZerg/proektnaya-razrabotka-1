@@ -69,7 +69,7 @@ export const marketplaceIntegrationsConfig: MarketplaceConfigItem[] = [
     code: 'internet_shop',
     name: 'Интернет-магазин',
     className: 'text-[#0F766E]',
-    hint: 'Заказы с сайта попадают на конвейер так же, как заказы OZON, с пометкой «ИМ».',
+    hint: 'Заполняется на вкладке магазина «мегатюль.рф». CRM каждые 10 минут забирает оплаченные заказы сайта на конвейер (вкладка «Магазин мегатюль.рф») вместе с этикеткой Ozon Доставки.',
     fields: [
       { key: 'siteUrl', label: 'Адрес сайта', placeholder: 'https://shop.example.ru' },
       { key: 'apiKey', label: 'Ключ доступа', secret: true },

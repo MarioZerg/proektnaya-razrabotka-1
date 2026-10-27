@@ -46,6 +46,11 @@ const useSupplyCreation = (allSupplies: Supply[], shopId: number | null) => {
         return;
       }
     }
+    // «Отгрузка» мегатюль.рф создаётся сразу: одна в день, без выбора типа.
+    if (marketplace === 'IM') {
+      await createSupplyNow(marketplace, type, false);
+      return;
+    }
     if (marketplace === 'OZON' && type === 'FBO') {
       setOzonFboDialogOpen(true);
       return;

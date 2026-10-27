@@ -256,6 +256,30 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                             'activeSupplyId': active[0],
                         }, ensure_ascii=False),
                     }
+            elif marketplace == 'IM':
+                # «Отгрузка» мегатюль.рф — одна в день: в неё сканируются все готовые
+                # заказы сайта, потом её сдают в Ozon Доставку. Вторую за день не
+                # заводим — посылки разъедутся по двум спискам.
+                cur.execute("SELECT code FROM shops WHERE id = %s", (int(shop_id),))
+                shop_code_row = cur.fetchone()
+                if not shop_code_row or shop_code_row[0] != 'megatul_site':
+                    return {'statusCode': 400, 'headers': headers,
+                            'body': json.dumps({'error': 'Отгрузка создаётся только на вкладке магазина мегатюль.рф'},
+                                               ensure_ascii=False)}
+                cur.execute(
+                    "SELECT id FROM marketplace_supplies WHERE marketplace = 'IM' AND shop_id = %s "
+                    "AND created_at::date = (now() AT TIME ZONE 'Europe/Moscow')::date "
+                    "AND status NOT IN ('Выполнена', 'Отменена') LIMIT 1",
+                    (int(shop_id),),
+                )
+                today = cur.fetchone()
+                if today:
+                    return {'statusCode': 409, 'headers': headers,
+                            'body': json.dumps({'error': f'Отгрузка за сегодня уже есть — #{today[0]}. '
+                                                         f'Сканируйте заказы в неё',
+                                                'activeSupplyId': today[0]}, ensure_ascii=False)}
+                if not comment:
+                    comment = 'Отгрузка'
             elif supply_type == 'FBS' and marketplace == 'WB':
                 cur.execute(
                     "SELECT id FROM marketplace_supplies "
@@ -292,6 +316,13 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                 f"{'true' if is_b2b else 'false'}) RETURNING id"
             )
             supply_id = cur.fetchone()[0]
+            if marketplace == 'IM':
+                cur.execute(
+                    "UPDATE marketplace_supplies SET supply_number = "
+                    "'Отгрузка ' || to_char(now() AT TIME ZONE 'Europe/Moscow', 'DD.MM.YYYY') "
+                    "WHERE id = %s",
+                    (int(supply_id),),
+                )
 
             # ПОСТАВКА FBS ПОПАДАЕТ В ЗАДАНИЯ СМЕНЫ КЛАДОВЩИКА.
             #
@@ -637,7 +668,9 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                 "              WHERE _ms.id = msi.supply_id "
                 "                AND COALESCE(_ms.status, '') "
                 "                    NOT IN ('Выполнена', 'Отменена')) "
-                "WHERE (o.order_number = '{code}' OR o.ozon_posting_number = '{code}') "
+                "WHERE (o.order_number = '{code}' OR o.ozon_posting_number = '{code}' "
+                "       OR (o.marketplace = 'IM' AND o.delivery_tracking_number = '{code}' "
+                "           AND COALESCE(o.group_size, 1) <= 1)) "
                 "ORDER BY (gw.shipping_labeled_at IS NOT NULL) DESC, "
                 "         (msi.id IS NULL) DESC, "
                 "         gw.shipping_labeled_at DESC NULLS LAST, "

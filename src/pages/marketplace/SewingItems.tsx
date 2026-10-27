@@ -14,6 +14,8 @@ import SewingItemsQueuePanel from '@/components/crm/sewingItems/SewingItemsQueue
 import SewingItemsTabsSection from '@/components/crm/sewingItems/SewingItemsTabsSection';
 import SewingItemsResults from '@/components/crm/sewingItems/SewingItemsResults';
 import InterceptedCutCard from '@/components/crm/sewingItems/InterceptedCutCard';
+import { isOrderCancelled } from '@/components/crm/sewingItems/sewingItemsShared';
+import SiteOrdersSwitch, { type OrdersSource } from '@/components/crm/sewingItems/SiteOrdersSwitch';
 
 const SewingItems = () => {
   const {
@@ -36,6 +38,20 @@ const SewingItems = () => {
     effectiveWorkshopId,
     effectiveShiftNumber,
   } = useSewingItemsData();
+
+  // Заказы интернет-магазина мегатюль.рф идут отдельным конвейером: тот же цех,
+  // но своя очередь, чтобы не теряться среди тысяч заказов маркетплейсов.
+  const [source, setSource] = useState<OrdersSource>(() =>
+    new URLSearchParams(window.location.search).get('source') === 'site' ? 'site' : 'marketplace'
+  );
+  const isSiteOrder = (o: { marketplace?: string | null }) => o.marketplace === 'IM';
+  const siteOrdersCount = orders.filter(
+    (o) => isSiteOrder(o) && o.sewingStatus !== 'Готовые' && !isOrderCancelled(o)
+  ).length;
+  const marketplaceOrdersCount = orders.filter(
+    (o) => !isSiteOrder(o) && o.sewingStatus !== 'Готовые' && !isOrderCancelled(o)
+  ).length;
+  const sourceOrders = orders.filter((o) => (source === 'site' ? isSiteOrder(o) : !isSiteOrder(o)));
 
   // Предел заказов на руках у закройщика — настройка цеха (сейчас 20).
   // Берём с сервера: в разных цехах он может отличаться, а зашитое в код число
@@ -89,7 +105,7 @@ const SewingItems = () => {
     hiddenByFilters,
     resetUserFilters,
   } = useSewingItemsFilters({
-    orders,
+    orders: sourceOrders,
     materials,
     visibleTabs,
     isCutter,
@@ -166,6 +182,19 @@ const SewingItems = () => {
     <CrmLayout>
       <div className="space-y-4 sm:space-y-6">
         <h1 className="text-xl font-bold">Товары для пошива</h1>
+
+        <SiteOrdersSwitch
+          value={source}
+          onChange={(v) => {
+            setSource(v);
+            setPage(1);
+          }}
+          marketplaceCount={marketplaceOrdersCount}
+          siteCount={siteOrdersCount}
+          canSync={!isProductionRole}
+          actor={{ id: user?.id, name: user?.name }}
+          onSynced={load}
+        />
 
         <SewingItemsHeaderControls
           isProductionRole={isProductionRole}
