@@ -2707,28 +2707,33 @@ def handler(event: dict, context) -> dict:
                 comment_esc = comment.replace("'", "''")
                 shift_sql = 'NULL' if shared_packaging else str(int(shift_number))
 
-                cur.execute(
-                    f"INSERT INTO shipments (type, status, workshop_id, shift_number, comment, requested_by) "
-                    f"VALUES ('to_workshop', 'Новый', {int(workshop_id)}, {shift_sql}, '{comment_esc}', {requested_by_sql}) "
-                    f"RETURNING id"
-                )
-                shipment_id = cur.fetchone()[0]
-
+                # ОДНА ТКАНЬ — ОДНА ЗАЯВКА. Раньше несколько материалов из одного
+                # запроса ложились в общую заявку, и цех принимал их все одним нажатием,
+                # не пересчитывая каждую ткань. Теперь у каждого материала своя заявка:
+                # кладовщик собирает, а смена принимает их по отдельности.
                 requested_qty_sql = float(requested_qty) if requested_qty not in (None, '') else 'NULL'
+                is_admin_request = bool(actor_row and actor_row[0] == 'admin')
+                shipment_ids = []
                 for material_id in material_ids:
+                    cur.execute(
+                        f"INSERT INTO shipments (type, status, workshop_id, shift_number, comment, requested_by) "
+                        f"VALUES ('to_workshop', 'Новый', {int(workshop_id)}, {shift_sql}, '{comment_esc}', {requested_by_sql}) "
+                        f"RETURNING id"
+                    )
+                    shipment_id = cur.fetchone()[0]
+                    shipment_ids.append(shipment_id)
                     cur.execute(
                         f"INSERT INTO shipment_items (shipment_id, material_id, requested_quantity) "
                         f"VALUES ({shipment_id}, {int(material_id)}, {requested_qty_sql})"
                     )
-
-                is_admin_request = bool(actor_row and actor_row[0] == 'admin')
-                log_action(
-                    cur, actor_id, actor_name, 'request_to_workshop', 'shipment', shipment_id,
-                    ('Администратор создал заявку на отгрузку в цех #' if is_admin_request
-                     else 'Создал заявку на отгрузку в цех #') + str(workshop_id),
-                )
+                    log_action(
+                        cur, actor_id, actor_name, 'request_to_workshop', 'shipment', shipment_id,
+                        ('Администратор создал заявку на отгрузку в цех #' if is_admin_request
+                         else 'Создал заявку на отгрузку в цех #') + str(workshop_id),
+                    )
                 conn.commit()
-                return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'id': shipment_id})}
+                return {'statusCode': 200, 'headers': headers,
+                        'body': json.dumps({'id': shipment_ids[0], 'ids': shipment_ids})}
 
             if action == 'collect_scan':
                 shipment_id = body_data.get('shipmentId')
