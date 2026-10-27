@@ -128,7 +128,10 @@ export const fetchMaxBotUrl = async (): Promise<MaxBotLink> => {
   const res = await fetchWithTimeout(AUTH_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ action: 'bot_info' }),
+    body: JSON.stringify({
+      action: 'bot_info',
+      returnUrl: `${window.location.origin}/login/code`,
+    }),
   });
   const data = await res.json();
   return { botUrl: data.botUrl || null, loginToken: data.loginToken || null };

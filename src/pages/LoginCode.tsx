@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import LoginBackground from '@/components/auth/LoginBackground';
 import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -202,8 +203,8 @@ const LoginCode = () => {
 
   return (
     <div className="relative flex min-h-screen items-center justify-center bg-background px-6 py-12 sm:py-16">
-      <div className="pointer-events-none absolute inset-0 grid-bg opacity-[0.25]" />
-
+      <LoginBackground />
+      
       <div className="relative w-full max-w-[360px] animate-fade-in">
         <div className="mb-10 mt-2 flex flex-col items-center gap-4 text-center">
           <img

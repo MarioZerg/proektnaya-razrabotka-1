@@ -235,13 +235,18 @@ def handler(event: dict, context) -> dict:
             return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'botUrl': None})}
 
         login_token = secrets.token_urlsafe(24)[:64]
+        # Адрес, куда вернуть человека из MAX кнопкой «Вернуться на сайт».
+        # Берём только https-ссылку разумной длины — иначе кнопку не показываем.
+        return_url = str(body_data.get('returnUrl') or '').strip()
+        if not return_url.startswith('https://') or len(return_url) > 300:
+            return_url = None
         conn = psycopg2.connect(dsn)
         try:
             cur = conn.cursor()
             cur.execute(
-                "INSERT INTO max_login_tokens (token, expires_at) "
-                "VALUES (%s, now() + interval '15 minutes')",
-                (login_token,),
+                "INSERT INTO max_login_tokens (token, expires_at, return_url) "
+                "VALUES (%s, now() + interval '15 minutes', %s)",
+                (login_token, return_url),
             )
             # Заодно подчищаем протухшие метки, чтобы таблица не росла бесконечно.
             cur.execute("DELETE FROM max_login_tokens WHERE expires_at < now() - interval '1 day'")

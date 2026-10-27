@@ -1,0 +1,1 @@
+ALTER TABLE t_p86119184_proektnaya_razrabotk.max_login_tokens ADD COLUMN IF NOT EXISTS return_url varchar(300) NULL;

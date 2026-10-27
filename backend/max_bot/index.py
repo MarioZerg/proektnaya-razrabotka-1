@@ -115,11 +115,25 @@ def _get_ca_bundle() -> str:
     return _CA_BUNDLE_PATH
 
 
-def send_max_message(max_user_id: str, text: str, with_contact_button: bool = False) -> None:
+def send_max_message(max_user_id: str, text: str, with_contact_button: bool = False,
+                     return_url: str | None = None) -> None:
     """Отправляет сообщение пользователю MAX. Токен — в заголовке Authorization,
-    чтобы не попадал в URL/логи."""
+    чтобы не попадал в URL/логи.
+
+    return_url — кнопка «Вернуться на сайт» под сообщением с кодом: человек
+    одним нажатием попадает обратно на страницу входа, где код уже подставлен.
+    """
     token = os.environ['MAX_BOT_TOKEN']
     payload = {'text': text}
+    if return_url and not with_contact_button:
+        payload['attachments'] = [
+            {
+                'type': 'inline_keyboard',
+                'payload': {
+                    'buttons': [[{'type': 'link', 'text': '↩️ Вернуться на сайт', 'url': return_url}]]
+                },
+            }
+        ]
     if with_contact_button:
         payload['attachments'] = [
             {
@@ -204,6 +218,15 @@ def issue_code(cur, max_user_id: str, phone_norm: str, sender_name: str, login_t
             (code, max_user_id, login_token),
         )
     return code
+
+
+def token_return_url(cur, login_token: str | None) -> str | None:
+    """Куда вернуть человека с этой метки входа (страница ввода кода на сайте)."""
+    if not login_token:
+        return None
+    cur.execute("SELECT return_url FROM max_login_tokens WHERE token = %s", (login_token,))
+    row = cur.fetchone()
+    return row[0] if row and row[0] else None
 
 
 def find_pending_token(cur, max_user_id: str) -> str | None:
@@ -346,8 +369,10 @@ def handler(event: dict, context) -> dict:
                     (max_user_id, known is None, login_token),
                 )
 
+            back_url = None
             if known:
                 code = issue_code(cur, max_user_id, known[2] or '', known[1] or 'Сотрудник', login_token)
+                back_url = token_return_url(cur, login_token)
                 conn.commit()
             else:
                 conn.commit()
@@ -361,6 +386,7 @@ def handler(event: dict, context) -> dict:
                 f'Код для входа в МЕГАТЮЛЬ: {code}\n'
                 'Можно просто вернуться на сайт — код подставится сам. '
                 f'Код действует {CODE_TTL_MINUTES} минут.',
+                return_url=back_url,
             )
         else:
             send_max_message(
@@ -447,6 +473,7 @@ def handler(event: dict, context) -> dict:
             # чтобы не заставлять переписывать шесть цифр руками.
             login_token = find_pending_token(cur, max_user_id)
             code = issue_code(cur, max_user_id, phone_norm, sender_name, login_token)
+            back_url = token_return_url(cur, login_token)
             conn.commit()
         finally:
             conn.close()
@@ -459,6 +486,7 @@ def handler(event: dict, context) -> dict:
         send_max_message(
             max_user_id,
             f'Код для входа в МЕГАТЮЛЬ: {code}\n{hint} Код действует {CODE_TTL_MINUTES} минут.',
+            return_url=back_url,
         )
         return {'statusCode': 200, 'headers': headers, 'body': ''}
 
