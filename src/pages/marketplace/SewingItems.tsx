@@ -51,7 +51,9 @@ const SewingItems = () => {
   const marketplaceOrdersCount = orders.filter(
     (o) => !isSiteOrder(o) && o.sewingStatus !== 'Готовые' && !isOrderCancelled(o)
   ).length;
-  const sourceOrders = orders.filter((o) => (source === 'site' ? isSiteOrder(o) : !isSiteOrder(o)));
+  const hasSiteOrders = orders.some(isSiteOrder);
+  const showOrder = (o: { marketplace?: string | null }) =>
+    source === 'site' ? isSiteOrder(o) : !isSiteOrder(o);
 
   // Предел заказов на руках у закройщика — настройка цеха (сейчас 20).
   // Берём с сервера: в разных цехах он может отличаться, а зашитое в код число
@@ -105,7 +107,8 @@ const SewingItems = () => {
     hiddenByFilters,
     resetUserFilters,
   } = useSewingItemsFilters({
-    orders: sourceOrders,
+    orders,
+    showOrder,
     materials,
     visibleTabs,
     isCutter,
@@ -183,6 +186,7 @@ const SewingItems = () => {
       <div className="space-y-4 sm:space-y-6">
         <h1 className="text-xl font-bold">Товары для пошива</h1>
 
+        {(!isProductionRole || hasSiteOrders) && (
         <SiteOrdersSwitch
           value={source}
           onChange={(v) => {
@@ -195,6 +199,7 @@ const SewingItems = () => {
           actor={{ id: user?.id, name: user?.name }}
           onSynced={load}
         />
+        )}
 
         <SewingItemsHeaderControls
           isProductionRole={isProductionRole}

@@ -24,6 +24,9 @@ interface UseSewingItemsFiltersArgs {
   /** Цех текущей открытой смены сотрудника. Производственные роли видят заказы только
    * своего цеха: перейдя в другой цех, упаковщица не должна видеть чужие заказы. */
   effectiveWorkshopId?: number | null;
+  /** Какие заказы ПОКАЗЫВАТЬ во вкладках (маркетплейсы или сайт). На счётчики «на руках»
+   * и блокировки кнопок не влияет — они считаются по всем заказам, как раньше. */
+  showOrder?: (o: Order) => boolean;
 }
 
 /** Вкладки статусов, фильтры поиска/типа/сотрудника/материала/размера/цеха и производные
@@ -37,6 +40,7 @@ export const useSewingItemsFilters = ({
   isPacker,
   userId,
   effectiveWorkshopId,
+  showOrder,
 }: UseSewingItemsFiltersArgs) => {
   const [activeTab, setActiveTab] = useState<TabValue>(visibleTabs[0]?.value || 'Новый');
 
@@ -117,7 +121,9 @@ export const useSewingItemsFilters = ({
     (o) => !isOrderCancelled(o) || !!o.cutAt || !!o.assignedUserId
   );
 
-  const ordersInTab = activeOrders
+  const shownOrders = showOrder ? activeOrders.filter(showOrder) : activeOrders;
+
+  const ordersInTab = shownOrders
     .filter((o) => {
       // ВКЛАДКА «ОТМЕНЁННЫЕ С КРОЕМ» — СРЕЗ ПО ВСЕМ ЭТАПАМ СРАЗУ.
       //
@@ -276,9 +282,9 @@ export const useSewingItemsFilters = ({
 
   const ordersMatchingTab = (status: TabValue) => {
     if (status === CANCELLED_CUT_TAB) {
-      return activeOrders.filter(isCancelledWithCut);
+      return shownOrders.filter(isCancelledWithCut);
     }
-    const workOrders = activeOrders.filter(
+    const workOrders = shownOrders.filter(
       (o) => !isCancelledWithCut(o) || o.sewingStatus === 'Стикеровка'
     );
 

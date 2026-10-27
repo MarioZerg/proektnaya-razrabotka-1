@@ -3362,7 +3362,7 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                 "  AND src.product = %s "
                 "  AND NOT " + GOODS_IN_LIVE_SUPPLY_SQL.format(gw='gw') + " "
                 # Свой пул у мегатюль.рф: заказу сайта — только вещь сайта, и наоборот.
-                "  AND (" + SITE_GOODS_SQL + ") = (SELECT marketplace = 'IM' FROM orders WHERE id = %s) "
+                "  AND (" + SITE_GOODS_SQL + ") = COALESCE((SELECT marketplace = 'IM' FROM orders WHERE id = %s), false) "
                 # FIFO: первой уходит вещь, дольше всех лежащая на полке.
                 "ORDER BY gw.received_at ASC "
                 "FOR UPDATE OF gw SKIP LOCKED LIMIT 1",

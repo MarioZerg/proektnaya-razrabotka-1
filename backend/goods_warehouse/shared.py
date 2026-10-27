@@ -319,8 +319,8 @@ IN_HAND_FIRST_SQL = (
 # заказам сайта не достаются — и наоборот, вещи сайта не уходят на OZON и WB.
 # Подставляется в запрос, где goods_warehouse — gw, а её исходный заказ — src.
 SITE_GOODS_SQL = (
-    "src.marketplace = 'IM' "
-    "AND COALESCE(gw.receive_reason, '') NOT IN ('admin', 'manual', 'import')"
+    "(COALESCE(src.marketplace, '') = 'IM' "
+    "AND COALESCE(gw.receive_reason, '') NOT IN ('admin', 'manual', 'import'))"
 )
 
 
