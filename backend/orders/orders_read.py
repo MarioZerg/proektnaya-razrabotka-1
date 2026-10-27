@@ -992,7 +992,7 @@ def handle_get(event: dict, headers: dict, dsn: str) -> dict:
             required_trim_material_name = None
             if material_name and width_val and height_val:
                 cur.execute(
-                    "SELECT id FROM marketplace_items WHERE material = %s AND width = %s AND height = %s LIMIT 1",
+                    "SELECT id FROM marketplace_items WHERE material = %s AND width = %s AND height = %s ORDER BY id LIMIT 1",
                     (material_name, width_val, height_val),
                 )
                 mi_row = cur.fetchone()

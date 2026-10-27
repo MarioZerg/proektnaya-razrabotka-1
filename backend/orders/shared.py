@@ -434,7 +434,7 @@ def write_off_materials_once(cur, order_id, material, width, height, workshop_id
         return None
 
     cur.execute(
-        "SELECT id FROM marketplace_items WHERE material = %s AND width = %s AND height = %s LIMIT 1",
+        "SELECT id FROM marketplace_items WHERE material = %s AND width = %s AND height = %s ORDER BY id LIMIT 1",
         (material, width, height),
     )
     item_row = cur.fetchone()
@@ -628,7 +628,7 @@ def consume_trim_roll(
     Если нужна, а рулон не выбран — ошибка 400.
     """
     cur.execute(
-        "SELECT id FROM marketplace_items WHERE material = %s AND width = %s AND height = %s LIMIT 1",
+        "SELECT id FROM marketplace_items WHERE material = %s AND width = %s AND height = %s ORDER BY id LIMIT 1",
         (material, width, height),
     )
     item_row = cur.fetchone()
@@ -812,7 +812,7 @@ def consume_fabric_roll(
         if material and width and height and tul_type_id:
             cur.execute(
                 "SELECT id FROM marketplace_items "
-                "WHERE material = %s AND width = %s AND height = %s LIMIT 1",
+                "WHERE material = %s AND width = %s AND height = %s ORDER BY id LIMIT 1",
                 (material, width, height),
             )
             item_row = cur.fetchone()
@@ -848,7 +848,7 @@ def consume_fabric_roll(
         }
 
     cur.execute(
-        "SELECT id FROM marketplace_items WHERE material = %s AND width = %s AND height = %s LIMIT 1",
+        "SELECT id FROM marketplace_items WHERE material = %s AND width = %s AND height = %s ORDER BY id LIMIT 1",
         (material, width, height),
     )
     item_row = cur.fetchone()

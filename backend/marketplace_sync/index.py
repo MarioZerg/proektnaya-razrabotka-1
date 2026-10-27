@@ -396,7 +396,136 @@ def _fill_item(cur, item, data, sku=None):
     return visible
 
 
+SITE_SHOP_CODE = 'megatul_site'
+DEFAULT_SITE_URL = 'https://xn--80aff0ab3b6do.xn--p1ai'
+
+
+def _site_settings(cur, shop_id):
+    """Если магазин — интернет-магазин мегатюль.рф, вернёт (site_url, api_key, enabled)."""
+    cur.execute("SELECT code FROM shops WHERE id = %s", (int(shop_id),))
+    row = cur.fetchone()
+    if not row or row[0] != SITE_SHOP_CODE:
+        return None
+    cur.execute(
+        "SELECT is_enabled, credentials FROM marketplace_integrations "
+        "WHERE marketplace_code = 'internet_shop' AND shop_id = %s LIMIT 1",
+        (int(shop_id),),
+    )
+    r = cur.fetchone()
+    creds = {}
+    enabled = False
+    if r:
+        enabled = bool(r[0])
+        creds = r[1] if isinstance(r[1], dict) else json.loads(r[1] or '{}')
+    site_url = (creds.get('siteUrl') or DEFAULT_SITE_URL).strip().rstrip('/')
+    return site_url, (creds.get('apiKey') or '').strip(), enabled
+
+
+def _to_int(v):
+    try:
+        return int(float(v))
+    except (TypeError, ValueError):
+        return None
+
+
+def handle_site_sync(cur, shop_id, site_url, api_key):
+    """Карточки товаров интернет-магазина мегатюль.рф.
+
+    Сайт отдаёт каталог: артикул, название, ткань, ширину, высоту, штрихкод.
+    Новые артикулы заводим, у существующих дописываем только пустые поля —
+    ручные правки и расход материалов, проставленный в CRM, не трогаем.
+    """
+    req = urllib.request.Request(
+        f'{site_url}/api/crm/products',
+        headers={'Accept': 'application/json', 'X-Api-Key': api_key,
+                 'Authorization': f'Bearer {api_key}'},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=20) as r:
+            data = json.loads(r.read().decode('utf-8') or '{}')
+    except urllib.error.HTTPError as e:
+        if e.code in (401, 403):
+            return _resp(400, {'error': 'Сайт не принял ключ доступа. Проверьте ключ в «Интеграциях».'})
+        if e.code == 404:
+            return _resp(400, {'error': 'На сайте ещё не включена выдача каталога для CRM (/api/crm/products).'})
+        return _resp(400, {'error': f'Сайт ответил ошибкой {e.code}'})
+    except Exception as e:
+        return _resp(400, {'error': f'Сайт недоступен: {e}'})
+
+    products = data.get('products') if isinstance(data, dict) else data
+    products = products or []
+
+    cur.execute(
+        "SELECT id, sku, name, material, width, height, barcode FROM marketplace_items WHERE shop_id = %s",
+        (int(shop_id),),
+    )
+    by_sku = {}
+    for row in cur.fetchall():
+        if (row[1] or '').strip():
+            by_sku[row[1].strip().lower()] = row
+
+    created = 0
+    linked = 0
+    for p in products:
+        sku = str(p.get('sku') or p.get('article') or '').strip()
+        if not sku:
+            continue
+        name = (p.get('name') or sku).strip()[:200]
+        material = (p.get('material') or '').strip() or None
+        width = _to_int(p.get('width'))
+        height = _to_int(p.get('height'))
+        if not (width and height):
+            pw, ph = parse_size_from_sku(sku)
+            width, height = width or pw, height or ph
+        barcode = (str(p.get('barcode') or '').strip() or None)
+        existing = by_sku.get(sku.lower())
+        if existing:
+            item_id, _sku, ex_name, ex_mat, ex_w, ex_h, ex_bc = existing
+            cur.execute(
+                "UPDATE marketplace_items SET "
+                "  name = CASE WHEN COALESCE(name, '') = '' THEN %s ELSE name END, "
+                "  material = CASE WHEN COALESCE(material, '') = '' THEN %s ELSE material END, "
+                "  width = COALESCE(width, %s), height = COALESCE(height, %s), "
+                "  barcode = CASE WHEN COALESCE(barcode, '') = '' THEN %s ELSE barcode END, "
+                "  updated_at = now() "
+                "WHERE id = %s AND (COALESCE(name, '') = '' OR (COALESCE(material, '') = '' AND %s IS NOT NULL) "
+                "  OR (width IS NULL AND %s IS NOT NULL) OR (height IS NULL AND %s IS NOT NULL) "
+                "  OR (COALESCE(barcode, '') = '' AND %s IS NOT NULL)) RETURNING id",
+                (name, material, width, height, barcode, item_id,
+                 material, width, height, barcode),
+            )
+            if cur.fetchone():
+                linked += 1
+            continue
+        cur.execute(
+            "INSERT INTO marketplace_items (name, sku, material, width, height, barcode, shop_id) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s)",
+            (name, sku[:100], material, width, height, barcode, int(shop_id)),
+        )
+        by_sku[sku.lower()] = (None, sku, name, material, width, height, barcode)
+        created += 1
+
+    return _resp(200, {
+        'created': created,
+        'linked': linked,
+        'ozonCards': 0,
+        'wbCards': 0,
+        'siteCards': len(products),
+        'totalArticles': len(products),
+        'skipped': max(0, len(products) - created - linked),
+        'warnings': [],
+    })
+
+
 def handle_sync(cur, shop_id):
+    site = _site_settings(cur, shop_id)
+    if site is not None:
+        site_url, api_key, enabled = site
+        if not api_key or not enabled:
+            return _resp(400, {'error': 'Магазин мегатюль.рф не подключён: заполните ключ доступа '
+                                        'в «Интеграциях» на вкладке магазина и включите интеграцию.'})
+        return handle_site_sync(cur, shop_id, site_url, api_key)
+
     client_id, ozon_key, ozon_on = get_ozon_credentials(cur, shop_id)
     wb_key, wb_on = get_wb_credentials(cur, shop_id)
 
@@ -505,7 +634,7 @@ def handle_sync(cur, shop_id):
 
 
 def handler(event: dict, context) -> dict:
-    """Синхронизация карточек товаров из OZON и Wildberries в справочник marketplace_items.
+    """Синхронизация карточек товаров из OZON и Wildberries (или с сайта мегатюль.рф) в справочник marketplace_items.
     Добавляет новые артикулы и дописывает пустые коды площадок на уже заведённые карточки.
     Заполненный артикул и заполненные коды не перезаписывает.
 

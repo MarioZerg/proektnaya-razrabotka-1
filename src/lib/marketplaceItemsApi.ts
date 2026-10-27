@@ -108,6 +108,8 @@ export interface SyncResult {
   linked?: number;
   ozonCards: number;
   wbCards: number;
+  /** Карточек с сайта мегатюль.рф (только для вкладки интернет-магазина). */
+  siteCards?: number;
   totalArticles: number;
   skipped: number;
   warnings: string[];

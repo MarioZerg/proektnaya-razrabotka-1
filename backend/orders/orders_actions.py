@@ -571,7 +571,7 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                         continue
                     cur.execute(
                         "SELECT id FROM marketplace_items WHERE material = %s AND width = %s "
-                        "AND height = %s LIMIT 1",
+                        "AND height = %s ORDER BY id LIMIT 1",
                         (g_material, g_width, g_height),
                     )
                     gi_row = cur.fetchone()
@@ -1622,7 +1622,7 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                                 order_shift_number = u_row[0] if u_row else None
 
                 cur.execute(
-                        "SELECT id FROM marketplace_items WHERE material = %s AND width = %s AND height = %s LIMIT 1",
+                        "SELECT id FROM marketplace_items WHERE material = %s AND width = %s AND height = %s ORDER BY id LIMIT 1",
                         (material, width, height),
                 )
                 item_row = cur.fetchone()
@@ -2443,7 +2443,7 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
             is_manual_order = bool(o_row) and o_row[3] == 'import'
             if o_row and o_row[0] and o_row[1] and o_row[2] and not is_manual_order:
                 cur.execute(
-                    "SELECT id FROM marketplace_items WHERE material = %s AND width = %s AND height = %s LIMIT 1",
+                    "SELECT id FROM marketplace_items WHERE material = %s AND width = %s AND height = %s ORDER BY id LIMIT 1",
                     (o_row[0], o_row[1], o_row[2]),
                 )
                 mi_row = cur.fetchone()
@@ -2738,7 +2738,7 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
             check_workshop_id = sewer_workshop_id or order_workshop_id
 
             cur.execute(
-                "SELECT id FROM marketplace_items WHERE material = %s AND width = %s AND height = %s LIMIT 1",
+                "SELECT id FROM marketplace_items WHERE material = %s AND width = %s AND height = %s ORDER BY id LIMIT 1",
                 (material, width, height),
             )
             item_row = cur.fetchone()

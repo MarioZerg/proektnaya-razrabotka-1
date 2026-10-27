@@ -47,6 +47,9 @@ const MaterialsSettings = () => {
   // Группа в чипах сверху: без фильтра таблица смешивает тюль, тесьму и пакеты,
   // и нужный материал приходится искать по страницам.
   const [typeFilter, setTypeFilter] = useState<number | 'all'>('all');
+  // Фильтр по магазину: 'all' — все, 'common' — без привязки (подходит всем магазинам),
+  // число — материалы, привязанные к магазину, плюс общие (они тоже ему подходят).
+  const [shopFilter, setShopFilter] = useState<number | 'all' | 'common'>('all');
 
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
@@ -86,8 +89,17 @@ const MaterialsSettings = () => {
   }, [shops]);
 
   const filteredMaterials = useMemo(
-    () => (typeFilter === 'all' ? materials : materials.filter((m) => m.typeId === typeFilter)),
-    [materials, typeFilter]
+    () =>
+      materials.filter((m) => {
+        if (typeFilter !== 'all' && m.typeId !== typeFilter) return false;
+        const linked = m.shops || [];
+        if (shopFilter === 'common') return linked.length === 0;
+        if (shopFilter !== 'all') {
+          return linked.length === 0 || linked.some((s) => s.shopId === shopFilter);
+        }
+        return true;
+      }),
+    [materials, typeFilter, shopFilter]
   );
 
   const totalPages = Math.max(1, Math.ceil(filteredMaterials.length / PAGE_SIZE));
@@ -101,7 +113,7 @@ const MaterialsSettings = () => {
   // третьей, а в новой группе материалов меньше и таблица окажется пустой.
   useEffect(() => {
     setPage(1);
-  }, [typeFilter]);
+  }, [typeFilter, shopFilter]);
 
   // Группу удалили, а фильтр на неё ещё стоит — сбрасываем, иначе таблица
   // молча останется пустой.
@@ -256,6 +268,42 @@ const MaterialsSettings = () => {
           onDeleteType={handleDeleteType}
         />
 
+        {shops.length > 1 && (
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-sm text-muted-foreground">Магазин:</span>
+            {(
+              [
+                { value: 'all' as const, label: 'Все' },
+                ...shops.map((sh) => ({ value: sh.id, label: sh.name })),
+                { value: 'common' as const, label: 'Без привязки' },
+              ]
+            ).map((opt) => {
+              const active = shopFilter === opt.value;
+              const count =
+                opt.value === 'all'
+                  ? materials.length
+                  : opt.value === 'common'
+                    ? materials.filter((m) => !m.shops || m.shops.length === 0).length
+                    : materials.filter((m) => m.shops?.some((s) => s.shopId === opt.value)).length;
+              return (
+                <button
+                  key={String(opt.value)}
+                  type="button"
+                  onClick={() => setShopFilter(opt.value)}
+                  className={`rounded-full border px-3 py-1 text-sm transition ${
+                    active
+                      ? 'border-primary bg-primary text-primary-foreground'
+                      : 'border-border bg-background text-foreground hover:bg-muted'
+                  }`}
+                >
+                  {opt.label}
+                  <span className="ml-1.5 text-xs opacity-70">{count}</span>
+                </button>
+              );
+            })}
+          </div>
+        )}
+
         {listError && (
           <WarehouseFetchError
             title="Не удалось загрузить материалы"
@@ -269,7 +317,7 @@ const MaterialsSettings = () => {
           error={listError}
           materials={filteredMaterials}
           pagedMaterials={pagedMaterials}
-          filtered={typeFilter !== 'all'}
+          filtered={typeFilter !== 'all' || shopFilter !== 'all'}
           typeById={typeById}
           shopById={shopById}
           page={currentPage}

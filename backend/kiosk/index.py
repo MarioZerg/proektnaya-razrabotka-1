@@ -290,7 +290,7 @@ def write_off_packaging(cur, order_id: int, workshop_id=None) -> str | None:
         return None
 
     cur.execute(
-        "SELECT id FROM marketplace_items WHERE material = %s AND width = %s AND height = %s LIMIT 1",
+        "SELECT id FROM marketplace_items WHERE material = %s AND width = %s AND height = %s ORDER BY id LIMIT 1",
         (o[0], o[1], o[2]),
     )
     item_row = cur.fetchone()

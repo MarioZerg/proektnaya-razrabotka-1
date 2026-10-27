@@ -208,8 +208,10 @@ const MarketplaceItemsSettings = () => {
         title: `Синхронизация завершена`,
         description:
           `Привязано к карточкам: ${res.linked ?? 0}. Добавлено новых: ${res.created}. ` +
-          `Всего карточек с площадок: ${res.totalArticles} ` +
-          `(OZON ${res.ozonCards}, WB ${res.wbCards}).` + warn,
+          (res.siteCards !== undefined
+            ? `Карточек на сайте: ${res.siteCards}. Расход материалов проставьте в карточке товара.`
+            : `Всего карточек с площадок: ${res.totalArticles} ` +
+              `(OZON ${res.ozonCards}, WB ${res.wbCards}).`) + warn,
       });
       load();
     } catch (err) {
