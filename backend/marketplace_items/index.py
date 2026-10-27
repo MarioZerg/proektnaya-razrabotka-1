@@ -113,7 +113,9 @@ def handler(event: dict, context) -> dict:
                         'body': json.dumps({'item': detail, 'shops': shops})}
 
             sql = (
-                "SELECT id, name, sku, width, height, ozon_sku, wb_sku, material, barcode, created_at, updated_at, ym_sku, shop_id, archived_at "
+                "SELECT id, name, sku, width, height, ozon_sku, wb_sku, material, barcode, created_at, updated_at, ym_sku, shop_id, archived_at, "
+                "  (SELECT COUNT(*) FROM marketplace_item_materials mim WHERE mim.marketplace_item_id = marketplace_items.id), "
+                "  site_product_id "
                 "FROM marketplace_items"
             )
             if shop_id:
@@ -135,6 +137,8 @@ def handler(event: dict, context) -> dict:
                     'ymSku': r[11],
                     'shopId': r[12],
                     'archivedAt': r[13].isoformat() + 'Z' if r[13] else None,
+                    'materialsCount': int(r[14] or 0),
+                    'siteProductId': r[15],
                 }
                 for r in cur.fetchall()
             ]

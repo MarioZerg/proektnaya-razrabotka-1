@@ -32,6 +32,19 @@ export const fetchSiteStatus = async (): Promise<SiteStatus> => {
   return data;
 };
 
+export interface SiteProductsSyncResult {
+  created: number;
+  updated?: number;
+  restored?: number;
+  archived?: number;
+  siteProducts?: number;
+  siteCards?: number;
+}
+
+/** Забирает артикулы размеров сайта в «Товары для интеграций» этого магазина. */
+export const syncSiteProducts = (actor?: { id?: number; name?: string }): Promise<SiteProductsSyncResult> =>
+  post({ action: 'sync_products', actorId: actor?.id, actorName: actor?.name });
+
 /** Забирает оплаченные заказы мегатюль.рф на конвейер. */
 export const syncSiteOrders = (actor?: { id?: number; name?: string }): Promise<SiteSyncResult> =>
   post({ action: 'sync', actorId: actor?.id, actorName: actor?.name });

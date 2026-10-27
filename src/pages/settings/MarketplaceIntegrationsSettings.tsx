@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import CrmLayout from '@/components/crm/CrmLayout';
 import Icon from '@/components/ui/icon';
+import { Button } from '@/components/ui/button';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/context/AuthContext';
 import {
@@ -15,6 +16,7 @@ import {
 } from '@/lib/marketplaceIntegrationsConfig';
 import MarketplaceIntegrationCard from '@/components/crm/settings/MarketplaceIntegrationCard';
 import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
+import SiteProductsTab from '@/components/crm/siteProducts/SiteProductsTab';
 
 const MarketplaceIntegrationsSettings = () => {
   const { toast } = useToast();
@@ -26,6 +28,8 @@ const MarketplaceIntegrationsSettings = () => {
   const [loading, setLoading] = useState(true);
   const [listError, setListError] = useState<string | null>(null);
   const [savingCode, setSavingCode] = useState<string | null>(null);
+  // У магазина мегатюль.рф две вкладки: ключи и «Товары для интеграций».
+  const [siteTab, setSiteTab] = useState<'keys' | 'products'>('keys');
 
   const load = () => {
     setLoading(true);
@@ -77,6 +81,8 @@ const MarketplaceIntegrationsSettings = () => {
       setSavingCode(null);
     }
   };
+
+  const isSiteShop = shops.find((s) => s.id === shopId)?.code === 'megatul_site';
 
   return (
     <CrmLayout>
@@ -143,6 +149,31 @@ const MarketplaceIntegrationsSettings = () => {
               </div>
             )}
 
+            {isSiteShop && (
+              <div className="flex flex-wrap gap-2">
+                {(
+                  [
+                    { value: 'keys', label: 'Интеграции', icon: 'KeyRound' },
+                    { value: 'products', label: 'Товары для интеграций', icon: 'Package' },
+                  ] as const
+                ).map((t) => (
+                  <Button
+                    key={t.value}
+                    size="sm"
+                    variant={siteTab === t.value ? 'default' : 'outline'}
+                    onClick={() => setSiteTab(t.value)}
+                  >
+                    <Icon name={t.icon} size={14} className="mr-1.5" />
+                    {t.label}
+                  </Button>
+                ))}
+              </div>
+            )}
+
+            {isSiteShop && siteTab === 'products' && shopId ? (
+              <SiteProductsTab shopId={shopId} />
+            ) : (
+            <>
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
               {marketplaceIntegrationsConfig.map((config) => (
                 <MarketplaceIntegrationCard
@@ -180,6 +211,8 @@ const MarketplaceIntegrationsSettings = () => {
                 ))}
               </div>
             </div>
+            </>
+            )}
           </>
         )}
       </div>

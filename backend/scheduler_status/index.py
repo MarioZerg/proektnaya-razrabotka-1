@@ -100,6 +100,16 @@ JOBS = [
         'everyMin': 10,
         'lateAfter': 60,
     },
+    {
+        'key': 'site_sync_products',
+        'title': 'мегатюль.рф — товары',
+        'func': 'site_orders',
+        'urlAction': 'sync_products',
+        'purpose': 'Забирает артикулы и размеры сайта в «Товары для интеграций», удалённые уводит в архив',
+        'group': 'orders',
+        'everyMin': 60,
+        'lateAfter': 240,
+    },
     # --- ОТМЕНЫ. Молчит — цех шьёт то, от чего покупатель уже отказался.
     {
         'key': 'ozon_refresh_statuses',
@@ -140,16 +150,6 @@ JOBS = [
         'group': 'cancels',
         'everyMin': 20,
         'lateAfter': 90,
-    },
-    {
-        'key': 'site_sync_products',
-        'title': 'мегатюль.рф — каталог товаров',
-        'func': 'site_orders',
-        'urlAction': 'sync_products',
-        'purpose': 'Заводит новые товары сайта в карточки ERP, удалённые уводит в архив',
-        'group': 'orders',
-        'everyMin': 60,
-        'lateAfter': 240,
     },
     # --- СКЛАД И ЦЕХ. Служебная работа, без которой копятся ручные разборы.
     {

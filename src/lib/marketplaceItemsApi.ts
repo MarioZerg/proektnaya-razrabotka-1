@@ -24,6 +24,10 @@ export interface MarketplaceItem {
   shopId: number;
   /** Карточка удалена в магазине: скрыта из работы, история заказов сохранена. */
   archivedAt?: string | null;
+  /** Сколько материалов расхода вписано в карточку. 0 — расход не проставлен. */
+  materialsCount?: number;
+  /** id карточки на сайте мегатюль.рф (bambuk, vual…). Пусто — товар заведён вручную. */
+  siteProductId?: string | null;
 }
 
 export interface MarketplaceItemMaterial {
