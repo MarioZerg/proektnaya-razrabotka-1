@@ -2,6 +2,7 @@ import base64
 import json
 import os
 import urllib.error
+import urllib.parse
 import urllib.request
 from datetime import datetime
 
@@ -133,7 +134,11 @@ def unit_parcels(so):
     for it in so.get('items') or []:
         for p in it.get('parcels') or []:
             result.append(parcel_of(p))
-    return result
+    if result:
+        return result
+    # Сайт отдал ОДНО отправление на весь заказ — им и закрываем все вещи.
+    one = parcel_of(delivery) if (delivery.get('trackingNumber') or delivery.get('labelUrl')) else parcel_of(so)
+    return [one] * len([1 for it in (so.get('items') or []) for _ in range(max(1, to_int(it.get('quantity')) or 1))])
 
 
 def sync_orders(cur, shop_id, site_url, api_key, actor_id, actor_name):
@@ -160,7 +165,8 @@ def sync_orders(cur, shop_id, site_url, api_key, actor_id, actor_name):
     created_orders = []
 
     for so in site_orders:
-        sid = str(so.get('id') or so.get('number') or '').strip()
+        # Карточка заказа и этикетка на сайте открываются по НОМЕРУ — его и храним.
+        sid = str(so.get('number') or so.get('id') or '').strip()
         if not sid:
             continue
         if str(so.get('status') or '').lower() in CANCEL_WORDS:
@@ -284,6 +290,7 @@ def check_statuses(cur, site_url, api_key, actor_id, actor_name, limit=40):
             p for it in (so.get('items') or []) for p in (it.get('parcels') or [])
         ]
 
+        unit_list = unit_parcels(so)
         for idx, (oid, _pos, onum) in enumerate(rows):
             p = raw_parcels[idx] if idx < len(raw_parcels) else {}
             p_cancelled = str((p or {}).get('status') or '').lower() in CANCEL_WORDS
@@ -298,7 +305,8 @@ def check_statuses(cur, site_url, api_key, actor_id, actor_name, limit=40):
                     log_action(cur, actor_id, actor_name, 'site_cancel',
                                f'мегатюль.рф: покупатель отменил заказ {onum}')
                 continue
-            tracking, label_url = parcel_of(p)
+            tracking, label_url = parcel_of(p) if p else (
+                unit_list[idx] if idx < len(unit_list) else (None, None))
             if tracking or label_url:
                 cur.execute(
                     "UPDATE orders SET delivery_tracking_number = COALESCE(%s, delivery_tracking_number), "
@@ -313,28 +321,36 @@ def check_statuses(cur, site_url, api_key, actor_id, actor_name, limit=40):
     return {'checked': len(sids), 'cancelled': cancelled_items, 'labelsUpdated': labels}
 
 
-def get_label(cur, order_id, order_number, api_key):
+def get_label(cur, order_id, order_number, api_key, site_url=DEFAULT_SITE_URL):
     """Этикетка Ozon Доставки, которую передал магазин, — в base64 для печати."""
     if order_id:
-        cur.execute("SELECT delivery_label_url, delivery_tracking_number FROM orders WHERE id = %s", (int(order_id),))
+        cur.execute("SELECT delivery_label_url, delivery_tracking_number, site_order_id FROM orders WHERE id = %s",
+                    (int(order_id),))
     else:
         cur.execute(
-            "SELECT delivery_label_url, delivery_tracking_number FROM orders "
+            "SELECT delivery_label_url, delivery_tracking_number, site_order_id FROM orders "
             "WHERE order_number = %s OR delivery_tracking_number = %s OR group_key = %s LIMIT 1",
             (order_number, order_number, order_number),
         )
     row = cur.fetchone()
     if not row:
         return 404, {'error': 'Заказ не найден'}
-    url, tracking = row
+    url, tracking, sid = row
+    # Ссылки нет — берём этикетку по номеру заказа: /api/crm/orders/{номер}/label.
+    if not url and sid:
+        url = f'{site_url}/api/crm/orders/{urllib.parse.quote(str(sid))}/label'
     if not url:
-        return 409, {'error': 'Магазин ещё не передал этикетку Ozon Доставки по этому заказу. '
-                              'Подождите несколько минут — система спросит сайт снова.'}
+        return 409, {'error': 'Магазин ещё не передал этикетку Ozon Доставки по этому заказу.'}
     req = urllib.request.Request(url, headers={'X-Api-Key': api_key, 'Authorization': f'Bearer {api_key}'})
     try:
         with urllib.request.urlopen(req, timeout=20) as r:
             content = r.read()
             ctype = r.headers.get('Content-Type') or ''
+    except urllib.error.HTTPError as e:
+        if e.code == 409:
+            return 409, {'error': 'Ozon ещё не готов отдать этикетку по этому заказу. '
+                                  'Попробуйте через несколько минут.'}
+        return 502, {'error': f'Сайт не отдал этикетку (ошибка {e.code})'}
     except Exception as e:
         return 502, {'error': f'Не удалось скачать этикетку: {e}'}
     kind = 'pdf' if ('pdf' in ctype or content[:4] == b'%PDF') else 'png'
@@ -385,7 +401,8 @@ def handler(event: dict, context) -> dict:
                                'connected': bool(api_key) and enabled})
 
         if action == 'label':
-            code, payload = get_label(cur, body.get('orderId'), (body.get('orderNumber') or '').strip(), api_key)
+            code, payload = get_label(cur, body.get('orderId'), (body.get('orderNumber') or '').strip(),
+                                      api_key, site_url)
             return _resp(code, payload)
 
         if not api_key or not enabled:
