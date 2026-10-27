@@ -52,15 +52,23 @@ def pick_inventory_shelf(cur, gw_id, stocktake_id):
         is_popular = bool(total) and (int(same) / int(total)) >= POPULAR_SIZE_SHARE
 
     cur.execute(
+        # Сколько вещей окажется на полке ПОСЛЕ пересчёта: то, что лежит и ещё
+        # не отсканировано, плюс всё, что этот пересчёт на неё назначил.
+        # Раньше вещи, которые инвентаризация уже переназначила на другую полку,
+        # продолжали числиться на старой: «Ходовая полка № 1» считалась полной
+        # (104), хотя 44 вещи с неё уже уехали, — и кладовщик упирался в
+        # «полки заполнены», не имея куда положить ходовой товар (27.10).
         "SELECT s.id, s.name, "
         "  (SELECT COUNT(*) FROM goods_warehouse g "
-        "     WHERE g.shelf_id = s.id AND g.status = 'in_stock') "
+        "     WHERE g.shelf_id = s.id AND g.status = 'in_stock' "
+        "       AND NOT EXISTS (SELECT 1 FROM stocktake_scans x "
+        "                       WHERE x.stocktake_id = %s AND x.goods_warehouse_id = g.id)) "
         "  + (SELECT COUNT(*) FROM stocktake_scans sc "
         "     JOIN goods_warehouse g ON g.id = sc.goods_warehouse_id "
         "     WHERE sc.stocktake_id = %s AND sc.shelf_id = s.id "
-        "       AND (g.shelf_id IS DISTINCT FROM s.id OR g.status <> 'in_stock')) "
+        "       AND g.status = 'in_stock') "
         "FROM shelves s ORDER BY s.name",
-        (int(stocktake_id),),
+        (int(stocktake_id), int(stocktake_id)),
     )
     wanted = 'popular' if is_popular else 'rare'
     group = []
@@ -84,15 +92,17 @@ def pick_inventory_shelf(cur, gw_id, stocktake_id):
             "  JOIN orders o ON o.id = gw.order_id "
             "  WHERE gw.status = 'in_stock' AND gw.shelf_id = ANY(%s) "
             "    AND o.material = %s AND o.width = %s AND o.height = %s "
+            "    AND NOT EXISTS (SELECT 1 FROM stocktake_scans x "
+            "                    WHERE x.stocktake_id = %s AND x.goods_warehouse_id = gw.id) "
             "  UNION ALL "
             "  SELECT sc.shelf_id FROM stocktake_scans sc "
             "  JOIN goods_warehouse gw ON gw.id = sc.goods_warehouse_id "
             "  JOIN orders o ON o.id = gw.order_id "
             "  WHERE sc.stocktake_id = %s AND sc.shelf_id = ANY(%s) "
             "    AND o.material = %s AND o.width = %s AND o.height = %s "
-            "    AND (gw.shelf_id IS DISTINCT FROM sc.shelf_id OR gw.status <> 'in_stock') "
+            "    AND gw.status = 'in_stock' "
             ") same GROUP BY shelf_id ORDER BY COUNT(*) DESC LIMIT 1",
-            (free_ids, material, width, height,
+            (free_ids, material, width, height, int(stocktake_id),
              int(stocktake_id), free_ids, material, width, height),
         )
         hit = cur.fetchone()
