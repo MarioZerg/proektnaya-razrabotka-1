@@ -2186,12 +2186,24 @@ def _handler(event: dict, context) -> dict:
                     # статусу: иначе подсказка соврёт — вещь по ярлыку FBS есть, а
                     # мы ответим «не найдена» вместо «не на перепаковке».
                     cur.execute(
-                        "SELECT gw.status FROM goods_warehouse gw "
+                        "SELECT gw.status, gw.storage_barcode, "
+                        "  to_char(gw.inspected_at + interval '3 hours', 'DD.MM HH24:MI'), "
+                        "  (SELECT full_name FROM users WHERE id = gw.inspected_by) "
+                        "FROM goods_warehouse gw "
                         "LEFT JOIN marketplace_returns mr ON mr.goods_warehouse_id = gw.id "
                         "LEFT JOIN orders o ON o.id = gw.order_id "
                         "WHERE " + code_match + " LIMIT 1"
                     )
                     other = cur.fetchone()
+                    # Вещь уже переупакована: на экране упаковщицы при сбое связи
+                    # мог не появиться ответ, и она пикала её снова, получая
+                    # «не на перепаковке». Говорим прямо, что работа уже сделана.
+                    if other and other[0] in ('inspected', 'taken'):
+                        who = f' ({other[3]}, {other[2]})' if other[3] or other[2] else ''
+                        return {'statusCode': 409, 'headers': headers, 'body': json.dumps(
+                            {'error': f'Вещь {other[1]} уже переупакована{who} — '
+                                      f'отдайте её кладовщику, он положит её на полку'},
+                            ensure_ascii=False)}
                     if other:
                         # Вещь уже распустили в материал — говорим об этом прямо,
                         # иначе упаковщица думает, что сканер сломался, и пикает

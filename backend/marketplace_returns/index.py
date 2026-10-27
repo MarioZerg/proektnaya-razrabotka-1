@@ -911,6 +911,18 @@ def _route_scanned_return(cur, gw_id, actor_id, actor_name):
     return 'check'
 
 
+_STAGE_NOTE = {
+    'repacking': 'уже передана упаковщицам на перепаковку — ищите её в тележке цеха',
+    'inspected': 'уже переупакована в цехе — заберите её у упаковщицы и положите на полку',
+    'taken': 'уже переупакована и забрана из цеха — положите её на полку',
+    'in_stock': 'уже лежит на полке',
+    'awaiting_shelf': 'ждёт полку — положите её на хранение',
+    'to_dispose': 'отложена на утилизацию',
+    'lost': 'списана',
+    'returned_to_roll': 'распущена в материал на рулон',
+}
+
+
 def _with_route(cur, conn, result, actor_id, actor_name):
     """Добавляет к ответу сканера, куда идёт вещь, и сохраняет решение."""
     if not result or not result.get('accepted'):
@@ -918,11 +930,22 @@ def _with_route(cur, conn, result, actor_id, actor_name):
     sb = result['accepted'].get('storageBarcode')
     if not sb:
         return result
-    cur.execute("SELECT id FROM goods_warehouse WHERE storage_barcode = %s", (sb,))
+    cur.execute(
+        "SELECT gw.id, gw.status, s.name FROM goods_warehouse gw "
+        "LEFT JOIN shelves s ON s.id = gw.shelf_id WHERE gw.storage_barcode = %s",
+        (sb,),
+    )
     row = cur.fetchone()
     route = _route_scanned_return(cur, row[0], actor_id, actor_name) if row else None
     conn.commit()
     result['route'] = route
+    # Повторный скан: вещь уже прошла дальше. Говорим кладовщику, где она
+    # сейчас, — иначе он видит «уже принята» и не понимает, куда она делась.
+    if result.get('alreadyPicked') and row and not result.get('note'):
+        stage = _STAGE_NOTE.get(row[1])
+        if stage:
+            shelf = f' «{row[2]}»' if row[1] == 'in_stock' and row[2] else ''
+            result['note'] = f'Вещь {sb} {stage}{shelf}'
     return result
 
 
