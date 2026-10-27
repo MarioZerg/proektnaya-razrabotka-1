@@ -49,6 +49,7 @@ CRON_LINES = {
     'wb_check_statuses': '57 * * * *',
     'ym_check_statuses': '3 * * * *',
     'site_check_statuses': '19-59/20 * * * *',
+    'site_sync_products': '27 * * * *',
     'sync': '12 * * * *',
     'ozon_split_pending': '33 * * * *',
     'price_robot': '42 * * * *',
@@ -139,6 +140,16 @@ JOBS = [
         'group': 'cancels',
         'everyMin': 20,
         'lateAfter': 90,
+    },
+    {
+        'key': 'site_sync_products',
+        'title': 'мегатюль.рф — каталог товаров',
+        'func': 'site_orders',
+        'urlAction': 'sync_products',
+        'purpose': 'Заводит новые товары сайта в карточки ERP, удалённые уводит в архив',
+        'group': 'orders',
+        'everyMin': 60,
+        'lateAfter': 240,
     },
     # --- СКЛАД И ЦЕХ. Служебная работа, без которой копятся ручные разборы.
     {

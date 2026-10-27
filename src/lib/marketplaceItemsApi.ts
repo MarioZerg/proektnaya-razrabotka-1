@@ -22,6 +22,8 @@ export interface MarketplaceItem {
   updatedAt: string;
   /** Магазин-владелец карточки: у МЕГАТЮЛЬ и ДЮНЫ разные кабинеты и ассортимент. */
   shopId: number;
+  /** Карточка удалена в магазине: скрыта из работы, история заказов сохранена. */
+  archivedAt?: string | null;
 }
 
 export interface MarketplaceItemMaterial {
@@ -110,6 +112,9 @@ export interface SyncResult {
   wbCards: number;
   /** Карточек с сайта мегатюль.рф (только для вкладки интернет-магазина). */
   siteCards?: number;
+  /** Сайт: сколько карточек ушло в архив и вернулось из него. */
+  archived?: number;
+  restored?: number;
   totalArticles: number;
   skipped: number;
   warnings: string[];

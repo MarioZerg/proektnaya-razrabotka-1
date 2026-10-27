@@ -444,21 +444,59 @@ def _to_int(v):
         return None
 
 
-def handle_site_sync(cur, shop_id, site_url, api_key):
-    """Карточки товаров интернет-магазина мегатюль.рф.
-
-    Сайт отдаёт каталог: артикул, название, ткань, ширину, высоту, штрихкод.
-    Новые артикулы заводим, у существующих дописываем только пустые поля —
-    ручные правки и расход материалов, проставленный в CRM, не трогаем.
-    """
+def _site_fetch(url, api_key):
     req = urllib.request.Request(
-        f'{site_url}/api/crm/products',
+        url,
         headers={'Accept': 'application/json', 'X-Api-Key': api_key,
                  'Authorization': f'Bearer {api_key}'},
     )
+    with urllib.request.urlopen(req, timeout=20) as r:
+        return json.loads(r.read().decode('utf-8') or '{}')
+
+
+def _site_units(products):
+    """Каталог сайта -> поштучные варианты (артикул + размер).
+
+    Сайт может отдавать товар с вложенными размерами (variants/sizes) или сразу
+    плоским списком. На каждый вариант — своя карточка в ERP со своим расходом.
+    """
+    units = []
+    for p in products or []:
+        base_name = (p.get('name') or p.get('title') or '').strip()
+        base_mat = (p.get('material') or p.get('fabric') or '').strip()
+        variants = p.get('variants') or p.get('sizes') or p.get('offers')
+        if isinstance(variants, list) and variants:
+            for v in variants:
+                units.append({
+                    'sku': str(v.get('sku') or v.get('article') or '').strip(),
+                    'name': (v.get('name') or base_name).strip(),
+                    'material': (v.get('material') or base_mat).strip(),
+                    'width': v.get('width'), 'height': v.get('height'),
+                    'barcode': v.get('barcode'),
+                })
+        else:
+            units.append({
+                'sku': str(p.get('sku') or p.get('article') or '').strip(),
+                'name': base_name,
+                'material': base_mat,
+                'width': p.get('width'), 'height': p.get('height'),
+                'barcode': p.get('barcode'),
+            })
+    return [u for u in units if u['sku']]
+
+
+def handle_site_sync(cur, shop_id, site_url, api_key):
+    """Карточки товаров интернет-магазина мегатюль.рф.
+
+    Сайт отдаёт ВЕСЬ каталог: артикулы и размеры. По нему:
+      * новый артикул — заводим карточку, расход материалов проставят в ERP;
+      * у существующей дописываем пустые поля; ручные правки и расход не трогаем;
+      * артикула больше нет на сайте — карточка уходит в архив. Заказы и история
+        продаж остаются: заказ хранит свою ткань и размер, карточку не удаляем;
+      * артикул снова появился — достаём карточку из архива с прежним расходом.
+    """
     try:
-        with urllib.request.urlopen(req, timeout=20) as r:
-            data = json.loads(r.read().decode('utf-8') or '{}')
+        data = _site_fetch(f'{site_url}/api/crm/products', api_key)
     except urllib.error.HTTPError as e:
         if e.code in (401, 403):
             return _resp(400, {'error': 'Сайт не принял ключ доступа. Проверьте ключ в «Интеграциях».'})
@@ -469,46 +507,54 @@ def handle_site_sync(cur, shop_id, site_url, api_key):
         return _resp(400, {'error': f'Сайт недоступен: {e}'})
 
     products = data.get('products') if isinstance(data, dict) else data
-    products = products or []
+    if not isinstance(products, list):
+        return _resp(400, {'error': 'Сайт вернул каталог в непонятном виде — ожидается список products'})
+    units = _site_units(products)
 
     cur.execute(
-        "SELECT id, sku, name, material, width, height, barcode FROM marketplace_items WHERE shop_id = %s",
+        "SELECT id, sku, archived_at FROM marketplace_items WHERE shop_id = %s",
         (int(shop_id),),
     )
     by_sku = {}
-    for row in cur.fetchall():
-        if (row[1] or '').strip():
-            by_sku[row[1].strip().lower()] = row
+    for item_id, sku, archived_at in cur.fetchall():
+        if (sku or '').strip():
+            by_sku[sku.strip().lower()] = (item_id, archived_at)
 
-    created = 0
-    linked = 0
-    for p in products:
-        sku = str(p.get('sku') or p.get('article') or '').strip()
-        if not sku:
+    created = linked = restored = 0
+    seen = set()
+    for u in units:
+        sku = u['sku'][:100]
+        key = sku.lower()
+        if key in seen:
             continue
-        name = (p.get('name') or sku).strip()[:200]
-        material = (p.get('material') or '').strip() or None
-        width = _to_int(p.get('width'))
-        height = _to_int(p.get('height'))
+        seen.add(key)
+        name = (u['name'] or sku)[:200]
+        material = u['material'][:100] or None
+        width, height = _to_int(u['width']), _to_int(u['height'])
         if not (width and height):
             pw, ph = parse_size_from_sku(sku)
             width, height = width or pw, height or ph
-        barcode = (str(p.get('barcode') or '').strip() or None)
-        existing = by_sku.get(sku.lower())
+        barcode = str(u['barcode'] or '').strip()[:100] or None
+
+        existing = by_sku.get(key)
         if existing:
-            item_id, _sku, ex_name, ex_mat, ex_w, ex_h, ex_bc = existing
+            item_id, archived_at = existing
+            if archived_at:
+                cur.execute(
+                    "UPDATE marketplace_items SET archived_at = NULL, updated_at = now() WHERE id = %s",
+                    (item_id,),
+                )
+                restored += 1
             cur.execute(
                 "UPDATE marketplace_items SET "
-                "  name = CASE WHEN COALESCE(name, '') = '' THEN %s ELSE name END, "
                 "  material = CASE WHEN COALESCE(material, '') = '' THEN %s ELSE material END, "
                 "  width = COALESCE(width, %s), height = COALESCE(height, %s), "
                 "  barcode = CASE WHEN COALESCE(barcode, '') = '' THEN %s ELSE barcode END, "
                 "  updated_at = now() "
-                "WHERE id = %s AND (COALESCE(name, '') = '' OR (COALESCE(material, '') = '' AND %s IS NOT NULL) "
+                "WHERE id = %s AND ((COALESCE(material, '') = '' AND %s IS NOT NULL) "
                 "  OR (width IS NULL AND %s IS NOT NULL) OR (height IS NULL AND %s IS NOT NULL) "
                 "  OR (COALESCE(barcode, '') = '' AND %s IS NOT NULL)) RETURNING id",
-                (name, material, width, height, barcode, item_id,
-                 material, width, height, barcode),
+                (material, width, height, barcode, item_id, material, width, height, barcode),
             )
             if cur.fetchone():
                 linked += 1
@@ -516,19 +562,34 @@ def handle_site_sync(cur, shop_id, site_url, api_key):
         cur.execute(
             "INSERT INTO marketplace_items (name, sku, material, width, height, barcode, shop_id) "
             "VALUES (%s, %s, %s, %s, %s, %s, %s)",
-            (name, sku[:100], material, width, height, barcode, int(shop_id)),
+            (name, sku, material, width, height, barcode, int(shop_id)),
         )
-        by_sku[sku.lower()] = (None, sku, name, material, width, height, barcode)
         created += 1
+
+    # Удалённые на сайте — в архив. Пустой каталог не архивирует ничего:
+    # сбой на сайте не должен разом убрать весь ассортимент.
+    archived = 0
+    if seen:
+        gone = [item_id for k, (item_id, archived_at) in by_sku.items()
+                if k not in seen and not archived_at]
+        if gone:
+            ids_csv = ','.join(str(int(i)) for i in gone)
+            cur.execute(
+                f"UPDATE marketplace_items SET archived_at = now(), updated_at = now() "
+                f"WHERE id IN ({ids_csv}) AND archived_at IS NULL"
+            )
+            archived = cur.rowcount
 
     return _resp(200, {
         'created': created,
         'linked': linked,
+        'restored': restored,
+        'archived': archived,
         'ozonCards': 0,
         'wbCards': 0,
-        'siteCards': len(products),
-        'totalArticles': len(products),
-        'skipped': max(0, len(products) - created - linked),
+        'siteCards': len(seen),
+        'totalArticles': len(seen),
+        'skipped': max(0, len(seen) - created - linked - restored),
         'warnings': [],
     })
 

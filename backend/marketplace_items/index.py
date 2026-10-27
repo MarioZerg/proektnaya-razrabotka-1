@@ -66,7 +66,7 @@ def handler(event: dict, context) -> dict:
 
             if item_id:
                 cur.execute(
-                    "SELECT id, name, sku, width, height, ozon_sku, wb_sku, material, barcode, created_at, updated_at, ym_sku, shop_id "
+                    "SELECT id, name, sku, width, height, ozon_sku, wb_sku, material, barcode, created_at, updated_at, ym_sku, shop_id, archived_at "
                     "FROM marketplace_items WHERE id = %s",
                     (int(item_id),),
                 )
@@ -106,13 +106,14 @@ def handler(event: dict, context) -> dict:
                     'updatedAt': row[10].isoformat() + 'Z',
                     'ymSku': row[11],
                     'shopId': row[12],
+                    'archivedAt': row[13].isoformat() + 'Z' if row[13] else None,
                     'materials': materials,
                 }
                 return {'statusCode': 200, 'headers': headers,
                         'body': json.dumps({'item': detail, 'shops': shops})}
 
             sql = (
-                "SELECT id, name, sku, width, height, ozon_sku, wb_sku, material, barcode, created_at, updated_at, ym_sku, shop_id "
+                "SELECT id, name, sku, width, height, ozon_sku, wb_sku, material, barcode, created_at, updated_at, ym_sku, shop_id, archived_at "
                 "FROM marketplace_items"
             )
             if shop_id:
@@ -133,6 +134,7 @@ def handler(event: dict, context) -> dict:
                     'updatedAt': r[10].isoformat() + 'Z',
                     'ymSku': r[11],
                     'shopId': r[12],
+                    'archivedAt': r[13].isoformat() + 'Z' if r[13] else None,
                 }
                 for r in cur.fetchall()
             ]

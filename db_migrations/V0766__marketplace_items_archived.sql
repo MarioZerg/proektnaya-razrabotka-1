@@ -1,0 +1,1 @@
+ALTER TABLE t_p86119184_proektnaya_razrabotk.marketplace_items ADD COLUMN IF NOT EXISTS archived_at timestamp NULL;

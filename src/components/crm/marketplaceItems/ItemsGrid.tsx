@@ -102,10 +102,19 @@ const ItemsGrid = ({
               и выталкивает кнопки правки за правый край экрана. */}
           <div className="grid min-w-0 grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {pagedItems.map((item) => (
-              <Card key={item.id} className="min-w-0 overflow-hidden border-border shadow-none">
+              <Card
+                key={item.id}
+                className={`min-w-0 overflow-hidden border-border shadow-none ${item.archivedAt ? 'opacity-70' : ''}`}
+              >
                 <CardContent className="min-w-0 space-y-2 pt-6">
                   <p className="min-w-0 break-words font-medium">{item.name}</p>
                   <div className="flex min-w-0 flex-wrap gap-1.5">
+                    {item.archivedAt && (
+                      <Badge variant="outline" className="gap-1 border-amber-300 bg-amber-50 text-amber-800">
+                        <Icon name="Archive" size={12} />
+                        В архиве с {new Date(item.archivedAt).toLocaleDateString('ru-RU')}
+                      </Badge>
+                    )}
                     {item.article && (
                       <Badge variant="secondary" className="max-w-full break-all font-mono-tech">
                         {item.article}

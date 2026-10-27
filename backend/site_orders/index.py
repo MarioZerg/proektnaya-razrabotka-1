@@ -10,6 +10,7 @@ import psycopg2
 
 SHOP_CODE = 'megatul_site'
 DEFAULT_SITE_URL = 'https://xn--80aff0ab3b6do.xn--p1ai'
+PRODUCTS_SYNC_URL = 'https://functions.poehali.dev/f43a35f0-f914-443a-92c0-fc08a2a09fa4'
 
 
 def normalize_site_url(raw):
@@ -379,6 +380,7 @@ def handler(event: dict, context) -> dict:
 
     POST { action: 'sync' }                  — забрать оплаченные заказы сайта (и по расписанию)
     POST { action: 'check_statuses' }        — сверить отмены и этикетки с сайтом
+    POST { action: 'sync_products' }         — выгрузить каталог сайта в карточки товаров
     POST { action: 'label', orderId }         — этикетка Ozon Доставки для печати
     GET  ?action=status                       — подключён ли магазин
     """
@@ -434,6 +436,36 @@ def handler(event: dict, context) -> dict:
             result.update(check_statuses(cur, site_url, api_key, actor_id, actor_name, limit=15))
             conn.commit()
             return _resp(200, result)
+
+        if action == 'sync_products':
+            # Каталог сайта -> карточки товаров ERP. Сама логика живёт в функции
+            # синхронизации карточек — вызываем её, чтобы правило было одно.
+            req = urllib.request.Request(
+                PRODUCTS_SYNC_URL,
+                data=json.dumps({'action': 'sync', 'shopId': shop_id}).encode('utf-8'),
+                headers={'Content-Type': 'application/json'},
+                method='POST',
+            )
+            try:
+                with urllib.request.urlopen(req, timeout=25) as r:
+                    result = json.loads(r.read().decode('utf-8') or '{}')
+                    code = r.status
+            except urllib.error.HTTPError as e:
+                code = e.code
+                try:
+                    result = json.loads(e.read().decode('utf-8') or '{}')
+                except Exception:
+                    result = {'error': f'Ошибка {e.code}'}
+            if code == 200:
+                log_action(cur, actor_id, actor_name, 'site_sync_products',
+                           f"мегатюль.рф каталог: новых {result.get('created', 0)}, "
+                           f"обновлено {result.get('linked', 0)}, в архив {result.get('archived', 0)}, "
+                           f"из архива {result.get('restored', 0)}")
+            else:
+                log_action(cur, actor_id, actor_name, 'site_sync_products',
+                           f"мегатюль.рф каталог: ошибка — {result.get('error', code)}")
+            conn.commit()
+            return _resp(code, result)
 
         if action == 'check_statuses':
             result = check_statuses(cur, site_url, api_key, actor_id, actor_name)

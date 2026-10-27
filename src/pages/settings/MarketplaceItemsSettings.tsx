@@ -44,6 +44,8 @@ const MarketplaceItemsSettings = () => {
   const [shopId, setShopId] = useState<number | null>(null);
 
   const [skuQuery, setSkuQuery] = useState('');
+  // Архив: карточки, удалённые в магазине. По умолчанию скрыты — в работе только живые.
+  const [showArchived, setShowArchived] = useState(false);
   const [materialFilter, setMaterialFilter] = useState(ALL_MATERIALS);
   const [page, setPage] = useState(1);
 
@@ -209,7 +211,10 @@ const MarketplaceItemsSettings = () => {
         description:
           `Привязано к карточкам: ${res.linked ?? 0}. Добавлено новых: ${res.created}. ` +
           (res.siteCards !== undefined
-            ? `Карточек на сайте: ${res.siteCards}. Расход материалов проставьте в карточке товара.`
+            ? `Товаров на сайте: ${res.siteCards}.` +
+              (res.archived ? ` Ушли в архив (удалены на сайте): ${res.archived}.` : '') +
+              (res.restored ? ` Вернулись из архива: ${res.restored}.` : '') +
+              ' Расход материалов проставьте в карточке товара.'
             : `Всего карточек с площадок: ${res.totalArticles} ` +
               `(OZON ${res.ozonCards}, WB ${res.wbCards}).`) + warn,
       });
@@ -228,13 +233,16 @@ const MarketplaceItemsSettings = () => {
   // Счётчик карточек по магазинам — видно, что у нового магазина ассортимент
   // ещё не заведён, без переключения вкладок.
   const shopCounts = items.reduce<Record<number, number>>((acc, item) => {
+    if (item.archivedAt) return acc;
     acc[item.shopId] = (acc[item.shopId] || 0) + 1;
     return acc;
   }, {});
 
   // Всё остальное на странице (материалы в фильтре, счётчики, пагинация)
   // считаем уже внутри выбранного магазина.
-  const shopItems = shopId === null ? items : items.filter((i) => i.shopId === shopId);
+  const shopAllItems = shopId === null ? items : items.filter((i) => i.shopId === shopId);
+  const archivedCount = shopAllItems.filter((i) => i.archivedAt).length;
+  const shopItems = shopAllItems.filter((i) => (showArchived ? !!i.archivedAt : !i.archivedAt));
   const currentShop = shops.find((s) => s.id === shopId) || null;
 
   const materialOptions = Array.from(
@@ -327,6 +335,27 @@ const MarketplaceItemsSettings = () => {
             }}
             counts={shopCounts}
           />
+        )}
+
+        {!loading && archivedCount > 0 && (
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              variant={showArchived ? 'default' : 'outline'}
+              size="sm"
+              onClick={() => {
+                setShowArchived((v) => !v);
+                setPage(1);
+              }}
+            >
+              <Icon name="Archive" size={14} className="mr-1.5" />
+              {showArchived ? 'Вернуться к товарам' : `Архив: ${archivedCount}`}
+            </Button>
+            {showArchived && (
+              <span className="text-sm text-muted-foreground">
+                Карточки, удалённые в магазине. История продаж по ним сохранена.
+              </span>
+            )}
+          </div>
         )}
 
         {!loading && shopItems.length > 0 && (
