@@ -888,6 +888,42 @@ def log_action(cur, actor_id, actor_name, action, entity_type, entity_id, descri
     )
 
 
+def log_box_removal(cur, actor_id, actor_name, where_sql, params, reason):
+    """Пишет в журнал КАЖДУЮ вещь, которую убирают из состава поставки или короба.
+
+    Вызывать ДО удаления строк — потом уже не узнать, что лежало в коробе.
+    where_sql — условие на marketplace_supply_items с алиасом msi.
+
+    Раньше удаление из короба не оставляло следа: GW-739587 исчезла из короба 5
+    поставки #1482 (19.10), и восстановить, кто и когда её вынул, было нельзя.
+    """
+    name = actor_name or None
+    uid = int(actor_id) if str(actor_id or '').isdigit() else None
+    if uid and not name:
+        cur.execute("SELECT full_name FROM users WHERE id = %s", (uid,))
+        row = cur.fetchone()
+        name = row[0] if row else None
+    cur.execute(
+        "SELECT gw.id, gw.storage_barcode, msi.supply_id, b.box_number, "
+        "       COALESCE(src.product, ''), s.type "
+        "FROM marketplace_supply_items msi "
+        "JOIN goods_warehouse gw ON gw.id = msi.goods_warehouse_id "
+        "JOIN marketplace_supplies s ON s.id = msi.supply_id "
+        "LEFT JOIN marketplace_supply_boxes b ON b.id = msi.box_id "
+        "LEFT JOIN orders src ON src.id = gw.order_id "
+        f"WHERE {where_sql}",
+        params,
+    )
+    rows = cur.fetchall()
+    for gid, barcode, sid, box_no, product, s_type in rows:
+        where = f'поставки #{sid} ({s_type})' + (f', короб {box_no}' if box_no else '')
+        log_action(
+            cur, uid, name or 'Система', 'supply_item_removed', 'goods_warehouse', gid,
+            f'Убрал вещь {barcode} ({product or "товар"}) из {where}: {reason}',
+        )
+    return len(rows)
+
+
 # Сколько поставка остаётся «занятой» без обновления от кладовщика.
 # Страница шлёт сигнал «я здесь» каждую минуту; 5 минут тишины — значит человек
 # закрыл вкладку, ушёл со смены или у него сел планшет. После этого поставку
@@ -1272,9 +1308,23 @@ def release_fbo_underfill_leftovers(cur, supply_id):
 
         # Строки состава вне закрытых коробов — убираем: иначе после отгрузки
         # хвост висел бы в «собранном» не закрытом виде.
+        log_box_removal(
+            cur, None, 'Система',
+            "msi.supply_id = %s "
+            "  AND msi.goods_warehouse_id IN ("
+            "    SELECT id FROM goods_warehouse "
+            "    WHERE order_id = %s OR reserved_order_id = %s"
+            "  ) "
+            "  AND NOT EXISTS ("
+            "    SELECT 1 FROM marketplace_supply_boxes b "
+            "    WHERE b.id = msi.box_id AND b.closed_at IS NOT NULL"
+            "  )",
+            (sid, oid, oid),
+            'отгрузка недокомплекта — вещь не попала в закрытые короба',
+        )
         cur.execute(
             "DELETE FROM marketplace_supply_items msi "
-            "WHERE msi.supply_id = %s "
+            "WHERE " "msi.supply_id = %s "
             "  AND msi.goods_warehouse_id IN ("
             "    SELECT id FROM goods_warehouse "
             "    WHERE order_id = %s OR reserved_order_id = %s"

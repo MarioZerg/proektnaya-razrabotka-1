@@ -45,6 +45,7 @@ from shared import (
     restore_missing_workshop_goods,
     return_wb_order_to_accumulator,
     seal_closed_box,
+    log_box_removal,
     upload_pass_sticker,
 )
 
@@ -1314,6 +1315,8 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                 targets = [(r[0], r[1]) for r in cur.fetchall()] or targets
 
             for t_item_id, t_goods_id in targets:
+                log_box_removal(cur, actor_id, body_data.get('actorName'), "msi.id = %s", (int(t_item_id),),
+                                'отменённый заказ — вещь на полку')
                 cur.execute(f"DELETE FROM marketplace_supply_items WHERE id = {int(t_item_id)}")
                 cur.execute(
                     "UPDATE goods_warehouse SET status = 'in_stock', shelf_id = %s, "
@@ -1368,6 +1371,8 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
             if supply_status not in ('Открытая', 'На сборке'):
                 return {'statusCode': 409, 'headers': headers, 'body': json.dumps({'error': 'Из этой поставки уже нельзя убрать товар'})}
 
+            log_box_removal(cur, actor_id, body_data.get('actorName'), "msi.id = %s", (int(item_id),),
+                            'убрана из поставки вручную')
             cur.execute(f"DELETE FROM marketplace_supply_items WHERE id = {int(item_id)}")
 
             # Вещь, сшитая в цехе под FBS-заказ, при удалении из поставки НЕ едет на
@@ -2752,6 +2757,8 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                     }, ensure_ascii=False),
                 }
 
+            log_box_removal(cur, actor_id, body_data.get('actorName'), "msi.id = %s", (int(item_id),),
+                            'убрана из короба крестиком')
             cur.execute(f"DELETE FROM marketplace_supply_items WHERE id = {int(item_id)}")
 
             # Вещь, сшитая под FBS-заказ, возвращается в «на поставку»: ярлык на ней
@@ -2878,6 +2885,9 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
             to_remove = rows[:remove_count]
             removed = 0
             for msi_id, goods_id, receive_reason, s_type in to_remove:
+                log_box_removal(cur, actor_id, body_data.get('actorName'), "msi.id = %s", (int(msi_id),),
+                                f'уменьшили количество в коробе на {len(to_remove)} шт. '
+                                f'(уходят последние добавленные)')
                 cur.execute(f"DELETE FROM marketplace_supply_items WHERE id = {int(msi_id)}")
                 # Возврат вещи на склад — та же логика, что в remove_box_item:
                 # сшитое под FBS-заказ возвращается в очередь на отгрузку,
@@ -3696,6 +3706,13 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                 )
 
             # Строку состава (если заводилась) и сам заказ убираем вместе.
+            log_box_removal(
+                cur, actor['realUserId'], actor['name'],
+                "msi.supply_id = %s AND msi.goods_warehouse_id IN "
+                "  (SELECT id FROM goods_warehouse WHERE order_id = %s OR reserved_order_id = %s)",
+                (int(o_supply_id), int(order_id), int(order_id)),
+                'товар убран из состава заявки',
+            )
             cur.execute(
                 "DELETE FROM marketplace_supply_items "
                 "WHERE supply_id = %s AND goods_warehouse_id IN "
@@ -3982,6 +3999,8 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
             # иначе в интерфейсе покажется «удалено -1 заказов».
             deleted_orders = max(0, cur.rowcount)
 
+            log_box_removal(cur, actor_id, body_data.get('actorName'), "msi.supply_id = %s", (int(item_id),),
+                            'поставка удалена целиком')
             cur.execute(f"DELETE FROM marketplace_supply_items WHERE supply_id = {int(item_id)}")
             cur.execute(f"DELETE FROM marketplace_supply_boxes WHERE supply_id = {int(item_id)}")
             # Отсканированные ярлыки связок Яндекса: живут только внутри своей поставки
