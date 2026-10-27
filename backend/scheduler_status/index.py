@@ -48,6 +48,7 @@ CRON_LINES = {
     'ozon_refresh_statuses': '27 * * * *',
     'wb_check_statuses': '57 * * * *',
     'ym_check_statuses': '3 * * * *',
+    'site_check_statuses': '19-59/20 * * * *',
     'sync': '12 * * * *',
     'ozon_split_pending': '33 * * * *',
     'price_robot': '42 * * * *',
@@ -128,6 +129,16 @@ JOBS = [
         'group': 'cancels',
         'everyMin': 60,
         'lateAfter': 180,
+    },
+    {
+        'key': 'site_check_statuses',
+        'title': 'мегатюль.рф — отмены и этикетки',
+        'func': 'site_orders',
+        'urlAction': 'check_statuses',
+        'purpose': 'Ловит отказы покупателей сайта и дотягивает этикетки Ozon Доставки',
+        'group': 'cancels',
+        'everyMin': 20,
+        'lateAfter': 90,
     },
     # --- СКЛАД И ЦЕХ. Служебная работа, без которой копятся ручные разборы.
     {

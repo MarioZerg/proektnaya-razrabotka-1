@@ -108,12 +108,40 @@ def to_int(v):
         return None
 
 
+CANCEL_WORDS = ('cancelled', 'canceled', 'refunded', 'returned_before_shipping')
+
+
+def parcel_of(it_or_parcel):
+    """Номер отправления Ozon и ссылка на этикетку из куска ответа сайта."""
+    d = it_or_parcel or {}
+    tracking = (d.get('trackingNumber') or d.get('postingNumber') or '').strip() or None
+    label_url = (d.get('labelUrl') or '').strip() or None
+    return tracking, label_url
+
+
+def unit_parcels(so):
+    """Отправления заказа по вещам: у КАЖДОЙ вещи своё отправление Ozon.
+
+    Сайт отдаёт их либо общим списком delivery.parcels (по порядку вещей), либо
+    у каждой позиции items[].parcels (по одному на штуку).
+    """
+    delivery = so.get('delivery') or {}
+    flat = delivery.get('parcels') or so.get('parcels')
+    if isinstance(flat, list) and flat:
+        return [parcel_of(p) for p in flat]
+    result = []
+    for it in so.get('items') or []:
+        for p in it.get('parcels') or []:
+            result.append(parcel_of(p))
+    return result
+
+
 def sync_orders(cur, shop_id, site_url, api_key, actor_id, actor_name):
     """Забирает оплаченные заказы сайта и ставит их на конвейер.
 
-    Все вещи одного заказа клиента получают общий ключ связки SITE-<номер>:
-    закройщица забирает связку целиком, и шьёт её одна швея — так же, как
-    заказы Яндекса из нескольких вещей.
+    Каждая вещь — отдельный заказ со СВОИМ отправлением Ozon и своей этикеткой.
+    Но все вещи одного покупателя связаны ключом SITE-<номер>: закройщица
+    забирает их одним стеком, и шьёт их одна швея — чтобы пошив не отличался.
     """
     status, data = site_get(f'{site_url}/api/crm/orders?status=paid', api_key)
     if status == 401 or status == 403:
@@ -135,6 +163,8 @@ def sync_orders(cur, shop_id, site_url, api_key, actor_id, actor_name):
         sid = str(so.get('id') or so.get('number') or '').strip()
         if not sid:
             continue
+        if str(so.get('status') or '').lower() in CANCEL_WORDS:
+            continue
         number = str(so.get('number') or sid).strip()
         group_key = f'SITE-{number}'
 
@@ -143,9 +173,6 @@ def sync_orders(cur, shop_id, site_url, api_key, actor_id, actor_name):
             skipped_existing += 1
             continue
 
-        delivery = so.get('delivery') or {}
-        tracking = (delivery.get('trackingNumber') or so.get('trackingNumber') or '').strip() or None
-        label_url = (delivery.get('labelUrl') or so.get('labelUrl') or '').strip() or None
         customer = so.get('customer') or {}
         created_at = parse_date(so.get('createdAt') or so.get('paidAt'))
 
@@ -168,9 +195,11 @@ def sync_orders(cur, shop_id, site_url, api_key, actor_id, actor_name):
         if has_unknown or not units:
             continue
 
+        parcels = unit_parcels(so)
         size = len(units)
         for pos, (material, width, height, item_name, item_id) in enumerate(units, start=1):
             product = f'{material} {width}x{height}' if material and width and height else item_name
+            tracking, label_url = parcels[pos - 1] if pos - 1 < len(parcels) else (None, None)
             cur.execute(
                 "INSERT INTO orders (order_number, marketplace, order_type, status, product, quantity, "
                 "source, material, width, height, marketplace_created_at, marketplace_item_id, "
@@ -212,43 +241,76 @@ def sync_orders(cur, shop_id, site_url, api_key, actor_id, actor_name):
     }
 
 
-def refresh_labels(cur, site_url, api_key):
-    """Дотягивает номер отправления и этикетку Ozon у заказов, где их ещё нет.
+def check_statuses(cur, site_url, api_key, actor_id, actor_name, limit=40):
+    """Сверяет с сайтом живые заказы: отмены покупателем и этикетки Ozon.
 
-    Отправление Ozon магазин создаёт после оплаты — бывает, что к первой загрузке
-    этикетки ещё нет. Спрашиваем сайт повторно по каждому такому заказу.
+    Отмену ставим в cancelled_at — дальше конвейер ведёт её так же, как отмену
+    маркетплейса: нетронутый заказ уходит из очереди, а уже раскроенную вещь
+    дошивают и стикеруют на полку хранения.
+
+    Отменить можно и одну вещь заказа: тогда сайт помечает отменённым её
+    отправление (parcels[].status), остальные вещи живут дальше.
     """
     cur.execute(
-        "SELECT DISTINCT site_order_id FROM orders WHERE marketplace = 'IM' "
-        "AND site_order_id IS NOT NULL AND delivery_label_url IS NULL "
-        "AND cancelled_at IS NULL AND COALESCE(status, '') NOT IN ('Отменён', 'Выполнен', 'Отгружен') "
-        "LIMIT 30"
+        "SELECT o.site_order_id FROM orders o "
+        "WHERE o.marketplace = 'IM' AND o.site_order_id IS NOT NULL "
+        "AND o.cancelled_at IS NULL "
+        "AND COALESCE(o.status, '') NOT IN ('Отменён', 'Выполнен', 'Отгружен', 'Доставлен') "
+        "AND o.created_at > now() - interval '60 days' "
+        "GROUP BY o.site_order_id ORDER BY random() LIMIT %s",
+        (int(limit),),
     )
-    updated = 0
-    for (sid,) in cur.fetchall():
+    sids = [r[0] for r in cur.fetchall()]
+    cancelled_items = 0
+    labels = 0
+    for sid in sids:
         st, data = site_get(f'{site_url}/api/crm/orders/{sid}', api_key)
+        if st == 404:
+            continue
         if st != 200 or not isinstance(data, dict):
             continue
         so = data.get('order') or data
+        cur.execute(
+            "SELECT id, COALESCE(group_position, 1), order_number FROM orders "
+            "WHERE site_order_id = %s ORDER BY COALESCE(group_position, 1), id",
+            (sid,),
+        )
+        rows = cur.fetchall()
+        whole_cancelled = str(so.get('status') or '').lower() in CANCEL_WORDS
+
         delivery = so.get('delivery') or {}
-        tracking = (delivery.get('trackingNumber') or so.get('trackingNumber') or '').strip() or None
-        label_url = (delivery.get('labelUrl') or so.get('labelUrl') or '').strip() or None
-        cancelled = str(so.get('status') or '').lower() in ('cancelled', 'canceled', 'refunded')
-        if cancelled:
-            cur.execute(
-                "UPDATE orders SET cancelled_at = now() WHERE site_order_id = %s AND cancelled_at IS NULL",
-                (sid,),
-            )
-            updated += 1
-            continue
-        if tracking or label_url:
-            cur.execute(
-                "UPDATE orders SET delivery_tracking_number = COALESCE(%s, delivery_tracking_number), "
-                "delivery_label_url = COALESCE(%s, delivery_label_url) WHERE site_order_id = %s",
-                (tracking, label_url, sid),
-            )
-            updated += 1
-    return updated
+        flat = delivery.get('parcels') or so.get('parcels')
+        raw_parcels = flat if isinstance(flat, list) and flat else [
+            p for it in (so.get('items') or []) for p in (it.get('parcels') or [])
+        ]
+
+        for idx, (oid, _pos, onum) in enumerate(rows):
+            p = raw_parcels[idx] if idx < len(raw_parcels) else {}
+            p_cancelled = str((p or {}).get('status') or '').lower() in CANCEL_WORDS
+            if whole_cancelled or p_cancelled:
+                cur.execute(
+                    "UPDATE orders SET cancelled_at = now() WHERE id = %s AND cancelled_at IS NULL "
+                    "RETURNING id",
+                    (oid,),
+                )
+                if cur.fetchone():
+                    cancelled_items += 1
+                    log_action(cur, actor_id, actor_name, 'site_cancel',
+                               f'мегатюль.рф: покупатель отменил заказ {onum}')
+                continue
+            tracking, label_url = parcel_of(p)
+            if tracking or label_url:
+                cur.execute(
+                    "UPDATE orders SET delivery_tracking_number = COALESCE(%s, delivery_tracking_number), "
+                    "delivery_label_url = COALESCE(%s, delivery_label_url) "
+                    "WHERE id = %s AND (delivery_label_url IS DISTINCT FROM COALESCE(%s, delivery_label_url) "
+                    "  OR delivery_tracking_number IS DISTINCT FROM COALESCE(%s, delivery_tracking_number)) "
+                    "RETURNING id",
+                    (tracking, label_url, oid, label_url, tracking),
+                )
+                if cur.fetchone():
+                    labels += 1
+    return {'checked': len(sids), 'cancelled': cancelled_items, 'labelsUpdated': labels}
 
 
 def get_label(cur, order_id, order_number, api_key):
@@ -284,6 +346,7 @@ def handler(event: dict, context) -> dict:
     """Заказы интернет-магазина мегатюль.рф: загрузка на конвейер и этикетки Ozon Доставки.
 
     POST { action: 'sync' }                  — забрать оплаченные заказы сайта (и по расписанию)
+    POST { action: 'check_statuses' }        — сверить отмены и этикетки с сайтом
     POST { action: 'label', orderId }         — этикетка Ozon Доставки для печати
     GET  ?action=status                       — подключён ли магазин
     """
@@ -334,7 +397,16 @@ def handler(event: dict, context) -> dict:
             if 'error' in result:
                 conn.rollback()
                 return _resp(502, result)
-            result['labelsUpdated'] = refresh_labels(cur, site_url, api_key)
+            conn.commit()
+            result.update(check_statuses(cur, site_url, api_key, actor_id, actor_name, limit=15))
+            conn.commit()
+            return _resp(200, result)
+
+        if action == 'check_statuses':
+            result = check_statuses(cur, site_url, api_key, actor_id, actor_name)
+            log_action(cur, actor_id, actor_name, 'site_check_statuses',
+                       f'мегатюль.рф: проверено заказов {result["checked"]}, '
+                       f'отменено вещей {result["cancelled"]}')
             conn.commit()
             return _resp(200, result)
 

@@ -11,6 +11,7 @@ import psycopg2
 
 from shared import (
     GOODS_IN_LIVE_SUPPLY_SQL,
+    SITE_GOODS_SQL,
     OZON_CANCEL_REASONS,
     OZON_FINAL_STATUSES,
     OZON_NOT_RETURNABLE,
@@ -3360,10 +3361,12 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                 "                  WHERE _fpi.goods_warehouse_id = gw.id AND _fpi.open_hold) "
                 "  AND src.product = %s "
                 "  AND NOT " + GOODS_IN_LIVE_SUPPLY_SQL.format(gw='gw') + " "
+                # Свой пул у мегатюль.рф: заказу сайта — только вещь сайта, и наоборот.
+                "  AND (" + SITE_GOODS_SQL + ") = (SELECT marketplace = 'IM' FROM orders WHERE id = %s) "
                 # FIFO: первой уходит вещь, дольше всех лежащая на полке.
                 "ORDER BY gw.received_at ASC "
                 "FOR UPDATE OF gw SKIP LOCKED LIMIT 1",
-                (int(item_id), rp_product),
+                (int(item_id), rp_product, int(rp_order_id)),
             )
             free_row = cur.fetchone()
             if not free_row:

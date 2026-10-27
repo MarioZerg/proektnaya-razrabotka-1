@@ -102,15 +102,9 @@ export const useKioskOrderActions = ({
       if (order.orderType === 'FBS') {
         const mp = (order.marketplace || '').toUpperCase();
         if (mp === 'IM') {
-          // Заказ с мегатюль.рф: этикетка Ozon Доставки от магазина, одна на заказ клиента.
+          // Заказ с мегатюль.рф: у каждой вещи своё отправление Ozon Доставки.
           const { printSiteLabel } = await import('@/lib/siteOrdersApi');
           await printSiteLabel({ orderId: order.id });
-          if ((order.groupSize || 0) > 1) {
-            toast({
-              title: `Заказ магазина: вещь ${order.groupPosition || 1} из ${order.groupSize}`,
-              description: 'Этикетка Ozon Доставки одна на весь заказ — клейте её на общую упаковку',
-            });
-          }
         } else if (mp === 'WB') {
           printLabelPng(await fetchWbLabel(order.orderNumber), 'Стикер WB');
         } else if (mp === 'OZON') {

@@ -311,6 +311,19 @@ IN_HAND_FIRST_SQL = (
 )
 
 
+# ВЕЩЬ ИНТЕРНЕТ-МАГАЗИНА мегатюль.рф.
+#
+# У сайта свой подбор со склада: заказ сайта закрывается только вещью, которая
+# сама когда-то была сшита под заказ сайта (возврат, отмена, лишняя). Вещи,
+# положенные на полку вручную (приёмка админом, импорт), и вещи маркетплейсов
+# заказам сайта не достаются — и наоборот, вещи сайта не уходят на OZON и WB.
+# Подставляется в запрос, где goods_warehouse — gw, а её исходный заказ — src.
+SITE_GOODS_SQL = (
+    "src.marketplace = 'IM' "
+    "AND COALESCE(gw.receive_reason, '') NOT IN ('admin', 'manual', 'import')"
+)
+
+
 RESERVE_ALIVE_SQL = (
     "(COALESCE(ro.sewing_status, '') IN ('Новый', 'Со склада') "
     " AND COALESCE(ro.status, '') NOT IN ('Отменён', 'Отгружен', 'Доставлен') "
@@ -690,7 +703,9 @@ def try_match_orders_from_stock(cur, gw_id=None):
     # FOR UPDATE OF gw SKIP LOCKED: вещь, которую параллельно резервирует другой процесс,
     # пропускаем — так одна вещь физически не может уйти в два заказа сразу.
     cur.execute(
-        "SELECT gw.id, src.marketplace_item_id, src.product FROM goods_warehouse gw "
+        "SELECT gw.id, src.marketplace_item_id, src.product, "
+        f"       ({SITE_GOODS_SQL}) "
+        "FROM goods_warehouse gw "
         "JOIN orders src ON src.id = gw.order_id "
         f"WHERE {where_gw} AND src.product IS NOT NULL "
         f"ORDER BY {IN_HAND_FIRST_SQL}, gw.received_at ASC "
@@ -705,9 +720,13 @@ def try_match_orders_from_stock(cur, gw_id=None):
     # подбираются по нему, а не по коду справочника: код заполнен не у всех вещей
     # (например, у возвратов и принятых вручную), и такие вещи автоподбор просто не
     # видел — заказ уходил в пошив, хотя готовый товар лежал на складе.
+    # ДВА РАЗДЕЛЬНЫХ ПУЛА: вещи заказов мегатюль.рф достаются только заказам сайта,
+    # остальные — только маркетплейсам (см. SITE_GOODS_SQL).
     by_product = {}
-    for row_gw_id, _item_id, product in free_stock:
-        by_product.setdefault(product, []).append(int(row_gw_id))
+    site_by_product = {}
+    for row_gw_id, _item_id, product, is_site_goods in free_stock:
+        pool_map = site_by_product if is_site_goods else by_product
+        pool_map.setdefault(product, []).append(int(row_gw_id))
 
 
     # --- 1. Яндекс: со склада НЕ подбираем вовсе ----------------------------------
@@ -725,14 +744,23 @@ def try_match_orders_from_stock(cur, gw_id=None):
     # на полке остаются свободны для OZON и WB. Ниже, в штучном подборе, заказы Яндекса
     # тоже исключены (marketplace <> 'Yandex').
 
-    # --- 2. OZON и WB: вещи штучные, подбираем по одной ---------------------------
-    if by_product:
+    # --- 2. OZON, WB и мегатюль.рф: вещи штучные, подбираем по одной -------------
+    if by_product or site_by_product:
         # SKIP LOCKED: заказы, которые прямо сейчас забирает закройщик, пропускаем —
         # вещь со склада под них подберётся в следующий раз, если они вернутся в очередь.
-        names_csv = ','.join("'" + p.replace("'", "''") + "'" for p in by_product)
+        names_csv = ','.join(
+            "'" + p.replace("'", "''") + "'" for p in set(by_product) | set(site_by_product)
+        )
         cur.execute(
-            "SELECT id, product FROM orders "
-            "WHERE marketplace <> 'Yandex' AND group_key IS NULL "
+            "SELECT id, product, (marketplace = 'IM') FROM orders "
+            "WHERE marketplace <> 'Yandex' "
+            # У заказа мегатюль.рф ключ связки есть всегда, когда вещей больше одной,
+            # но отправление Ozon у каждой вещи своё — подбирать их можно поштучно.
+            # Пока ни одну вещь покупателя не взяли в цех: дальше связку доделывает цех.
+            "AND (group_key IS NULL OR (marketplace = 'IM' AND NOT EXISTS ("
+            "     SELECT 1 FROM orders gsib WHERE gsib.group_key = orders.group_key "
+            "       AND gsib.id <> orders.id AND gsib.cancelled_at IS NULL "
+            f"       AND gsib.sewing_status NOT IN ('{NOT_STARTED_SEWING}', 'Со склада')))) "
             f"AND sewing_status = '{NOT_STARTED_SEWING}' AND fulfilled_from_stock_id IS NULL "
             # ЖЁСТКОЕ УСЛОВИЕ: заказ не должен быть закреплён НИ ЗА КЕМ.
             #
@@ -797,8 +825,8 @@ def try_match_orders_from_stock(cur, gw_id=None):
         # кладовщика показывает «Failed to fetch», хотя вещь уже почти принята.
         + (" LIMIT 1" if gw_id else "")
     )
-        for order_id, order_product in cur.fetchall():
-            pool = by_product.get(order_product)
+        for order_id, order_product, is_site_order in cur.fetchall():
+            pool = (site_by_product if is_site_order else by_product).get(order_product)
             if not pool:
                 continue
             pick_id = pool.pop(0)

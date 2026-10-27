@@ -233,6 +233,8 @@ def match_from_stock(cur, order_id, item_id) -> bool:
         "WHERE _fpi.goods_warehouse_id = gw.id AND _fpi.open_hold) "
         "AND gw.shelf_id IS NOT NULL "
         "AND (src.marketplace_item_id = %s OR (%s IS NOT NULL AND src.product = %s)) "
+        # Вещи заказов мегатюль.рф у сайта свой подбор — маркетплейсу их не отдаём.
+        "AND NOT (src.marketplace = 'IM' AND COALESCE(gw.receive_reason, '') NOT IN ('admin', 'manual', 'import')) "
         # Вещь, которую кладовщик уже взял сканером подбора, идёт первой —
         # см. IN_HAND_FIRST_SQL в goods_warehouse/shared.py.
         "ORDER BY (gw.picked_confirmed_at > now() - interval '1 day') DESC, "

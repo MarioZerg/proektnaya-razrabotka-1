@@ -903,6 +903,8 @@ def _handler(event: dict, context) -> dict:
                 # Номер грузоместа с позицией — это конкретная вещь связки.
                 _ym_esc = _ym_digits.replace("'", "''")
                 ym_clause = f"   OR o.order_number = 'YM-{_ym_esc}' "
+            # Заказ мегатюль.рф ищем и по номеру отправления Ozon Доставки на его этикетке.
+            ym_clause += f"   OR (o.marketplace = 'IM' AND o.delivery_tracking_number = '{order_number_esc}') "
 
             # Номер без последнего хвоста: «47971098-0677-1-1» -> «47971098-0677-1».
             # Отсекаем ровно один сегмент и только если он короткий (1-2 цифры) —
@@ -1465,7 +1467,7 @@ def _handler(event: dict, context) -> dict:
                             and (order_type or '') in ('FBS', 'FBO'):
                         release_shelf_reserve(cur, int(order_id), packer_id)
                         fix_bundle = None
-                        if group_key and (group_size or 0) > 1:
+                        if group_key and (group_size or 0) > 1 and not str(group_key).startswith('SITE-'):
                             fix_bundle = f"{group_key}-{group_position or 1}"
                         cur.execute(
                             "INSERT INTO goods_warehouse (order_id, reserved_order_id, "
@@ -1703,7 +1705,7 @@ def _handler(event: dict, context) -> dict:
                         # заказы из цеха закрываются здесь, на терминале. Из-за этого у
                         # новых связок кода не было вовсе: в строке товара не показывалась
                         # кнопка стикера, а упаковщице нечего было наклеить на вещь.
-                        if group_key and (group_size or 0) > 1:
+                        if group_key and (group_size or 0) > 1 and not str(group_key).startswith('SITE-'):
                             bundle_barcode = f"{group_key}-{group_position or 1}"
                         release_shelf_reserve(cur, int(order_id), packer_id)
                         # Вещь сразу закрепляем за своим заказом заявки (reserved_order_id):
