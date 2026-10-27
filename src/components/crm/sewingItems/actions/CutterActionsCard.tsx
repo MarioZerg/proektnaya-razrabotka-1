@@ -105,7 +105,7 @@ const CutterActionsCard = ({
           )}
         </CardTitle>
       </CardHeader>
-      <CardContent className="flex flex-wrap items-end gap-3">
+      <CardContent className="grid grid-cols-1 items-start gap-x-4 gap-y-4 sm:grid-cols-2 lg:grid-cols-3">
         {/* РУЛОНЫ ПРЯЧЕМ, КОГДА ТКАНЬ ВЗЯТА С ПЕРЕШИВА.
             Отрез уже закреплён за вещью и лежит на столе. Оставлять рядом
             список рулонов нельзя: закройщица выберет рулон «до кучи», и заказ
@@ -113,13 +113,13 @@ const CutterActionsCard = ({
             Блокировать поле мало, его надо убрать: выбор должен быть один.
             Чтобы снова резать от рулона, кусок откреплеяют в блоке выше. */}
         {repairPieceTaken ? (
-          <div className="w-full rounded-md border border-violet-200 bg-violet-50 p-2.5 text-sm text-violet-900">
+          <div className="rounded-md border border-violet-200 bg-violet-50 p-2.5 text-sm text-violet-900 sm:col-span-full">
             Рулон выбирать не нужно — вещь кроится из куска с перешива, и ни один
             рулон на неё не спишется. Номер куска и причина перешива — в блоке выше.
             Чтобы вернуться к рулону, откре́пите кусок: он уйдёт обратно в перешив.
           </div>
         ) : (
-          <div className="w-full space-y-1.5 sm:w-64">
+          <div className="min-w-0 space-y-1.5">
             <Label>Рулон в вашем цехе/смене</Label>
             <Select value={selectedRollId} onValueChange={setSelectedRollId} disabled={cutting || isAlreadyCut}>
               {/* НОМЕР РУЛОНА — ПЕРВЫМ. Длинное название ткани на телефоне
@@ -165,7 +165,7 @@ const CutterActionsCard = ({
           </div>
         )}
 
-        <div className="w-40 space-y-1.5">
+        <div className="min-w-0 space-y-1.5">
           <Label>Вешалка</Label>
           {hangersError && hangers.length === 0 ? (
             <WarehouseFetchError
@@ -193,7 +193,10 @@ const CutterActionsCard = ({
           )}
         </div>
 
+        <div className="flex flex-col gap-2">
+        <Label aria-hidden className="invisible hidden sm:block">{'\u00A0'}</Label>
         <Button
+          className="w-full"
           onClick={() =>
             onCut(
               selectedRollId ? Number(selectedRollId) : undefined,
@@ -224,7 +227,7 @@ const CutterActionsCard = ({
         {!repairPieceTaken && selectedOrder.groupSize && selectedOrder.groupSize > 1 && (
           <Button
             variant="outline"
-            className="border-violet-500 text-violet-700 hover:bg-violet-50 hover:text-violet-800"
+            className="h-auto min-h-10 w-full whitespace-normal border-violet-500 text-violet-700 hover:bg-violet-50 hover:text-violet-800"
             onClick={() =>
               onCutGroup(
                 selectedRollId ? Number(selectedRollId) : undefined,
@@ -237,6 +240,7 @@ const CutterActionsCard = ({
             Раскроить всю связку — {selectedOrder.groupSize} вещей
           </Button>
         )}
+        </div>
       </CardContent>
     </Card>
   );

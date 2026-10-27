@@ -81,8 +81,8 @@ const AdminActionsCard = ({
     <CardHeader className="pb-3">
       <CardTitle className="text-sm">Действия</CardTitle>
     </CardHeader>
-    <CardContent className="flex flex-wrap items-end gap-3">
-      <div className="w-full space-y-1.5 sm:w-48">
+    <CardContent className="grid grid-cols-1 items-start gap-x-4 gap-y-4 sm:grid-cols-2 lg:grid-cols-3">
+      <div className="min-w-0 space-y-1.5">
         <Label>Статус пошива</Label>
         <Select value={selectedOrder.sewingStatus} onValueChange={applyStatus} disabled={saving}>
           <SelectTrigger>
@@ -98,7 +98,7 @@ const AdminActionsCard = ({
         </Select>
       </div>
 
-      <div className="w-full space-y-1.5 sm:w-64">
+      <div className="min-w-0 space-y-1.5">
         <Label>
           Рулон ткани
           {orderDetail?.requiredFabricMaterialName
@@ -139,7 +139,7 @@ const AdminActionsCard = ({
         </p>
       </div>
 
-      <div className="w-full space-y-1.5 sm:w-64">
+      <div className="min-w-0 space-y-1.5">
         <Label>
           Рулон тесьмы
           {orderDetail?.requiredTrimMaterialName
@@ -184,7 +184,7 @@ const AdminActionsCard = ({
         </p>
       </div>
 
-      <div className="w-full space-y-1.5 sm:w-48">
+      <div className="min-w-0 space-y-1.5">
         <Label>Сотрудник</Label>
         <Select
           value={selectedOrder.assignedUserId ? String(selectedOrder.assignedUserId) : 'none'}
@@ -243,7 +243,7 @@ const AdminActionsCard = ({
         )}
       </div>
 
-      <div className="w-full space-y-1.5 sm:w-48">
+      <div className="min-w-0 space-y-1.5">
         <Label>Цех</Label>
         <Select
           value={selectedOrder.workshopId ? String(selectedOrder.workshopId) : 'none'}
@@ -264,7 +264,9 @@ const AdminActionsCard = ({
         </Select>
       </div>
 
-      <Button onClick={() => onCut()} disabled={cutting || isAlreadyCut}>
+      <div className="space-y-1.5">
+        <Label aria-hidden className="invisible hidden sm:block">{'\u00A0'}</Label>
+      <Button className="w-full" onClick={() => onCut()} disabled={cutting || isAlreadyCut}>
         {cutting ? (
           <>
             <Icon name="Loader2" size={16} className="mr-2 animate-spin" />
@@ -277,6 +279,7 @@ const AdminActionsCard = ({
           </>
         )}
       </Button>
+      </div>
     </CardContent>
   </Card>
   );

@@ -85,9 +85,9 @@ const SewerActionsCard = ({
           )}
         </CardTitle>
       </CardHeader>
-      <CardContent className="flex flex-wrap items-end gap-3">
+      <CardContent className="grid grid-cols-1 items-start gap-x-4 gap-y-4 sm:grid-cols-2">
         {trimNeeded ? (
-          <div className="w-full space-y-1.5 sm:w-64">
+          <div className="min-w-0 space-y-1.5">
             <Label>Рулон тесьмы в вашем цехе/смене</Label>
             <Select
               value={selectedRollId}
@@ -134,7 +134,10 @@ const SewerActionsCard = ({
             настройками цеха по ширине и отсчитывается от взятия заказа. Так место
             в работе освобождается только реально отшитой вещью. Кнопка сама
             показывает остаток и разблокируется — обновлять страницу не нужно. */}
+        <div className="space-y-1.5">
+        {trimNeeded && <Label aria-hidden className="invisible hidden sm:block">{'\u00A0'}</Label>}
         <Button
+          className="h-auto min-h-10 w-full whitespace-normal"
           onClick={() => onSendToStickering?.(selectedRollId ? Number(selectedRollId) : undefined)}
           disabled={
             cutting || isAlreadyStickering || (trimNeeded && !selectedRollId) || sewWaitSec > 0
@@ -165,6 +168,7 @@ const SewerActionsCard = ({
             в одну минуту. Кнопка откроется сама.
           </p>
         )}
+        </div>
       </CardContent>
     </Card>
   );
