@@ -83,6 +83,11 @@ const MarketplaceIntegrationsSettings = () => {
   };
 
   const isSiteShop = shops.find((s) => s.id === shopId)?.code === 'megatul_site';
+  // У мегатюль.рф только интеграция с самим магазином: площадок и 1С там нет.
+  // У остальных магазинов, наоборот, карточку интернет-магазина не показываем.
+  const visibleConfigs = marketplaceIntegrationsConfig.filter((c) =>
+    isSiteShop ? c.code === 'internet_shop' : c.code !== 'internet_shop'
+  );
 
   return (
     <CrmLayout>
@@ -117,11 +122,15 @@ const MarketplaceIntegrationsSettings = () => {
               <div className="flex flex-wrap gap-2 border-b border-border pb-3">
                 {shops.map((shop) => {
                   const active = shop.id === shopId;
+                  const shopIsSite = shop.code === 'megatul_site';
                   const connected = integrations.filter(
                     (i) =>
                       i.shopId === shop.id &&
                       i.isEnabled &&
-                      marketplaceIntegrationsConfig.some((c) => c.code === i.marketplaceCode),
+                      (shopIsSite
+                        ? i.marketplaceCode === 'internet_shop'
+                        : i.marketplaceCode !== 'internet_shop' &&
+                          marketplaceIntegrationsConfig.some((c) => c.code === i.marketplaceCode)),
                   ).length;
                   return (
                     <button
@@ -175,7 +184,7 @@ const MarketplaceIntegrationsSettings = () => {
             ) : (
             <>
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-              {marketplaceIntegrationsConfig.map((config) => (
+              {visibleConfigs.map((config) => (
                 <MarketplaceIntegrationCard
                   key={`${shopId}-${config.code}`}
                   config={config}
@@ -189,6 +198,7 @@ const MarketplaceIntegrationsSettings = () => {
               ))}
             </div>
 
+            {!isSiteShop && (
             <div className="space-y-3">
               <div>
                 <h2 className="text-base font-semibold">Бухгалтерия</h2>
@@ -211,6 +221,7 @@ const MarketplaceIntegrationsSettings = () => {
                 ))}
               </div>
             </div>
+            )}
             </>
             )}
           </>
