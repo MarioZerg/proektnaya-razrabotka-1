@@ -2330,6 +2330,21 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                     (int(supply_id),),
                 )
                 open_order = cur.fetchone()
+                # ВЕЩЬ УЖЕ ДЕРЖИТ ЖИВОЙ ЗАКАЗ ЭТОЙ ЖЕ ПОСТАВКИ — НЕ ПЕРЕЦЕПЛЯЕМ.
+                #
+                # Раньше вещь со своим заказом (№106) переезжала на «свободный»
+                # заказ (№103), №106 оставался без вещи, следующий скан забирал
+                # вещь у №104 и т.д. — цепочка заканчивалась заказом без вещи,
+                # и одна штука «пропадала» из подбора (поставка #1519, GW-738221).
+                cur.execute(
+                    "SELECT 1 FROM goods_warehouse g "
+                    "JOIN orders o ON o.id = g.reserved_order_id "
+                    "WHERE g.id = %s AND o.supply_id = %s "
+                    "  AND COALESCE(o.status, '') <> 'Отменён'",
+                    (int(fbo_gid), int(supply_id)),
+                )
+                if cur.fetchone():
+                    open_order = None
                 if open_order:
                     cur.execute(
                         "UPDATE goods_warehouse SET reserved_order_id = %s, "

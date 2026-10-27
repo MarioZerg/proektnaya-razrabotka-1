@@ -1,0 +1,2 @@
+UPDATE t_p86119184_proektnaya_razrabotk.goods_warehouse SET reserved_order_id = 121421, matched_at = now(), status = 'picking', picked_confirmed_at = now() WHERE id = 16949 AND reserved_order_id IS NULL;
+UPDATE t_p86119184_proektnaya_razrabotk.orders SET fulfilled_from_stock_id = 16949, sewing_status = 'Со склада' WHERE id = 121421;
