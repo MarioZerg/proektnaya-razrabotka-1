@@ -1,0 +1,1 @@
+UPDATE t_p86119184_proektnaya_razrabotk.fbo_supply_proposals SET status = 'open', supply_id = NULL, decided_at = NULL WHERE id = 4 AND status = 'accepting' AND supply_id IS NULL;

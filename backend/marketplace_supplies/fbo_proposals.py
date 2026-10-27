@@ -322,7 +322,7 @@ def _gazelka_trips(cluster, first_day):
     req.add_header('Authorization', f'Bearer {token}')
     req.add_header('Content-Type', 'application/json')
     try:
-        with urllib.request.urlopen(req, timeout=15) as resp:
+        with urllib.request.urlopen(req, timeout=8) as resp:
             payload = json.loads(resp.read().decode('utf-8') or '[]')
     except Exception:
         return []
@@ -843,7 +843,19 @@ def accept(cur, proposal_id, actor_id, actor_name, shop_id):
     # Черновик Ozon живёт 30 минут. Предложку подтверждают позже — поэтому
     # перед созданием заявки считаем черновик заново по фактическому составу
     # (с заменами и пошивом), иначе Ozon ответит «черновик не существует».
-    if client_id and api_key and ozon_cluster_id:
+    # ЧЕРНОВИК СВЕЖИЙ И СОСТАВ НЕ МЕНЯЛСЯ — НЕ ПЕРЕСЧИТЫВАЕМ.
+    #
+    # Пересчёт — это до десятка запросов к Ozon с паузами по секунде, плюс
+    # расписание газельки. 27.10 предложку подтвердили через 12 секунд после
+    # формирования, пересчёт съел всё время функции, её оборвало на полпути,
+    # и предложка зависла «в создании» без поставки. Черновик Ozon живёт
+    # 30 минут: пока он свежий и ни одной вещи не заменили, он годится как есть.
+    fresh_draft = False
+    if proposal_created is not None and draft_id and warehouse_id and not missing:
+        cur.execute("SELECT now() - %s < interval '25 minutes'", (proposal_created,))
+        fresh_draft = bool(cur.fetchone()[0])
+
+    if client_id and api_key and ozon_cluster_id and not fresh_draft:
         counts = {}
         for gw_id, item_id in ready:
             counts[int(item_id)] = counts.get(int(item_id), 0) + 1
