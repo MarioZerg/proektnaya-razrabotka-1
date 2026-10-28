@@ -125,18 +125,21 @@ def assign_internal_skus(cur, shop_id):
         "  AND width IS NOT NULL AND height IS NOT NULL",
         (int(shop_id),),
     )
-    added = 0
+    rows = []
     for item_id, pid, width, height in cur.fetchall():
         prefix = INTERNAL_PREFIX.get(pid) or ''.join(ch for ch in pid.lower() if ch.isalnum())
         w = int(width) // 100 if int(width) % 100 == 0 else int(width)
-        code = f"{prefix}{w}_{int(height)}"
-        cur.execute(
-            "UPDATE marketplace_items SET internal_sku = %s WHERE id = %s AND NOT EXISTS "
-            "(SELECT 1 FROM marketplace_items WHERE internal_sku = %s)",
-            (code, item_id, code),
-        )
-        added += cur.rowcount
-    return added
+        rows.append((int(item_id), f"{prefix}{w}_{int(height)}".replace("'", '')))
+    if not rows:
+        return 0
+    values = ','.join(f"({i}, '{code}')" for i, code in rows)
+    cur.execute(
+        "UPDATE marketplace_items mi SET internal_sku = v.code "
+        f"FROM (VALUES {values}) AS v(id, code) "
+        "WHERE mi.id = v.id AND NOT EXISTS "
+        "(SELECT 1 FROM marketplace_items x WHERE x.internal_sku = v.code)"
+    )
+    return cur.rowcount
 
 
 def list_products(cur, shop_id):
@@ -148,7 +151,8 @@ def list_products(cur, shop_id):
         "   JOIN materials x ON x.id = m.material_id JOIN material_types t ON t.id = x.type_id "
         "   WHERE m.marketplace_item_id = mi.id AND t.name = 'Тюль' ORDER BY m.id LIMIT 1), "
         "  mi.internal_sku "
-        "FROM marketplace_items mi WHERE mi.shop_id = %s ORDER BY mi.sku",
+        "FROM marketplace_items mi WHERE mi.shop_id = %s AND COALESCE(mi.sku, '') NOT LIKE 'dup:%%' "
+        "ORDER BY mi.sku",
         (int(shop_id),),
     )
     rows = cur.fetchall()

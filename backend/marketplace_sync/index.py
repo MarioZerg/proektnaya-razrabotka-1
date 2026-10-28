@@ -514,13 +514,17 @@ def handle_site_sync(cur, shop_id, site_url, api_key):
     units = _site_units(products)
 
     cur.execute(
-        "SELECT id, sku, archived_at, site_product_id FROM marketplace_items WHERE shop_id = %s",
+        "SELECT id, sku, archived_at, site_product_id, internal_sku FROM marketplace_items "
+        "WHERE shop_id = %s AND COALESCE(sku, '') NOT LIKE 'dup:%%'",
         (int(shop_id),),
     )
     by_sku = {}
-    for item_id, sku, archived_at, spid in cur.fetchall():
+    aliases = {}
+    for item_id, sku, archived_at, spid, internal_sku in cur.fetchall():
         if (sku or '').strip():
             by_sku[sku.strip().lower()] = (item_id, archived_at, spid)
+        if (internal_sku or '').strip():
+            aliases[internal_sku.strip().lower()] = (item_id, archived_at, spid, (sku or '').strip().lower())
 
     # Пишем пачками: по запросу на каждый артикул база упирается в лимит запросов.
     def q(v):
@@ -542,6 +546,11 @@ def handle_site_sync(cur, shop_id, site_url, api_key):
         row = (sku, u['name'][:200], (u['material'] or '')[:100] or None,
                u['width'], u['height'], u['pid'])
         existing = by_sku.get(key)
+        if not existing and key in aliases:
+            # Сайт перешёл на наш внутренний артикул — это та же строка, а не новый товар.
+            item_id, archived_at, spid, old_key = aliases[key]
+            existing = (item_id, archived_at, spid)
+            seen.add(old_key)
         if existing:
             to_update.append((existing[0], existing[1]) + row)
         else:
@@ -550,16 +559,17 @@ def handle_site_sync(cur, shop_id, site_url, api_key):
     for i in range(0, len(to_update), 300):
         chunk = to_update[i:i + 300]
         values = ','.join(
-            f"({int(item_id)}, {q(name)}, {q(material)}, {q(w)}::int, {q(h)}::int, {q(pid)})"
-            for item_id, _arch, _sku, name, material, w, h, pid in chunk
+            f"({int(item_id)}, {q(sku)}, {q(name)}, {q(material)}, {q(w)}::int, {q(h)}::int, {q(pid)})"
+            for item_id, _arch, sku, name, material, w, h, pid in chunk
         )
         cur.execute(
-            "UPDATE marketplace_items mi SET name = v.name, material = v.material, "
+            "UPDATE marketplace_items mi SET sku = v.sku, name = v.name, material = COALESCE(v.material, mi.material), "
             "  width = v.width, height = v.height, site_product_id = v.pid, "
             "  archived_at = NULL, updated_at = now() "
-            f"FROM (VALUES {values}) AS v(id, name, material, width, height, pid) "
+            f"FROM (VALUES {values}) AS v(id, sku, name, material, width, height, pid) "
             f"WHERE mi.id = v.id AND mi.shop_id = {int(shop_id)} AND ("
-            "  mi.name IS DISTINCT FROM v.name OR mi.material IS DISTINCT FROM v.material "
+            "  mi.sku IS DISTINCT FROM v.sku OR mi.name IS DISTINCT FROM v.name "
+            "  OR (v.material IS NOT NULL AND mi.material IS DISTINCT FROM v.material) "
             "  OR mi.width IS DISTINCT FROM v.width OR mi.height IS DISTINCT FROM v.height "
             "  OR mi.site_product_id IS DISTINCT FROM v.pid OR mi.archived_at IS NOT NULL) "
             "RETURNING mi.id"
