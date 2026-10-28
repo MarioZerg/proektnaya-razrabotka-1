@@ -51,6 +51,20 @@
     "price": 100
    },
    "expectedStatus": 403
+  },
+  {
+   "name": "Save pricing needs admin",
+   "method": "POST",
+   "path": "/",
+   "body": {
+    "action": "save_pricing",
+    "targetProfitPct": 30,
+    "taxPct": 6,
+    "acquiringPct": 2,
+    "bloggerPct": 10,
+    "deliveryRub": 0
+   },
+   "expectedStatus": 403
   }
  ]
 }

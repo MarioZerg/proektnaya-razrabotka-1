@@ -392,6 +392,7 @@ def handler(event: dict, context) -> dict:
     POST { action: 'catalog' }               — товары сайта с ценой, себестоимостью и статусом
     POST { action: 'set_price', itemId, price } — цена товара (админ), сразу уходит на сайт
     POST { action: 'set_disabled', disabled, itemIds? | materialId? } — выключить/включить на сайте
+    POST { action: 'save_pricing', targetProfitPct, taxPct, acquiringPct, bloggerPct, deliveryRub }
     POST { action: 'low_fabric' }            — ткани меньше 20 м и товары сайта на них
     GET  ?action=status                       — подключён ли магазин
     """
@@ -434,6 +435,16 @@ def handler(event: dict, context) -> dict:
 
         if action == 'low_fabric':
             return _resp(200, site_catalog.low_fabric(cur, shop_id))
+
+        if action == 'save_pricing':
+            if not site_catalog.is_admin(cur, actor_id):
+                return _resp(403, {'error': 'Настройки цен меняет администратор'})
+            code, payload = site_catalog.save_pricing(cur, body)
+            if code == 200:
+                conn.commit()
+            else:
+                conn.rollback()
+            return _resp(code, payload)
 
         if action in ('set_price', 'set_disabled'):
             if not site_catalog.is_admin(cur, actor_id):

@@ -36,6 +36,41 @@ def _cost_map():
     return out
 
 
+def pricing_settings(cur):
+    cur.execute(
+        "SELECT target_profit_pct, tax_pct, acquiring_pct, blogger_pct, delivery_rub "
+        "FROM site_pricing_settings ORDER BY id LIMIT 1"
+    )
+    r = cur.fetchone() or (30, 6, 2, 10, 0)
+    return {'targetProfitPct': float(r[0]), 'taxPct': float(r[1]), 'acquiringPct': float(r[2]),
+            'bloggerPct': float(r[3]), 'deliveryRub': float(r[4])}
+
+
+def save_pricing(cur, body):
+    def num(key, lo, hi):
+        try:
+            v = float(body.get(key))
+        except (TypeError, ValueError):
+            raise ValueError(f'Неверное значение: {key}')
+        if v < lo or v > hi:
+            raise ValueError(f'Значение вне диапазона: {key}')
+        return v
+    try:
+        vals = (num('targetProfitPct', 0, 90), num('taxPct', 0, 50), num('acquiringPct', 0, 20),
+                num('bloggerPct', 0, 80), num('deliveryRub', 0, 100000))
+    except ValueError as e:
+        return 400, {'error': str(e)}
+    if vals[0] + vals[1] + vals[2] >= 95:
+        return 400, {'error': 'Прибыль, налог и эквайринг вместе должны быть меньше 95%'}
+    cur.execute(
+        "UPDATE site_pricing_settings SET target_profit_pct = %s, tax_pct = %s, acquiring_pct = %s, "
+        "  blogger_pct = %s, delivery_rub = %s, updated_at = now(), updated_by = %s "
+        "WHERE id = (SELECT id FROM site_pricing_settings ORDER BY id LIMIT 1)",
+        (*vals, body.get('actorId')),
+    )
+    return 200, pricing_settings(cur)
+
+
 def list_products(cur, shop_id):
     cur.execute(
         "SELECT mi.id, mi.name, mi.sku, mi.width, mi.height, mi.material, mi.site_product_id, "
@@ -66,7 +101,7 @@ def list_products(cur, shop_id):
             'materialsCount': int(r[12] or 0),
             'cost': cost,
         })
-    return {'items': items, 'costAvailable': costs is not None}
+    return {'items': items, 'costAvailable': costs is not None, 'pricing': pricing_settings(cur)}
 
 
 def push_to_site(site_url, api_key, payload_items):

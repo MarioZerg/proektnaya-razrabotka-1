@@ -81,8 +81,25 @@ export interface SiteCatalogItem {
   cost: number | null;
 }
 
-export const fetchSiteCatalog = (): Promise<{ items: SiteCatalogItem[]; costAvailable: boolean }> =>
-  post({ action: 'catalog' });
+export interface SitePricing {
+  targetProfitPct: number;
+  taxPct: number;
+  acquiringPct: number;
+  bloggerPct: number;
+  deliveryRub: number;
+}
+
+export const fetchSiteCatalog = (): Promise<{
+  items: SiteCatalogItem[];
+  costAvailable: boolean;
+  pricing: SitePricing;
+}> => post({ action: 'catalog' });
+
+export const saveSitePricing = (
+  pricing: SitePricing,
+  actor?: { id?: number; name?: string }
+): Promise<SitePricing> =>
+  post({ action: 'save_pricing', ...pricing, actorId: actor?.id, actorName: actor?.name });
 
 export interface SitePushResult {
   pushed: boolean;

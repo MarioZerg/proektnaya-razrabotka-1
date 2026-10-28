@@ -11,11 +11,23 @@ import {
   setSiteDisabled,
   syncSiteProducts,
   type SiteCatalogItem,
+  type SitePricing,
 } from '@/lib/siteOrdersApi';
+import SitePricingPanel from '@/components/crm/siteProducts/SitePricingPanel';
+import SiteProfitCell from '@/components/crm/siteProducts/SiteProfitCell';
+import { siteProfit } from '@/lib/sitePricing';
 import SitePriceCell from '@/components/crm/siteProducts/SitePriceCell';
 import SiteItemMaterialsDialog from '@/components/crm/siteProducts/SiteItemMaterialsDialog';
 
-type View = 'active' | 'noMaterials' | 'noPrice' | 'disabled' | 'archived';
+type View = 'active' | 'noMaterials' | 'noPrice' | 'lowProfit' | 'disabled' | 'archived';
+
+const DEFAULT_PRICING: SitePricing = {
+  targetProfitPct: 30,
+  taxPct: 6,
+  acquiringPct: 2,
+  bloggerPct: 10,
+  deliveryRub: 0,
+};
 
 const rub = (v: number) => `${v.toLocaleString('ru-RU', { maximumFractionDigits: 0 })} ₽`;
 
@@ -24,6 +36,7 @@ const SiteProductsTab = ({ shopId }: { shopId: number }) => {
   const { toast } = useToast();
   const { user } = useAuth();
   const [items, setItems] = useState<SiteCatalogItem[]>([]);
+  const [pricing, setPricing] = useState<SitePricing>(DEFAULT_PRICING);
   const [materials, setMaterials] = useState<Material[]>([]);
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
@@ -38,7 +51,10 @@ const SiteProductsTab = ({ shopId }: { shopId: number }) => {
   const load = () => {
     setLoading(true);
     fetchSiteCatalog()
-      .then(({ items: list }) => setItems(list))
+      .then(({ items: list, pricing: p }) => {
+        setItems(list);
+        if (p) setPricing(p);
+      })
       .catch(() => setItems([]))
       .finally(() => setLoading(false));
   };
@@ -80,6 +96,12 @@ const SiteProductsTab = ({ shopId }: { shopId: number }) => {
   const noMaterials = active.filter((i) => !i.materialsCount);
   const noPrice = active.filter((i) => i.price == null);
   const disabled = active.filter((i) => i.disabled);
+  const lowProfit = active.filter(
+    (i) =>
+      i.price != null &&
+      i.cost != null &&
+      siteProfit(i.price, i.cost, pricing).profitPct < pricing.targetProfitPct - 0.5
+  );
 
   const toggleDisabled = async (i: SiteCatalogItem) => {
     setToggling(i.id);
@@ -108,16 +130,15 @@ const SiteProductsTab = ({ shopId }: { shopId: number }) => {
     return Array.from(map.entries()).sort((a, b) => a[1].localeCompare(b[1]));
   }, [items]);
 
-  const base =
-    view === 'archived'
-      ? archived
-      : view === 'noMaterials'
-        ? noMaterials
-        : view === 'noPrice'
-          ? noPrice
-          : view === 'disabled'
-            ? disabled
-            : active;
+  const byView: Record<View, SiteCatalogItem[]> = {
+    active,
+    noMaterials,
+    noPrice,
+    lowProfit,
+    disabled,
+    archived,
+  };
+  const base = byView[view];
   const q = query.trim().toLowerCase();
   const shown = base
     .filter((i) => product === 'all' || i.siteProductId === product)
@@ -138,6 +159,7 @@ const SiteProductsTab = ({ shopId }: { shopId: number }) => {
     { value: 'active', label: 'Все', count: active.length },
     { value: 'noMaterials', label: 'Без расхода', count: noMaterials.length },
     { value: 'noPrice', label: 'Без цены', count: noPrice.length },
+    { value: 'lowProfit', label: `Прибыль < ${pricing.targetProfitPct}%`, count: lowProfit.length },
     { value: 'disabled', label: 'Выключены', count: disabled.length },
     { value: 'archived', label: 'Архив', count: archived.length },
   ];
@@ -158,6 +180,8 @@ const SiteProductsTab = ({ shopId }: { shopId: number }) => {
           {syncing ? 'Загружаю…' : 'Загрузить товары с сайта'}
         </Button>
       </div>
+
+      <SitePricingPanel pricing={pricing} canEdit={isAdmin} actor={actor} onSaved={setPricing} />
 
       <div className="flex flex-wrap items-center gap-2">
         {views.map((v) => (
@@ -208,7 +232,7 @@ const SiteProductsTab = ({ shopId }: { shopId: number }) => {
         </p>
       ) : (
         <div className="overflow-x-auto rounded-lg border border-border">
-          <table className="w-full min-w-[900px] text-sm">
+          <table className="w-full min-w-[1040px] text-sm">
             <thead className="bg-muted/50 text-left text-xs text-muted-foreground">
               <tr>
                 <th className="px-3 py-2 font-medium">Название</th>
@@ -217,6 +241,7 @@ const SiteProductsTab = ({ shopId }: { shopId: number }) => {
                 <th className="px-3 py-2 font-medium">Расход</th>
                 <th className="px-3 py-2 font-medium">Себестоимость</th>
                 <th className="px-3 py-2 font-medium">Цена на сайте</th>
+                <th className="px-3 py-2 font-medium">Чистая прибыль</th>
                 <th className="px-3 py-2 font-medium">На сайте</th>
                 <th className="px-3 py-2" />
               </tr>
@@ -252,7 +277,16 @@ const SiteProductsTab = ({ shopId }: { shopId: number }) => {
                     {i.cost != null ? rub(i.cost) : <span className="text-muted-foreground">—</span>}
                   </td>
                   <td className="px-3 py-2">
-                    <SitePriceCell item={i} canEdit={isAdmin && !i.archivedAt} actor={actor} onSaved={load} />
+                    <SitePriceCell
+                      item={i}
+                      pricing={pricing}
+                      canEdit={isAdmin && !i.archivedAt}
+                      actor={actor}
+                      onSaved={load}
+                    />
+                  </td>
+                  <td className="px-3 py-2">
+                    <SiteProfitCell item={i} pricing={pricing} />
                   </td>
                   <td className="px-3 py-2">
                     {isAdmin && !i.archivedAt ? (
