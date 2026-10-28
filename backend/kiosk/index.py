@@ -1015,11 +1015,17 @@ def _handler(event: dict, context) -> dict:
                 # Упаковщица сканирует эту бирку и без такого условия получила бы
                 # «заказ не найден» или, хуже, сам отменённый заказ — и вещь уехала
                 # бы на склад вместо покупателя, который её ждёт.
+                # Крой могли передавать по цепочке несколько раз (отменили один
+                # заказ, потом и следующий) — идём по всей цепочке до живого.
                 f"   OR o.cut_from_order_id IN ("
-                f"        SELECT c.id FROM orders c "
-                f"        WHERE c.order_number = '{order_number_esc}' "
-                f"           OR c.ozon_posting_number = '{order_number_esc}' "
-                f"           OR c.order_number = '{base_number_esc}') "
+                f"        WITH RECURSIVE chain(id) AS ("
+                f"          SELECT c.id FROM orders c "
+                f"          WHERE c.order_number = '{order_number_esc}' "
+                f"             OR c.ozon_posting_number = '{order_number_esc}' "
+                f"             OR c.order_number = '{base_number_esc}' "
+                f"          UNION "
+                f"          SELECT n.id FROM orders n JOIN chain ON n.cut_from_order_id = chain.id"
+                f"        ) SELECT id FROM chain) "
                 # Соседи по отправлению: OZON мог выдать вещам номера «-1» и «-3».
                 # Только те, что сейчас на стикеровке, и только для настоящего корня.
                 f"{root_clause}"
