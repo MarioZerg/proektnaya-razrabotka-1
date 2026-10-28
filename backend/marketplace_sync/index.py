@@ -522,42 +522,64 @@ def handle_site_sync(cur, shop_id, site_url, api_key):
         if (sku or '').strip():
             by_sku[sku.strip().lower()] = (item_id, archived_at, spid)
 
+    # Пишем пачками: по запросу на каждый артикул база упирается в лимит запросов.
+    def q(v):
+        if v is None:
+            return 'NULL'
+        if isinstance(v, int):
+            return str(v)
+        return "'" + str(v).replace("'", "''") + "'"
+
     created = updated = restored = 0
     seen = set()
+    to_update, to_insert = [], []
     for u in units:
         sku = u['sku'][:100]
         key = sku.lower()
         if key in seen:
             continue
         seen.add(key)
-        name = u['name'][:200]
-        material = (u['material'] or '')[:100] or None
+        row = (sku, u['name'][:200], (u['material'] or '')[:100] or None,
+               u['width'], u['height'], u['pid'])
         existing = by_sku.get(key)
         if existing:
-            item_id, archived_at, _spid = existing
-            cur.execute(
-                "UPDATE marketplace_items SET name = %s, material = %s, width = %s, height = %s, "
-                "  site_product_id = %s, archived_at = NULL, updated_at = now() "
-                "WHERE id = %s AND shop_id = %s AND ("
-                "  name IS DISTINCT FROM %s OR material IS DISTINCT FROM %s "
-                "  OR width IS DISTINCT FROM %s OR height IS DISTINCT FROM %s "
-                "  OR site_product_id IS DISTINCT FROM %s OR archived_at IS NOT NULL) "
-                "RETURNING id",
-                (name, material, u['width'], u['height'], u['pid'], item_id, int(shop_id),
-                 name, material, u['width'], u['height'], u['pid']),
-            )
-            if cur.fetchone():
-                if archived_at:
-                    restored += 1
-                else:
-                    updated += 1
-            continue
+            to_update.append((existing[0], existing[1]) + row)
+        else:
+            to_insert.append(row)
+
+    for i in range(0, len(to_update), 300):
+        chunk = to_update[i:i + 300]
+        values = ','.join(
+            f"({int(item_id)}, {q(name)}, {q(material)}, {q(w)}::int, {q(h)}::int, {q(pid)})"
+            for item_id, _arch, _sku, name, material, w, h, pid in chunk
+        )
+        cur.execute(
+            "UPDATE marketplace_items mi SET name = v.name, material = v.material, "
+            "  width = v.width, height = v.height, site_product_id = v.pid, "
+            "  archived_at = NULL, updated_at = now() "
+            f"FROM (VALUES {values}) AS v(id, name, material, width, height, pid) "
+            f"WHERE mi.id = v.id AND mi.shop_id = {int(shop_id)} AND ("
+            "  mi.name IS DISTINCT FROM v.name OR mi.material IS DISTINCT FROM v.material "
+            "  OR mi.width IS DISTINCT FROM v.width OR mi.height IS DISTINCT FROM v.height "
+            "  OR mi.site_product_id IS DISTINCT FROM v.pid OR mi.archived_at IS NOT NULL) "
+            "RETURNING mi.id"
+        )
+        changed = {r[0] for r in cur.fetchall()}
+        archived_before = {item_id for item_id, arch, *_ in chunk if arch}
+        restored += len(changed & archived_before)
+        updated += len(changed - archived_before)
+
+    for i in range(0, len(to_insert), 300):
+        chunk = to_insert[i:i + 300]
+        values = ','.join(
+            f"({q(name)}, {q(sku)}, {q(material)}, {q(w)}, {q(h)}, {int(shop_id)}, {q(pid)})"
+            for sku, name, material, w, h, pid in chunk
+        )
         cur.execute(
             "INSERT INTO marketplace_items (name, sku, material, width, height, shop_id, site_product_id) "
-            "VALUES (%s, %s, %s, %s, %s, %s, %s)",
-            (name, sku, material, u['width'], u['height'], int(shop_id), u['pid']),
+            f"VALUES {values}"
         )
-        created += 1
+        created += len(chunk)
 
     # В архив — только товары, пришедшие с сайта (site_product_id заполнен),
     # и только если каталог не пустой: сбой сайта не должен убрать весь ассортимент.
