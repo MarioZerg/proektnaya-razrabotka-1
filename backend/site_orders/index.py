@@ -219,24 +219,43 @@ def sync_orders(cur, shop_id, site_url, api_key, actor_id, actor_name):
                 has_unknown = True
                 unmatched.append({'orderNumber': number, 'sku': it.get('sku'), 'name': it.get('name') or ''})
                 continue
+            try:
+                unit_price = float(it.get('price')) if it.get('price') is not None else None
+            except (TypeError, ValueError):
+                unit_price = None
             for _ in range(max(1, to_int(it.get('quantity')) or 1)):
-                units.append(item)
+                units.append((*item, unit_price))
 
         if has_unknown or not units:
             continue
 
         parcels = unit_parcels(so)
         size = len(units)
-        for pos, (material, width, height, item_name, item_id) in enumerate(units, start=1):
+        delivery = so.get('delivery') or {}
+        try:
+            delivery_rub = float(so.get('deliveryPrice') if so.get('deliveryPrice') is not None
+                                 else delivery.get('price') or 0)
+        except (TypeError, ValueError):
+            delivery_rub = 0.0
+        city = str(so.get('city') or delivery.get('city') or '')[:255] or None
+        partner_code = str(so.get('partnerCode') or '')[:100] or None
+        try:
+            partner_total = float(so.get('partnerAmount')) if so.get('partnerAmount') is not None else None
+        except (TypeError, ValueError):
+            partner_total = None
+        delivery_share = round(delivery_rub / size, 2) if size else 0
+        partner_share = round(partner_total / size, 2) if partner_total is not None and size else None
+        for pos, (material, width, height, item_name, item_id, unit_price) in enumerate(units, start=1):
             product = f'{material} {width}x{height}' if material and width and height else item_name
             tracking, label_url = parcels[pos - 1] if pos - 1 < len(parcels) else (None, None)
             cur.execute(
                 "INSERT INTO orders (order_number, marketplace, order_type, status, product, quantity, "
                 "source, material, width, height, marketplace_created_at, marketplace_item_id, "
                 "group_key, group_size, group_position, shop_id, site_order_id, site_customer_name, "
-                "site_customer_phone, delivery_tracking_number, delivery_label_url) "
+                "site_customer_phone, delivery_tracking_number, delivery_label_url, "
+                "site_goods_rub, site_delivery_rub, site_city, site_partner_code, site_partner_rub) "
                 "VALUES (%s, 'IM', 'FBS', 'Новый', %s, 1, 'api', %s, %s, %s, %s, %s, "
-                "%s, %s, %s, %s, %s, %s, %s, %s, %s) "
+                "%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
                 "ON CONFLICT (order_number) DO NOTHING RETURNING id",
                 (
                     f'{group_key}-{pos}' if size > 1 else group_key,
@@ -250,6 +269,8 @@ def sync_orders(cur, shop_id, site_url, api_key, actor_id, actor_name):
                     (customer.get('name') or '')[:255] or None,
                     (customer.get('phone') or '')[:64] or None,
                     tracking, label_url,
+                    unit_price, delivery_share, city, partner_code,
+                    partner_share if partner_code else None,
                 ),
             )
             if cur.fetchone():

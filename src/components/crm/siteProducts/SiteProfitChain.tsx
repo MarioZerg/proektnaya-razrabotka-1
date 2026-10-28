@@ -96,7 +96,7 @@ const SiteProfitChain = ({ group, pricing }: Props) => {
         <div className="space-y-1">
           <p className="text-[11px] uppercase text-muted-foreground">По ссылке блогера</p>
           <Line label="Цена на витрине" value={price} bold />
-          <Line label={`Блогеру ${pricing.bloggerPct}% от цены`} value={blog.blogger} sign="−" />
+          <Line label={`Блогеру ${pricing.bloggerPct}% от цены без доставки`} value={blog.blogger} sign="−" />
           <Line label={`Налог УСН ${pricing.taxPct}%`} value={blog.tax} sign="−" />
           <Line label={`Эквайринг ${pricing.acquiringPct}%`} value={blog.acquiring} sign="−" />
           <Line label="Себестоимость" value={cost} sign="−" />
@@ -138,7 +138,7 @@ const SiteProfitChain = ({ group, pricing }: Props) => {
         <div className="rounded-md bg-muted/50 p-2 text-xs">
           Без блогера его {rub(blog.blogger)} остаются нам:{' '}
           <span className="font-semibold">{rub(base.profit)}</span> ({Math.round(base.profitPct)}%).
-          Доставку клиент оплачивает на сайте отдельно.
+          Доставку до города клиента сайт прибавляет к этой цене и полностью отдаёт Ozon — в прибыль и долю блогера она не входит.
         </div>
       </PopoverContent>
     </Popover>
