@@ -111,6 +111,34 @@ def save_pricing(cur, body):
     return 200, pricing_settings(cur)
 
 
+INTERNAL_PREFIX = {
+    'bambuk': 'bambuk', 'vual': 'vyal', 'len': 'len', 'molniya': 'mol', 'mramor': 'mramor',
+    'setka': 'grek', 'shifon': 'krep',
+}
+
+
+def assign_internal_skus(cur, shop_id):
+    """Внутренний артикул карточки сайта в стиле маркетплейсов: vyal2_230 (ткань, ширина/100, высота)."""
+    cur.execute(
+        "SELECT id, site_product_id, width, height FROM marketplace_items "
+        "WHERE shop_id = %s AND internal_sku IS NULL AND site_product_id IS NOT NULL "
+        "  AND width IS NOT NULL AND height IS NOT NULL",
+        (int(shop_id),),
+    )
+    added = 0
+    for item_id, pid, width, height in cur.fetchall():
+        prefix = INTERNAL_PREFIX.get(pid) or ''.join(ch for ch in pid.lower() if ch.isalnum())
+        w = int(width) // 100 if int(width) % 100 == 0 else int(width)
+        code = f"{prefix}{w}_{int(height)}"
+        cur.execute(
+            "UPDATE marketplace_items SET internal_sku = %s WHERE id = %s AND NOT EXISTS "
+            "(SELECT 1 FROM marketplace_items WHERE internal_sku = %s)",
+            (code, item_id, code),
+        )
+        added += cur.rowcount
+    return added
+
+
 def list_products(cur, shop_id):
     cur.execute(
         "SELECT mi.id, mi.name, mi.sku, mi.width, mi.height, mi.material, mi.site_product_id, "
@@ -118,7 +146,8 @@ def list_products(cur, shop_id):
         "  (SELECT COUNT(*) FROM marketplace_item_materials m WHERE m.marketplace_item_id = mi.id), "
         "  (SELECT m.material_id FROM marketplace_item_materials m "
         "   JOIN materials x ON x.id = m.material_id JOIN material_types t ON t.id = x.type_id "
-        "   WHERE m.marketplace_item_id = mi.id AND t.name = 'Тюль' ORDER BY m.id LIMIT 1) "
+        "   WHERE m.marketplace_item_id = mi.id AND t.name = 'Тюль' ORDER BY m.id LIMIT 1), "
+        "  mi.internal_sku "
         "FROM marketplace_items mi WHERE mi.shop_id = %s ORDER BY mi.sku",
         (int(shop_id),),
     )
@@ -151,6 +180,7 @@ def list_products(cur, shop_id):
             'materialsCount': int(r[12] or 0),
             'cost': cost,
             'costParts': parts,
+            'internalSku': r[14],
         })
     return {'items': items, 'costAvailable': costs is not None, 'pricing': pricing_settings(cur)}
 

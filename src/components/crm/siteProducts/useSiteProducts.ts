@@ -163,7 +163,11 @@ const useSiteProducts = (shopId: number) => {
       (g) =>
         !q ||
         g.title.toLowerCase().includes(q) ||
-        g.items.some((i) => (i.article || '').toLowerCase().includes(q))
+        g.items.some(
+          (i) =>
+            (i.article || '').toLowerCase().includes(q) ||
+            (i.internalSku || '').toLowerCase().includes(q)
+        )
     )
     .sort((a, b) => a.title.localeCompare(b.title, 'ru') || (a.width || 0) - (b.width || 0));
 

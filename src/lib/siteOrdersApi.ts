@@ -67,6 +67,7 @@ export interface SiteCatalogItem {
   id: number;
   name: string;
   article: string | null;
+  internalSku?: string | null;
   width: number | null;
   height: number | null;
   material: string | null;

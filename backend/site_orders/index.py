@@ -460,6 +460,8 @@ def handler(event: dict, context) -> dict:
                                'connected': bool(api_key) and enabled})
 
         if action == 'catalog':
+            if site_catalog.assign_internal_skus(cur, shop_id):
+                conn.commit()
             return _resp(200, site_catalog.list_products(cur, shop_id))
 
         if action == 'orders_profit':

@@ -124,7 +124,8 @@ const SiteWidthRow = ({
             <thead className="text-left text-muted-foreground">
               <tr>
                 <th className="py-1 pr-3 font-medium">Высота</th>
-                <th className="py-1 pr-3 font-medium">Артикул</th>
+                <th className="py-1 pr-3 font-medium">Наш артикул</th>
+                <th className="py-1 pr-3 font-medium">Артикул сайта</th>
                 <th className="py-1 pr-3 font-medium">Себестоимость</th>
                 <th className="py-1 pr-3 font-medium">Цена</th>
                 <th className="py-1 pr-3 font-medium">Прибыль с блогером</th>
@@ -139,7 +140,8 @@ const SiteWidthRow = ({
                 return (
                   <tr key={i.id} className={`border-t border-border/40 ${i.disabled ? 'opacity-50' : ''}`}>
                     <td className="py-1 pr-3 font-semibold">{i.height ?? '—'}</td>
-                    <td className="py-1 pr-3 font-mono">{i.article}</td>
+                    <td className="py-1 pr-3 font-mono font-semibold">{i.internalSku || '—'}</td>
+                    <td className="py-1 pr-3 font-mono text-muted-foreground">{i.article}</td>
                     <td className="py-1 pr-3">
                       {i.cost != null ? rub(i.cost) : <span className="text-amber-700">нет расхода</span>}
                     </td>
