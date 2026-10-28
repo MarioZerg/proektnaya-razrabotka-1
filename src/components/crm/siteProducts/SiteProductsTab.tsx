@@ -24,7 +24,7 @@ import { groupByWidth, type SiteWidthGroup } from '@/components/crm/siteProducts
 type View = 'active' | 'noMaterials' | 'noPrice' | 'lowProfit' | 'disabled' | 'archived';
 
 const DEFAULT_PRICING: SitePricing = {
-  profitByWidth: { '200': 250, '300': 250, '400': 250, '500': 450, '600': 450, '700': 450, '800': 450 },
+  profitByWidth: { '200': 450, '300': 450, '400': 450, '500': 250, '600': 250, '700': 250, '800': 250 },
   taxPct: 6,
   acquiringPct: 2,
   bloggerPct: 10,

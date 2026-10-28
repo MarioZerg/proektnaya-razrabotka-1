@@ -1,0 +1,2 @@
+UPDATE site_pricing_settings SET profit_by_width = '{"200":450,"300":450,"400":450,"500":250,"600":250,"700":250,"800":250}'::jsonb, updated_at = now();
+ALTER TABLE site_pricing_settings ALTER COLUMN profit_by_width SET DEFAULT '{"200":450,"300":450,"400":450,"500":250,"600":250,"700":250,"800":250}'::jsonb;
