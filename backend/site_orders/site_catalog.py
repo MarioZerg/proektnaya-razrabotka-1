@@ -60,8 +60,8 @@ def save_pricing(cur, body):
                 num('bloggerPct', 0, 80), num('deliveryRub', 0, 100000))
     except ValueError as e:
         return 400, {'error': str(e)}
-    if vals[0] + vals[1] + vals[2] >= 95:
-        return 400, {'error': 'Прибыль, налог и эквайринг вместе должны быть меньше 95%'}
+    if vals[0] + vals[1] + vals[2] + vals[3] >= 95:
+        return 400, {'error': 'Прибыль, налог, эквайринг и блогер вместе должны быть меньше 95%'}
     cur.execute(
         "UPDATE site_pricing_settings SET target_profit_pct = %s, tax_pct = %s, acquiring_pct = %s, "
         "  blogger_pct = %s, delivery_rub = %s, updated_at = now(), updated_by = %s "

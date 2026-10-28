@@ -27,9 +27,12 @@ export const siteProfit = (
   return { tax, acquiring, delivery, blogger, profit, profitPct: price > 0 ? (profit / price) * 100 : 0 };
 };
 
-/** Цена, при которой без блогера остаётся целевой % чистой прибыли. Кратна 10 ₽ вверх. */
+/**
+ * Цена, при которой целевой % чистой прибыли остаётся даже при продаже через блогера:
+ * его доля от цены витрины заложена в цену. Кратна 10 ₽ вверх.
+ */
 export const recommendedPrice = (cost: number, p: SitePricing): number | null => {
-  const share = 1 - (p.targetProfitPct + p.taxPct + p.acquiringPct) / 100;
+  const share = 1 - (p.targetProfitPct + p.taxPct + p.acquiringPct + p.bloggerPct) / 100;
   if (share <= 0) return null;
   return Math.ceil((cost + p.deliveryRub) / share / 10) * 10;
 };

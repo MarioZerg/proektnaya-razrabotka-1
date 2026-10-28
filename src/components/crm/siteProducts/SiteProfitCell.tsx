@@ -13,17 +13,18 @@ const SiteProfitCell = ({ item, pricing }: { item: SiteCatalogItem; pricing: Sit
   const color = (pct: number) =>
     pct < 0 ? 'text-red-600' : pct < pricing.targetProfitPct - 0.5 ? 'text-amber-700' : 'text-emerald-700';
   const breakdown =
-    `Цена ${rub(item.price)} − налог ${rub(base.tax)} − эквайринг ${rub(base.acquiring)}` +
-    (base.delivery ? ` − доставка ${rub(base.delivery)}` : '') +
-    ` − себестоимость ${rub(item.cost)} = ${rub(base.profit)}`;
+    `Продажа через блогера: цена ${rub(item.price)} − блогер ${rub(blog.blogger)} − налог ${rub(blog.tax)}` +
+    ` − эквайринг ${rub(blog.acquiring)}` +
+    (blog.delivery ? ` − доставка ${rub(blog.delivery)}` : '') +
+    ` − себестоимость ${rub(item.cost)} = ${rub(blog.profit)}`;
 
   return (
     <div className="flex flex-col gap-0.5" title={breakdown}>
-      <span className={`font-medium ${color(base.profitPct)}`}>
-        {rub(base.profit)} · {Math.round(base.profitPct)}%
-      </span>
-      <span className={`text-xs ${color(blog.profitPct)}`}>
+      <span className={`font-medium ${color(blog.profitPct)}`}>
         с блогером {rub(blog.profit)} · {Math.round(blog.profitPct)}%
+      </span>
+      <span className="text-xs text-muted-foreground">
+        без блогера {rub(base.profit)} · {Math.round(base.profitPct)}%
       </span>
     </div>
   );

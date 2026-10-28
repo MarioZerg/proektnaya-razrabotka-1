@@ -100,7 +100,7 @@ const SiteProductsTab = ({ shopId }: { shopId: number }) => {
     (i) =>
       i.price != null &&
       i.cost != null &&
-      siteProfit(i.price, i.cost, pricing).profitPct < pricing.targetProfitPct - 0.5
+      siteProfit(i.price, i.cost, pricing, true).profitPct < pricing.targetProfitPct - 0.5
   );
 
   const toggleDisabled = async (i: SiteCatalogItem) => {
