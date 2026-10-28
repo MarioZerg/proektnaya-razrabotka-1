@@ -4,13 +4,12 @@ import { Button } from '@/components/ui/button';
 import Icon from '@/components/ui/icon';
 import { useToast } from '@/hooks/use-toast';
 import { setSitePrice, type SitePricing } from '@/lib/siteOrdersApi';
-import { recommendedPrice, type CostRange } from '@/lib/sitePricing';
+import { recommendedPrice } from '@/lib/sitePricing';
 import type { SiteWidthGroup } from '@/components/crm/siteProducts/siteWidthGroups';
 
 interface Props {
   group: SiteWidthGroup;
   pricing: SitePricing;
-  range: CostRange;
   canEdit: boolean;
   actor?: { id?: number; name?: string };
   onSaved: () => void;
@@ -19,7 +18,7 @@ interface Props {
 const rub = (v: number) => `${v.toLocaleString('ru-RU', { maximumFractionDigits: 0 })} ₽`;
 
 /** Цена ширины: одна на все высоты, сохраняется и уходит на сайт сразу для всех. */
-const SitePriceCell = ({ group, pricing, range, canEdit, actor, onSaved }: Props) => {
+const SitePriceCell = ({ group, pricing, canEdit, actor, onSaved }: Props) => {
   const { toast } = useToast();
   const saved = typeof group.price === 'number' ? group.price : null;
   const [value, setValue] = useState(saved != null ? String(saved) : '');
@@ -31,7 +30,7 @@ const SitePriceCell = ({ group, pricing, range, canEdit, actor, onSaved }: Props
 
   const current = value.trim() ? Number(value.replace(',', '.')) : null;
   const changed = group.price === 'mixed' ? current != null : (current ?? null) !== saved;
-  const recommended = group.cost != null ? recommendedPrice(group.cost, range, pricing) : null;
+  const recommended = group.cost != null ? recommendedPrice(group.cost, group.width, pricing) : null;
 
   const save = async (price: number | null) => {
     if (price !== null && (!Number.isFinite(price) || price <= 0)) {

@@ -44,12 +44,14 @@ def _cost_map():
 
 def pricing_settings(cur):
     cur.execute(
-        "SELECT min_profit_rub, max_profit_rub, tax_pct, acquiring_pct, blogger_pct "
+        "SELECT min_profit_rub, max_profit_rub, tax_pct, acquiring_pct, blogger_pct, profit_by_width "
         "FROM site_pricing_settings ORDER BY id LIMIT 1"
     )
-    r = cur.fetchone() or (250, 450, 6, 2, 10)
+    r = cur.fetchone() or (250, 450, 6, 2, 10, {})
+    raw = r[5] if isinstance(r[5], dict) else json.loads(r[5] or '{}')
     return {'minProfitRub': float(r[0]), 'maxProfitRub': float(r[1]), 'taxPct': float(r[2]),
-            'acquiringPct': float(r[3]), 'bloggerPct': float(r[4])}
+            'acquiringPct': float(r[3]), 'bloggerPct': float(r[4]),
+            'profitByWidth': {str(int(float(k))): float(v) for k, v in raw.items()}}
 
 
 def save_pricing(cur, body):
@@ -62,19 +64,23 @@ def save_pricing(cur, body):
             raise ValueError(f'Значение вне диапазона: {key}')
         return v
     try:
-        vals = (num('minProfitRub', 0, 100000), num('maxProfitRub', 0, 100000),
-                num('taxPct', 0, 50), num('acquiringPct', 0, 20), num('bloggerPct', 0, 80))
-    except ValueError as e:
+        vals = (num('taxPct', 0, 50), num('acquiringPct', 0, 20), num('bloggerPct', 0, 80))
+        by_width = {}
+        for k, v in (body.get('profitByWidth') or {}).items():
+            w = int(float(k))
+            p = float(v)
+            if w <= 0 or w > 2000 or p < 0 or p > 100000:
+                raise ValueError(f'Неверная прибыль для ширины {k}')
+            by_width[str(w)] = round(p, 2)
+    except (TypeError, ValueError) as e:
         return 400, {'error': str(e)}
-    if vals[0] > vals[1]:
-        return 400, {'error': 'Минимальная прибыль больше максимальной'}
-    if vals[2] + vals[3] + vals[4] >= 90:
+    if sum(vals) >= 90:
         return 400, {'error': 'Налог, эквайринг и блогер вместе должны быть меньше 90%'}
     cur.execute(
-        "UPDATE site_pricing_settings SET min_profit_rub = %s, max_profit_rub = %s, tax_pct = %s, "
-        "  acquiring_pct = %s, blogger_pct = %s, delivery_rub = 0, updated_at = now(), updated_by = %s "
+        "UPDATE site_pricing_settings SET tax_pct = %s, acquiring_pct = %s, blogger_pct = %s, "
+        "  profit_by_width = %s::jsonb, updated_at = now(), updated_by = %s "
         "WHERE id = (SELECT id FROM site_pricing_settings ORDER BY id LIMIT 1)",
-        (*vals, body.get('actorId')),
+        (*vals, json.dumps(by_width), body.get('actorId')),
     )
     return 200, pricing_settings(cur)
 

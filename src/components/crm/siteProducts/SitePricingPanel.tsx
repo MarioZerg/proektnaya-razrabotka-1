@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -8,37 +8,70 @@ import { saveSitePricing, type SitePricing } from '@/lib/siteOrdersApi';
 
 interface Props {
   pricing: SitePricing;
+  /** Ширины, которые есть в каталоге сайта. */
+  widths: number[];
   canEdit: boolean;
   actor?: { id?: number; name?: string };
   onSaved: (p: SitePricing) => void;
 }
 
-const FIELDS: { key: keyof SitePricing; label: string; suffix: string }[] = [
-  { key: 'minProfitRub', label: 'Прибыль с маленькой', suffix: '₽ чистыми со штуки' },
-  { key: 'maxProfitRub', label: 'Прибыль с большой', suffix: '₽ чистыми со штуки' },
+const PCT_FIELDS = [
   { key: 'bloggerPct', label: 'Блогеру', suffix: '% от цены витрины' },
   { key: 'taxPct', label: 'Налог УСН', suffix: '% от цены' },
   { key: 'acquiringPct', label: 'Эквайринг', suffix: '% от цены' },
-];
-/** Из чего считается цена на сайте: прибыль от цены, а не от себестоимости. */
-const SitePricingPanel = ({ pricing, canEdit, actor, onSaved }: Props) => {
+] as const;
+
+const BASE_WIDTHS = [200, 300, 400, 500, 600, 700, 800];
+
+const num = (v: string) => Number((v || '0').replace(',', '.'));
+
+/** Прибыль на каждую ширину в рублях и проценты, которые вычитаются из цены. */
+const SitePricingPanel = ({ pricing, widths, canEdit, actor, onSaved }: Props) => {
   const { toast } = useToast();
-  const [form, setForm] = useState<Record<string, string>>({});
+  const [pct, setPct] = useState<Record<string, string>>({});
+  const [byWidth, setByWidth] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
 
+  const allWidths = useMemo(
+    () =>
+      [...new Set([...BASE_WIDTHS, ...widths, ...Object.keys(pricing.profitByWidth || {}).map(Number)])]
+        .filter((w) => Number.isFinite(w) && w > 0)
+        .sort((a, b) => a - b),
+    [widths, pricing.profitByWidth]
+  );
+
   useEffect(() => {
-    setForm(Object.fromEntries(FIELDS.map((f) => [f.key, String(pricing[f.key])])));
+    setPct(Object.fromEntries(PCT_FIELDS.map((f) => [f.key, String(pricing[f.key])])));
+    setByWidth(
+      Object.fromEntries(
+        Object.entries(pricing.profitByWidth || {}).map(([w, v]) => [w, String(v)])
+      )
+    );
   }, [pricing]);
 
-  const changed = FIELDS.some((f) => Number(form[f.key]?.replace(',', '.')) !== pricing[f.key]);
+  const changed =
+    PCT_FIELDS.some((f) => num(pct[f.key]) !== pricing[f.key]) ||
+    allWidths.some(
+      (w) => (byWidth[String(w)] ?? '') !== String(pricing.profitByWidth?.[String(w)] ?? '')
+    );
 
   const save = async () => {
-    const next = Object.fromEntries(
-      FIELDS.map((f) => [f.key, Number((form[f.key] || '0').replace(',', '.'))])
-    ) as unknown as SitePricing;
+    const profitByWidth = Object.fromEntries(
+      Object.entries(byWidth)
+        .filter(([, v]) => v.trim() !== '')
+        .map(([w, v]) => [w, num(v)])
+    );
     setSaving(true);
     try {
-      const saved = await saveSitePricing(next, actor);
+      const saved = await saveSitePricing(
+        {
+          profitByWidth,
+          bloggerPct: num(pct.bloggerPct),
+          taxPct: num(pct.taxPct),
+          acquiringPct: num(pct.acquiringPct),
+        },
+        actor
+      );
       toast({ title: 'Настройки цен сохранены' });
       onSaved(saved);
     } catch (e) {
@@ -49,33 +82,60 @@ const SitePricingPanel = ({ pricing, canEdit, actor, onSaved }: Props) => {
   };
 
   return (
-    <div className="rounded-lg border border-border bg-muted/30 p-3">
-      <div className="mb-2 flex items-center gap-2 text-sm font-semibold">
+    <div className="space-y-3 rounded-lg border border-border bg-muted/30 p-3">
+      <div className="flex items-center gap-2 text-sm font-semibold">
         <Icon name="Calculator" size={16} />
         Расчёт цены
       </div>
-      <p className="mb-3 text-xs text-muted-foreground">
-        Нам со штуки — от «маленькой» (самая дешёвая вещь) до «большой» (самая дорогая), между ними
-        плавно: с больших размеров рублей больше, но процент от цены меньше. Доля блогера заложена в цену
-        сверху и нашу прибыль не трогает. Доставку клиент оплачивает на сайте отдельно.
-      </p>
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
-        {FIELDS.map((f) => (
+
+      <div>
+        <Label className="text-xs">Чистая прибыль со штуки по ширине, ₽</Label>
+        <div className="mt-1 grid grid-cols-4 gap-2 sm:grid-cols-8">
+          {allWidths.map((w) => {
+            const inCatalog = widths.includes(w);
+            return (
+              <div key={w} className="space-y-0.5">
+                <p className={`text-[11px] ${inCatalog ? 'font-semibold text-foreground' : 'text-muted-foreground'}`}>
+                  {w} см
+                </p>
+                <Input
+                  inputMode="decimal"
+                  value={byWidth[String(w)] ?? ''}
+                  disabled={!canEdit}
+                  placeholder="—"
+                  onChange={(e) => setByWidth((s) => ({ ...s, [String(w)]: e.target.value }))}
+                  className="h-8"
+                />
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      <div className="grid grid-cols-3 gap-3">
+        {PCT_FIELDS.map((f) => (
           <div key={f.key} className="space-y-1">
             <Label className="text-xs">{f.label}</Label>
             <Input
               inputMode="decimal"
-              value={form[f.key] ?? ''}
+              value={pct[f.key] ?? ''}
               disabled={!canEdit}
-              onChange={(e) => setForm((s) => ({ ...s, [f.key]: e.target.value }))}
+              onChange={(e) => setPct((s) => ({ ...s, [f.key]: e.target.value }))}
               className="h-8"
             />
             <p className="text-[11px] text-muted-foreground">{f.suffix}</p>
           </div>
         ))}
       </div>
+
+      <p className="text-xs text-muted-foreground">
+        Сколько рублей чистыми хотим с одной штуки каждой ширины — на все её высоты. Доля блогера
+        заложена в цену сверху и нашу прибыль не трогает. Доставку клиент оплачивает на сайте отдельно.
+        Жирным — ширины, которые есть в каталоге.
+      </p>
+
       {canEdit && changed && (
-        <Button size="sm" className="mt-3" onClick={save} disabled={saving}>
+        <Button size="sm" onClick={save} disabled={saving}>
           {saving ? 'Сохраняю…' : 'Сохранить'}
         </Button>
       )}

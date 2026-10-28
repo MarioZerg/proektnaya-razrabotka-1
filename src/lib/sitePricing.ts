@@ -26,29 +26,27 @@ export const siteProfit = (
   return { tax, acquiring, blogger, profit, profitPct: price > 0 ? (profit / price) * 100 : 0 };
 };
 
-export interface CostRange {
-  min: number;
-  max: number;
-}
-
-/**
- * Сколько рублей хотим заработать на штуке. Самая дешёвая вещь каталога —
- * минимум, самая дорогая — максимум, между ними плавно. Рублей с большой вещи
- * больше, но в процентах от цены — меньше, чем с маленькой.
- */
-export const targetProfit = (cost: number, range: CostRange, p: SitePricing): number => {
-  if (range.max <= range.min) return (p.minProfitRub + p.maxProfitRub) / 2;
-  const t = Math.min(1, Math.max(0, (cost - range.min) / (range.max - range.min)));
-  return p.minProfitRub + t * (p.maxProfitRub - p.minProfitRub);
+/** Целевая прибыль ширины, ₽. Не задана — берём ближайшую меньшую заданную ширину. */
+export const targetProfit = (width: number | null, p: SitePricing): number | null => {
+  const map = p.profitByWidth || {};
+  if (width != null && map[String(width)] != null) return map[String(width)];
+  const known = Object.keys(map)
+    .map(Number)
+    .filter((w) => Number.isFinite(w))
+    .sort((a, b) => a - b);
+  if (!known.length) return null;
+  const lower = width != null ? known.filter((w) => w <= width).pop() : undefined;
+  return map[String(lower ?? known[0])];
 };
 
 /**
- * Цена витрины, при которой целевая прибыль остаётся нам даже при продаже по
+ * Цена витрины, при которой прибыль ширины остаётся нам даже при продаже по
  * ссылке блогера: его % от цены заложен сверху и нашу прибыль не трогает.
  * Кратна 10 ₽ вверх.
  */
-export const recommendedPrice = (cost: number, range: CostRange, p: SitePricing): number | null => {
+export const recommendedPrice = (cost: number, width: number | null, p: SitePricing): number | null => {
+  const target = targetProfit(width, p);
   const share = 1 - (p.taxPct + p.acquiringPct + p.bloggerPct) / 100;
-  if (share <= 0) return null;
-  return Math.ceil((cost + targetProfit(cost, range, p)) / share / 10) * 10;
+  if (target == null || share <= 0) return null;
+  return Math.ceil((cost + target) / share / 10) * 10;
 };

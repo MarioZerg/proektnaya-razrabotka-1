@@ -84,9 +84,8 @@ export interface SiteCatalogItem {
 }
 
 export interface SitePricing {
-  /** Чистая прибыль со штуки: с самой дешёвой вещи каталога … с самой дорогой. */
-  minProfitRub: number;
-  maxProfitRub: number;
+  /** Чистая прибыль со штуки по ширине, ₽: { "200": 250, "500": 450 }. */
+  profitByWidth: Record<string, number>;
   taxPct: number;
   acquiringPct: number;
   /** Доля блогера от цены витрины — сверх нашей прибыли. */

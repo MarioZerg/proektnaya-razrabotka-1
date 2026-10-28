@@ -392,7 +392,7 @@ def handler(event: dict, context) -> dict:
     POST { action: 'catalog' }               — товары сайта с ценой, себестоимостью и статусом
     POST { action: 'set_price', itemId, price } — цена товара (админ), сразу уходит на сайт
     POST { action: 'set_disabled', disabled, itemIds? | materialId? } — выключить/включить на сайте
-    POST { action: 'save_pricing', minProfitRub, maxProfitRub, taxPct, acquiringPct, bloggerPct }
+    POST { action: 'save_pricing', taxPct, acquiringPct, bloggerPct, profitByWidth: {'200': 250, ...} }
     POST { action: 'low_fabric' }            — ткани меньше 20 м и товары сайта на них
     GET  ?action=status                       — подключён ли магазин
     """

@@ -16,7 +16,7 @@ import {
 import SitePricingPanel from '@/components/crm/siteProducts/SitePricingPanel';
 import SiteProfitCell from '@/components/crm/siteProducts/SiteProfitCell';
 import SiteProfitChain from '@/components/crm/siteProducts/SiteProfitChain';
-import { siteProfit, targetProfit, type CostRange } from '@/lib/sitePricing';
+import { siteProfit, targetProfit } from '@/lib/sitePricing';
 import SitePriceCell from '@/components/crm/siteProducts/SitePriceCell';
 import SiteItemMaterialsDialog from '@/components/crm/siteProducts/SiteItemMaterialsDialog';
 import { groupByWidth, type SiteWidthGroup } from '@/components/crm/siteProducts/siteWidthGroups';
@@ -24,8 +24,7 @@ import { groupByWidth, type SiteWidthGroup } from '@/components/crm/siteProducts
 type View = 'active' | 'noMaterials' | 'noPrice' | 'lowProfit' | 'disabled' | 'archived';
 
 const DEFAULT_PRICING: SitePricing = {
-  minProfitRub: 250,
-  maxProfitRub: 450,
+  profitByWidth: { '200': 250, '300': 250, '400': 250, '500': 450, '600': 450, '700': 450, '800': 450 },
   taxPct: 6,
   acquiringPct: 2,
   bloggerPct: 10,
@@ -100,12 +99,10 @@ const SiteProductsTab = ({ shopId }: { shopId: number }) => {
   const noMaterials = active.filter((g) => g.noMaterials > 0);
   const noPrice = active.filter((g) => g.price == null || g.price === 'mixed');
   const disabled = active.filter((g) => g.disabled || g.partlyDisabled);
-  const costs = active.map((g) => g.cost).filter((c): c is number => c != null);
-  const range: CostRange = {
-    min: costs.length ? Math.min(...costs) : 0,
-    max: costs.length ? Math.max(...costs) : 0,
-  };
-  const targetOf = (g: SiteWidthGroup) => (g.cost != null ? targetProfit(g.cost, range, pricing) : null);
+  const targetOf = (g: SiteWidthGroup) => targetProfit(g.width, pricing);
+  const widths = [...new Set(active.map((g) => g.width).filter((w): w is number => w != null))].sort(
+    (a, b) => a - b
+  );
   const priceOf = (g: SiteWidthGroup) => (typeof g.price === 'number' ? g.price : null);
   const lowProfit = active.filter((g) => {
     const price = priceOf(g);
@@ -197,7 +194,13 @@ const SiteProductsTab = ({ shopId }: { shopId: number }) => {
         </Button>
       </div>
 
-      <SitePricingPanel pricing={pricing} canEdit={isAdmin} actor={actor} onSaved={setPricing} />
+      <SitePricingPanel
+        pricing={pricing}
+        widths={widths}
+        canEdit={isAdmin}
+        actor={actor}
+        onSaved={setPricing}
+      />
 
       <div className="flex flex-wrap items-center gap-2">
         {views.map((v) => (
@@ -310,7 +313,6 @@ const SiteProductsTab = ({ shopId }: { shopId: number }) => {
                         <SitePriceCell
                           group={g}
                           pricing={pricing}
-                          range={range}
                           canEdit={isAdmin && !g.archived}
                           actor={actor}
                           onSaved={load}
@@ -322,7 +324,7 @@ const SiteProductsTab = ({ shopId }: { shopId: number }) => {
                           pricing={pricing}
                           target={targetOf(g)}
                         />
-                        <SiteProfitChain group={g} pricing={pricing} range={range} />
+                        <SiteProfitChain group={g} pricing={pricing} />
                       </td>
                       <td className="px-3 py-2">
                         {isAdmin && !g.archived ? (

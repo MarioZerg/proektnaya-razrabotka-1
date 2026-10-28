@@ -1,7 +1,7 @@
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import Icon from '@/components/ui/icon';
 import type { SitePricing } from '@/lib/siteOrdersApi';
-import { siteProfit, targetProfit, type CostRange } from '@/lib/sitePricing';
+import { siteProfit, targetProfit } from '@/lib/sitePricing';
 import type { SiteWidthGroup } from '@/components/crm/siteProducts/siteWidthGroups';
 
 const rub = (v: number) =>
@@ -10,7 +10,6 @@ const rub = (v: number) =>
 interface Props {
   group: SiteWidthGroup;
   pricing: SitePricing;
-  range: CostRange;
 }
 
 const Line = ({
@@ -36,14 +35,14 @@ const Line = ({
 );
 
 /** Цепочка расчёта: от цены витрины до нашей чистой прибыли. */
-const SiteProfitChain = ({ group, pricing, range }: Props) => {
+const SiteProfitChain = ({ group, pricing }: Props) => {
   const price = typeof group.price === 'number' ? group.price : null;
   const cost = group.cost;
   if (price == null || cost == null) return null;
 
   const blog = siteProfit(price, cost, pricing, true);
   const base = siteProfit(price, cost, pricing);
-  const target = targetProfit(cost, range, pricing);
+  const target = targetProfit(group.width, pricing);
   const parts = group.costParts;
 
   return (
@@ -82,7 +81,7 @@ const SiteProfitChain = ({ group, pricing, range }: Props) => {
           <div className="border-t border-border pt-1">
             <Line label="Наша чистая прибыль" value={blog.profit} sign="=" bold />
             <p className="pl-4 text-xs text-muted-foreground">
-              {Math.round(blog.profitPct)}% от цены · цель {rub(Math.round(target))}
+              {Math.round(blog.profitPct)}% от цены{target != null ? ` · цель ширины ${rub(target)}` : ''}
             </p>
           </div>
         </div>

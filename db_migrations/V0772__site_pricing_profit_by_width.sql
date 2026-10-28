@@ -1,0 +1,1 @@
+ALTER TABLE site_pricing_settings ADD COLUMN IF NOT EXISTS profit_by_width JSONB NOT NULL DEFAULT '{"200":250,"300":250,"400":250,"500":450,"600":450,"700":450,"800":450}'::jsonb;
