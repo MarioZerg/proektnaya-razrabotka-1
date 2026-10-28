@@ -75,7 +75,6 @@ const Vacations = lazy(() => import("./pages/shifts/Vacations"));
 const SuppliersSettings = lazy(() => import("./pages/settings/SuppliersSettings"));
 const MarketplaceItemsSettings = lazy(() => import("./pages/settings/MarketplaceItemsSettings"));
 const MarketplaceIntegrationsSettings = lazy(() => import("./pages/settings/MarketplaceIntegrationsSettings"));
-const MegatulShop = lazy(() => import("./pages/shop/MegatulShop"));
 const Kiosk = lazy(() => import("./pages/Kiosk"));
 const Contracts = lazy(() => import("./pages/Contracts"));
 const PrivacyPolicy = lazy(() => import("./pages/legal/PrivacyPolicy"));
@@ -201,7 +200,6 @@ const App = () => (
             <Route path="/crm/settings/suppliers" element={<SuppliersSettings />} />
             <Route path="/crm/settings/marketplace-items" element={<MarketplaceItemsSettings />} />
             <Route path="/crm/settings/marketplace-integrations" element={<MarketplaceIntegrationsSettings />} />
-            <Route path="/crm/shop/megatul" element={<MegatulShop />} />
             <Route path="/crm/kiosk" element={<Kiosk />} />
             <Route path="/crm/contracts" element={<Contracts />} />
             {/* Материалы по обращению в прокуратуру: только админ, только по прямой

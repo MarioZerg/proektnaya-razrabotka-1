@@ -15,7 +15,8 @@ import {
 } from '@/lib/marketplaceIntegrationsConfig';
 import MarketplaceIntegrationCard from '@/components/crm/settings/MarketplaceIntegrationCard';
 import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
-import { Link } from 'react-router-dom';
+import { Button } from '@/components/ui/button';
+import SiteProductsTab from '@/components/crm/siteProducts/SiteProductsTab';
 
 const MarketplaceIntegrationsSettings = () => {
   const { toast } = useToast();
@@ -27,6 +28,7 @@ const MarketplaceIntegrationsSettings = () => {
   const [loading, setLoading] = useState(true);
   const [listError, setListError] = useState<string | null>(null);
   const [savingCode, setSavingCode] = useState<string | null>(null);
+  const [siteTab, setSiteTab] = useState<'keys' | 'products'>('products');
   // У магазина мегатюль.рф две вкладки: ключи и «Товары для интеграций».
 
   const load = () => {
@@ -157,15 +159,29 @@ const MarketplaceIntegrationsSettings = () => {
             )}
 
             {isSiteShop && (
-              <Link
-                to="/crm/shop/megatul"
-                className="inline-flex items-center gap-1.5 text-sm font-medium text-primary hover:underline"
-              >
-                <Icon name="Package" size={14} />
-                Товары, цены и прибыль — в разделе «Магазин мегатюль.рф»
-              </Link>
+              <div className="flex flex-wrap gap-2">
+                {(
+                  [
+                    { value: 'products', label: 'Товары, цены и прибыль', icon: 'Package' },
+                    { value: 'keys', label: 'Подключение', icon: 'KeyRound' },
+                  ] as const
+                ).map((t) => (
+                  <Button
+                    key={t.value}
+                    size="sm"
+                    variant={siteTab === t.value ? 'default' : 'outline'}
+                    onClick={() => setSiteTab(t.value)}
+                  >
+                    <Icon name={t.icon} size={14} className="mr-1.5" />
+                    {t.label}
+                  </Button>
+                ))}
+              </div>
             )}
 
+            {isSiteShop && siteTab === 'products' && shopId ? (
+              <SiteProductsTab shopId={shopId} />
+            ) : (
             <>
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
               {visibleConfigs.map((config) => (
@@ -207,6 +223,7 @@ const MarketplaceIntegrationsSettings = () => {
             </div>
             )}
             </>
+            )}
           </>
         )}
       </div>
