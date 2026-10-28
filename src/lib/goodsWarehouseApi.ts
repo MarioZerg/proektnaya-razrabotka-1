@@ -519,6 +519,9 @@ export interface AdminNotification {
   link: string | null;
   createdAt: string | null;
   isRead: boolean;
+  actorId?: number | null;
+  /** Должность автора — по ней уведомления делятся на участки. */
+  actorRole?: string | null;
 }
 
 /** Уведомления для панели администратора. */

@@ -643,9 +643,13 @@ def handle_get(event: dict, headers: dict, dsn: str) -> dict:
         # Уведомления для панели администратора.
         if params.get('notifications'):
             cur.execute(
-                "SELECT id, kind, title, message, actor_name, link, created_at, is_read "
-                "FROM admin_notifications WHERE hidden_at IS NULL "
-                "ORDER BY created_at DESC LIMIT 100"
+                # Роль автора: админ разбирает уведомления по участкам
+                # (закройщики, швеи, перепаковка, склад) и по людям.
+                "SELECT n.id, n.kind, n.title, n.message, COALESCE(n.actor_name, u.full_name), n.link, "
+                "  n.created_at, n.is_read, n.actor_id, u.role "
+                "FROM admin_notifications n LEFT JOIN users u ON u.id = n.actor_id "
+                "WHERE n.hidden_at IS NULL "
+                "ORDER BY n.created_at DESC LIMIT 500"
             )
             rows = cur.fetchall()
             return {
@@ -662,6 +666,8 @@ def handle_get(event: dict, headers: dict, dsn: str) -> dict:
                             'link': r[5],
                             'createdAt': (r[6].isoformat() + 'Z') if r[6] else None,
                             'isRead': r[7],
+                            'actorId': r[8],
+                            'actorRole': r[9],
                         }
                         for r in rows
                     ],
