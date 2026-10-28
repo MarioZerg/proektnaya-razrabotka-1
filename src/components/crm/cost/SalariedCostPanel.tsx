@@ -23,7 +23,7 @@ const SalariedCostPanel = ({ salaried }: { salaried: SalariedCost }) => {
         </div>
         <p className="text-sm text-muted-foreground">
           Окладные начисления за {monthLabel} делятся на число вещей, сшитых за этот месяц, и входят в
-          прочие расходы каждой вещи. Считается само по данным «Финансов».
+          работу цеха каждой вещи. Считается само по данным «Финансов».
         </p>
         <div className="space-y-1 text-sm">
           {salaried.parts.map((p) => (

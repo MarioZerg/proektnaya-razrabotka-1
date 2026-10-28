@@ -659,11 +659,13 @@ def _calc_groups(cur, settings, manager_per_unit=0.0, salaried_per_unit=0.0):
         cut_cost = round(meters * cutter_rates.get(fabric_id, 0.0), 2) if fabric_id else 0.0
         sew_cost = round(sewer_rates.get(int(width), 0.0), 2) if width else 0.0
         pack_work = round(meters * packer_rate, 2)
-        labor_cost = cut_cost + sew_cost + pack_work
+        # Оклады склада и уборки из «Финансов» — тоже работа цеха, а не прочие расходы.
+        salaried_work = round(salaried_cost, 2)
+        labor_cost = cut_cost + sew_cost + pack_work + salaried_work
 
         # Прочие расходы: список статей владельца плюс старое общее поле.
         overhead = round(
-            extra_per_unit + settings['overheadPerItem'] + manager_cost + salaried_cost, 2
+            extra_per_unit + settings['overheadPerItem'] + manager_cost, 2
         )
 
         # СЕБЕСТОИМОСТЬ — ТОЛЬКО НАШИ ЗАТРАТЫ.
@@ -697,12 +699,12 @@ def _calc_groups(cur, settings, manager_per_unit=0.0, salaried_per_unit=0.0):
             'cutCost': cut_cost,
             'sewCost': sew_cost,
             'packWorkCost': pack_work,
+            'salariedCost': salaried_work,
             'laborCost': round(labor_cost, 2),
             'overhead': overhead,
             # Из чего сложились прочие расходы: ручные статьи и менеджер.
             'overheadExtra': round(extra_per_unit + settings['overheadPerItem'], 2),
             'overheadManager': round(manager_cost, 2),
-            'overheadSalaried': round(salaried_cost, 2),
             'total': total,
             'missing': [
                 *(['Не задан расход материалов'] if not g['materials'] else []),

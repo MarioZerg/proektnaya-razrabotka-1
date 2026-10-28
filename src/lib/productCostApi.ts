@@ -50,14 +50,14 @@ export interface CostGroup {
   cutCost: number;
   sewCost: number;
   packWorkCost: number;
+  /** Оклады из «Финансов» на одну изготовленную вещь — часть работы цеха. */
+  salariedCost?: number;
   laborCost: number;
   overhead: number;
   /** Из чего сложились прочие расходы: ручные статьи. */
   overheadExtra?: number;
   /** Вознаграждение менеджера маркетплейсов на одну вещь. */
   overheadManager?: number;
-  /** Окладная часть из «Финансов» на одну изготовленную вещь. */
-  overheadSalaried?: number;
   /** Во сколько вещь обходится цеху. Без налога и комиссии площадки. */
   total: number;
   /** Чего не хватает для честной цифры. */
