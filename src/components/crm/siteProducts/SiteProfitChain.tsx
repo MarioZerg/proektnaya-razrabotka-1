@@ -43,6 +43,7 @@ const Line = ({
 const SiteProfitChain = ({ group, pricing }: Props) => {
   const priced = group.items.filter((i) => i.price != null && i.cost != null);
   const [activeId, setActiveId] = useState<number | null>(null);
+  const [showMaterials, setShowMaterials] = useState(false);
   if (priced.length === 0) return null;
 
   const item = priced.find((i) => i.id === activeId) ?? priced[0];
@@ -101,9 +102,26 @@ const SiteProfitChain = ({ group, pricing }: Props) => {
           <Line label="Себестоимость" value={cost} sign="−" />
           {parts && (
             <>
-              {(parts.lines || []).map((l) => (
-                <Line key={l.name} label={`${l.name} · ${l.quantity} × ${rub(l.price)}`} value={l.sum} muted />
-              ))}
+              <button
+                type="button"
+                onClick={() => setShowMaterials((v) => !v)}
+                className="flex w-full items-center justify-between gap-3 pl-4 text-xs text-muted-foreground hover:text-foreground"
+              >
+                <span className="inline-flex items-center gap-1">
+                  <Icon name={showMaterials ? 'ChevronDown' : 'ChevronRight'} size={12} />
+                  материалы
+                </span>
+                <span className="shrink-0">{rub(parts.materials)}</span>
+              </button>
+              {showMaterials &&
+                (parts.lines || []).map((l) => (
+                  <div key={l.name} className="flex justify-between gap-3 pl-8 text-[11px] text-muted-foreground">
+                    <span className="min-w-0 truncate">
+                      {l.name} · {l.quantity} × {rub(l.price)}
+                    </span>
+                    <span className="shrink-0">{rub(l.sum)}</span>
+                  </div>
+                ))}
               <Line label="недостачи материалов" value={parts.shortage} muted />
               <Line label="работа цеха и оклады" value={parts.labor} muted />
               <Line label="прочие расходы" value={parts.overhead} muted />
