@@ -26,13 +26,15 @@ interface Row {
 
 interface Props {
   item: Pick<MarketplaceItem, 'id' | 'name' | 'article'> | null;
+  /** Все артикулы ширины: расход сохраняется сразу на них. */
+  itemIds?: number[];
   materials: Material[];
   onClose: () => void;
   onSaved: () => void;
 }
 
 /** Расход материалов склада на один артикул размера. Живёт только в ERP. */
-const SiteItemMaterialsDialog = ({ item, materials, onClose, onSaved }: Props) => {
+const SiteItemMaterialsDialog = ({ item, itemIds, materials, onClose, onSaved }: Props) => {
   const { toast } = useToast();
   const [rows, setRows] = useState<Row[]>([]);
   const [loading, setLoading] = useState(false);
@@ -61,13 +63,17 @@ const SiteItemMaterialsDialog = ({ item, materials, onClose, onSaved }: Props) =
     if (!item) return;
     setSaving(true);
     try {
-      await setMarketplaceItemMaterials(
-        item.id,
-        rows
-          .filter((r) => r.materialId)
-          .map((r) => ({ materialId: Number(r.materialId), quantity: Number(r.quantity) || 0 }))
-      );
-      toast({ title: 'Расход сохранён', description: item.article || item.name });
+      const list = rows
+        .filter((r) => r.materialId)
+        .map((r) => ({ materialId: Number(r.materialId), quantity: Number(r.quantity) || 0 }));
+      const ids = itemIds?.length ? itemIds : [item.id];
+      for (const id of ids) {
+        await setMarketplaceItemMaterials(id, list);
+      }
+      toast({
+        title: 'Расход сохранён',
+        description: ids.length > 1 ? `Для всех высот: ${ids.length}` : item.article || item.name,
+      });
       onSaved();
       onClose();
     } catch (e) {
@@ -139,7 +145,9 @@ const SiteItemMaterialsDialog = ({ item, materials, onClose, onSaved }: Props) =
               </div>
             ))}
             <p className="text-xs text-muted-foreground">
-              Расход хранится только в ERP: загрузка с сайта его не меняет.
+              {itemIds && itemIds.length > 1
+                ? `Расход ширины — одинаковый для всех ${itemIds.length} высот. Хранится только в ERP.`
+                : 'Расход хранится только в ERP: загрузка с сайта его не меняет.'}
             </p>
             <Button className="w-full" onClick={save} disabled={saving}>
               {saving ? <Icon name="Loader2" size={16} className="animate-spin" /> : 'Сохранить'}

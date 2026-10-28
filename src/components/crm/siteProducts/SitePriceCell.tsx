@@ -3,11 +3,12 @@ import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import Icon from '@/components/ui/icon';
 import { useToast } from '@/hooks/use-toast';
-import { setSitePrice, type SiteCatalogItem, type SitePricing } from '@/lib/siteOrdersApi';
+import { setSitePrice, type SitePricing } from '@/lib/siteOrdersApi';
 import { recommendedPrice, type CostRange } from '@/lib/sitePricing';
+import type { SiteWidthGroup } from '@/components/crm/siteProducts/siteWidthGroups';
 
 interface Props {
-  item: SiteCatalogItem;
+  group: SiteWidthGroup;
   pricing: SitePricing;
   range: CostRange;
   canEdit: boolean;
@@ -17,19 +18,20 @@ interface Props {
 
 const rub = (v: number) => `${v.toLocaleString('ru-RU', { maximumFractionDigits: 0 })} ₽`;
 
-/** Цена на сайте: вписывается вручную или берётся рекомендуемая. */
-const SitePriceCell = ({ item, pricing, range, canEdit, actor, onSaved }: Props) => {
+/** Цена ширины: одна на все высоты, сохраняется и уходит на сайт сразу для всех. */
+const SitePriceCell = ({ group, pricing, range, canEdit, actor, onSaved }: Props) => {
   const { toast } = useToast();
-  const [value, setValue] = useState(item.price != null ? String(item.price) : '');
+  const saved = typeof group.price === 'number' ? group.price : null;
+  const [value, setValue] = useState(saved != null ? String(saved) : '');
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
-    setValue(item.price != null ? String(item.price) : '');
-  }, [item.price]);
+    setValue(saved != null ? String(saved) : '');
+  }, [saved]);
 
   const current = value.trim() ? Number(value.replace(',', '.')) : null;
-  const changed = (current ?? null) !== (item.price ?? null);
-  const recommended = item.cost != null ? recommendedPrice(item.cost, range, pricing) : null;
+  const changed = group.price === 'mixed' ? current != null : (current ?? null) !== saved;
+  const recommended = group.cost != null ? recommendedPrice(group.cost, range, pricing) : null;
 
   const save = async (price: number | null) => {
     if (price !== null && (!Number.isFinite(price) || price <= 0)) {
@@ -38,10 +40,14 @@ const SitePriceCell = ({ item, pricing, range, canEdit, actor, onSaved }: Props)
     }
     setSaving(true);
     try {
-      const r = await setSitePrice(item.id, price, actor);
+      const r = await setSitePrice(
+        group.items.map((i) => i.id),
+        price,
+        actor
+      );
       toast(
         r.pushed
-          ? { title: 'Цена сохранена и отправлена на сайт' }
+          ? { title: `Цена сохранена для ${group.items.length} высот и отправлена на сайт` }
           : { title: 'Цена сохранена, на сайт не ушла', description: r.pushError || undefined, variant: 'destructive' }
       );
       onSaved();
@@ -53,7 +59,9 @@ const SitePriceCell = ({ item, pricing, range, canEdit, actor, onSaved }: Props)
   };
 
   if (!canEdit) {
-    return <span>{item.price != null ? rub(item.price) : '—'}</span>;
+    return (
+      <span>{group.price === 'mixed' ? 'разная' : saved != null ? rub(saved) : '—'}</span>
+    );
   }
 
   return (
@@ -64,7 +72,7 @@ const SitePriceCell = ({ item, pricing, range, canEdit, actor, onSaved }: Props)
           value={value}
           onChange={(e) => setValue(e.target.value)}
           onKeyDown={(e) => e.key === 'Enter' && changed && save(current)}
-          placeholder="Цена"
+          placeholder={group.price === 'mixed' ? 'разная' : 'Цена'}
           className="h-8 w-24"
         />
         {changed && (
@@ -73,7 +81,7 @@ const SitePriceCell = ({ item, pricing, range, canEdit, actor, onSaved }: Props)
           </Button>
         )}
       </div>
-      {recommended != null && recommended !== item.price && (
+      {recommended != null && recommended !== group.price && (
         <button
           type="button"
           disabled={saving}
@@ -83,8 +91,8 @@ const SitePriceCell = ({ item, pricing, range, canEdit, actor, onSaved }: Props)
           поставить {rub(recommended)}
         </button>
       )}
-      {item.pushError && (
-        <span className="text-xs text-red-600" title={item.pushError}>
+      {group.pushError && (
+        <span className="text-xs text-red-600" title={group.pushError}>
           не ушло на сайт
         </span>
       )}

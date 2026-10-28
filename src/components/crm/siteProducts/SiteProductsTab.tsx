@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { Fragment, useEffect, useMemo, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
@@ -18,6 +18,7 @@ import SiteProfitCell from '@/components/crm/siteProducts/SiteProfitCell';
 import { siteProfit, targetProfit, type CostRange } from '@/lib/sitePricing';
 import SitePriceCell from '@/components/crm/siteProducts/SitePriceCell';
 import SiteItemMaterialsDialog from '@/components/crm/siteProducts/SiteItemMaterialsDialog';
+import { groupByWidth, type SiteWidthGroup } from '@/components/crm/siteProducts/siteWidthGroups';
 
 type View = 'active' | 'noMaterials' | 'noPrice' | 'lowProfit' | 'disabled' | 'archived';
 
@@ -31,7 +32,7 @@ const DEFAULT_PRICING: SitePricing = {
 
 const rub = (v: number) => `${v.toLocaleString('ru-RU', { maximumFractionDigits: 0 })} ₽`;
 
-/** «Товары для интеграций» магазина мегатюль.рф: одна строка — один артикул размера. */
+/** Товары мегатюль.рф: одна строка — одна ширина карточки, внутри все её высоты. */
 const SiteProductsTab = ({ shopId }: { shopId: number }) => {
   const { toast } = useToast();
   const { user } = useAuth();
@@ -43,8 +44,9 @@ const SiteProductsTab = ({ shopId }: { shopId: number }) => {
   const [query, setQuery] = useState('');
   const [view, setView] = useState<View>('active');
   const [product, setProduct] = useState<string>('all');
-  const [editing, setEditing] = useState<SiteCatalogItem | null>(null);
-  const [toggling, setToggling] = useState<number | null>(null);
+  const [editing, setEditing] = useState<SiteWidthGroup | null>(null);
+  const [toggling, setToggling] = useState<string | null>(null);
+  const [open, setOpen] = useState<Set<string>>(new Set());
   const isAdmin = user?.role === 'admin';
   const actor = { id: user?.id, name: user?.name };
 
@@ -91,31 +93,36 @@ const SiteProductsTab = ({ shopId }: { shopId: number }) => {
     }
   };
 
-  const active = items.filter((i) => !i.archivedAt);
-  const archived = items.filter((i) => i.archivedAt);
-  const noMaterials = active.filter((i) => !i.materialsCount);
-  const noPrice = active.filter((i) => i.price == null);
-  const disabled = active.filter((i) => i.disabled);
-  const costs = active.map((i) => i.cost).filter((c): c is number => c != null);
+  const allGroups = useMemo(() => groupByWidth(items), [items]);
+  const active = allGroups.filter((g) => !g.archived);
+  const archived = allGroups.filter((g) => g.archived);
+  const noMaterials = active.filter((g) => g.noMaterials > 0);
+  const noPrice = active.filter((g) => g.price == null || g.price === 'mixed');
+  const disabled = active.filter((g) => g.disabled || g.partlyDisabled);
+  const costs = active.map((g) => g.cost).filter((c): c is number => c != null);
   const range: CostRange = {
     min: costs.length ? Math.min(...costs) : 0,
     max: costs.length ? Math.max(...costs) : 0,
   };
-  const targetOf = (i: SiteCatalogItem) => (i.cost != null ? targetProfit(i.cost, range, pricing) : null);
-  const lowProfit = active.filter(
-    (i) =>
-      i.price != null &&
-      i.cost != null &&
-      siteProfit(i.price, i.cost, pricing, true).profit < (targetOf(i) ?? 0) - 5
-  );
+  const targetOf = (g: SiteWidthGroup) => (g.cost != null ? targetProfit(g.cost, range, pricing) : null);
+  const priceOf = (g: SiteWidthGroup) => (typeof g.price === 'number' ? g.price : null);
+  const lowProfit = active.filter((g) => {
+    const price = priceOf(g);
+    return (
+      price != null &&
+      g.cost != null &&
+      siteProfit(price, g.cost, pricing, true).profit < (targetOf(g) ?? 0) - 5
+    );
+  });
 
-  const toggleDisabled = async (i: SiteCatalogItem) => {
-    setToggling(i.id);
+  const toggleDisabled = async (g: SiteWidthGroup) => {
+    setToggling(g.key);
+    const next = !g.disabled;
     try {
-      const r = await setSiteDisabled({ itemIds: [i.id] }, !i.disabled, actor);
+      const r = await setSiteDisabled({ itemIds: g.items.map((i) => i.id) }, next, actor);
       toast(
         r.pushed
-          ? { title: i.disabled ? 'Товар включён на сайте' : 'Товар выключен на сайте' }
+          ? { title: next ? 'Ширина выключена на сайте' : 'Ширина включена на сайте' }
           : { title: 'Сохранено, на сайт не ушло', description: r.pushError || undefined, variant: 'destructive' }
       );
       load();
@@ -136,7 +143,7 @@ const SiteProductsTab = ({ shopId }: { shopId: number }) => {
     return Array.from(map.entries()).sort((a, b) => a[1].localeCompare(b[1]));
   }, [items]);
 
-  const byView: Record<View, SiteCatalogItem[]> = {
+  const byView: Record<View, SiteWidthGroup[]> = {
     active,
     noMaterials,
     noPrice,
@@ -144,25 +151,40 @@ const SiteProductsTab = ({ shopId }: { shopId: number }) => {
     disabled,
     archived,
   };
-  const base = byView[view];
   const q = query.trim().toLowerCase();
-  const shown = base
-    .filter((i) => product === 'all' || i.siteProductId === product)
+  const shown = byView[view]
+    .filter((g) => product === 'all' || g.items[0].siteProductId === product)
     .filter(
-      (i) =>
+      (g) =>
         !q ||
-        (i.article || '').toLowerCase().includes(q) ||
-        (i.name || '').toLowerCase().includes(q)
+        g.title.toLowerCase().includes(q) ||
+        g.items.some((i) => (i.article || '').toLowerCase().includes(q))
     )
-    .sort(
-      (a, b) =>
-        (a.article || '').localeCompare(b.article || '') ||
-        (a.width || 0) - (b.width || 0) ||
-        (a.height || 0) - (b.height || 0)
-    );
+    .sort((a, b) => a.title.localeCompare(b.title, 'ru') || (a.width || 0) - (b.width || 0));
+
+  const editingItem = useMemo(
+    () =>
+      editing
+        ? {
+            id: editing.items[0].id,
+            name: `${editing.title} · ширина ${editing.width ?? '—'} см`,
+            article: `${editing.items.length} высот`,
+          }
+        : null,
+    [editing]
+  );
+  const editingIds = useMemo(() => editing?.items.map((i) => i.id), [editing]);
+
+  const toggleOpen = (key: string) =>
+    setOpen((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
 
   const views: { value: View; label: string; count: number }[] = [
-    { value: 'active', label: 'Все', count: active.length },
+    { value: 'active', label: 'Все ширины', count: active.length },
     { value: 'noMaterials', label: 'Без расхода', count: noMaterials.length },
     { value: 'noPrice', label: 'Без цены', count: noPrice.length },
     { value: 'lowProfit', label: 'Ниже цели', count: lowProfit.length },
@@ -241,9 +263,9 @@ const SiteProductsTab = ({ shopId }: { shopId: number }) => {
           <table className="w-full min-w-[1040px] text-sm">
             <thead className="bg-muted/50 text-left text-xs text-muted-foreground">
               <tr>
-                <th className="px-3 py-2 font-medium">Название</th>
-                <th className="px-3 py-2 font-medium">Артикул</th>
-                <th className="px-3 py-2 font-medium">Ширина × высота, см</th>
+                <th className="px-3 py-2 font-medium">Карточка</th>
+                <th className="px-3 py-2 font-medium">Ширина</th>
+                <th className="px-3 py-2 font-medium">Высоты</th>
                 <th className="px-3 py-2 font-medium">Расход</th>
                 <th className="px-3 py-2 font-medium">Себестоимость</th>
                 <th className="px-3 py-2 font-medium">Цена на сайте</th>
@@ -253,79 +275,127 @@ const SiteProductsTab = ({ shopId }: { shopId: number }) => {
               </tr>
             </thead>
             <tbody>
-              {shown.map((i) => (
-                <tr key={i.id} className={`border-t border-border ${i.disabled ? 'bg-muted/40' : ''}`}>
-                  <td className="px-3 py-2">
-                    {i.name}
-                    {i.archivedAt && (
-                      <Badge variant="outline" className="ml-2 border-amber-300 bg-amber-50 text-amber-800">
-                        архив с {new Date(i.archivedAt).toLocaleDateString('ru-RU')}
-                      </Badge>
+              {shown.map((g) => {
+                const isOpen = open.has(g.key);
+                return (
+                  <Fragment key={g.key}>
+                    <tr className={`border-t border-border align-top ${g.disabled ? 'bg-muted/40' : ''}`}>
+                      <td className="px-3 py-2">
+                        <span className="font-medium">{g.title}</span>
+                        {g.archived && (
+                          <Badge variant="outline" className="ml-2 border-amber-300 bg-amber-50 text-amber-800">
+                            архив
+                          </Badge>
+                        )}
+                        {g.manual && (
+                          <Badge variant="outline" className="ml-2">
+                            вручную
+                          </Badge>
+                        )}
+                      </td>
+                      <td className="px-3 py-2 font-semibold">{g.width ? `${g.width} см` : '—'}</td>
+                      <td className="px-3 py-2">
+                        <button
+                          type="button"
+                          onClick={() => toggleOpen(g.key)}
+                          className="inline-flex items-center gap-1 text-sky-700 hover:underline"
+                        >
+                          <Icon name={isOpen ? 'ChevronUp' : 'ChevronDown'} size={14} />
+                          {g.items.length} шт
+                          {g.heights.length > 0 &&
+                            ` · ${Math.min(...g.heights)}–${Math.max(...g.heights)}`}
+                        </button>
+                      </td>
+                      <td className="px-3 py-2">
+                        {g.noMaterials === 0 ? (
+                          <span className="text-emerald-700">материалов: {g.materialsCount}</span>
+                        ) : g.noMaterials === g.items.length ? (
+                          <span className="text-amber-700">не проставлен</span>
+                        ) : (
+                          <span className="text-amber-700">нет у {g.noMaterials} высот</span>
+                        )}
+                      </td>
+                      <td className="px-3 py-2">
+                        {g.cost != null ? rub(g.cost) : <span className="text-muted-foreground">—</span>}
+                      </td>
+                      <td className="px-3 py-2">
+                        <SitePriceCell
+                          group={g}
+                          pricing={pricing}
+                          range={range}
+                          canEdit={isAdmin && !g.archived}
+                          actor={actor}
+                          onSaved={load}
+                        />
+                      </td>
+                      <td className="px-3 py-2">
+                        <SiteProfitCell
+                          item={{ price: priceOf(g), cost: g.cost }}
+                          pricing={pricing}
+                          target={targetOf(g)}
+                        />
+                      </td>
+                      <td className="px-3 py-2">
+                        {isAdmin && !g.archived ? (
+                          <Button
+                            size="sm"
+                            variant={g.disabled ? 'default' : 'outline'}
+                            disabled={toggling === g.key}
+                            onClick={() => toggleDisabled(g)}
+                          >
+                            {g.disabled ? 'Включить' : 'Выключить'}
+                          </Button>
+                        ) : g.disabled ? (
+                          <span className="text-amber-700">выключена</span>
+                        ) : (
+                          <span className="text-emerald-700">продаётся</span>
+                        )}
+                        {g.partlyDisabled && (
+                          <p className="mt-0.5 text-xs text-amber-700">часть высот выключена</p>
+                        )}
+                      </td>
+                      <td className="px-3 py-2 text-right">
+                        <Button size="sm" variant="outline" onClick={() => setEditing(g)}>
+                          <Icon name="Pencil" size={14} className="mr-1" />
+                          Расход
+                        </Button>
+                      </td>
+                    </tr>
+                    {isOpen && (
+                      <tr className="border-t border-border/50 bg-muted/20">
+                        <td colSpan={9} className="px-3 py-2">
+                          <div className="flex flex-wrap gap-1.5">
+                            {g.items.map((i) => (
+                              <span
+                                key={i.id}
+                                className={`rounded border border-border bg-background px-2 py-0.5 text-xs ${
+                                  i.disabled ? 'opacity-50' : ''
+                                }`}
+                                title={i.name}
+                              >
+                                <span className="font-mono">{i.article}</span>
+                                <span className="ml-1 text-muted-foreground">
+                                  {i.width}×{i.height}
+                                  {i.price != null && i.price !== priceOf(g) ? ` · ${rub(i.price)}` : ''}
+                                  {i.disabled ? ' · выкл' : ''}
+                                </span>
+                              </span>
+                            ))}
+                          </div>
+                        </td>
+                      </tr>
                     )}
-                    {!i.siteProductId && (
-                      <Badge variant="outline" className="ml-2">
-                        вручную
-                      </Badge>
-                    )}
-                  </td>
-                  <td className="px-3 py-2 font-mono text-xs">{i.article}</td>
-                  <td className="px-3 py-2">
-                    {i.width && i.height ? `${i.width}×${i.height}` : '—'}
-                  </td>
-                  <td className="px-3 py-2">
-                    {i.materialsCount ? (
-                      <span className="text-emerald-700">материалов: {i.materialsCount}</span>
-                    ) : (
-                      <span className="text-amber-700">не проставлен</span>
-                    )}
-                  </td>
-                  <td className="px-3 py-2">
-                    {i.cost != null ? rub(i.cost) : <span className="text-muted-foreground">—</span>}
-                  </td>
-                  <td className="px-3 py-2">
-                    <SitePriceCell
-                      item={i}
-                      pricing={pricing}
-                      range={range}
-                      canEdit={isAdmin && !i.archivedAt}
-                      actor={actor}
-                      onSaved={load}
-                    />
-                  </td>
-                  <td className="px-3 py-2">
-                    <SiteProfitCell item={i} pricing={pricing} target={targetOf(i)} />
-                  </td>
-                  <td className="px-3 py-2">
-                    {isAdmin && !i.archivedAt ? (
-                      <Button
-                        size="sm"
-                        variant={i.disabled ? 'default' : 'outline'}
-                        disabled={toggling === i.id}
-                        onClick={() => toggleDisabled(i)}
-                      >
-                        {i.disabled ? 'Включить' : 'Выключить'}
-                      </Button>
-                    ) : i.disabled ? (
-                      <span className="text-amber-700">выключен</span>
-                    ) : (
-                      <span className="text-emerald-700">продаётся</span>
-                    )}
-                  </td>
-                  <td className="px-3 py-2 text-right">
-                    <Button size="sm" variant="outline" onClick={() => setEditing(i)}>
-                      <Icon name="Pencil" size={14} className="mr-1" />
-                      Расход
-                    </Button>
-                  </td>
-                </tr>
-              ))}
+                  </Fragment>
+                );
+              })}
             </tbody>
           </table>
         </div>
       )}
 
       <SiteItemMaterialsDialog
-        item={editing}
+        item={editingItem}
+        itemIds={editingIds}
         materials={materials}
         onClose={() => setEditing(null)}
         onSaved={load}

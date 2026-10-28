@@ -1,11 +1,12 @@
-import type { SiteCatalogItem, SitePricing } from '@/lib/siteOrdersApi';
+import type { SitePricing } from '@/lib/siteOrdersApi';
 import { siteProfit } from '@/lib/sitePricing';
 
 const rub = (v: number) => `${v.toLocaleString('ru-RU', { maximumFractionDigits: 0 })} ₽`;
 
 /** Чистая прибыль с продажи: обычной и по ссылке блогера. */
 interface Props {
-  item: SiteCatalogItem;
+  /** Цена и себестоимость ширины. */
+  item: { price: number | null; cost: number | null };
   pricing: SitePricing;
   /** Целевая прибыль этой вещи, ₽. */
   target: number | null;

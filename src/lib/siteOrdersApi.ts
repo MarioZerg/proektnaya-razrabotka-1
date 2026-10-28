@@ -109,12 +109,13 @@ export interface SitePushResult {
   changed?: number;
 }
 
+/** Цена сразу на все высоты одной ширины. */
 export const setSitePrice = (
-  itemId: number,
+  itemIds: number[],
   price: number | null,
   actor?: { id?: number; name?: string }
 ): Promise<SitePushResult> =>
-  post({ action: 'set_price', itemId, price, actorId: actor?.id, actorName: actor?.name });
+  post({ action: 'set_price', itemIds, price, actorId: actor?.id, actorName: actor?.name });
 
 export const setSiteDisabled = (
   target: { itemIds?: number[]; materialId?: number },

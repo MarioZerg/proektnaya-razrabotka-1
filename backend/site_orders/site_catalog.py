@@ -151,25 +151,31 @@ def _push_items(cur, ids, site_url, api_key):
 
 
 def set_price(cur, shop_id, body, site_url, api_key):
-    item_id = body.get('itemId')
-    price = body.get('price')
-    if not item_id:
+    """Цена на одну или сразу на все высоты ширины (itemIds)."""
+    ids = [int(i) for i in (body.get('itemIds') or []) if i]
+    if body.get('itemId'):
+        ids.append(int(body['itemId']))
+    ids = sorted(set(ids))
+    if not ids:
         return 400, {'error': 'Укажите товар'}
+    price = body.get('price')
     try:
         price_val = None if price in (None, '') else round(float(price), 2)
     except (TypeError, ValueError):
         return 400, {'error': 'Цена должна быть числом'}
     if price_val is not None and price_val <= 0:
         return 400, {'error': 'Цена должна быть больше нуля'}
+    ids_csv = ','.join(str(i) for i in ids)
     cur.execute(
-        "UPDATE marketplace_items SET site_price = %s, updated_at = now() "
-        "WHERE id = %s AND shop_id = %s RETURNING id",
-        (price_val, int(item_id), int(shop_id)),
+        f"UPDATE marketplace_items SET site_price = %s, updated_at = now() "
+        f"WHERE id IN ({ids_csv}) AND shop_id = %s RETURNING id",
+        (price_val, int(shop_id)),
     )
-    if not cur.fetchone():
+    done = [r[0] for r in cur.fetchall()]
+    if not done:
         return 404, {'error': 'Товар не найден'}
-    ok, err = _push_items(cur, [int(item_id)], site_url, api_key)
-    return 200, {'saved': True, 'pushed': ok, 'pushError': err}
+    ok, err = _push_items(cur, done, site_url, api_key)
+    return 200, {'saved': True, 'changed': len(done), 'pushed': ok, 'pushError': err}
 
 
 def set_disabled(cur, shop_id, body, site_url, api_key):
