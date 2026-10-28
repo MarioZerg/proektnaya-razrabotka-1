@@ -15,18 +15,18 @@ import {
 } from '@/lib/siteOrdersApi';
 import SitePricingPanel from '@/components/crm/siteProducts/SitePricingPanel';
 import SiteProfitCell from '@/components/crm/siteProducts/SiteProfitCell';
-import { siteProfit } from '@/lib/sitePricing';
+import { siteProfit, targetProfit, type CostRange } from '@/lib/sitePricing';
 import SitePriceCell from '@/components/crm/siteProducts/SitePriceCell';
 import SiteItemMaterialsDialog from '@/components/crm/siteProducts/SiteItemMaterialsDialog';
 
 type View = 'active' | 'noMaterials' | 'noPrice' | 'lowProfit' | 'disabled' | 'archived';
 
 const DEFAULT_PRICING: SitePricing = {
-  targetProfitPct: 30,
+  minProfitRub: 250,
+  maxProfitRub: 450,
   taxPct: 6,
   acquiringPct: 2,
   bloggerPct: 10,
-  deliveryRub: 0,
 };
 
 const rub = (v: number) => `${v.toLocaleString('ru-RU', { maximumFractionDigits: 0 })} ₽`;
@@ -96,11 +96,17 @@ const SiteProductsTab = ({ shopId }: { shopId: number }) => {
   const noMaterials = active.filter((i) => !i.materialsCount);
   const noPrice = active.filter((i) => i.price == null);
   const disabled = active.filter((i) => i.disabled);
+  const costs = active.map((i) => i.cost).filter((c): c is number => c != null);
+  const range: CostRange = {
+    min: costs.length ? Math.min(...costs) : 0,
+    max: costs.length ? Math.max(...costs) : 0,
+  };
+  const targetOf = (i: SiteCatalogItem) => (i.cost != null ? targetProfit(i.cost, range, pricing) : null);
   const lowProfit = active.filter(
     (i) =>
       i.price != null &&
       i.cost != null &&
-      siteProfit(i.price, i.cost, pricing, true).profitPct < pricing.targetProfitPct - 0.5
+      siteProfit(i.price, i.cost, pricing, true).profit < (targetOf(i) ?? 0) - 5
   );
 
   const toggleDisabled = async (i: SiteCatalogItem) => {
@@ -159,7 +165,7 @@ const SiteProductsTab = ({ shopId }: { shopId: number }) => {
     { value: 'active', label: 'Все', count: active.length },
     { value: 'noMaterials', label: 'Без расхода', count: noMaterials.length },
     { value: 'noPrice', label: 'Без цены', count: noPrice.length },
-    { value: 'lowProfit', label: `Прибыль < ${pricing.targetProfitPct}%`, count: lowProfit.length },
+    { value: 'lowProfit', label: 'Ниже цели', count: lowProfit.length },
     { value: 'disabled', label: 'Выключены', count: disabled.length },
     { value: 'archived', label: 'Архив', count: archived.length },
   ];
@@ -280,13 +286,14 @@ const SiteProductsTab = ({ shopId }: { shopId: number }) => {
                     <SitePriceCell
                       item={i}
                       pricing={pricing}
+                      range={range}
                       canEdit={isAdmin && !i.archivedAt}
                       actor={actor}
                       onSaved={load}
                     />
                   </td>
                   <td className="px-3 py-2">
-                    <SiteProfitCell item={i} pricing={pricing} />
+                    <SiteProfitCell item={i} pricing={pricing} target={targetOf(i)} />
                   </td>
                   <td className="px-3 py-2">
                     {isAdmin && !i.archivedAt ? (

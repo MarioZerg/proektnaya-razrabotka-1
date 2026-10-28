@@ -38,12 +38,12 @@ def _cost_map():
 
 def pricing_settings(cur):
     cur.execute(
-        "SELECT target_profit_pct, tax_pct, acquiring_pct, blogger_pct, delivery_rub "
+        "SELECT min_profit_rub, max_profit_rub, tax_pct, acquiring_pct, blogger_pct "
         "FROM site_pricing_settings ORDER BY id LIMIT 1"
     )
-    r = cur.fetchone() or (30, 6, 2, 10, 0)
-    return {'targetProfitPct': float(r[0]), 'taxPct': float(r[1]), 'acquiringPct': float(r[2]),
-            'bloggerPct': float(r[3]), 'deliveryRub': float(r[4])}
+    r = cur.fetchone() or (250, 450, 6, 2, 10)
+    return {'minProfitRub': float(r[0]), 'maxProfitRub': float(r[1]), 'taxPct': float(r[2]),
+            'acquiringPct': float(r[3]), 'bloggerPct': float(r[4])}
 
 
 def save_pricing(cur, body):
@@ -56,15 +56,17 @@ def save_pricing(cur, body):
             raise ValueError(f'Значение вне диапазона: {key}')
         return v
     try:
-        vals = (num('targetProfitPct', 0, 90), num('taxPct', 0, 50), num('acquiringPct', 0, 20),
-                num('bloggerPct', 0, 80), num('deliveryRub', 0, 100000))
+        vals = (num('minProfitRub', 0, 100000), num('maxProfitRub', 0, 100000),
+                num('taxPct', 0, 50), num('acquiringPct', 0, 20), num('bloggerPct', 0, 80))
     except ValueError as e:
         return 400, {'error': str(e)}
-    if vals[0] + vals[1] + vals[2] + vals[3] >= 95:
-        return 400, {'error': 'Прибыль, налог, эквайринг и блогер вместе должны быть меньше 95%'}
+    if vals[0] > vals[1]:
+        return 400, {'error': 'Минимальная прибыль больше максимальной'}
+    if vals[2] + vals[3] + vals[4] >= 90:
+        return 400, {'error': 'Налог, эквайринг и блогер вместе должны быть меньше 90%'}
     cur.execute(
-        "UPDATE site_pricing_settings SET target_profit_pct = %s, tax_pct = %s, acquiring_pct = %s, "
-        "  blogger_pct = %s, delivery_rub = %s, updated_at = now(), updated_by = %s "
+        "UPDATE site_pricing_settings SET min_profit_rub = %s, max_profit_rub = %s, tax_pct = %s, "
+        "  acquiring_pct = %s, blogger_pct = %s, delivery_rub = 0, updated_at = now(), updated_by = %s "
         "WHERE id = (SELECT id FROM site_pricing_settings ORDER BY id LIMIT 1)",
         (*vals, body.get('actorId')),
     )

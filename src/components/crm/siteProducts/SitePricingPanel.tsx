@@ -14,13 +14,12 @@ interface Props {
 }
 
 const FIELDS: { key: keyof SitePricing; label: string; suffix: string }[] = [
-  { key: 'targetProfitPct', label: 'Чистая прибыль', suffix: '% от цены' },
+  { key: 'minProfitRub', label: 'Прибыль с маленькой', suffix: '₽ чистыми со штуки' },
+  { key: 'maxProfitRub', label: 'Прибыль с большой', suffix: '₽ чистыми со штуки' },
+  { key: 'bloggerPct', label: 'Блогеру', suffix: '% от цены витрины' },
   { key: 'taxPct', label: 'Налог УСН', suffix: '% от цены' },
   { key: 'acquiringPct', label: 'Эквайринг', suffix: '% от цены' },
-  { key: 'deliveryRub', label: 'Доставка за наш счёт', suffix: '₽ с заказа' },
-  { key: 'bloggerPct', label: 'Блогеру', suffix: '% от цены' },
 ];
-
 /** Из чего считается цена на сайте: прибыль от цены, а не от себестоимости. */
 const SitePricingPanel = ({ pricing, canEdit, actor, onSaved }: Props) => {
   const { toast } = useToast();
@@ -56,9 +55,9 @@ const SitePricingPanel = ({ pricing, canEdit, actor, onSaved }: Props) => {
         Расчёт цены
       </div>
       <p className="mb-3 text-xs text-muted-foreground">
-        Чистая прибыль = цена витрины − доля блогера − налог − эквайринг − доставка − себестоимость.
-        Рекомендуемая цена закладывает долю блогера: заданный % остаётся нам даже при продаже по его
-        ссылке, без блогера прибыль выше.
+        Нам со штуки — от «маленькой» (самая дешёвая вещь) до «большой» (самая дорогая), между ними
+        плавно: с больших размеров рублей больше, но процент от цены меньше. Доля блогера заложена в цену
+        сверху и нашу прибыль не трогает. Доставку клиент оплачивает на сайте отдельно.
       </p>
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
         {FIELDS.map((f) => (

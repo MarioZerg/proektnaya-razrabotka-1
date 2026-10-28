@@ -58,11 +58,11 @@
    "path": "/",
    "body": {
     "action": "save_pricing",
-    "targetProfitPct": 30,
+    "minProfitRub": 250,
+    "maxProfitRub": 450,
     "taxPct": 6,
     "acquiringPct": 2,
-    "bloggerPct": 10,
-    "deliveryRub": 0
+    "bloggerPct": 10
    },
    "expectedStatus": 403
   }

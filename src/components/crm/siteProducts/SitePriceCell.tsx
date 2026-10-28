@@ -4,11 +4,12 @@ import { Button } from '@/components/ui/button';
 import Icon from '@/components/ui/icon';
 import { useToast } from '@/hooks/use-toast';
 import { setSitePrice, type SiteCatalogItem, type SitePricing } from '@/lib/siteOrdersApi';
-import { recommendedPrice } from '@/lib/sitePricing';
+import { recommendedPrice, type CostRange } from '@/lib/sitePricing';
 
 interface Props {
   item: SiteCatalogItem;
   pricing: SitePricing;
+  range: CostRange;
   canEdit: boolean;
   actor?: { id?: number; name?: string };
   onSaved: () => void;
@@ -17,7 +18,7 @@ interface Props {
 const rub = (v: number) => `${v.toLocaleString('ru-RU', { maximumFractionDigits: 0 })} ₽`;
 
 /** Цена на сайте: вписывается вручную или берётся рекомендуемая. */
-const SitePriceCell = ({ item, pricing, canEdit, actor, onSaved }: Props) => {
+const SitePriceCell = ({ item, pricing, range, canEdit, actor, onSaved }: Props) => {
   const { toast } = useToast();
   const [value, setValue] = useState(item.price != null ? String(item.price) : '');
   const [saving, setSaving] = useState(false);
@@ -28,7 +29,7 @@ const SitePriceCell = ({ item, pricing, canEdit, actor, onSaved }: Props) => {
 
   const current = value.trim() ? Number(value.replace(',', '.')) : null;
   const changed = (current ?? null) !== (item.price ?? null);
-  const recommended = item.cost != null ? recommendedPrice(item.cost, pricing) : null;
+  const recommended = item.cost != null ? recommendedPrice(item.cost, range, pricing) : null;
 
   const save = async (price: number | null) => {
     if (price !== null && (!Number.isFinite(price) || price <= 0)) {

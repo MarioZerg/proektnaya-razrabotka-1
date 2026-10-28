@@ -82,11 +82,13 @@ export interface SiteCatalogItem {
 }
 
 export interface SitePricing {
-  targetProfitPct: number;
+  /** Чистая прибыль со штуки: с самой дешёвой вещи каталога … с самой дорогой. */
+  minProfitRub: number;
+  maxProfitRub: number;
   taxPct: number;
   acquiringPct: number;
+  /** Доля блогера от цены витрины — сверх нашей прибыли. */
   bloggerPct: number;
-  deliveryRub: number;
 }
 
 export const fetchSiteCatalog = (): Promise<{
