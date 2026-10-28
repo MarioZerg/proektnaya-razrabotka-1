@@ -29,10 +29,16 @@ def _cost_map():
     out = {}
     for g in data.get('groups') or []:
         width = int(float(g.get('width') or 0))
-        total = float(g.get('total') or 0)
+        parts = {
+            'total': float(g.get('total') or 0),
+            'materials': float(g.get('materialsCost') or 0),
+            'shortage': float(g.get('shortageCost') or 0),
+            'labor': float(g.get('laborCost') or 0),
+            'overhead': float(g.get('overhead') or 0),
+        }
         for m in g.get('materials') or []:
             if m.get('typeName') == 'Тюль' and m.get('materialId'):
-                out.setdefault((int(m['materialId']), width), total)
+                out.setdefault((int(m['materialId']), width), parts)
     return out
 
 
@@ -89,9 +95,10 @@ def list_products(cur, shop_id):
     items = []
     for r in rows:
         has_materials = int(r[12] or 0) > 0
-        cost = None
+        parts = None
         if has_materials and r[13] and costs is not None:
-            cost = costs.get((int(r[13]), int(r[3] or 0)))
+            parts = costs.get((int(r[13]), int(r[3] or 0)))
+        cost = parts['total'] if parts else None
         items.append({
             'id': r[0], 'name': r[1], 'article': r[2], 'width': r[3], 'height': r[4],
             'material': r[5], 'siteProductId': r[6],
@@ -102,6 +109,7 @@ def list_products(cur, shop_id):
             'pushError': r[11],
             'materialsCount': int(r[12] or 0),
             'cost': cost,
+            'costParts': parts,
         })
     return {'items': items, 'costAvailable': costs is not None, 'pricing': pricing_settings(cur)}
 

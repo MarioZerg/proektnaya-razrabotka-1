@@ -15,6 +15,7 @@ import {
 } from '@/lib/siteOrdersApi';
 import SitePricingPanel from '@/components/crm/siteProducts/SitePricingPanel';
 import SiteProfitCell from '@/components/crm/siteProducts/SiteProfitCell';
+import SiteProfitChain from '@/components/crm/siteProducts/SiteProfitChain';
 import { siteProfit, targetProfit, type CostRange } from '@/lib/sitePricing';
 import SitePriceCell from '@/components/crm/siteProducts/SitePriceCell';
 import SiteItemMaterialsDialog from '@/components/crm/siteProducts/SiteItemMaterialsDialog';
@@ -321,6 +322,7 @@ const SiteProductsTab = ({ shopId }: { shopId: number }) => {
                           pricing={pricing}
                           target={targetOf(g)}
                         />
+                        <SiteProfitChain group={g} pricing={pricing} range={range} />
                       </td>
                       <td className="px-3 py-2">
                         {isAdmin && !g.archived ? (

@@ -79,6 +79,8 @@ export interface SiteCatalogItem {
   materialsCount: number;
   /** Себестоимость из «Себестоимости товара»; null — расход не проставлен. */
   cost: number | null;
+  /** Из чего сложилась себестоимость (как в «Себестоимости товара»). */
+  costParts?: { total: number; materials: number; shortage: number; labor: number; overhead: number } | null;
 }
 
 export interface SitePricing {

@@ -8,6 +8,7 @@ export interface SiteWidthGroup {
   items: SiteCatalogItem[];
   heights: number[];
   cost: number | null;
+  costParts: SiteCatalogItem['costParts'];
   /** Общая цена, если у всех высот одинаковая; null — не задана; 'mixed' — разная. */
   price: number | null | 'mixed';
   materialsCount: number;
@@ -39,6 +40,10 @@ export const groupByWidth = (items: SiteCatalogItem[]): SiteWidthGroup[] => {
       items: sorted,
       heights: sorted.map((i) => i.height).filter((h): h is number => h != null),
       cost: costs.length ? Math.max(...costs) : null,
+      costParts:
+        costs.length
+          ? sorted.find((i) => i.cost === Math.max(...costs))?.costParts ?? null
+          : null,
       price: prices.size === 1 ? [...prices][0] : 'mixed',
       materialsCount: Math.max(...sorted.map((i) => i.materialsCount)),
       noMaterials: sorted.filter((i) => !i.materialsCount).length,
