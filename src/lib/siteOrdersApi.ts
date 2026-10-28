@@ -105,6 +105,35 @@ export const fetchSiteCatalog = (): Promise<{
   pricing: SitePricing;
 }> => post({ action: 'catalog' });
 
+export interface SiteOrderProfit {
+  id: number;
+  orderNumber: string;
+  product: string | null;
+  city: string | null;
+  goods: number | null;
+  delivery: number;
+  ozon: number | null;
+  paid: number;
+  tax: number;
+  acquiring: number;
+  blogger: number;
+  partnerCode: string | null;
+  cost: number | null;
+  profit: number | null;
+  complete: boolean;
+  createdAt: string | null;
+  status: string | null;
+}
+
+export interface SiteOrdersProfit {
+  month: string;
+  orders: SiteOrderProfit[];
+  totals: Record<'paid' | 'goods' | 'delivery' | 'tax' | 'acquiring' | 'ozon' | 'blogger' | 'cost' | 'profit', number>;
+}
+
+export const fetchSiteOrdersProfit = (month?: string): Promise<SiteOrdersProfit> =>
+  post({ action: 'orders_profit', month });
+
 export const saveSitePricing = (
   pricing: SitePricing,
   actor?: { id?: number; name?: string }

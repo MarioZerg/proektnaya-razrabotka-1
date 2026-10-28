@@ -1,71 +1,85 @@
 {
- "tests": [
-  {
-   "name": "OPTIONS preflight",
-   "method": "OPTIONS",
-   "path": "/",
-   "expectedStatus": 200
-  },
-  {
-   "name": "Status",
-   "method": "GET",
-   "path": "/?action=status",
-   "expectedStatus": 200,
-   "expectedBody": {
-    "shopId": 3
-   },
-   "bodyMatcher": "partial"
-  },
-  {
-   "name": "Sync via GET needs cron key",
-   "method": "GET",
-   "path": "/?action=sync",
-   "expectedStatus": 403
-  },
-  {
-   "name": "Label for unknown order",
-   "method": "POST",
-   "path": "/",
-   "body": {
-    "action": "label",
-    "orderNumber": "NO-SUCH-ORDER"
-   },
-   "expectedStatus": 404
-  },
-  {
-   "name": "Catalog list",
-   "method": "POST",
-   "path": "/",
-   "body": {
-    "action": "catalog"
-   },
-   "expectedStatus": 200
-  },
-  {
-   "name": "Set price needs admin",
-   "method": "POST",
-   "path": "/",
-   "body": {
-    "action": "set_price",
-    "itemId": 1,
-    "price": 100
-   },
-   "expectedStatus": 403
-  },
-  {
-   "name": "Save pricing needs admin",
-   "method": "POST",
-   "path": "/",
-   "body": {
-    "action": "save_pricing",
-    "taxPct": 6,
-    "acquiringPct": 2,
-    "bloggerPct": 10,
-    "profitByWidth": {
-     "200": 250
+  "tests": [
+    {
+      "name": "OPTIONS preflight",
+      "method": "OPTIONS",
+      "path": "/",
+      "expectedStatus": 200
+    },
+    {
+      "name": "Status",
+      "method": "GET",
+      "path": "/?action=status",
+      "expectedStatus": 200,
+      "expectedBody": {
+        "shopId": 3
+      },
+      "bodyMatcher": "partial"
+    },
+    {
+      "name": "Sync via GET needs cron key",
+      "method": "GET",
+      "path": "/?action=sync",
+      "expectedStatus": 403
+    },
+    {
+      "name": "Label for unknown order",
+      "method": "POST",
+      "path": "/",
+      "body": {
+        "action": "label",
+        "orderNumber": "NO-SUCH-ORDER"
+      },
+      "expectedStatus": 404
+    },
+    {
+      "name": "Catalog list",
+      "method": "POST",
+      "path": "/",
+      "body": {
+        "action": "catalog"
+      },
+      "expectedStatus": 200
+    },
+    {
+      "name": "Set price needs admin",
+      "method": "POST",
+      "path": "/",
+      "body": {
+        "action": "set_price",
+        "itemId": 1,
+        "price": 100
+      },
+      "expectedStatus": 403
+    },
+    {
+      "name": "Save pricing needs admin",
+      "method": "POST",
+      "path": "/",
+      "body": {
+        "action": "save_pricing",
+        "taxPct": 6,
+        "acquiringPct": 2,
+        "bloggerPct": 10,
+        "profitByWidth": {
+          "200": 250
+        }
+      },
+      "expectedStatus": 403
+    },
+    {
+      "name": "Orders profit",
+      "method": "POST",
+      "path": "/",
+      "body": {
+        "action": "orders_profit",
+        "month": "2026-10"
+      },
+      "expectedStatus": 200,
+      "expectedBody": {
+        "month": "2026-10"
+      },
+      "bodyMatcher": "partial"
     }
-   },
-   "expectedStatus": 403
-  }
- ]
+  ]
 }

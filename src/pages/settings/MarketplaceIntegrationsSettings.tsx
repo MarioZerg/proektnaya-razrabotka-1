@@ -17,6 +17,7 @@ import MarketplaceIntegrationCard from '@/components/crm/settings/MarketplaceInt
 import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
 import { Button } from '@/components/ui/button';
 import SiteProductsTab from '@/components/crm/siteProducts/SiteProductsTab';
+import SiteOrdersProfitTab from '@/components/crm/siteProducts/SiteOrdersProfitTab';
 
 const MarketplaceIntegrationsSettings = () => {
   const { toast } = useToast();
@@ -28,7 +29,7 @@ const MarketplaceIntegrationsSettings = () => {
   const [loading, setLoading] = useState(true);
   const [listError, setListError] = useState<string | null>(null);
   const [savingCode, setSavingCode] = useState<string | null>(null);
-  const [siteTab, setSiteTab] = useState<'keys' | 'products'>('products');
+  const [siteTab, setSiteTab] = useState<'keys' | 'products' | 'profit'>('products');
   // У магазина мегатюль.рф две вкладки: ключи и «Товары для интеграций».
 
   const load = () => {
@@ -163,6 +164,7 @@ const MarketplaceIntegrationsSettings = () => {
                 {(
                   [
                     { value: 'products', label: 'Товары, цены и прибыль', icon: 'Package' },
+                    { value: 'profit', label: 'Прибыль заказов', icon: 'Wallet' },
                     { value: 'keys', label: 'Подключение', icon: 'KeyRound' },
                   ] as const
                 ).map((t) => (
@@ -181,6 +183,8 @@ const MarketplaceIntegrationsSettings = () => {
 
             {isSiteShop && siteTab === 'products' && shopId ? (
               <SiteProductsTab shopId={shopId} />
+            ) : isSiteShop && siteTab === 'profit' ? (
+              <SiteOrdersProfitTab />
             ) : (
             <>
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">

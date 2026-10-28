@@ -305,3 +305,79 @@ def low_fabric(cur, shop_id):
             for r in cur.fetchall() if int(r[3] or 0) > 0
         ],
     }
+
+
+def orders_profit(cur, shop_id, month=None):
+    """Реальная прибыль заказов сайта за месяц.
+
+    Налог и эквайринг — со всей оплаты покупателя (товар + доставка),
+    блогеру — его начисление (15% от товара без доставки), Ozon — фактический тариф.
+    """
+    month = str(month or '')[:7]
+    if len(month) != 7:
+        cur.execute("SELECT to_char(now(), 'YYYY-MM')")
+        month = cur.fetchone()[0]
+    p = pricing_settings(cur)
+    cur.execute(
+        "SELECT o.id, o.order_number, o.group_key, o.product, o.marketplace_item_id, o.site_city, "
+        "  o.site_goods_rub, o.site_delivery_rub, o.site_delivery_cost_rub, o.site_partner_code, "
+        "  o.site_partner_rub, o.marketplace_created_at, o.status "
+        "FROM orders o WHERE o.shop_id = %s AND o.site_order_id IS NOT NULL "
+        "  AND to_char(COALESCE(o.marketplace_created_at, o.created_at), 'YYYY-MM') = %s "
+        "ORDER BY COALESCE(o.marketplace_created_at, o.created_at) DESC, o.id",
+        (int(shop_id), month),
+    )
+    rows = cur.fetchall()
+    costs = _cost_map()
+    item_ids = sorted({r[4] for r in rows if r[4]})
+    mats, info = {}, {}
+    if item_ids:
+        ids_csv = ','.join(str(int(i)) for i in item_ids)
+        cur.execute(
+            "SELECT mim.marketplace_item_id, mim.material_id, m.name, mim.quantity "
+            "FROM marketplace_item_materials mim LEFT JOIN materials m ON m.id = mim.material_id "
+            f"WHERE mim.marketplace_item_id IN ({ids_csv}) ORDER BY mim.id"
+        )
+        for item_id, mid, name, qty in cur.fetchall():
+            if mid is not None:
+                mats.setdefault(item_id, []).append((mid, name or '?', float(qty or 0)))
+        cur.execute(
+            "SELECT mi.id, mi.width, (SELECT m.material_id FROM marketplace_item_materials m "
+            "  JOIN materials x ON x.id = m.material_id JOIN material_types t ON t.id = x.type_id "
+            "  WHERE m.marketplace_item_id = mi.id AND t.name = 'Тюль' ORDER BY m.id LIMIT 1) "
+            f"FROM marketplace_items mi WHERE mi.id IN ({ids_csv})"
+        )
+        info = {r[0]: (r[2], r[1]) for r in cur.fetchall()}
+    tax_k = p['taxPct'] / 100
+    acq_k = p['acquiringPct'] / 100
+    out = []
+    totals = {'paid': 0.0, 'goods': 0.0, 'delivery': 0.0, 'tax': 0.0, 'acquiring': 0.0,
+              'ozon': 0.0, 'blogger': 0.0, 'cost': 0.0, 'profit': 0.0}
+    for r in rows:
+        goods = float(r[6]) if r[6] is not None else None
+        delivery = float(r[7] or 0)
+        ozon = float(r[8]) if r[8] is not None else None
+        fabric_id, width = info.get(r[4], (None, None))
+        parts = _item_cost(mats.get(r[4]), fabric_id, width, costs) if r[4] else None
+        cost = parts['total'] if parts else None
+        paid = (goods or 0) + delivery
+        tax = paid * tax_k
+        acq = paid * acq_k
+        blogger = float(r[10] or 0) if r[9] else 0.0
+        complete = goods is not None and cost is not None and ozon is not None
+        profit = paid - tax - acq - (ozon or 0) - blogger - (cost or 0) if goods is not None else None
+        out.append({
+            'id': r[0], 'orderNumber': r[1], 'groupKey': r[2], 'product': r[3], 'city': r[5],
+            'goods': goods, 'delivery': delivery, 'ozon': ozon, 'paid': paid,
+            'tax': round(tax, 2), 'acquiring': round(acq, 2), 'blogger': blogger,
+            'partnerCode': r[9], 'cost': cost,
+            'profit': round(profit, 2) if profit is not None else None, 'complete': complete,
+            'createdAt': r[11].isoformat() + 'Z' if r[11] else None, 'status': r[12],
+        })
+        if goods is not None:
+            for k, v in (('paid', paid), ('goods', goods), ('delivery', delivery), ('tax', tax),
+                         ('acquiring', acq), ('ozon', ozon or 0), ('blogger', blogger),
+                         ('cost', cost or 0), ('profit', profit)):
+                totals[k] += v
+    return {'month': month, 'orders': out, 'totals': {k: round(v, 2) for k, v in totals.items()},
+            'pricing': p}

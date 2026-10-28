@@ -243,7 +243,13 @@ def sync_orders(cur, shop_id, site_url, api_key, actor_id, actor_name):
             partner_total = float(so.get('partnerAmount')) if so.get('partnerAmount') is not None else None
         except (TypeError, ValueError):
             partner_total = None
+        try:
+            raw_cost = so.get('deliveryCost') if so.get('deliveryCost') is not None else delivery.get('cost')
+            delivery_cost = float(raw_cost) if raw_cost is not None else None
+        except (TypeError, ValueError):
+            delivery_cost = None
         delivery_share = round(delivery_rub / size, 2) if size else 0
+        delivery_cost_share = round(delivery_cost / size, 2) if delivery_cost is not None and size else None
         partner_share = round(partner_total / size, 2) if partner_total is not None and size else None
         for pos, (material, width, height, item_name, item_id, unit_price) in enumerate(units, start=1):
             product = f'{material} {width}x{height}' if material and width and height else item_name
@@ -253,9 +259,10 @@ def sync_orders(cur, shop_id, site_url, api_key, actor_id, actor_name):
                 "source, material, width, height, marketplace_created_at, marketplace_item_id, "
                 "group_key, group_size, group_position, shop_id, site_order_id, site_customer_name, "
                 "site_customer_phone, delivery_tracking_number, delivery_label_url, "
-                "site_goods_rub, site_delivery_rub, site_city, site_partner_code, site_partner_rub) "
+                "site_goods_rub, site_delivery_rub, site_city, site_partner_code, site_partner_rub, "
+                "site_delivery_cost_rub) "
                 "VALUES (%s, 'IM', 'FBS', 'Новый', %s, 1, 'api', %s, %s, %s, %s, %s, "
-                "%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
+                "%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
                 "ON CONFLICT (order_number) DO NOTHING RETURNING id",
                 (
                     f'{group_key}-{pos}' if size > 1 else group_key,
@@ -271,6 +278,7 @@ def sync_orders(cur, shop_id, site_url, api_key, actor_id, actor_name):
                     tracking, label_url,
                     unit_price, delivery_share, city, partner_code,
                     partner_share if partner_code else None,
+                    delivery_cost_share,
                 ),
             )
             if cur.fetchone():
@@ -453,6 +461,9 @@ def handler(event: dict, context) -> dict:
 
         if action == 'catalog':
             return _resp(200, site_catalog.list_products(cur, shop_id))
+
+        if action == 'orders_profit':
+            return _resp(200, site_catalog.orders_profit(cur, shop_id, body.get('month')))
 
         if action == 'low_fabric':
             return _resp(200, site_catalog.low_fabric(cur, shop_id))
