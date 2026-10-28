@@ -1,222 +1,52 @@
-import { Fragment, useEffect, useMemo, useState } from 'react';
+import { Fragment } from 'react';
 import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
-import { Input } from '@/components/ui/input';
 import Icon from '@/components/ui/icon';
-import { useToast } from '@/hooks/use-toast';
-import { useAuth } from '@/context/AuthContext';
-import { fetchMaterialsData, type Material } from '@/lib/materialsApi';
-import {
-  fetchSiteCatalog,
-  setSiteDisabled,
-  syncSiteProducts,
-  type SiteCatalogItem,
-  type SitePricing,
-} from '@/lib/siteOrdersApi';
 import SitePricingPanel from '@/components/crm/siteProducts/SitePricingPanel';
-import SiteProfitCell from '@/components/crm/siteProducts/SiteProfitCell';
-import SiteProfitChain from '@/components/crm/siteProducts/SiteProfitChain';
-import { recommendedPrice, siteProfit, targetProfit } from '@/lib/sitePricing';
-import SitePriceCell from '@/components/crm/siteProducts/SitePriceCell';
-import SiteHeightPriceCell from '@/components/crm/siteProducts/SiteHeightPriceCell';
 import SiteItemMaterialsDialog from '@/components/crm/siteProducts/SiteItemMaterialsDialog';
-import { groupByWidth, type SiteWidthGroup } from '@/components/crm/siteProducts/siteWidthGroups';
-
-type View = 'active' | 'noMaterials' | 'noPrice' | 'lowProfit' | 'disabled' | 'archived';
-
-const DEFAULT_PRICING: SitePricing = {
-  profitByWidth: { '200': 450, '300': 450, '400': 450, '500': 250, '600': 250, '700': 250, '800': 250 },
-  taxPct: 6,
-  acquiringPct: 2,
-  bloggerPct: 10,
-};
-
-const rub = (v: number) => `${v.toLocaleString('ru-RU', { maximumFractionDigits: 0 })} ₽`;
+import SiteProductsFilters from '@/components/crm/siteProducts/SiteProductsFilters';
+import SiteMaterialRow from '@/components/crm/siteProducts/SiteMaterialRow';
+import SiteWidthRow from '@/components/crm/siteProducts/SiteWidthRow';
+import useSiteProducts from '@/components/crm/siteProducts/useSiteProducts';
 
 /** Товары мегатюль.рф: одна строка — одна ширина карточки, внутри все её высоты. */
 const SiteProductsTab = ({ shopId }: { shopId: number }) => {
-  const { toast } = useToast();
-  const { user } = useAuth();
-  const [items, setItems] = useState<SiteCatalogItem[]>([]);
-  const [pricing, setPricing] = useState<SitePricing>(DEFAULT_PRICING);
-  const [materials, setMaterials] = useState<Material[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [syncing, setSyncing] = useState(false);
-  const [query, setQuery] = useState('');
-  const [view, setView] = useState<View>('active');
-  const [product, setProduct] = useState<string>('all');
-  const [editing, setEditing] = useState<SiteWidthGroup | null>(null);
-  const [toggling, setToggling] = useState<string | null>(null);
-  const [open, setOpen] = useState<Set<string>>(new Set());
-  const [openMaterials, setOpenMaterials] = useState<Set<string>>(new Set());
-  const isAdmin = user?.role === 'admin';
-  const actor = { id: user?.id, name: user?.name };
-
-  const load = () => {
-    setLoading(true);
-    fetchSiteCatalog()
-      .then(({ items: list, pricing: p }) => {
-        setItems(list);
-        if (p) setPricing(p);
-      })
-      .catch(() => setItems([]))
-      .finally(() => setLoading(false));
-  };
-
-  useEffect(() => {
-    load();
-    fetchMaterialsData()
-      .then((d) => setMaterials(d.materials))
-      .catch(() => {});
-  }, [shopId]);
-
-  const handleSync = async () => {
-    setSyncing(true);
-    try {
-      const r = await syncSiteProducts({ id: user?.id, name: user?.name });
-      toast({
-        title: 'Товары загружены',
-        description:
-          `Карточек на сайте: ${r.siteProducts ?? 0}, артикулов: ${r.siteCards ?? 0}. ` +
-          `Новых: ${r.created}, обновлено: ${r.updated ?? 0}` +
-          (r.archived ? `, в архив: ${r.archived}` : '') +
-          (r.restored ? `, из архива: ${r.restored}` : '') +
-          '.',
-      });
-      load();
-    } catch (e) {
-      toast({
-        title: 'Не удалось загрузить товары',
-        description: e instanceof Error ? e.message : undefined,
-        variant: 'destructive',
-      });
-    } finally {
-      setSyncing(false);
-    }
-  };
-
-  const allGroups = useMemo(() => groupByWidth(items), [items]);
-  const active = allGroups.filter((g) => !g.archived);
-  const archived = allGroups.filter((g) => g.archived);
-  const noMaterials = active.filter((g) => g.noMaterials > 0);
-  const noPrice = active.filter((g) => g.price == null || g.price === 'mixed');
-  const disabled = active.filter((g) => g.disabled || g.partlyDisabled);
-  const targetOf = (g: SiteWidthGroup) => targetProfit(g.width, pricing);
-  const widths = [...new Set(active.map((g) => g.width).filter((w): w is number => w != null))].sort(
-    (a, b) => a - b
-  );
-  const priceOf = (g: SiteWidthGroup) => (typeof g.price === 'number' ? g.price : null);
-  const lowProfit = active.filter((g) => {
-    const price = priceOf(g);
-    return (
-      price != null &&
-      g.cost != null &&
-      siteProfit(price, g.cost, pricing, true).profit < (targetOf(g) ?? 0) - 5
-    );
-  });
-
-  const toggleDisabled = async (g: SiteWidthGroup) => {
-    setToggling(g.key);
-    const next = !g.disabled;
-    try {
-      const r = await setSiteDisabled({ itemIds: g.items.map((i) => i.id) }, next, actor);
-      toast(
-        r.pushed
-          ? { title: next ? 'Ширина выключена на сайте' : 'Ширина включена на сайте' }
-          : { title: 'Сохранено, на сайт не ушло', description: r.pushError || undefined, variant: 'destructive' }
-      );
-      load();
-    } catch (e) {
-      toast({ title: 'Ошибка', description: e instanceof Error ? e.message : undefined, variant: 'destructive' });
-    } finally {
-      setToggling(null);
-    }
-  };
-
-  const toggleMaterialDisabled = async (title: string) => {
-    const groups = active.filter((g) => g.title === title);
-    const all = groups.flatMap((g) => g.items);
-    const next = !all.every((i) => i.disabled);
-    if (
-      next &&
-      !window.confirm(`Снять с продажи на сайте всю ткань «${title}» (${groups.length} шир.)?`)
-    )
-      return;
-    setToggling(`mat:${title}`);
-    try {
-      const r = await setSiteDisabled({ itemIds: all.map((i) => i.id) }, next, actor);
-      toast(
-        r.pushed
-          ? { title: next ? `«${title}» снята с продажи` : `«${title}» снова продаётся` }
-          : { title: 'Сохранено, на сайт не ушло', description: r.pushError || undefined, variant: 'destructive' }
-      );
-      load();
-    } catch (e) {
-      toast({ title: 'Ошибка', description: e instanceof Error ? e.message : undefined, variant: 'destructive' });
-    } finally {
-      setToggling(null);
-    }
-  };
-
-  const productOptions = useMemo(() => {
-    const map = new Map<string, string>();
-    items.forEach((i) => {
-      if (i.siteProductId && !map.has(i.siteProductId)) {
-        map.set(i.siteProductId, (i.name || '').replace(/\s+\d+×\d+$/, ''));
-      }
-    });
-    return Array.from(map.entries()).sort((a, b) => a[1].localeCompare(b[1]));
-  }, [items]);
-
-  const byView: Record<View, SiteWidthGroup[]> = {
+  const {
+    items,
+    pricing,
+    setPricing,
+    materials,
+    loading,
+    syncing,
+    query,
+    setQuery,
+    view,
+    setView,
+    product,
+    setProduct,
+    editing,
+    setEditing,
+    toggling,
+    open,
+    openMaterials,
+    isAdmin,
+    actor,
+    load,
+    handleSync,
     active,
-    noMaterials,
-    noPrice,
     lowProfit,
-    disabled,
-    archived,
-  };
-  const q = query.trim().toLowerCase();
-  const shown = byView[view]
-    .filter((g) => product === 'all' || g.items[0].siteProductId === product)
-    .filter(
-      (g) =>
-        !q ||
-        g.title.toLowerCase().includes(q) ||
-        g.items.some((i) => (i.article || '').toLowerCase().includes(q))
-    )
-    .sort((a, b) => a.title.localeCompare(b.title, 'ru') || (a.width || 0) - (b.width || 0));
-
-  const materialGroups = useMemo(() => {
-    const map = new Map<string, SiteWidthGroup[]>();
-    shown.forEach((g) => map.set(g.title, [...(map.get(g.title) || []), g]));
-    return [...map.entries()];
-  }, [shown]);
-  const autoOpen = !!q || product !== 'all';
-  const toggleMaterial = (title: string) =>
-    setOpenMaterials((prev) => {
-      const next = new Set(prev);
-      if (next.has(title)) next.delete(title);
-      else next.add(title);
-      return next;
-    });
-
-  const toggleOpen = (key: string) =>
-    setOpen((prev) => {
-      const next = new Set(prev);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
-      return next;
-    });
-
-  const views: { value: View; label: string; count: number }[] = [
-    { value: 'active', label: 'Все товары', count: active.length },
-    { value: 'noMaterials', label: 'Без расхода', count: noMaterials.length },
-    { value: 'noPrice', label: 'Без цены', count: noPrice.length },
-    { value: 'lowProfit', label: 'Ниже цели', count: lowProfit.length },
-    { value: 'disabled', label: 'Выключены', count: disabled.length },
-    { value: 'archived', label: 'Архив', count: archived.length },
-  ];
+    targetOf,
+    widths,
+    priceOf,
+    toggleDisabled,
+    toggleMaterialDisabled,
+    productOptions,
+    shown,
+    materialGroups,
+    autoOpen,
+    toggleMaterial,
+    toggleOpen,
+    views,
+  } = useSiteProducts(shopId);
 
   return (
     <div className="space-y-4">
@@ -243,41 +73,16 @@ const SiteProductsTab = ({ shopId }: { shopId: number }) => {
         onSaved={setPricing}
       />
 
-      <div className="flex flex-wrap items-center gap-2">
-        {views.map((v) => (
-          <button
-            key={v.value}
-            type="button"
-            onClick={() => setView(v.value)}
-            className={`rounded-full border px-3 py-1 text-sm transition ${
-              view === v.value
-                ? 'border-primary bg-primary text-primary-foreground'
-                : 'border-border bg-background text-foreground hover:bg-muted'
-            }`}
-          >
-            {v.label}
-            <span className="ml-1.5 text-xs opacity-70">{v.count}</span>
-          </button>
-        ))}
-        <select
-          value={product}
-          onChange={(e) => setProduct(e.target.value)}
-          className="h-8 rounded-md border border-border bg-background px-2 text-sm text-foreground"
-        >
-          <option value="all">Все карточки</option>
-          {productOptions.map(([id, name]) => (
-            <option key={id} value={id}>
-              {name || id}
-            </option>
-          ))}
-        </select>
-        <Input
-          placeholder="Артикул или название"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          className="h-8 w-full sm:w-56"
-        />
-      </div>
+      <SiteProductsFilters
+        views={views}
+        view={view}
+        onView={setView}
+        product={product}
+        onProduct={setProduct}
+        productOptions={productOptions}
+        query={query}
+        onQuery={setQuery}
+      />
 
       {loading ? (
         <div className="flex items-center gap-2 text-sm text-muted-foreground">
@@ -311,228 +116,38 @@ const SiteProductsTab = ({ shopId }: { shopId: number }) => {
                 const matOpen = autoOpen || openMaterials.has(title);
                 const matAll = active.filter((g) => g.title === title);
                 const matDisabled = matAll.length > 0 && matAll.every((g) => g.disabled);
-                const ws = groups.map((g) => g.width).filter((w): w is number => w != null);
-                const costs = groups.map((g) => g.cost).filter((c): c is number => c != null);
-                const prices = groups.map(priceOf).filter((c): c is number => c != null);
-                const range = (v: number[]) =>
-                  v.length === 0
-                    ? '—'
-                    : Math.min(...v) === Math.max(...v)
-                      ? rub(v[0])
-                      : `${rub(Math.min(...v))} – ${rub(Math.max(...v))}`;
-                const issues = [
-                  groups.filter((g) => g.noMaterials > 0).length && `без расхода ${groups.filter((g) => g.noMaterials > 0).length}`,
-                  groups.filter((g) => g.price == null || g.price === 'mixed').length &&
-                    `без цены ${groups.filter((g) => g.price == null || g.price === 'mixed').length}`,
-                  groups.filter((g) => lowProfit.includes(g)).length &&
-                    `ниже цели ${groups.filter((g) => lowProfit.includes(g)).length}`,
-                  groups.filter((g) => g.disabled).length && `выкл ${groups.filter((g) => g.disabled).length}`,
-                ].filter(Boolean);
                 return (
                   <Fragment key={title}>
-                    <tr
-                      className="cursor-pointer border-t-2 border-border bg-muted/40 hover:bg-muted/60"
-                      onClick={() => toggleMaterial(title)}
-                    >
-                      <td className="px-3 py-2.5" colSpan={2}>
-                        <span className="inline-flex items-center gap-1.5 font-semibold">
-                          <Icon name={matOpen ? 'ChevronDown' : 'ChevronRight'} size={16} />
-                          {title}
-                        </span>
-                      </td>
-                      <td className="px-3 py-2.5 text-muted-foreground">
-                        {groups.length} шир.{ws.length > 0 && ` · ${Math.min(...ws)}–${Math.max(...ws)}`}
-                      </td>
-                      <td className="px-3 py-2.5" colSpan={2}>
-                        <span className="text-muted-foreground">себест. </span>
-                        {range(costs)}
-                      </td>
-                      <td className="px-3 py-2.5">{range(prices)}</td>
-                      <td className="px-3 py-2.5">
-                        {issues.length ? (
-                          <span className="text-xs text-amber-700">{issues.join(' · ')}</span>
-                        ) : (
-                          <span className="text-xs text-emerald-700">всё заполнено</span>
-                        )}
-                      </td>
-                      <td className="px-3 py-2.5" colSpan={2} onClick={(e) => e.stopPropagation()}>
-                        {isAdmin && view !== 'archived' ? (
-                          <Button
-                            size="sm"
-                            variant={matDisabled ? 'default' : 'outline'}
-                            disabled={toggling === `mat:${title}`}
-                            onClick={() => toggleMaterialDisabled(title)}
-                          >
-                            {toggling === `mat:${title}` ? (
-                              <Icon name="Loader2" size={14} className="animate-spin" />
-                            ) : matDisabled ? (
-                              'Включить ткань'
-                            ) : (
-                              'Выключить ткань'
-                            )}
-                          </Button>
-                        ) : matDisabled ? (
-                          <span className="text-xs text-amber-700">выключена</span>
-                        ) : null}
-                      </td>
-                    </tr>
-                    {matOpen && groups.map((g) => {
-                const isOpen = open.has(g.key);
-                return (
-                  <Fragment key={g.key}>
-                    <tr className={`border-t border-border align-top ${g.disabled ? 'bg-muted/40' : ''}`}>
-                      <td className="px-3 py-2 pl-9">
-                        <span className="text-muted-foreground">{g.title}</span>
-                        {g.archived && (
-                          <Badge variant="outline" className="ml-2 border-amber-300 bg-amber-50 text-amber-800">
-                            архив
-                          </Badge>
-                        )}
-                        {g.manual && (
-                          <Badge variant="outline" className="ml-2">
-                            вручную
-                          </Badge>
-                        )}
-                      </td>
-                      <td className="px-3 py-2 font-semibold">{g.width ? `${g.width} см` : '—'}</td>
-                      <td className="px-3 py-2">
-                        <button
-                          type="button"
-                          onClick={() => toggleOpen(g.key)}
-                          className="inline-flex items-center gap-1 text-sky-700 hover:underline"
-                        >
-                          <Icon name={isOpen ? 'ChevronUp' : 'ChevronDown'} size={14} />
-                          {g.items.length} шт
-                          {g.heights.length > 0 &&
-                            ` · ${Math.min(...g.heights)}–${Math.max(...g.heights)}`}
-                        </button>
-                      </td>
-                      <td className="px-3 py-2">
-                        {g.noMaterials === 0 ? (
-                          <span className="text-emerald-700">материалов: {g.materialsCount}</span>
-                        ) : g.noMaterials === g.items.length ? (
-                          <span className="text-amber-700">не проставлен</span>
-                        ) : (
-                          <span className="text-amber-700">нет у {g.noMaterials} высот</span>
-                        )}
-                      </td>
-                      <td className="px-3 py-2">
-                        {g.cost != null ? rub(g.cost) : <span className="text-muted-foreground">—</span>}
-                      </td>
-                      <td className="px-3 py-2">
-                        <SitePriceCell
-                          group={g}
+                    <SiteMaterialRow
+                      title={title}
+                      groups={groups}
+                      matOpen={matOpen}
+                      matDisabled={matDisabled}
+                      lowProfit={lowProfit}
+                      priceOf={priceOf}
+                      canToggle={isAdmin && view !== 'archived'}
+                      toggling={toggling}
+                      onToggleOpen={toggleMaterial}
+                      onToggleDisabled={toggleMaterialDisabled}
+                    />
+                    {matOpen &&
+                      groups.map((g) => (
+                        <SiteWidthRow
+                          key={g.key}
+                          g={g}
+                          isOpen={open.has(g.key)}
                           pricing={pricing}
-                          canEdit={isAdmin && !g.archived}
+                          isAdmin={isAdmin}
                           actor={actor}
+                          toggling={toggling}
+                          priceOf={priceOf}
+                          targetOf={targetOf}
+                          onToggleOpen={toggleOpen}
+                          onToggleDisabled={toggleDisabled}
+                          onEdit={setEditing}
                           onSaved={load}
                         />
-                      </td>
-                      <td className="px-3 py-2">
-                        <SiteProfitCell
-                          item={{ price: priceOf(g), cost: g.cost }}
-                          pricing={pricing}
-                          target={targetOf(g)}
-                        />
-                        <SiteProfitChain group={g} pricing={pricing} />
-                      </td>
-                      <td className="px-3 py-2">
-                        {isAdmin && !g.archived ? (
-                          <Button
-                            size="sm"
-                            variant={g.disabled ? 'default' : 'outline'}
-                            disabled={toggling === g.key}
-                            onClick={() => toggleDisabled(g)}
-                          >
-                            {g.disabled ? 'Включить' : 'Выключить'}
-                          </Button>
-                        ) : g.disabled ? (
-                          <span className="text-amber-700">выключена</span>
-                        ) : (
-                          <span className="text-emerald-700">продаётся</span>
-                        )}
-                        {g.partlyDisabled && (
-                          <p className="mt-0.5 text-xs text-amber-700">часть высот выключена</p>
-                        )}
-                      </td>
-                      <td className="px-3 py-2 text-right">
-                        <Button size="sm" variant="outline" onClick={() => setEditing(g)}>
-                          <Icon name="Pencil" size={14} className="mr-1" />
-                          Расход
-                        </Button>
-                      </td>
-                    </tr>
-                    {isOpen && (
-                      <tr className="border-t border-border/50 bg-muted/20">
-                        <td colSpan={9} className="px-3 py-2">
-                          <table className="w-full text-xs">
-                            <thead className="text-left text-muted-foreground">
-                              <tr>
-                                <th className="py-1 pr-3 font-medium">Высота</th>
-                                <th className="py-1 pr-3 font-medium">Артикул</th>
-                                <th className="py-1 pr-3 font-medium">Себестоимость</th>
-                                <th className="py-1 pr-3 font-medium">Цена</th>
-                                <th className="py-1 pr-3 font-medium">Прибыль с блогером</th>
-                                <th className="py-1 pr-3 font-medium">Без блогера</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {g.items.map((i) => {
-                                const target = targetOf(g);
-                                const withB =
-                                  i.price != null && i.cost != null
-                                    ? siteProfit(i.price, i.cost, pricing, true)
-                                    : null;
-                                const noB =
-                                  i.price != null && i.cost != null
-                                    ? siteProfit(i.price, i.cost, pricing)
-                                    : null;
-                                return (
-                                  <tr key={i.id} className={`border-t border-border/40 ${i.disabled ? 'opacity-50' : ''}`}>
-                                    <td className="py-1 pr-3 font-semibold">{i.height ?? '—'}</td>
-                                    <td className="py-1 pr-3 font-mono">{i.article}</td>
-                                    <td className="py-1 pr-3">
-                                      {i.cost != null ? rub(i.cost) : <span className="text-amber-700">нет расхода</span>}
-                                    </td>
-                                    <td className="py-1 pr-3">
-                                      <SiteHeightPriceCell
-                                        item={i}
-                                        recommended={
-                                          i.cost != null ? recommendedPrice(i.cost, g.width, pricing) : null
-                                        }
-                                        canEdit={isAdmin && !i.archivedAt}
-                                        actor={actor}
-                                        onSaved={load}
-                                      />
-                                    </td>
-                                    <td
-                                      className={`py-1 pr-3 font-medium ${
-                                        !withB
-                                          ? ''
-                                          : withB.profit < 0
-                                            ? 'text-red-600'
-                                            : target != null && withB.profit < target - 5
-                                              ? 'text-amber-700'
-                                              : 'text-emerald-700'
-                                      }`}
-                                    >
-                                      {withB ? `${rub(withB.profit)} · ${Math.round(withB.profitPct)}%` : '—'}
-                                    </td>
-                                    <td className="py-1 pr-3 text-muted-foreground">
-                                      {noB ? rub(noB.profit) : '—'}
-                                      {i.disabled ? ' · выкл' : ''}
-                                    </td>
-                                  </tr>
-                                );
-                              })}
-                            </tbody>
-                          </table>
-                        </td>
-                      </tr>
-                    )}
-                  </Fragment>
-                );
-              })}
+                      ))}
                   </Fragment>
                 );
               })}
