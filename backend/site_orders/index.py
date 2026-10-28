@@ -8,6 +8,8 @@ from datetime import datetime
 
 import psycopg2
 
+import site_catalog
+
 SHOP_CODE = 'megatul_site'
 DEFAULT_SITE_URL = 'https://xn--80aff0ab3b6do.xn--p1ai'
 PRODUCTS_SYNC_URL = 'https://functions.poehali.dev/f43a35f0-f914-443a-92c0-fc08a2a09fa4'
@@ -387,6 +389,10 @@ def handler(event: dict, context) -> dict:
     POST { action: 'check_statuses' }        — сверить отмены и этикетки с сайтом
     POST { action: 'sync_products' }         — выгрузить каталог сайта в карточки товаров
     POST { action: 'label', orderId }         — этикетка Ozon Доставки для печати
+    POST { action: 'catalog' }               — товары сайта с ценой, себестоимостью и статусом
+    POST { action: 'set_price', itemId, price } — цена товара (админ), сразу уходит на сайт
+    POST { action: 'set_disabled', disabled, itemIds? | materialId? } — выключить/включить на сайте
+    POST { action: 'low_fabric' }            — ткани меньше 20 м и товары сайта на них
     GET  ?action=status                       — подключён ли магазин
     """
     method = event.get('httpMethod', 'GET')
@@ -422,6 +428,29 @@ def handler(event: dict, context) -> dict:
         if action == 'status':
             return _resp(200, {'shopId': shop_id, 'siteUrl': site_url,
                                'connected': bool(api_key) and enabled})
+
+        if action == 'catalog':
+            return _resp(200, site_catalog.list_products(cur, shop_id))
+
+        if action == 'low_fabric':
+            return _resp(200, site_catalog.low_fabric(cur, shop_id))
+
+        if action in ('set_price', 'set_disabled'):
+            if not site_catalog.is_admin(cur, actor_id):
+                return _resp(403, {'error': 'Цены и продажу на сайте меняет администратор'})
+            fn = site_catalog.set_price if action == 'set_price' else site_catalog.set_disabled
+            code, payload = fn(cur, shop_id, body, site_url, api_key if enabled else '')
+            if code == 200:
+                conn.commit()
+                what = 'цена' if action == 'set_price' else (
+                    'выключен' if body.get('disabled') else 'включён')
+                log_action(cur, actor_id, actor_name, f'site_{action}',
+                           f"мегатюль.рф: {what}, товаров {payload.get('changed', 1)}"
+                           + ('' if payload.get('pushed') else f" (на сайт не ушло: {payload.get('pushError')})"))
+                conn.commit()
+            else:
+                conn.rollback()
+            return _resp(code, payload)
 
         if action == 'label':
             code, payload = get_label(cur, body.get('orderId'), (body.get('orderNumber') or '').strip(),

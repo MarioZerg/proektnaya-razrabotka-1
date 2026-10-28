@@ -25,7 +25,7 @@ interface Row {
 }
 
 interface Props {
-  item: MarketplaceItem | null;
+  item: Pick<MarketplaceItem, 'id' | 'name' | 'article'> | null;
   materials: Material[];
   onClose: () => void;
   onSaved: () => void;

@@ -1,4 +1,5 @@
 import AdminNotifications from '@/components/crm/dashboard/AdminNotifications';
+import LowFabricSiteCard from '@/components/crm/dashboard/LowFabricSiteCard';
 import VacationOnLeaveCard from '@/components/crm/dashboard/VacationOnLeaveCard';
 import VarikiPurchasesCard from '@/components/crm/variki/VarikiPurchasesCard';
 import MyShiftCard from '@/components/crm/dashboard/MyShiftCard';
@@ -114,6 +115,7 @@ const CrmDashboardHeader = ({
     {/* Решения склада, которые стоят денег, — сразу перед виджетами: админ видит их
         первыми, ещё до сводки по цеху. */}
     {isAdmin && <AdminNotifications />}
+    {isAdmin && <LowFabricSiteCard />}
     {isAdmin && <VacationOnLeaveCard />}
     {/* Упаковщице на телефоне сразу видно, чью пачку разбирать первой:
         швея, которая скинула на стикеровку раньше всех. */}

@@ -5,30 +5,40 @@ import { Input } from '@/components/ui/input';
 import Icon from '@/components/ui/icon';
 import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/context/AuthContext';
-import { fetchMarketplaceItems, type MarketplaceItem } from '@/lib/marketplaceItemsApi';
 import { fetchMaterialsData, type Material } from '@/lib/materialsApi';
-import { syncSiteProducts } from '@/lib/siteOrdersApi';
+import {
+  fetchSiteCatalog,
+  setSiteDisabled,
+  syncSiteProducts,
+  type SiteCatalogItem,
+} from '@/lib/siteOrdersApi';
+import SitePriceCell from '@/components/crm/siteProducts/SitePriceCell';
 import SiteItemMaterialsDialog from '@/components/crm/siteProducts/SiteItemMaterialsDialog';
 
-type View = 'active' | 'noMaterials' | 'archived';
+type View = 'active' | 'noMaterials' | 'noPrice' | 'disabled' | 'archived';
+
+const rub = (v: number) => `${v.toLocaleString('ru-RU', { maximumFractionDigits: 0 })} ₽`;
 
 /** «Товары для интеграций» магазина мегатюль.рф: одна строка — один артикул размера. */
 const SiteProductsTab = ({ shopId }: { shopId: number }) => {
   const { toast } = useToast();
   const { user } = useAuth();
-  const [items, setItems] = useState<MarketplaceItem[]>([]);
+  const [items, setItems] = useState<SiteCatalogItem[]>([]);
   const [materials, setMaterials] = useState<Material[]>([]);
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
   const [query, setQuery] = useState('');
   const [view, setView] = useState<View>('active');
   const [product, setProduct] = useState<string>('all');
-  const [editing, setEditing] = useState<MarketplaceItem | null>(null);
+  const [editing, setEditing] = useState<SiteCatalogItem | null>(null);
+  const [toggling, setToggling] = useState<number | null>(null);
+  const isAdmin = user?.role === 'admin';
+  const actor = { id: user?.id, name: user?.name };
 
   const load = () => {
     setLoading(true);
-    fetchMarketplaceItems()
-      .then(({ items: list }) => setItems(list.filter((i) => i.shopId === shopId)))
+    fetchSiteCatalog()
+      .then(({ items: list }) => setItems(list))
       .catch(() => setItems([]))
       .finally(() => setLoading(false));
   };
@@ -68,6 +78,25 @@ const SiteProductsTab = ({ shopId }: { shopId: number }) => {
   const active = items.filter((i) => !i.archivedAt);
   const archived = items.filter((i) => i.archivedAt);
   const noMaterials = active.filter((i) => !i.materialsCount);
+  const noPrice = active.filter((i) => i.price == null);
+  const disabled = active.filter((i) => i.disabled);
+
+  const toggleDisabled = async (i: SiteCatalogItem) => {
+    setToggling(i.id);
+    try {
+      const r = await setSiteDisabled({ itemIds: [i.id] }, !i.disabled, actor);
+      toast(
+        r.pushed
+          ? { title: i.disabled ? 'Товар включён на сайте' : 'Товар выключен на сайте' }
+          : { title: 'Сохранено, на сайт не ушло', description: r.pushError || undefined, variant: 'destructive' }
+      );
+      load();
+    } catch (e) {
+      toast({ title: 'Ошибка', description: e instanceof Error ? e.message : undefined, variant: 'destructive' });
+    } finally {
+      setToggling(null);
+    }
+  };
 
   const productOptions = useMemo(() => {
     const map = new Map<string, string>();
@@ -79,7 +108,16 @@ const SiteProductsTab = ({ shopId }: { shopId: number }) => {
     return Array.from(map.entries()).sort((a, b) => a[1].localeCompare(b[1]));
   }, [items]);
 
-  const base = view === 'archived' ? archived : view === 'noMaterials' ? noMaterials : active;
+  const base =
+    view === 'archived'
+      ? archived
+      : view === 'noMaterials'
+        ? noMaterials
+        : view === 'noPrice'
+          ? noPrice
+          : view === 'disabled'
+            ? disabled
+            : active;
   const q = query.trim().toLowerCase();
   const shown = base
     .filter((i) => product === 'all' || i.siteProductId === product)
@@ -99,6 +137,8 @@ const SiteProductsTab = ({ shopId }: { shopId: number }) => {
   const views: { value: View; label: string; count: number }[] = [
     { value: 'active', label: 'Все', count: active.length },
     { value: 'noMaterials', label: 'Без расхода', count: noMaterials.length },
+    { value: 'noPrice', label: 'Без цены', count: noPrice.length },
+    { value: 'disabled', label: 'Выключены', count: disabled.length },
     { value: 'archived', label: 'Архив', count: archived.length },
   ];
 
@@ -106,7 +146,8 @@ const SiteProductsTab = ({ shopId }: { shopId: number }) => {
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <p className="text-sm text-muted-foreground">
-          Артикулы размеров с сайта. Расход материалов вписывается здесь и в магазин не уходит.
+          Название, артикул и размер приходят с сайта. Себестоимость — из «Себестоимости товара», если
+          проставлен расход. Цена и включение товара отправляются на сайт.
         </p>
         <Button onClick={handleSync} disabled={syncing}>
           <Icon
@@ -167,21 +208,22 @@ const SiteProductsTab = ({ shopId }: { shopId: number }) => {
         </p>
       ) : (
         <div className="overflow-x-auto rounded-lg border border-border">
-          <table className="w-full min-w-[640px] text-sm">
+          <table className="w-full min-w-[900px] text-sm">
             <thead className="bg-muted/50 text-left text-xs text-muted-foreground">
               <tr>
-                <th className="px-3 py-2 font-medium">Артикул</th>
                 <th className="px-3 py-2 font-medium">Название</th>
-                <th className="px-3 py-2 font-medium">Ткань</th>
-                <th className="px-3 py-2 font-medium">Размер, см</th>
+                <th className="px-3 py-2 font-medium">Артикул</th>
+                <th className="px-3 py-2 font-medium">Ширина × высота, см</th>
                 <th className="px-3 py-2 font-medium">Расход</th>
+                <th className="px-3 py-2 font-medium">Себестоимость</th>
+                <th className="px-3 py-2 font-medium">Цена на сайте</th>
+                <th className="px-3 py-2 font-medium">На сайте</th>
                 <th className="px-3 py-2" />
               </tr>
             </thead>
             <tbody>
               {shown.map((i) => (
-                <tr key={i.id} className="border-t border-border">
-                  <td className="px-3 py-2 font-mono text-xs">{i.article}</td>
+                <tr key={i.id} className={`border-t border-border ${i.disabled ? 'bg-muted/40' : ''}`}>
                   <td className="px-3 py-2">
                     {i.name}
                     {i.archivedAt && (
@@ -195,7 +237,7 @@ const SiteProductsTab = ({ shopId }: { shopId: number }) => {
                       </Badge>
                     )}
                   </td>
-                  <td className="px-3 py-2">{i.material || '—'}</td>
+                  <td className="px-3 py-2 font-mono text-xs">{i.article}</td>
                   <td className="px-3 py-2">
                     {i.width && i.height ? `${i.width}×${i.height}` : '—'}
                   </td>
@@ -204,6 +246,28 @@ const SiteProductsTab = ({ shopId }: { shopId: number }) => {
                       <span className="text-emerald-700">материалов: {i.materialsCount}</span>
                     ) : (
                       <span className="text-amber-700">не проставлен</span>
+                    )}
+                  </td>
+                  <td className="px-3 py-2">
+                    {i.cost != null ? rub(i.cost) : <span className="text-muted-foreground">—</span>}
+                  </td>
+                  <td className="px-3 py-2">
+                    <SitePriceCell item={i} canEdit={isAdmin && !i.archivedAt} actor={actor} onSaved={load} />
+                  </td>
+                  <td className="px-3 py-2">
+                    {isAdmin && !i.archivedAt ? (
+                      <Button
+                        size="sm"
+                        variant={i.disabled ? 'default' : 'outline'}
+                        disabled={toggling === i.id}
+                        onClick={() => toggleDisabled(i)}
+                      >
+                        {i.disabled ? 'Включить' : 'Выключить'}
+                      </Button>
+                    ) : i.disabled ? (
+                      <span className="text-amber-700">выключен</span>
+                    ) : (
+                      <span className="text-emerald-700">продаётся</span>
                     )}
                   </td>
                   <td className="px-3 py-2 text-right">

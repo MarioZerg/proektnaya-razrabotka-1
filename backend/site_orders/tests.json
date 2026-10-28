@@ -1,6 +1,56 @@
-{"tests": [
-  {"name": "OPTIONS preflight", "method": "OPTIONS", "path": "/", "expectedStatus": 200},
-  {"name": "Status", "method": "GET", "path": "/?action=status", "expectedStatus": 200, "expectedBody": {"shopId": 3}, "bodyMatcher": "partial"},
-  {"name": "Sync via GET needs cron key", "method": "GET", "path": "/?action=sync", "expectedStatus": 403},
-  {"name": "Label for unknown order", "method": "POST", "path": "/", "body": {"action": "label", "orderNumber": "NO-SUCH-ORDER"}, "expectedStatus": 404}
-]}
+{
+ "tests": [
+  {
+   "name": "OPTIONS preflight",
+   "method": "OPTIONS",
+   "path": "/",
+   "expectedStatus": 200
+  },
+  {
+   "name": "Status",
+   "method": "GET",
+   "path": "/?action=status",
+   "expectedStatus": 200,
+   "expectedBody": {
+    "shopId": 3
+   },
+   "bodyMatcher": "partial"
+  },
+  {
+   "name": "Sync via GET needs cron key",
+   "method": "GET",
+   "path": "/?action=sync",
+   "expectedStatus": 403
+  },
+  {
+   "name": "Label for unknown order",
+   "method": "POST",
+   "path": "/",
+   "body": {
+    "action": "label",
+    "orderNumber": "NO-SUCH-ORDER"
+   },
+   "expectedStatus": 404
+  },
+  {
+   "name": "Catalog list",
+   "method": "POST",
+   "path": "/",
+   "body": {
+    "action": "catalog"
+   },
+   "expectedStatus": 200
+  },
+  {
+   "name": "Set price needs admin",
+   "method": "POST",
+   "path": "/",
+   "body": {
+    "action": "set_price",
+    "itemId": 1,
+    "price": 100
+   },
+   "expectedStatus": 403
+  }
+ ]
+}

@@ -62,3 +62,55 @@ export const printSiteLabel = async (ref: { orderId?: number; orderNumber?: stri
   if (label.kind === 'pdf') await printLabelPdf(label.base64, 'Ozon Доставка');
   else printLabelPng(label.base64, 'Ozon Доставка');
 };
+
+export interface SiteCatalogItem {
+  id: number;
+  name: string;
+  article: string | null;
+  width: number | null;
+  height: number | null;
+  material: string | null;
+  siteProductId: string | null;
+  archivedAt: string | null;
+  price: number | null;
+  disabled: boolean;
+  pushedAt: string | null;
+  pushError: string | null;
+  materialsCount: number;
+  /** Себестоимость из «Себестоимости товара»; null — расход не проставлен. */
+  cost: number | null;
+}
+
+export const fetchSiteCatalog = (): Promise<{ items: SiteCatalogItem[]; costAvailable: boolean }> =>
+  post({ action: 'catalog' });
+
+export interface SitePushResult {
+  pushed: boolean;
+  pushError: string | null;
+  changed?: number;
+}
+
+export const setSitePrice = (
+  itemId: number,
+  price: number | null,
+  actor?: { id?: number; name?: string }
+): Promise<SitePushResult> =>
+  post({ action: 'set_price', itemId, price, actorId: actor?.id, actorName: actor?.name });
+
+export const setSiteDisabled = (
+  target: { itemIds?: number[]; materialId?: number },
+  disabled: boolean,
+  actor?: { id?: number; name?: string }
+): Promise<SitePushResult> =>
+  post({ action: 'set_disabled', ...target, disabled, actorId: actor?.id, actorName: actor?.name });
+
+export interface LowFabric {
+  materialId: number;
+  name: string;
+  meters: number;
+  activeItems: number;
+  disabledItems: number;
+}
+
+export const fetchLowFabric = (): Promise<{ threshold: number; fabrics: LowFabric[] }> =>
+  post({ action: 'low_fabric' });
