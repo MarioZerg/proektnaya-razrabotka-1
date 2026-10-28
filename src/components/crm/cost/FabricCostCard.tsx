@@ -5,6 +5,15 @@ import Icon from '@/components/ui/icon';
 import type { CostGroup } from '@/lib/productCostApi';
 import { formatDate } from '@/lib/dateUtils';
 
+const TYPE_ORDER: Record<string, number> = { Тюль: 0, Аксессуары: 1, Упаковка: 2 };
+
+const sortMaterials = (list: CostGroup['materials']) =>
+  [...list].sort(
+    (a, b) =>
+      (TYPE_ORDER[a.typeName] ?? 9) - (TYPE_ORDER[b.typeName] ?? 9) ||
+      a.name.localeCompare(b.name, 'ru'),
+  );
+
 const money = (v: number) =>
   v.toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
@@ -105,7 +114,7 @@ const FabricCostCard = ({ material, widths }: FabricCostCardProps) => {
           {g.materials.length === 0 ? (
             <p className="text-xs text-muted-foreground">Расход не задан</p>
           ) : (
-            g.materials.map((m) => (
+            sortMaterials(g.materials).map((m) => (
               <div key={m.materialId} className="flex justify-between gap-2 text-xs">
                 <span className="min-w-0 truncate">
                   {m.name}
