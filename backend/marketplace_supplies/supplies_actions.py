@@ -3022,6 +3022,11 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
             if 'gazelkaPlanId' in body_data:
                 gp = body_data['gazelkaPlanId']
                 fields.append(f"gazelka_plan_id = {int(gp)}" if gp not in (None, '') else "gazelka_plan_id = NULL")
+                # Номер заявки Газельки (ID отгрузки) — это и есть id привязанной заявки.
+                # Раньше он писался только отдельной кнопкой «Подтянуть», и поставка,
+                # у которой заявка уже выбрана, всё равно висела с «Не хватает данных».
+                if 'gazelkaId' not in body_data:
+                    fields.append(f"gazelka_id = '{int(gp)}'" if gp not in (None, '') else "gazelka_id = NULL")
             if 'gazelkaIds' in body_data:
                 gi = body_data['gazelkaIds']
                 fields.append(f"gazelka_ids = {int(gi)}" if gi not in (None, '') else "gazelka_ids = 0")

@@ -1,0 +1,1 @@
+UPDATE marketplace_supplies SET gazelka_id = gazelka_plan_id::text WHERE gazelka_plan_id IS NOT NULL AND (gazelka_id IS NULL OR gazelka_id = '') AND type = 'FBO' AND status NOT IN ('Выполнена', 'Отменена');

@@ -71,7 +71,13 @@ const GazelkaShippingCard = ({ supply, onReload, isManager, gazelkaReady }: Gaze
   const handleSave = async () => {
     setSaving(true);
     try {
-      await updateSupply(supply.id, { gazelkaPlanId: selected ? Number(selected) : null });
+      const plan = plans.find((p) => String(p.id) === selected);
+      // Вместе с заявкой сразу пишем её номер, забор и короба — отдельно «подтягивать» не нужно.
+      await updateSupply(supply.id, {
+        gazelkaPlanId: selected ? Number(selected) : null,
+        gazelkaId: selected ? selected : '',
+        ...(plan ? { gazelkaPickup: !!plan.cargoPickup, packagingCount: plan.boxes ?? null } : {}),
+      });
       toast({ title: selected ? 'Заявка Газельки привязана' : 'Заявка Газельки отвязана' });
       onReload();
     } catch (e) {
