@@ -133,6 +133,31 @@ const SiteProductsTab = ({ shopId }: { shopId: number }) => {
     }
   };
 
+  const toggleMaterialDisabled = async (title: string) => {
+    const groups = active.filter((g) => g.title === title);
+    const all = groups.flatMap((g) => g.items);
+    const next = !all.every((i) => i.disabled);
+    if (
+      next &&
+      !window.confirm(`Снять с продажи на сайте всю ткань «${title}» (${groups.length} шир.)?`)
+    )
+      return;
+    setToggling(`mat:${title}`);
+    try {
+      const r = await setSiteDisabled({ itemIds: all.map((i) => i.id) }, next, actor);
+      toast(
+        r.pushed
+          ? { title: next ? `«${title}» снята с продажи` : `«${title}» снова продаётся` }
+          : { title: 'Сохранено, на сайт не ушло', description: r.pushError || undefined, variant: 'destructive' }
+      );
+      load();
+    } catch (e) {
+      toast({ title: 'Ошибка', description: e instanceof Error ? e.message : undefined, variant: 'destructive' });
+    } finally {
+      setToggling(null);
+    }
+  };
+
   const productOptions = useMemo(() => {
     const map = new Map<string, string>();
     items.forEach((i) => {
@@ -284,6 +309,8 @@ const SiteProductsTab = ({ shopId }: { shopId: number }) => {
             <tbody>
               {materialGroups.map(([title, groups]) => {
                 const matOpen = autoOpen || openMaterials.has(title);
+                const matAll = active.filter((g) => g.title === title);
+                const matDisabled = matAll.length > 0 && matAll.every((g) => g.disabled);
                 const ws = groups.map((g) => g.width).filter((w): w is number => w != null);
                 const costs = groups.map((g) => g.cost).filter((c): c is number => c != null);
                 const prices = groups.map(priceOf).filter((c): c is number => c != null);
@@ -321,12 +348,32 @@ const SiteProductsTab = ({ shopId }: { shopId: number }) => {
                         {range(costs)}
                       </td>
                       <td className="px-3 py-2.5">{range(prices)}</td>
-                      <td className="px-3 py-2.5" colSpan={3}>
+                      <td className="px-3 py-2.5">
                         {issues.length ? (
                           <span className="text-xs text-amber-700">{issues.join(' · ')}</span>
                         ) : (
                           <span className="text-xs text-emerald-700">всё заполнено</span>
                         )}
+                      </td>
+                      <td className="px-3 py-2.5" colSpan={2} onClick={(e) => e.stopPropagation()}>
+                        {isAdmin && view !== 'archived' ? (
+                          <Button
+                            size="sm"
+                            variant={matDisabled ? 'default' : 'outline'}
+                            disabled={toggling === `mat:${title}`}
+                            onClick={() => toggleMaterialDisabled(title)}
+                          >
+                            {toggling === `mat:${title}` ? (
+                              <Icon name="Loader2" size={14} className="animate-spin" />
+                            ) : matDisabled ? (
+                              'Включить ткань'
+                            ) : (
+                              'Выключить ткань'
+                            )}
+                          </Button>
+                        ) : matDisabled ? (
+                          <span className="text-xs text-amber-700">выключена</span>
+                        ) : null}
                       </td>
                     </tr>
                     {matOpen && groups.map((g) => {
