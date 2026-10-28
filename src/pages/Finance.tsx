@@ -23,7 +23,6 @@ import {
   type CashBoxTransaction,
   type PendingPayout,
 } from '@/lib/salaryApi';
-import ManagerFinanceView from '@/components/crm/finance/ManagerFinanceView';
 import MySalaryView from '@/components/crm/finance/MySalaryView';
 import AdminFinanceView from '@/components/crm/finance/AdminFinanceView';
 
@@ -367,13 +366,6 @@ const Finance = () => {
       toast({ title: 'Ошибка', description: e instanceof Error ? e.message : undefined, variant: 'destructive' });
     }
   };
-
-  // У менеджера маркетплейсов другая схема: не сдельная работа в цехе, а
-  // процент с денег, пришедших на счёт по недельным отчётам площадки.
-  // Показывать ему экран цеховых начислений бессмысленно — он там пустой.
-  if (user?.role === 'manager' && user?.id) {
-    return <ManagerFinanceView userId={user.id} />;
-  }
 
   if (user?.role !== 'admin') {
     if (!user?.id) return null;

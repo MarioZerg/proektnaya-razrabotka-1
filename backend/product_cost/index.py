@@ -1,5 +1,4 @@
 import json
-import urllib.request
 import os
 
 import psycopg2
@@ -32,12 +31,6 @@ def _is_admin(cur, actor_id):
     cur.execute("SELECT role FROM users WHERE id = %s", (int(actor_id),))
     row = cur.fetchone()
     return bool(row and row[0] == 'admin')
-
-
-# Юнит-экономика: там живёт полный расчёт прибыльности товара.
-UNIT_ECONOMICS_URL = (
-    'https://functions.poehali.dev/4ebd72ad-8ca4-456c-840c-d2db30ce04cd'
-)
 
 
 def _settings(cur):
@@ -325,241 +318,7 @@ def _sold_units(cur, days=30):
     return {'days': int(days), 'total': total, 'byMarketplace': out}
 
 
-def loss_share_for_period(cur, p_from, p_to, mp_code='ozon'):
-    """Доля убыточных продаж за период: штук в минусе и их вес в деньгах.
-
-    Нужна для начисления менеджеру: премировать за проданное в убыток не за что.
-    Живёт здесь, а не в финансах менеджера, потому что рядом уже есть весь
-    расчёт себестоимости — считать его во второй раз значит гарантированно
-    разойтись в цифрах.
-
-    Убыточной считаем продажу, где цена не покрывает полных затрат: своя
-    себестоимость (материалы, работа цеха, прочие расходы) плюс удержания
-    площадки — комиссия, эквайринг, логистика.
-
-    Вознаграждение менеджера в затраты НЕ включаем: иначе оно влияет само на
-    себя — чем больше начислено, тем больше товаров становятся убыточными,
-    и расчёт начинает ходить по кругу.
-    """
-    settings = _settings(cur)
-    groups, _ = _calc_groups(cur, settings, 0.0, _salaried(cur)['perUnit'])
-    cost_by_key = {
-        (g['material'], float(g['width'] or 0)): float(g['total'] or 0)
-        for g in groups
-    }
-
-    # В заказах площадка записана своим именем, в тарифах — кодом.
-    mp_orders = {
-        'ozon': 'OZON', 'wildberries': 'WB', 'yandex_market': 'Yandex',
-    }.get(mp_code, mp_code.upper())
-
-    # Прибыльность берём из ЮНИТ-ЭКОНОМИКИ, а не считаем здесь заново.
-    #
-    # Свой упрощённый расчёт (цена минус себестоимость, комиссия и логистика)
-    # давал другую картину: юнитка показывала Лен 200 см в минусе, а здесь он
-    # выходил в плюс на 520 ₽. Она учитывает то, что упрощённая формула
-    # пропускала: продвижение, стоимость возвратов, налог и НДС.
-    #
-    # Два расчёта одного и того же неизбежно расходятся, а решает деньги
-    # именно этот — по нему менеджеру не платят за убыточное. Поэтому источник
-    # правды должен быть один.
-    # Тарифы нужны как запасной вариант, если юнит-экономика не ответит.
-    cur.execute(
-        "SELECT commission_fbs_percent, acquiring_percent, logistics_fbs "
-        "FROM marketplace_tariffs WHERE marketplace_code = %s", (mp_code,)
-    )
-    t = cur.fetchone()
-    commission_pct = float(t[0] or 0) if t else 0.0
-    acquiring_pct = float(t[1] or 0) if t else 0.0
-    logistics = float(t[2] or 0) if t else 0.0
-
-    profit_by_key = {}
-    try:
-        url = (f'{UNIT_ECONOMICS_URL}?marketplace={mp_code}&scheme=FBS')
-        req = urllib.request.Request(url, headers={'Content-Type': 'application/json'})
-        with urllib.request.urlopen(req, timeout=40) as r:
-            ue = json.loads(r.read())
-        for row in (ue.get('rows') or []):
-            # По каждой ВЫСОТЕ своя цена и своя прибыль: внутри группы одна
-            # высота может быть убыточной, пока соседняя приносит доход.
-            for h in (row.get('heights') or []):
-                u = h.get('unit') or {}
-                # Размеры с приблизительной логистикой пропускаем: там
-                # подставлен общий тариф площадки, вчетверо выше реального,
-                # и прибыльный товар выглядит убыточным. Удерживать по такой
-                # цифре деньги с менеджера нельзя.
-                if u.get('logisticsFromTariff'):
-                    continue
-                if u.get('price'):
-                    profit_by_key[(row['material'], float(row['width'] or 0),
-                                   round(float(u['price']), 0))] = float(
-                        u.get('profit') or 0)
-            u = row.get('unit') or {}
-            if u.get('price'):
-                profit_by_key.setdefault(
-                    (row['material'], float(row['width'] or 0), None),
-                    float(u.get('profit') or 0))
-    except Exception:
-        profit_by_key = {}
-
-    # Продажи периода: цена — та, что реально платит покупатель.
-    cur.execute(
-        "SELECT o.material, o.width, "
-        "       coalesce(mp.price_with_marketplace_discount, mp.price), "
-        "       count(*) "
-        "FROM orders o "
-        "JOIN marketplace_prices mp "
-        "  ON mp.marketplace_item_id = o.marketplace_item_id "
-        " AND mp.marketplace_code = %s "
-        "WHERE o.marketplace = %s AND o.cancelled_at IS NULL "
-        "  AND o.created_at::date >= %s AND o.created_at::date <= %s "
-        "  AND coalesce(mp.price_with_marketplace_discount, mp.price) > 0 "
-        "GROUP BY o.material, o.width, "
-        "         coalesce(mp.price_with_marketplace_discount, mp.price)",
-        (mp_code, mp_orders, p_from, p_to),
-    )
-
-    total_units = 0
-    loss_units = 0
-    # Вес считаем по ВЫРУЧКЕ, а не по штукам: убыточной чаще оказывается
-    # дешёвая позиция, и по количеству её доля выглядит больше, чем по деньгам.
-    total_revenue = 0.0
-    loss_revenue = 0.0
-    profit_total = 0.0
-    # Разбор убыточных позиций: менеджеру нужен не сухой вычет, а список,
-    # с которым можно работать — какие товары и насколько ушли в минус.
-    details = []
-
-    for material, width, price, cnt in cur.fetchall():
-        price = float(price or 0)
-        cnt = int(cnt or 0)
-        own = cost_by_key.get((material, float(width or 0)))
-        if own is None:
-            # Себестоимость не посчитана — судить об убытке не по чему.
-            continue
-
-        total_units += cnt
-        total_revenue += price * cnt
-
-        # Прибыль на вещь: сначала ищем точное совпадение по цене, потом —
-        # среднюю по группе. Если юнит-экономика недоступна, считаем по
-        # упрощённой формуле, чтобы расчёт не встал совсем.
-        profit = profit_by_key.get(
-            (material, float(width or 0), round(price, 0)))
-        if profit is None:
-            profit = profit_by_key.get((material, float(width or 0), None))
-        if profit is None:
-            platform = (price * (commission_pct + acquiring_pct) / 100.0
-                        + logistics)
-            profit = price - (own + platform)
-        profit_total += profit * cnt
-
-        if profit <= 0:
-            loss_units += cnt
-            loss_revenue += price * cnt
-            details.append({
-                'material': material,
-                'width': float(width or 0),
-                'price': round(price, 2),
-                'lossPerUnit': round(-profit, 2),
-                'units': cnt,
-                'lossTotal': round(-profit * cnt, 2),
-            })
-
-    share = (loss_revenue / total_revenue) if total_revenue > 0 else 0.0
-    # Средняя маржа за период: сколько осталось с рубля выручки.
-    avg_margin = (profit_total / total_revenue * 100.0) if total_revenue else 0.0
-
-    details.sort(key=lambda x: -x['lossTotal'])
-    return {
-        'lossUnits': loss_units,
-        'totalUnits': total_units,
-        'share': round(share, 6),
-        'avgMargin': round(avg_margin, 2),
-        # Только заметные позиции: длинный список в отчёте читать невозможно.
-        'details': details[:12],
-    }
-
-
-def _manager_commission(cur, sold_units):
-    """Вознаграждение менеджера маркетплейсов и сколько это на вещь.
-
-    Менеджер получает процент с поступлений по отчётам площадок. Считали это
-    вручную, и в себестоимость товара расход не попадал вовсе — при том что на
-    каждой вещи он заметен.
-
-    База — НАЧИСЛЕННОЕ по отчёту, а не пришедшее на счёт. Разница между ними
-    появляется, когда мы берём досрочную выплату: площадка удерживает её из
-    перевода. Но досрочная выплата — наше решение по деньгам, а не результат
-    работы менеджера, и урезать из-за неё вознаграждение неправильно.
-
-    Берём ПРОШЛЫЙ ПОЛНЫЙ месяц: текущий ещё идёт, и по нему сумма занижена —
-    себестоимость скакала бы весь месяц вверх по мере поступления отчётов.
-    """
-    cur.execute(
-        "SELECT percent, is_active, comment, user_id FROM manager_commission_settings "
-        "ORDER BY id LIMIT 1"
-    )
-    row = cur.fetchone()
-    if not row:
-        return None
-    percent = float(row[0] or 0)
-    is_active = bool(row[1])
-
-    # Прошлый полный месяц.
-    cur.execute(
-        "SELECT (date_trunc('month', now()) - interval '1 month')::date, "
-        "       (date_trunc('month', now()) - interval '1 day')::date"
-    )
-    m_start, m_end = cur.fetchone()
-
-    cur.execute(
-        "SELECT coalesce(sum(transferred_amount), 0), "
-        "       coalesce(sum(early_payout_amount), 0), count(*), "
-        "       coalesce(sum(accrued_amount), 0), "
-        "       coalesce(sum(agency_fee), 0) "
-        "FROM marketplace_payouts "
-        "WHERE period_start >= %s AND period_start <= %s",
-        (m_start, m_end),
-    )
-    transferred, early, periods, accrued, agency = cur.fetchone()
-    transferred = float(transferred or 0)
-    accrued = float(accrued or 0)
-    early = float(early or 0)
-    agency = float(agency or 0)
-
-    payout = round(transferred * percent / 100.0, 2)
-    per_unit = round(payout / sold_units, 2) if sold_units else None
-
-    return {
-        'percent': percent,
-        'isActive': is_active,
-        # Кому начисляем: нужен владельцу, чтобы открыть отчёты менеджера
-        # и выплатить по ним, не переключая учётную запись.
-        'userId': int(row[3]) if len(row) > 3 and row[3] else None,
-        'comment': row[2],
-        'month': str(m_start),
-        'monthEnd': str(m_end),
-        'periods': int(periods or 0),
-        # Фактически перечислено на расчётный счёт — БАЗА ПРОЦЕНТА.
-        # Раньше базой было «начисленное», которое мы складывали сами из
-        # заказов и удержаний. Оно расходилось с деньгами: в услугах сидит
-        # агентское вознаграждение — техническая проводка на миллионы, из-за
-        # неё июль показывал 17,1 млн вместо реальных перечислений.
-        'transferred': round(transferred, 2),
-        # Расчётная сумма по отчёту — для сверки, но не база.
-        'accrued': round(accrued, 2),
-        # Агентское вознаграждение: объясняет разрыв между ними.
-        'agencyFee': round(agency, 2),
-        # Удержано досрочными выплатами: на процент менеджера не влияет,
-        # но показать надо — это реальные деньги, ушедшие из перевода.
-        'earlyPayout': round(early, 2),
-        'payout': payout,
-        'perUnit': per_unit,
-    }
-
-
-def _calc_groups(cur, settings, manager_per_unit=0.0, salaried_per_unit=0.0):
+def _calc_groups(cur, settings, salaried_per_unit=0.0):
     """Себестоимость по ТКАНИ и ШИРИНЕ, а не по каждому товару.
 
     Высота изделия на себестоимость не влияет: полотно кроят по ширине, тесьму
@@ -574,11 +333,6 @@ def _calc_groups(cur, settings, manager_per_unit=0.0, salaried_per_unit=0.0):
     cutter_rates, sewer_rates, packer_rate = _rates(cur, settings['workshopId'])
     extras = _extra_expenses(cur)
     extra_per_unit = round(sum(e['perUnit'] for e in extras if e['isActive']), 4)
-    # Вознаграждение менеджера — такой же расход на вещь, как коробка или
-    # оклад кладовщика. Раньше оно считалось отдельной панелью и в стоимость
-    # товара не попадало: себестоимость выглядела ниже настоящей, а решения
-    # по ценам принимались по ней.
-    manager_cost = round(float(manager_per_unit or 0), 4)
     salaried_cost = round(float(salaried_per_unit or 0), 4)
 
     # Берём ОДИН товар-образец на каждую пару «ткань + ширина»: расход внутри пары
@@ -665,7 +419,7 @@ def _calc_groups(cur, settings, manager_per_unit=0.0, salaried_per_unit=0.0):
 
         # Прочие расходы: список статей владельца плюс старое общее поле.
         overhead = round(
-            extra_per_unit + settings['overheadPerItem'] + manager_cost, 2
+            extra_per_unit + settings['overheadPerItem'], 2
         )
 
         # СЕБЕСТОИМОСТЬ — ТОЛЬКО НАШИ ЗАТРАТЫ.
@@ -704,7 +458,6 @@ def _calc_groups(cur, settings, manager_per_unit=0.0, salaried_per_unit=0.0):
             'overhead': overhead,
             # Из чего сложились прочие расходы: ручные статьи и менеджер.
             'overheadExtra': round(extra_per_unit + settings['overheadPerItem'], 2),
-            'overheadManager': round(manager_cost, 2),
             'total': total,
             'missing': [
                 *(['Не задан расход материалов'] if not g['materials'] else []),
@@ -750,28 +503,10 @@ def handler(event: dict, context) -> dict:
         if method == 'GET':
             params = event.get('queryStringParameters') or {}
 
-            # Доля убыточных продаж за период — для начисления менеджеру.
-            # Отдельным действием, чтобы не считать её при каждом открытии
-            # страницы себестоимости: запрос тяжёлый, а нужен раз в неделю.
-            if params.get('action') == 'loss_share':
-                p_from = params.get('from')
-                p_to = params.get('to')
-                if not p_from or not p_to:
-                    return _resp(400, {'error': 'Укажите from и to'})
-                return _resp(200, loss_share_for_period(
-                    cur, p_from, p_to, params.get('marketplace') or 'ozon'))
-
             settings = _settings(cur)
             sold = _sold_units(cur, 30)
-            manager = _manager_commission(cur, sold['total'])
-            # Вознаграждение включаем в себестоимость только когда расчёт
-            # включён: выключенная договорённость не должна тихо сидеть в цене.
-            manager_per_unit = (
-                manager['perUnit'] or 0
-                if manager and manager.get('isActive') else 0
-            )
             salaried = _salaried(cur)
-            groups, extras = _calc_groups(cur, settings, manager_per_unit, salaried['perUnit'])
+            groups, extras = _calc_groups(cur, settings, salaried['perUnit'])
             cur.execute("SELECT id, name FROM workshops WHERE name NOT IN ('Цех №2', 'Тестовый цех (QA)') ORDER BY id")
             workshops = [{'id': r[0], 'name': r[1]} for r in cur.fetchall()]
             return _resp(200, {
@@ -782,8 +517,6 @@ def handler(event: dict, context) -> dict:
                 # Сколько вещей реально продано за месяц — подсказка для
                 # делителя постоянных расходов, чтобы его не брали «на глаз».
                 'sold': sold,
-                # Вознаграждение менеджера маркетплейсов: процент с поступлений.
-                'manager': manager,
                 # Окладная часть из «Финансов» за прошлый месяц на одну изготовленную вещь.
                 'salaried': salaried,
                 # Последние приёмки по материалу: подставить цену метра в карточку.
@@ -845,28 +578,6 @@ def handler(event: dict, context) -> dict:
                     return _resp(400, {'error': 'Укажите id'})
                 cur.execute(
                     "DELETE FROM cost_extra_expenses WHERE id = %s", (int(expense_id),)
-                )
-                conn.commit()
-                return _resp(200, {'ok': True})
-
-            if action == 'save_manager':
-                # Ставка менеджера маркетплейсов. Меняется руками: договорённость
-                # может пересматриваться, а из отчётов площадки её не вывести.
-                try:
-                    percent = float(body_data.get('percent') or 0)
-                except (TypeError, ValueError):
-                    return _resp(400, {'error': 'Процент указан неверно'})
-                if percent < 0 or percent > 50:
-                    return _resp(400, {'error': 'Процент должен быть от 0 до 50'})
-                cur.execute(
-                    "UPDATE manager_commission_settings SET percent = %s, "
-                    "  is_active = %s, comment = %s, updated_at = now(), "
-                    "  updated_by = %s "
-                    "WHERE id = (SELECT id FROM manager_commission_settings "
-                    "            ORDER BY id LIMIT 1)",
-                    (percent, bool(body_data.get('isActive', True)),
-                     (body_data.get('comment') or '').strip() or None,
-                     body_data.get('actorId')),
                 )
                 conn.commit()
                 return _resp(200, {'ok': True})

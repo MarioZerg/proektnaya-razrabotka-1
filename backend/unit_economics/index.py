@@ -1154,67 +1154,25 @@ def _rates(cur, workshop_id):
     return cutter, sewer, packer
 
 
-def _manager_per_unit(cur):
-    """Доля менеджера маркетплейсов в себестоимости одной вещи.
+SALARIED_TYPES = ('storekeeper_shift', 'senior_storekeeper_shift', 'cleaner_shift',
+                  'packer_returns_shift', 'admin_daily')
 
-    Менеджер получает процент с денег, реально пришедших на счёт. Сумма за
-    месяц раскладывается на все проданные за месяц вещи — это такой же
-    постоянный расход, как аренда или зарплата кладовщика.
 
-    Считаем ровно так же, как страница себестоимости: одна и та же цифра
-    должна выходить с обеих сторон. Пока эта доля здесь не учитывалась,
-    юнит-экономика показывала прибыль на 25 рублей с вещи больше настоящей,
-    и цены назначались с оглядкой на завышенный запас.
+def _salaried_per_unit(cur):
+    """Оклады из «Финансов» за прошлый месяц на одну сшитую вещь.
+
+    Ровно как на странице себестоимости: одна цифра с обеих сторон.
     """
-    cur.execute(
-        "SELECT percent, is_active FROM manager_commission_settings "
-        "ORDER BY id LIMIT 1")
-    row = cur.fetchone()
-    if not row or not row[1]:
-        return 0.0
-    percent = float(row[0] or 0)
-    if percent <= 0:
-        return 0.0
-
-    # База — прошлый ПОЛНЫЙ месяц: за текущий деньги ещё приходят, и делить
-    # неполную сумму на неполные продажи бессмысленно.
-    cur.execute(
-        "SELECT coalesce(sum(transferred_amount), 0) "
-        "FROM marketplace_payouts "
-        "WHERE period_start >= (date_trunc('month', now()) "
-        "                       - interval '1 month')::date "
-        "  AND period_start <= (date_trunc('month', now()) "
-        "                       - interval '1 day')::date")
-    transferred = float((cur.fetchone() or [0])[0] or 0)
-    if transferred <= 0:
-        return 0.0
-
-    # Сколько вещей продано за месяц — та же база, что на странице
-    # себестоимости. Считать по-разному нельзя: цифры разойдутся, и станет
-    # непонятно, какой из двух себестоимостей верить.
-    #
-    # OZON отдаёт продажи в финансовом отчёте (обе схемы), а по WB и Яндексу
-    # такого отчёта нет — там считаем отгруженные заказы.
-    cur.execute(
-        "SELECT coalesce(sold_units, 0) FROM marketplace_ad_spend "
-        "WHERE marketplace_code = 'ozon' AND marketplace_item_id IS NULL "
-        "ORDER BY calculated_at DESC LIMIT 1")
-    r = cur.fetchone()
-    sold = int(r[0] or 0) if r else 0
-
-    cur.execute(
-        "SELECT count(*) FROM orders "
-        "WHERE cancelled_at IS NULL AND marketplace <> 'OZON' "
-        "  AND status = 'Отгружен' "
-        "  AND created_at >= now() - interval '30 days'")
-    r2 = cur.fetchone()
-    sold += int(r2[0] or 0) if r2 else 0
-
-    if sold <= 0:
-        return 0.0
-
-    return round(transferred * percent / 100.0 / sold, 4)
-
+    types_sql = ','.join(f"'{t}'" for t in SALARIED_TYPES)
+    period = ("accrued_for >= date_trunc('month', (now() + interval '3 hours')) - interval '1 month' "
+              "AND accrued_for < date_trunc('month', (now() + interval '3 hours'))")
+    cur.execute(f"SELECT COALESCE(SUM(amount), 0) FROM salary_accruals "
+                f"WHERE type IN ({types_sql}) AND {period}")
+    total = float((cur.fetchone() or [0])[0] or 0)
+    cur.execute(f"SELECT COUNT(DISTINCT order_id) FROM salary_accruals "
+                f"WHERE type = 'sewer_piece' AND order_id IS NOT NULL AND {period}")
+    made = int((cur.fetchone() or [0])[0] or 0)
+    return round(total / made, 4) if made else 0.0
 
 def _realization_prices(cur, months=2):
     """Цена продажи по официальному отчёту OZON: {sku: (цена, продаж)}.
@@ -1273,10 +1231,8 @@ def _cost_by_group(cur):
         per = int(per_items or 1) or 1
         extra_per_unit += float(amount or 0) / per
 
-    # Вознаграждение менеджера — такой же постоянный расход на вещь, как
-    # коробка или зарплата кладовщика. Страница себестоимости его учитывает,
-    # а здесь он терялся: прибыль выходила завышенной.
-    manager_cost = _manager_per_unit(cur)
+    # Оклады склада и уборки — часть работы цеха, как на странице себестоимости.
+    salaried_cost = round(_salaried_per_unit(cur), 2)
 
     prices = _material_prices(cur)
     cutter_rates, sewer_rates, packer_rate = _rates(cur, workshop_id)
@@ -1322,8 +1278,8 @@ def _cost_by_group(cur):
         cut = round(meters * cutter_rates.get(fabric_id, 0.0), 2) if fabric_id else 0.0
         sew = round(sewer_rates.get(int(width), 0.0), 2) if width else 0.0
         pack = round(meters * packer_rate, 2)
-        labor = cut + sew + pack
-        overhead = round(extra_per_unit + overhead_legacy + manager_cost, 2)
+        labor = cut + sew + pack + salaried_cost
+        overhead = round(extra_per_unit + overhead_legacy, 2)
         # Обрезки, брак и пересорт: материал оплачен, а в изделие не попал.
         shortage = round(materials_cost * shortage_pct / 100, 2)
         out[(material, width_raw)] = {
@@ -1334,9 +1290,7 @@ def _cost_by_group(cur):
             'cutCost': cut, 'sewCost': sew, 'packWorkCost': pack,
             'laborCost': round(labor, 2),
             'overhead': overhead,
-            # Доля менеджера отдельной строкой: в разборе расходов должно
-            # быть видно, из чего сложилась накладная часть.
-            'overheadManager': round(manager_cost, 2),
+            'salariedCost': salaried_cost,
             # Полная себестоимость производства — без комиссии и налога.
             'productionCost': round(materials_cost + shortage + labor
                                     + overhead, 2),

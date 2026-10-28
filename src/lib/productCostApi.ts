@@ -56,8 +56,6 @@ export interface CostGroup {
   overhead: number;
   /** Из чего сложились прочие расходы: ручные статьи. */
   overheadExtra?: number;
-  /** Вознаграждение менеджера маркетплейсов на одну вещь. */
-  overheadManager?: number;
   /** Во сколько вещь обходится цеху. Без налога и комиссии площадки. */
   total: number;
   /** Чего не хватает для честной цифры. */
@@ -110,31 +108,6 @@ export interface SoldUnits {
   byMarketplace: SoldByMarketplace[];
 }
 
-/** Вознаграждение менеджера маркетплейсов за прошлый месяц. */
-export interface ManagerCommission {
-  percent: number;
-  isActive: boolean;
-  /** Кому начисляем — по нему открываем отчёты для выплаты. */
-  userId: number | null;
-  comment: string | null;
-  /** Первое число месяца, за который считаем. */
-  month: string;
-  monthEnd: string;
-  /** Сколько отчётов площадки попало в расчёт. */
-  periods: number;
-  /** Фактически перечислено на расчётный счёт — база процента. */
-  transferred: number;
-  /** Расчётная сумма по отчёту: для сверки, но не база. */
-  accrued: number;
-  /** Агентское вознаграждение — техническая проводка, не деньги. */
-  agencyFee: number;
-  /** Удержано досрочными выплатами: на процент не влияет. */
-  earlyPayout: number;
-  payout: number;
-  /** Сколько это на одну проданную вещь. */
-  perUnit: number | null;
-}
-
 /** Оклады из «Финансов» за прошлый месяц, поделённые на изготовленные вещи. */
 export interface SalariedCost {
   month: string;
@@ -150,7 +123,6 @@ export interface CostResponse {
   extras: ExtraExpense[];
   workshops: { id: number; name: string }[];
   sold: SoldUnits;
-  manager: ManagerCommission | null;
   salaried?: SalariedCost;
   /** Последние приёмки по id материала — чтобы подставить цену метра в карточку. */
   suppliesByMaterial?: Record<string, MaterialSupplyPrice[]>;
@@ -236,10 +208,3 @@ export const loadRecentSupplyPrices = async (): Promise<Record<string, MaterialS
   }
   return map;
 };
-
-export const saveManagerCommission = (payload: {
-  percent: number;
-  isActive: boolean;
-  comment?: string;
-  actorId?: number;
-}) => post({ action: 'save_manager', ...payload });
