@@ -9,6 +9,7 @@ import FabricCostCard from '@/components/crm/cost/FabricCostCard';
 import CostSettingsPanel from '@/components/crm/cost/CostSettingsPanel';
 import ExtraExpensesPanel from '@/components/crm/cost/ExtraExpensesPanel';
 import ManagerCommissionPanel from '@/components/crm/cost/ManagerCommissionPanel';
+import SalariedCostPanel from '@/components/crm/cost/SalariedCostPanel';
 import ManagerAccrualsPanel from '@/components/crm/finance/ManagerAccrualsPanel';
 import {
   fetchProductCosts,
@@ -142,6 +143,8 @@ const ProductCost = () => {
         {data && canEdit && (
           <ExtraExpensesPanel expenses={data.extras} sold={data.sold} onChanged={load} />
         )}
+
+        {data?.salaried && canEdit && <SalariedCostPanel salaried={data.salaried} />}
 
         {/* Вознаграждение менеджера маркетплейсов: тоже расход на вещь, но
             считается от поступлений по отчётам, а не задаётся вручную. */}

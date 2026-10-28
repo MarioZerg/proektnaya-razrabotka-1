@@ -205,6 +205,50 @@ def _extra_expenses(cur):
     return rows
 
 
+SALARIED_TYPES = ('storekeeper_shift', 'senior_storekeeper_shift', 'cleaner_shift',
+                  'packer_returns_shift', 'admin_daily')
+SALARIED_LABELS = {
+    'storekeeper_shift': 'Кладовщики',
+    'senior_storekeeper_shift': 'Старший кладовщик',
+    'cleaner_shift': 'Уборщица',
+    'packer_returns_shift': 'Упаковщица-возвраты',
+    'admin_daily': 'Администратор',
+}
+
+
+def _salaried(cur):
+    """Окладные начисления из «Финансов» на одну изготовленную вещь.
+
+    Берём прошлый ПОЛНЫЙ месяц: текущий ещё не закончен, и деление половины
+    окладов на половину выпуска шатало бы цифру каждый день. Изготовленные
+    вещи — те, за пошив которых начислено швеям.
+    """
+    types_sql = ','.join(f"'{t}'" for t in SALARIED_TYPES)
+    period = ("accrued_for >= date_trunc('month', (now() + interval '3 hours')) - interval '1 month' "
+              "AND accrued_for < date_trunc('month', (now() + interval '3 hours'))")
+    cur.execute(
+        f"SELECT type, COALESCE(SUM(amount), 0) FROM salary_accruals "
+        f"WHERE type IN ({types_sql}) AND {period} GROUP BY type"
+    )
+    parts = [{'type': t, 'label': SALARIED_LABELS.get(t, t), 'amount': round(float(a or 0), 2)}
+             for t, a in cur.fetchall() if float(a or 0) != 0]
+    cur.execute(
+        f"SELECT COUNT(DISTINCT order_id), "
+        f"  to_char(date_trunc('month', (now() + interval '3 hours')) - interval '1 month', 'YYYY-MM') "
+        f"FROM salary_accruals WHERE type = 'sewer_piece' AND order_id IS NOT NULL AND {period}"
+    )
+    made, month = cur.fetchone()
+    made = int(made or 0)
+    total = round(sum(p['amount'] for p in parts), 2)
+    return {
+        'month': month,
+        'total': total,
+        'madeUnits': made,
+        'perUnit': round(total / made, 4) if made else 0.0,
+        'parts': sorted(parts, key=lambda p: -p['amount']),
+    }
+
+
 def _sold_units(cur, days=30):
     """Сколько вещей РЕАЛЬНО продано за период — по всем площадкам и схемам.
 
@@ -298,7 +342,7 @@ def loss_share_for_period(cur, p_from, p_to, mp_code='ozon'):
     и расчёт начинает ходить по кругу.
     """
     settings = _settings(cur)
-    groups, _ = _calc_groups(cur, settings, 0.0)
+    groups, _ = _calc_groups(cur, settings, 0.0, _salaried(cur)['perUnit'])
     cost_by_key = {
         (g['material'], float(g['width'] or 0)): float(g['total'] or 0)
         for g in groups
@@ -515,7 +559,7 @@ def _manager_commission(cur, sold_units):
     }
 
 
-def _calc_groups(cur, settings, manager_per_unit=0.0):
+def _calc_groups(cur, settings, manager_per_unit=0.0, salaried_per_unit=0.0):
     """Себестоимость по ТКАНИ и ШИРИНЕ, а не по каждому товару.
 
     Высота изделия на себестоимость не влияет: полотно кроят по ширине, тесьму
@@ -535,6 +579,7 @@ def _calc_groups(cur, settings, manager_per_unit=0.0):
     # товара не попадало: себестоимость выглядела ниже настоящей, а решения
     # по ценам принимались по ней.
     manager_cost = round(float(manager_per_unit or 0), 4)
+    salaried_cost = round(float(salaried_per_unit or 0), 4)
 
     # Берём ОДИН товар-образец на каждую пару «ткань + ширина»: расход внутри пары
     # одинаковый, а высоту мы намеренно не различаем.
@@ -618,7 +663,7 @@ def _calc_groups(cur, settings, manager_per_unit=0.0):
 
         # Прочие расходы: список статей владельца плюс старое общее поле.
         overhead = round(
-            extra_per_unit + settings['overheadPerItem'] + manager_cost, 2
+            extra_per_unit + settings['overheadPerItem'] + manager_cost + salaried_cost, 2
         )
 
         # СЕБЕСТОИМОСТЬ — ТОЛЬКО НАШИ ЗАТРАТЫ.
@@ -657,6 +702,7 @@ def _calc_groups(cur, settings, manager_per_unit=0.0):
             # Из чего сложились прочие расходы: ручные статьи и менеджер.
             'overheadExtra': round(extra_per_unit + settings['overheadPerItem'], 2),
             'overheadManager': round(manager_cost, 2),
+            'overheadSalaried': round(salaried_cost, 2),
             'total': total,
             'missing': [
                 *(['Не задан расход материалов'] if not g['materials'] else []),
@@ -722,7 +768,8 @@ def handler(event: dict, context) -> dict:
                 manager['perUnit'] or 0
                 if manager and manager.get('isActive') else 0
             )
-            groups, extras = _calc_groups(cur, settings, manager_per_unit)
+            salaried = _salaried(cur)
+            groups, extras = _calc_groups(cur, settings, manager_per_unit, salaried['perUnit'])
             cur.execute("SELECT id, name FROM workshops WHERE name NOT IN ('Цех №2', 'Тестовый цех (QA)') ORDER BY id")
             workshops = [{'id': r[0], 'name': r[1]} for r in cur.fetchall()]
             return _resp(200, {
@@ -735,6 +782,8 @@ def handler(event: dict, context) -> dict:
                 'sold': sold,
                 # Вознаграждение менеджера маркетплейсов: процент с поступлений.
                 'manager': manager,
+                # Окладная часть из «Финансов» за прошлый месяц на одну изготовленную вещь.
+                'salaried': salaried,
                 # Последние приёмки по материалу: подставить цену метра в карточку.
                 'suppliesByMaterial': _recent_supplies(cur),
             })

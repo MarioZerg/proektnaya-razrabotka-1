@@ -246,6 +246,12 @@ const FabricCostCard = ({ material, widths, supplies }: FabricCostCardProps) => 
             {/* Вознаграждение менеджера показываем отдельной строкой: оно
                 считается от продаж и меняется само, в отличие от статей,
                 которые владелец задаёт руками. */}
+            {!!g.overheadSalaried && g.overheadSalaried > 0 && (
+              <div className="mt-0.5 flex justify-between text-xs text-muted-foreground">
+                <span className="pl-2">· оклады из финансов</span>
+                <span>{money(g.overheadSalaried)} ₽</span>
+              </div>
+            )}
             {!!g.overheadManager && g.overheadManager > 0 && (
               <div className="mt-0.5 flex justify-between text-xs text-muted-foreground">
                 <span className="pl-2">· менеджер маркетплейсов</span>

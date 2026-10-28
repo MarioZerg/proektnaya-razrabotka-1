@@ -56,6 +56,8 @@ export interface CostGroup {
   overheadExtra?: number;
   /** Вознаграждение менеджера маркетплейсов на одну вещь. */
   overheadManager?: number;
+  /** Окладная часть из «Финансов» на одну изготовленную вещь. */
+  overheadSalaried?: number;
   /** Во сколько вещь обходится цеху. Без налога и комиссии площадки. */
   total: number;
   /** Чего не хватает для честной цифры. */
@@ -133,6 +135,15 @@ export interface ManagerCommission {
   perUnit: number | null;
 }
 
+/** Оклады из «Финансов» за прошлый месяц, поделённые на изготовленные вещи. */
+export interface SalariedCost {
+  month: string;
+  total: number;
+  madeUnits: number;
+  perUnit: number;
+  parts: { type: string; label: string; amount: number }[];
+}
+
 export interface CostResponse {
   settings: CostSettings;
   groups: CostGroup[];
@@ -140,6 +151,7 @@ export interface CostResponse {
   workshops: { id: number; name: string }[];
   sold: SoldUnits;
   manager: ManagerCommission | null;
+  salaried?: SalariedCost;
   /** Последние приёмки по id материала — чтобы подставить цену метра в карточку. */
   suppliesByMaterial?: Record<string, MaterialSupplyPrice[]>;
 }
