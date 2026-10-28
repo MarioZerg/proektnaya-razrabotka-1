@@ -57,81 +57,61 @@ def _settings(cur):
 
 
 def _material_prices(cur):
-    """Актуальная цена каждого материала за единицу.
+    """Цена материала за единицу — по ПОСЛЕДНЕЙ поставке этого материала.
 
-    Цену берём из прайса поставщика с его курсом валюты — это «живая» цена: меняется
-    прайс, меняется и себестоимость, без ручного ввода. Из нескольких поставщиков
-    берём максимальную: считать выгодно по худшему сценарию, иначе себестоимость
-    окажется занижена и товар будет казаться прибыльнее, чем он есть.
-
-    Прайса нет (старый материал, разовая закупка) — падаем на среднюю цену рулонов,
-    лежащих на складе. Это фактические деньги, уже потраченные на этот материал.
+    В одну приёмку собирают всех поставщиков: ткань, тесьму, пакеты. Каждый
+    материал берёт цену из своей последней завершённой приёмки, где цена вписана
+    (средняя по метражу рулонов этой приёмки). Нет такой поставки — прайс
+    поставщика, нет и его — «нет цены».
     """
     cur.execute(
+        "WITH last_supply AS ("
+        "  SELECT DISTINCT ON (r.material_id) r.material_id, s.id AS shipment_id, "
+        "         COALESCE(s.completed_at, s.created_at) AS dt "
+        "  FROM rolls r JOIN shipments s ON s.id = r.shipment_id "
+        "  WHERE s.type = 'from_supplier' AND s.status = 'Завершено' "
+        "    AND r.cost_per_unit > 0 AND r.removed_at IS NULL "
+        "  ORDER BY r.material_id, COALESCE(s.completed_at, s.created_at) DESC, s.id DESC"
+        "), last_price AS ("
+        "  SELECT ls.material_id, ls.shipment_id, ls.dt, "
+        "         SUM(r.cost_per_unit * NULLIF(r.initial_quantity, 0)) "
+        "           / NULLIF(SUM(NULLIF(r.initial_quantity, 0)), 0) AS price, "
+        "         AVG(r.cost_per_unit) AS avg_price "
+        "  FROM last_supply ls JOIN rolls r "
+        "    ON r.shipment_id = ls.shipment_id AND r.material_id = ls.material_id "
+        "  WHERE r.cost_per_unit > 0 AND r.removed_at IS NULL "
+        "  GROUP BY ls.material_id, ls.shipment_id, ls.dt"
+        ") "
         "SELECT m.id, m.name, m.unit, mt.name, "
+        "  COALESCE(lp.price, lp.avg_price), lp.shipment_id, lp.dt, "
         "  (SELECT MAX(sp.price * COALESCE(s.exchange_rate, 1)) "
         "     FROM supplier_prices sp "
         "     JOIN suppliers s ON s.id = sp.supplier_id "
-        "    WHERE sp.material_id = m.id), "
-        "  (SELECT AVG(NULLIF(r.cost_per_unit, 0)) FROM rolls r "
-        "    WHERE r.material_id = m.id "
-        "      AND r.status IN ('in_storage', 'in_workshop')) "
+        "    WHERE sp.material_id = m.id) "
         "FROM materials m "
-        "LEFT JOIN material_types mt ON mt.id = m.type_id"
+        "LEFT JOIN material_types mt ON mt.id = m.type_id "
+        "LEFT JOIN last_price lp ON lp.material_id = m.id"
     )
     out = {}
     for r in cur.fetchall():
-        supplier_price = float(r[4]) if r[4] is not None else None
-        roll_price = float(r[5]) if r[5] is not None else None
-        price = supplier_price if supplier_price else (roll_price or 0.0)
+        supply_price = float(r[4]) if r[4] is not None else None
+        supplier_price = float(r[7]) if r[7] is not None else None
+        if supply_price:
+            price, source = supply_price, 'supply'
+        elif supplier_price:
+            price, source = supplier_price, 'supplier'
+        else:
+            price, source = 0.0, 'none'
         out[r[0]] = {
             'name': r[1],
             'unit': r[2],
             'typeName': r[3] or '',
             'price': round(price, 4),
-            # Откуда взяли цену — владелец должен видеть, чему верить.
-            'priceSource': 'supplier' if supplier_price else ('rolls' if roll_price else 'none'),
+            'priceSource': source,
+            'shipmentId': r[5] if supply_price else None,
+            'shipmentDate': r[6].isoformat() if supply_price and r[6] else None,
         }
     return out
-
-
-def _recent_supplies(cur, per_material=5):
-    """Последние приёмки по каждому материалу — фактическая цена 1 пог.м.
-
-    Прайс поставщика в карточке себестоимости — плановая цена. После машины
-    метр стоит иначе: курс, логистика, правки метража. Владелец подставляет
-    цену из конкретной поставки и смотрит, как поедет себестоимость вещи.
-    """
-    cur.execute(
-        "SELECT r.material_id, s.id, "
-        "       COALESCE(s.completed_at, s.created_at), "
-        "       COALESCE(MAX(sup.name), ''), "
-        "       AVG(r.cost_per_unit), "
-        "       SUM(r.initial_quantity) "
-        "FROM rolls r "
-        "JOIN shipments s ON s.id = r.shipment_id "
-        "LEFT JOIN suppliers sup ON sup.id = COALESCE(r.supplier_id, s.supplier_id) "
-        "WHERE s.type = 'from_supplier' "
-        "  AND s.status = 'Завершено' "
-        "  AND r.cost_per_unit IS NOT NULL "
-        "  AND r.removed_at IS NULL "
-        "GROUP BY r.material_id, s.id, s.completed_at, s.created_at "
-        "ORDER BY r.material_id, COALESCE(s.completed_at, s.created_at) DESC, s.id DESC"
-    )
-    by_mat = {}
-    for mid, sid, dt, sname, cpu, qty in cur.fetchall():
-        key = str(mid)
-        arr = by_mat.setdefault(key, [])
-        if len(arr) >= per_material:
-            continue
-        arr.append({
-            'shipmentId': sid,
-            'completedAt': dt.isoformat() if dt else None,
-            'supplierName': sname or '—',
-            'costPerUnit': round(float(cpu), 4),
-            'quantity': round(float(qty or 0), 2),
-        })
-    return by_mat
 
 
 def _rates(cur, workshop_id):
@@ -372,6 +352,8 @@ def _calc_groups(cur, settings, salaried_per_unit=0.0):
                 'pricePerUnit': p['price'],
                 'sum': round(qty * p['price'], 2),
                 'priceSource': p['priceSource'],
+                'shipmentId': p.get('shipmentId'),
+                'shipmentDate': p.get('shipmentDate'),
             })
 
     # Сколько товаров стоит за каждой парой — владельцу видно, что плашка
@@ -463,7 +445,7 @@ def _calc_groups(cur, settings, salaried_per_unit=0.0):
                 *(['Не задан расход материалов'] if not g['materials'] else []),
                 *(['Нет тарифа закройщика'] if cut_cost == 0 else []),
                 *(['Нет тарифа швеи'] if sew_cost == 0 else []),
-                *([f'Нет цены: {m["name"]}'
+                *([f'Нет цены ни в одной поставке: {m["name"]}'
                    for m in g['materials'] if m['priceSource'] == 'none']),
             ],
         })
@@ -519,8 +501,6 @@ def handler(event: dict, context) -> dict:
                 'sold': sold,
                 # Окладная часть из «Финансов» за прошлый месяц на одну изготовленную вещь.
                 'salaried': salaried,
-                # Последние приёмки по материалу: подставить цену метра в карточку.
-                'suppliesByMaterial': _recent_supplies(cur),
             })
 
         if method == 'POST':

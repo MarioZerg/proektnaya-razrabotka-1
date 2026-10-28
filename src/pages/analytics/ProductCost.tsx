@@ -11,10 +11,8 @@ import ExtraExpensesPanel from '@/components/crm/cost/ExtraExpensesPanel';
 import SalariedCostPanel from '@/components/crm/cost/SalariedCostPanel';
 import {
   fetchProductCosts,
-  loadRecentSupplyPrices,
   type CostResponse,
   type CostGroup,
-  type MaterialSupplyPrice,
 } from '@/lib/productCostApi';
 import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
 
@@ -42,7 +40,6 @@ const ProductCost = () => {
   const [loading, setLoading] = useState(true);
   const [listError, setListError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
-  const [supplyMap, setSupplyMap] = useState<Record<string, MaterialSupplyPrice[]> | null>(null);
 
   const load = () => {
     setLoading(true);
@@ -61,17 +58,6 @@ const ProductCost = () => {
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  useEffect(() => {
-    if (!data) return;
-    if (data.suppliesByMaterial) {
-      setSupplyMap(data.suppliesByMaterial);
-      return;
-    }
-    loadRecentSupplyPrices()
-      .then(setSupplyMap)
-      .catch(() => setSupplyMap({}));
-  }, [data]);
 
   const groups = useMemo(() => data?.groups || [], [data]);
 
@@ -218,22 +204,9 @@ const ProductCost = () => {
         ) : (
           /* Плашка на каждую ткань, внутри — переключение по ширинам. */
           <div className="grid grid-cols-1 gap-3 lg:grid-cols-2 2xl:grid-cols-3">
-            {visible.map((f) => {
-              const fabricId = f.widths[0]?.materials.find((m) => m.typeName === 'Тюль')?.materialId;
-              const supplies = !supplyMap
-                ? null
-                : fabricId != null
-                  ? supplyMap[String(fabricId)] || []
-                  : [];
-              return (
-                <FabricCostCard
-                  key={f.material}
-                  material={f.material}
-                  widths={f.widths}
-                  supplies={supplies}
-                />
-              );
-            })}
+            {visible.map((f) => (
+              <FabricCostCard key={f.material} material={f.material} widths={f.widths} />
+            ))}
           </div>
         )}
       </div>
