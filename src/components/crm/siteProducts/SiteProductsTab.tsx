@@ -162,19 +162,6 @@ const SiteProductsTab = ({ shopId }: { shopId: number }) => {
     )
     .sort((a, b) => a.title.localeCompare(b.title, 'ru') || (a.width || 0) - (b.width || 0));
 
-  const editingItem = useMemo(
-    () =>
-      editing
-        ? {
-            id: editing.items[0].id,
-            name: `${editing.title} · ширина ${editing.width ?? '—'} см`,
-            article: `${editing.items.length} высот`,
-          }
-        : null,
-    [editing]
-  );
-  const editingIds = useMemo(() => editing?.items.map((i) => i.id), [editing]);
-
   const toggleOpen = (key: string) =>
     setOpen((prev) => {
       const next = new Set(prev);
@@ -394,8 +381,7 @@ const SiteProductsTab = ({ shopId }: { shopId: number }) => {
       )}
 
       <SiteItemMaterialsDialog
-        item={editingItem}
-        itemIds={editingIds}
+        group={editing}
         materials={materials}
         onClose={() => setEditing(null)}
         onSaved={load}

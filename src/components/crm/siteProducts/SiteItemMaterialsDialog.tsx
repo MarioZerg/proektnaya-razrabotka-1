@@ -12,11 +12,7 @@ import {
 } from '@/components/ui/select';
 import Icon from '@/components/ui/icon';
 import { useToast } from '@/hooks/use-toast';
-import {
-  fetchMarketplaceItemDetail,
-  setMarketplaceItemMaterials,
-  type MarketplaceItem,
-} from '@/lib/marketplaceItemsApi';
+import { fetchMarketplaceItemDetail, setMarketplaceItemMaterials } from '@/lib/marketplaceItemsApi';
 import type { Material } from '@/lib/materialsApi';
 
 interface Row {
@@ -24,56 +20,91 @@ interface Row {
   quantity: string;
 }
 
+export interface MaterialsDialogGroup {
+  title: string;
+  width: number | null;
+  items: { id: number; height: number | null; article: string | null }[];
+}
+
 interface Props {
-  item: Pick<MarketplaceItem, 'id' | 'name' | 'article'> | null;
-  /** Все артикулы ширины: расход сохраняется сразу на них. */
-  itemIds?: number[];
+  group: MaterialsDialogGroup | null;
   materials: Material[];
   onClose: () => void;
   onSaved: () => void;
 }
 
-/** Расход материалов склада на один артикул размера. Живёт только в ERP. */
-const SiteItemMaterialsDialog = ({ item, itemIds, materials, onClose, onSaved }: Props) => {
+const EMPTY: Row[] = [{ materialId: '', quantity: '' }];
+const sig = (rows: Row[]) =>
+  JSON.stringify(rows.filter((r) => r.materialId).map((r) => [r.materialId, Number(r.quantity) || 0]));
+
+/** Расход ширины с переключением по высотам: у разных высот могут быть разные пакеты. */
+const SiteItemMaterialsDialog = ({ group, materials, onClose, onSaved }: Props) => {
   const { toast } = useToast();
-  const [rows, setRows] = useState<Row[]>([]);
+  const [rowsById, setRowsById] = useState<Record<number, Row[]>>({});
+  const [initial, setInitial] = useState<Record<number, string>>({});
+  const [activeId, setActiveId] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
-    if (!item) return;
+    if (!group) return;
     setLoading(true);
-    setRows([]);
-    fetchMarketplaceItemDetail(item.id)
-      .then((d) => {
-        const list = d.materials.map((m) => ({
-          materialId: m.materialId ? String(m.materialId) : '',
-          quantity: String(m.quantity),
-        }));
-        setRows(list.length ? list : [{ materialId: '', quantity: '' }]);
+    setRowsById({});
+    setActiveId(group.items[0]?.id ?? null);
+    Promise.all(
+      group.items.map((it) =>
+        fetchMarketplaceItemDetail(it.id)
+          .then((d) =>
+            d.materials.map((m) => ({
+              materialId: m.materialId ? String(m.materialId) : '',
+              quantity: String(m.quantity),
+            }))
+          )
+          .catch(() => [] as Row[])
+      )
+    )
+      .then((lists) => {
+        const rows: Record<number, Row[]> = {};
+        const init: Record<number, string> = {};
+        group.items.forEach((it, idx) => {
+          rows[it.id] = lists[idx].length ? lists[idx] : EMPTY;
+          init[it.id] = sig(lists[idx]);
+        });
+        setRowsById(rows);
+        setInitial(init);
       })
-      .catch(() => setRows([{ materialId: '', quantity: '' }]))
       .finally(() => setLoading(false));
-  }, [item]);
+  }, [group]);
 
+  const rows = activeId != null ? rowsById[activeId] || EMPTY : EMPTY;
+  const setRows = (fn: (r: Row[]) => Row[]) =>
+    activeId != null && setRowsById((s) => ({ ...s, [activeId]: fn(s[activeId] || EMPTY) }));
   const update = (idx: number, patch: Partial<Row>) =>
     setRows((r) => r.map((x, i) => (i === idx ? { ...x, ...patch } : x)));
 
+  const dirtyIds = group ? group.items.filter((it) => sig(rowsById[it.id] || []) !== initial[it.id]).map((it) => it.id) : [];
+  const emptyCount = group ? group.items.filter((it) => sig(rowsById[it.id] || []) === '[]').length : 0;
+
+  const copyToAll = () => {
+    if (!group || activeId == null) return;
+    const src = rowsById[activeId] || EMPTY;
+    setRowsById(Object.fromEntries(group.items.map((it) => [it.id, src.map((r) => ({ ...r }))])));
+    toast({ title: `Расход скопирован на все высоты: ${group.items.length}`, description: 'Не забудьте сохранить' });
+  };
+
   const save = async () => {
-    if (!item) return;
+    if (!group || dirtyIds.length === 0) return;
     setSaving(true);
     try {
-      const list = rows
-        .filter((r) => r.materialId)
-        .map((r) => ({ materialId: Number(r.materialId), quantity: Number(r.quantity) || 0 }));
-      const ids = itemIds?.length ? itemIds : [item.id];
-      for (const id of ids) {
-        await setMarketplaceItemMaterials(id, list);
+      for (const id of dirtyIds) {
+        await setMarketplaceItemMaterials(
+          id,
+          (rowsById[id] || [])
+            .filter((r) => r.materialId)
+            .map((r) => ({ materialId: Number(r.materialId), quantity: Number(r.quantity) || 0 }))
+        );
       }
-      toast({
-        title: 'Расход сохранён',
-        description: ids.length > 1 ? `Для всех высот: ${ids.length}` : item.article || item.name,
-      });
+      toast({ title: 'Расход сохранён', description: `Изменено высот: ${dirtyIds.length}` });
       onSaved();
       onClose();
     } catch (e) {
@@ -87,13 +118,17 @@ const SiteItemMaterialsDialog = ({ item, itemIds, materials, onClose, onSaved }:
     }
   };
 
+  const active = group?.items.find((it) => it.id === activeId);
+
   return (
-    <Dialog open={!!item} onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="max-w-lg">
+    <Dialog open={!!group} onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="max-w-xl">
         <DialogHeader>
-          <DialogTitle className="break-words">{item?.name}</DialogTitle>
+          <DialogTitle className="break-words">
+            {group?.title} · ширина {group?.width ?? '—'} см
+          </DialogTitle>
         </DialogHeader>
-        <p className="font-mono text-xs text-muted-foreground">{item?.article}</p>
+
         {loading ? (
           <div className="flex items-center gap-2 text-sm text-muted-foreground">
             <Icon name="Loader2" size={16} className="animate-spin" />
@@ -101,20 +136,61 @@ const SiteItemMaterialsDialog = ({ item, itemIds, materials, onClose, onSaved }:
           </div>
         ) : (
           <div className="space-y-3">
-            <div className="flex items-center justify-between">
-              <Label>Расход материалов склада</Label>
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                onClick={() => setRows((r) => [...r, { materialId: '', quantity: '' }])}
-              >
-                <Icon name="Plus" size={14} className="mr-1" />
-                Добавить
-              </Button>
+            <div>
+              <Label className="text-xs text-muted-foreground">Высота</Label>
+              <div className="mt-1 flex flex-wrap gap-1">
+                {group?.items.map((it) => {
+                  const isActive = it.id === activeId;
+                  const empty = sig(rowsById[it.id] || []) === '[]';
+                  const dirty = dirtyIds.includes(it.id);
+                  return (
+                    <button
+                      key={it.id}
+                      type="button"
+                      onClick={() => setActiveId(it.id)}
+                      className={`rounded px-2.5 py-1 text-xs font-semibold transition ${
+                        isActive
+                          ? 'bg-primary text-primary-foreground'
+                          : empty
+                            ? 'bg-amber-100 text-amber-800 hover:bg-amber-200'
+                            : 'bg-muted text-muted-foreground hover:bg-muted/70'
+                      }`}
+                      title={empty ? 'Расход не проставлен' : undefined}
+                    >
+                      {it.height ?? '—'}
+                      {dirty ? ' •' : ''}
+                    </button>
+                  );
+                })}
+              </div>
+              {active?.article && (
+                <p className="mt-1 font-mono text-xs text-muted-foreground">{active.article}</p>
+              )}
             </div>
+
+            <div className="flex items-center justify-between gap-2">
+              <Label>Расход материалов</Label>
+              <div className="flex gap-1">
+                {group && group.items.length > 1 && (
+                  <Button type="button" size="sm" variant="ghost" onClick={copyToAll}>
+                    <Icon name="Copy" size={14} className="mr-1" />
+                    На все высоты
+                  </Button>
+                )}
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  onClick={() => setRows((r) => [...r, { materialId: '', quantity: '' }])}
+                >
+                  <Icon name="Plus" size={14} className="mr-1" />
+                  Добавить
+                </Button>
+              </div>
+            </div>
+
             {rows.map((row, idx) => (
-              <div key={idx} className="grid grid-cols-[1fr_100px_32px] gap-2">
+              <div key={`${activeId}-${idx}`} className="grid grid-cols-[1fr_100px_32px] gap-2">
                 <Select value={row.materialId} onValueChange={(v) => update(idx, { materialId: v })}>
                   <SelectTrigger>
                     <SelectValue placeholder="Материал" />
@@ -144,13 +220,19 @@ const SiteItemMaterialsDialog = ({ item, itemIds, materials, onClose, onSaved }:
                 </Button>
               </div>
             ))}
+
             <p className="text-xs text-muted-foreground">
-              {itemIds && itemIds.length > 1
-                ? `Расход ширины — одинаковый для всех ${itemIds.length} высот. Хранится только в ERP.`
-                : 'Расход хранится только в ERP: загрузка с сайта его не меняет.'}
+              У каждой высоты свой расход — например, другой пакет. Жёлтым отмечены высоты без расхода
+              {emptyCount ? ` (${emptyCount})` : ''}, точкой — изменённые. Хранится только в ERP.
             </p>
-            <Button className="w-full" onClick={save} disabled={saving}>
-              {saving ? <Icon name="Loader2" size={16} className="animate-spin" /> : 'Сохранить'}
+            <Button className="w-full" onClick={save} disabled={saving || dirtyIds.length === 0}>
+              {saving ? (
+                <Icon name="Loader2" size={16} className="animate-spin" />
+              ) : dirtyIds.length ? (
+                `Сохранить (${dirtyIds.length})`
+              ) : (
+                'Нет изменений'
+              )}
             </Button>
           </div>
         )}
