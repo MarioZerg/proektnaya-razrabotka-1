@@ -3,7 +3,7 @@ import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import Icon from '@/components/ui/icon';
 import { useToast } from '@/hooks/use-toast';
-import { setSitePrice, type SitePricing } from '@/lib/siteOrdersApi';
+import { setSitePrice, setSitePrices, type SitePricing } from '@/lib/siteOrdersApi';
 import { recommendedPrice } from '@/lib/sitePricing';
 import type { SiteWidthGroup } from '@/components/crm/siteProducts/siteWidthGroups';
 
@@ -31,6 +31,32 @@ const SitePriceCell = ({ group, pricing, canEdit, actor, onSaved }: Props) => {
   const current = value.trim() ? Number(value.replace(',', '.')) : null;
   const changed = group.price === 'mixed' ? current != null : (current ?? null) !== saved;
   const recommended = group.cost != null ? recommendedPrice(group.cost, group.width, pricing) : null;
+
+  const byHeight: Record<number, number> = {};
+  group.items.forEach((i) => {
+    const r = i.cost != null ? recommendedPrice(i.cost, group.width, pricing) : null;
+    if (r != null) byHeight[i.id] = r;
+  });
+  const byHeightDiffers =
+    Object.keys(byHeight).length > 0 &&
+    group.items.some((i) => byHeight[i.id] != null && byHeight[i.id] !== i.price);
+
+  const saveByHeight = async () => {
+    setSaving(true);
+    try {
+      const r = await setSitePrices(byHeight, actor);
+      toast(
+        r.pushed
+          ? { title: `Цены по высотам отправлены на сайт: ${Object.keys(byHeight).length}` }
+          : { title: 'Цены сохранены, на сайт не ушли', description: r.pushError || undefined, variant: 'destructive' }
+      );
+      onSaved();
+    } catch (e) {
+      toast({ title: 'Не удалось сохранить', description: e instanceof Error ? e.message : undefined, variant: 'destructive' });
+    } finally {
+      setSaving(false);
+    }
+  };
 
   const save = async (price: number | null) => {
     if (price !== null && (!Number.isFinite(price) || price <= 0)) {
@@ -88,6 +114,17 @@ const SitePriceCell = ({ group, pricing, canEdit, actor, onSaved }: Props) => {
           className="w-fit text-left text-xs text-sky-700 hover:underline"
         >
           поставить {rub(recommended)}
+        </button>
+      )}
+      {byHeightDiffers && (
+        <button
+          type="button"
+          disabled={saving}
+          onClick={saveByHeight}
+          className="w-fit text-left text-xs text-sky-700 hover:underline"
+          title="Каждой высоте — своя цена по её себестоимости и цели прибыли ширины"
+        >
+          по высотам
         </button>
       )}
       {group.pushError && (

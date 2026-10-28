@@ -16,8 +16,9 @@ import {
 import SitePricingPanel from '@/components/crm/siteProducts/SitePricingPanel';
 import SiteProfitCell from '@/components/crm/siteProducts/SiteProfitCell';
 import SiteProfitChain from '@/components/crm/siteProducts/SiteProfitChain';
-import { siteProfit, targetProfit } from '@/lib/sitePricing';
+import { recommendedPrice, siteProfit, targetProfit } from '@/lib/sitePricing';
 import SitePriceCell from '@/components/crm/siteProducts/SitePriceCell';
+import SiteHeightPriceCell from '@/components/crm/siteProducts/SiteHeightPriceCell';
 import SiteItemMaterialsDialog from '@/components/crm/siteProducts/SiteItemMaterialsDialog';
 import { groupByWidth, type SiteWidthGroup } from '@/components/crm/siteProducts/siteWidthGroups';
 
@@ -384,7 +385,17 @@ const SiteProductsTab = ({ shopId }: { shopId: number }) => {
                                     <td className="py-1 pr-3">
                                       {i.cost != null ? rub(i.cost) : <span className="text-amber-700">нет расхода</span>}
                                     </td>
-                                    <td className="py-1 pr-3">{i.price != null ? rub(i.price) : '—'}</td>
+                                    <td className="py-1 pr-3">
+                                      <SiteHeightPriceCell
+                                        item={i}
+                                        recommended={
+                                          i.cost != null ? recommendedPrice(i.cost, g.width, pricing) : null
+                                        }
+                                        canEdit={isAdmin && !i.archivedAt}
+                                        actor={actor}
+                                        onSaved={load}
+                                      />
+                                    </td>
                                     <td
                                       className={`py-1 pr-3 font-medium ${
                                         !withB

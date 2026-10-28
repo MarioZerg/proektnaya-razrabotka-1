@@ -117,6 +117,13 @@ export interface SitePushResult {
   changed?: number;
 }
 
+/** Своя цена каждой высоте: { id артикула: цена }. */
+export const setSitePrices = (
+  prices: Record<number, number>,
+  actor?: { id?: number; name?: string }
+): Promise<SitePushResult> =>
+  post({ action: 'set_price', prices, actorId: actor?.id, actorName: actor?.name });
+
 /** Цена сразу на все высоты одной ширины. */
 export const setSitePrice = (
   itemIds: number[],

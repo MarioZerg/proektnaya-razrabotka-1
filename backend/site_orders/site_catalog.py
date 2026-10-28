@@ -202,24 +202,41 @@ def _push_items(cur, ids, site_url, api_key):
 def set_price(cur, shop_id, body, site_url, api_key):
     """Цена на одну или сразу на все высоты ширины (itemIds)."""
     ids = [int(i) for i in (body.get('itemIds') or []) if i]
+    ids += [int(k) for k in (body.get('prices') or {}).keys()]
     if body.get('itemId'):
         ids.append(int(body['itemId']))
     ids = sorted(set(ids))
     if not ids:
         return 400, {'error': 'Укажите товар'}
-    price = body.get('price')
-    try:
-        price_val = None if price in (None, '') else round(float(price), 2)
-    except (TypeError, ValueError):
-        return 400, {'error': 'Цена должна быть числом'}
-    if price_val is not None and price_val <= 0:
-        return 400, {'error': 'Цена должна быть больше нуля'}
-    ids_csv = ','.join(str(i) for i in ids)
-    cur.execute(
-        f"UPDATE marketplace_items SET site_price = %s, updated_at = now() "
-        f"WHERE id IN ({ids_csv}) AND shop_id = %s RETURNING id",
-        (price_val, int(shop_id)),
-    )
+    per_item = body.get('prices') or {}
+    if per_item:
+        try:
+            pairs = {int(k): round(float(v), 2) for k, v in per_item.items()}
+        except (TypeError, ValueError):
+            return 400, {'error': 'Цена должна быть числом'}
+        if any(v <= 0 for v in pairs.values()):
+            return 400, {'error': 'Цена должна быть больше нуля'}
+        values = ','.join(f"({k}, {v})" for k, v in pairs.items())
+        cur.execute(
+            "UPDATE marketplace_items mi SET site_price = v.price, updated_at = now() "
+            f"FROM (VALUES {values}) AS v(id, price) "
+            "WHERE mi.id = v.id AND mi.shop_id = %s RETURNING mi.id",
+            (int(shop_id),),
+        )
+    else:
+        price = body.get('price')
+        try:
+            price_val = None if price in (None, '') else round(float(price), 2)
+        except (TypeError, ValueError):
+            return 400, {'error': 'Цена должна быть числом'}
+        if price_val is not None and price_val <= 0:
+            return 400, {'error': 'Цена должна быть больше нуля'}
+        ids_csv = ','.join(str(i) for i in ids)
+        cur.execute(
+            f"UPDATE marketplace_items SET site_price = %s, updated_at = now() "
+            f"WHERE id IN ({ids_csv}) AND shop_id = %s RETURNING id",
+            (price_val, int(shop_id)),
+        )
     done = [r[0] for r in cur.fetchall()]
     if not done:
         return 404, {'error': 'Товар не найден'}
