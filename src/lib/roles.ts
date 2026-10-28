@@ -401,6 +401,7 @@ const accountantNav: NavItem[] = [
 
 const adminNav: NavItem[] = [
   { label: 'Главная', icon: 'LayoutDashboard', path: '/crm' },
+  { label: 'Магазин мегатюль.рф', icon: 'ShoppingBag', path: '/crm/shop/megatul' },
   // У админа полный раздел: витрина (посмотреть глазами сотрудника) и управление
   // подарками. Сотрудникам открыта только витрина.
   {
