@@ -355,24 +355,58 @@ const SiteProductsTab = ({ shopId }: { shopId: number }) => {
                     {isOpen && (
                       <tr className="border-t border-border/50 bg-muted/20">
                         <td colSpan={9} className="px-3 py-2">
-                          <div className="flex flex-wrap gap-1.5">
-                            {g.items.map((i) => (
-                              <span
-                                key={i.id}
-                                className={`rounded border border-border bg-background px-2 py-0.5 text-xs ${
-                                  i.disabled ? 'opacity-50' : ''
-                                }`}
-                                title={i.name}
-                              >
-                                <span className="font-mono">{i.article}</span>
-                                <span className="ml-1 text-muted-foreground">
-                                  {i.width}×{i.height}
-                                  {i.price != null && i.price !== priceOf(g) ? ` · ${rub(i.price)}` : ''}
-                                  {i.disabled ? ' · выкл' : ''}
-                                </span>
-                              </span>
-                            ))}
-                          </div>
+                          <table className="w-full text-xs">
+                            <thead className="text-left text-muted-foreground">
+                              <tr>
+                                <th className="py-1 pr-3 font-medium">Высота</th>
+                                <th className="py-1 pr-3 font-medium">Артикул</th>
+                                <th className="py-1 pr-3 font-medium">Себестоимость</th>
+                                <th className="py-1 pr-3 font-medium">Цена</th>
+                                <th className="py-1 pr-3 font-medium">Прибыль с блогером</th>
+                                <th className="py-1 pr-3 font-medium">Без блогера</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {g.items.map((i) => {
+                                const target = targetOf(g);
+                                const withB =
+                                  i.price != null && i.cost != null
+                                    ? siteProfit(i.price, i.cost, pricing, true)
+                                    : null;
+                                const noB =
+                                  i.price != null && i.cost != null
+                                    ? siteProfit(i.price, i.cost, pricing)
+                                    : null;
+                                return (
+                                  <tr key={i.id} className={`border-t border-border/40 ${i.disabled ? 'opacity-50' : ''}`}>
+                                    <td className="py-1 pr-3 font-semibold">{i.height ?? '—'}</td>
+                                    <td className="py-1 pr-3 font-mono">{i.article}</td>
+                                    <td className="py-1 pr-3">
+                                      {i.cost != null ? rub(i.cost) : <span className="text-amber-700">нет расхода</span>}
+                                    </td>
+                                    <td className="py-1 pr-3">{i.price != null ? rub(i.price) : '—'}</td>
+                                    <td
+                                      className={`py-1 pr-3 font-medium ${
+                                        !withB
+                                          ? ''
+                                          : withB.profit < 0
+                                            ? 'text-red-600'
+                                            : target != null && withB.profit < target - 5
+                                              ? 'text-amber-700'
+                                              : 'text-emerald-700'
+                                      }`}
+                                    >
+                                      {withB ? `${rub(withB.profit)} · ${Math.round(withB.profitPct)}%` : '—'}
+                                    </td>
+                                    <td className="py-1 pr-3 text-muted-foreground">
+                                      {noB ? rub(noB.profit) : '—'}
+                                      {i.disabled ? ' · выкл' : ''}
+                                    </td>
+                                  </tr>
+                                );
+                              })}
+                            </tbody>
+                          </table>
                         </td>
                       </tr>
                     )}

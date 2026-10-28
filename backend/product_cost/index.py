@@ -501,6 +501,8 @@ def handler(event: dict, context) -> dict:
                 'sold': sold,
                 # Окладная часть из «Финансов» за прошлый месяц на одну изготовленную вещь.
                 'salaried': salaried,
+                # Цена каждого материала по последней поставке — для расчёта по конкретной высоте.
+                'materialPrices': {str(k): v['price'] for k, v in _material_prices(cur).items()},
             })
 
         if method == 'POST':

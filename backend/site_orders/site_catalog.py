@@ -21,25 +21,51 @@ def is_admin(cur, actor_id):
 
 
 def _cost_map():
+    """Работа и накладные ширины + цены материалов по последним поставкам.
+
+    Материалы считаем по КАЖДОЙ высоте отдельно: у высот могут быть разные пакеты.
+    Работа цеха и прочие расходы зависят только от ткани и ширины.
+    """
     try:
         with urllib.request.urlopen(PRODUCT_COST_URL, timeout=20) as r:
             data = json.loads(r.read().decode('utf-8') or '{}')
     except Exception:
         return None
-    out = {}
+    groups = {}
     for g in data.get('groups') or []:
         width = int(float(g.get('width') or 0))
         parts = {
-            'total': float(g.get('total') or 0),
-            'materials': float(g.get('materialsCost') or 0),
-            'shortage': float(g.get('shortageCost') or 0),
             'labor': float(g.get('laborCost') or 0),
             'overhead': float(g.get('overhead') or 0),
+            'shortagePct': float(g.get('shortagePercent') or 0),
         }
         for m in g.get('materials') or []:
             if m.get('typeName') == 'Тюль' and m.get('materialId'):
-                out.setdefault((int(m['materialId']), width), parts)
-    return out
+                groups.setdefault((int(m['materialId']), width), parts)
+    prices = {int(k): float(v or 0) for k, v in (data.get('materialPrices') or {}).items()}
+    shortage_pct = float((data.get('settings') or {}).get('shortagePercent') or 0)
+    return {'groups': groups, 'prices': prices, 'shortagePct': shortage_pct}
+
+
+def _item_cost(item_materials, fabric_id, width, costs):
+    """Себестоимость одной высоты: её материалы + недостачи + работа и накладные ширины."""
+    if not item_materials or not fabric_id or costs is None:
+        return None
+    grp = costs['groups'].get((int(fabric_id), int(width or 0)))
+    if grp is None:
+        return None
+    lines = []
+    for mid, name, qty in item_materials:
+        price = costs['prices'].get(int(mid), 0.0)
+        lines.append({'name': name, 'quantity': round(qty, 3), 'price': round(price, 2),
+                      'sum': round(qty * price, 2)})
+    materials = round(sum(x['sum'] for x in lines), 2)
+    pct = grp['shortagePct'] or costs['shortagePct']
+    shortage = round(materials * pct / 100, 2)
+    total = round(materials + shortage + grp['labor'] + grp['overhead'], 2)
+    return {'total': total, 'materials': materials, 'shortage': shortage,
+            'labor': round(grp['labor'], 2), 'overhead': round(grp['overhead'], 2),
+            'lines': lines}
 
 
 def pricing_settings(cur):
@@ -98,12 +124,21 @@ def list_products(cur, shop_id):
     )
     rows = cur.fetchall()
     costs = _cost_map()
+    cur.execute(
+        "SELECT mim.marketplace_item_id, mim.material_id, m.name, mim.quantity "
+        "FROM marketplace_item_materials mim "
+        "JOIN marketplace_items mi ON mi.id = mim.marketplace_item_id "
+        "LEFT JOIN materials m ON m.id = mim.material_id "
+        "WHERE mi.shop_id = %s ORDER BY mim.id",
+        (int(shop_id),),
+    )
+    mats = {}
+    for item_id, mid, name, qty in cur.fetchall():
+        if mid is not None:
+            mats.setdefault(item_id, []).append((mid, name or '?', float(qty or 0)))
     items = []
     for r in rows:
-        has_materials = int(r[12] or 0) > 0
-        parts = None
-        if has_materials and r[13] and costs is not None:
-            parts = costs.get((int(r[13]), int(r[3] or 0)))
+        parts = _item_cost(mats.get(r[0]), r[13], r[3], costs)
         cost = parts['total'] if parts else None
         items.append({
             'id': r[0], 'name': r[1], 'article': r[2], 'width': r[3], 'height': r[4],
