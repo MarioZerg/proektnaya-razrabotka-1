@@ -111,8 +111,6 @@ const CrmLayout = ({ children }: { children: ReactNode }) => {
 
   const navigate = useNavigate();
   const location = useLocation();
-  const isAgentChat =
-    location.pathname === '/crm/chat' || location.pathname === '/crm/shop-chat';
   const [testAccounts, setTestAccounts] = useState<TestAccount[]>([]);
   const [qrOpen, setQrOpen] = useState(false);
   const [radioOpen, setRadioOpen] = useState(false);
@@ -419,20 +417,12 @@ const CrmLayout = ({ children }: { children: ReactNode }) => {
 
       {/* min-w-0 обязателен: без него широкая таблица внутри распирает всю страницу,
           и на телефоне появляется горизонтальная прокрутка всего экрана вместо
-          аккуратной прокрутки самой таблицы.
-          На чате МЕГАБУХ высоту режем по окну: лента крутится своим бегунком,
-          страница не растёт портянкой. */}
-      <main
-        className={
-          isAgentChat
-            ? 'flex h-svh max-h-svh w-full min-w-0 flex-1 flex-col overflow-hidden'
-            : 'w-full min-w-0 flex-1 overflow-x-hidden'
-        }
-      >
+          аккуратной прокрутки самой таблицы. */}
+      <main className="w-full min-w-0 flex-1 overflow-x-hidden">
         {/* Шапка липкая и выше виджета заданий: меню и баланс всегда нажимаются. */}
         <div
           ref={headerRef}
-          className={`sticky top-0 z-50 bg-background${isAgentChat ? ' shrink-0' : ''}`}
+          className="sticky top-0 z-50 bg-background"
         >
         <DocsCountdownBanner />
         {/* min-w-0 на шапке: без него виджеты с крупным балансом раздвигали
@@ -461,13 +451,7 @@ const CrmLayout = ({ children }: { children: ReactNode }) => {
         <StorekeeperTasksWidget topOffset={headerOffset} />
         {user?.id && user.role === 'sewer' ? <DuelWatcher userId={user.id} /> : null}
         {/* Сбой внутри страницы не должен гасить меню и весь экран. */}
-        <div
-          className={
-            isAgentChat
-              ? 'flex min-h-0 flex-1 flex-col overflow-hidden p-3 sm:p-6'
-              : 'p-3 sm:p-6'
-          }
-        >
+        <div className="p-3 sm:p-6">
           {/* key по адресу: при переходе на другую страницу защита пересоздаётся,
               иначе экран ошибки «залипал» бы и на исправных разделах. Роль в ключе —
               чтобы после переключения должности страница отрисовалась заново. */}
