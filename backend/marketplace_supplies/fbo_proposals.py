@@ -1084,15 +1084,40 @@ def _accepted_supply(proposal_id):
         return None
 
 
+def _expire_stale(cur, shop_id):
+    """Предложка, которую не подтвердили до дня Газельки, теряет смысл.
+
+    Раньше она так и висела открытой и держала вещи: подбор их не брал, а сама
+    поставка не создавалась. Теперь после дня Газельки предложка закрывается
+    сама, вещи возвращаются в подбор.
+    """
+    cur.execute(
+        "UPDATE fbo_supply_proposal_items SET open_hold = false "
+        "WHERE open_hold AND proposal_id IN (SELECT id FROM fbo_supply_proposals "
+        "  WHERE shop_id = %s AND status = 'open' AND gazelka_date IS NOT NULL "
+        "    AND gazelka_date < (now() AT TIME ZONE 'Europe/Moscow')::date)",
+        (int(shop_id),),
+    )
+    cur.execute(
+        "UPDATE fbo_supply_proposals SET status = 'rejected', decided_at = now() "
+        "WHERE shop_id = %s AND status = 'open' AND gazelka_date IS NOT NULL "
+        "  AND gazelka_date < (now() AT TIME ZONE 'Europe/Moscow')::date",
+        (int(shop_id),),
+    )
+
+
 def handle_proposal_action(cur, conn, body, headers):
-    if (body.get('actorRole') or '') != 'admin':
-        return _resp(403, {'error': 'Предложку подтверждает и отклоняет администратор'}, headers)
     action = body.get('action')
     shop_id = body.get('shopId')
     if not shop_id:
         return _resp(400, {'error': 'Укажите магазин'}, headers)
+    # Список видят все, кто работает с поставками: иначе кладовщик не понимает,
+    # почему вещи на полке не идут в подбор. Решение — только за администратором.
+    if action != 'fbo_proposal_list' and (body.get('actorRole') or '') != 'admin':
+        return _resp(403, {'error': 'Предложку подтверждает и отклоняет администратор'}, headers)
     actor_id = body.get('actorId')
     _recover_stuck(cur, shop_id)
+    _expire_stale(cur, shop_id)
     conn.commit()
     if action == 'fbo_proposal_list':
         return _resp(200, {'proposals': list_open(cur, shop_id)}, headers)

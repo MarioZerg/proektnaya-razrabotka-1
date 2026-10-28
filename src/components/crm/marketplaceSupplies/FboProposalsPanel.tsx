@@ -32,19 +32,29 @@ const FboProposalsPanel = ({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const load = () => {
-    if (!shopId || !isAdmin) return;
+  const load = async () => {
+    if (!shopId) return;
     setLoading(true);
-    fetchFboProposals(shopId, actorId, 'admin')
-      .then((res) => {
+    // База иногда коротко отвечает «перегружена» — повторяем, а не показываем пустоту.
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      try {
+        const res = await fetchFboProposals(shopId, actorId, isAdmin ? 'admin' : undefined);
         setRows(res.proposals || []);
         setError(null);
-      })
-      .catch((e) => setError(e instanceof Error ? e.message : 'Не удалось загрузить предложки'))
-      .finally(() => setLoading(false));
+        break;
+      } catch (e) {
+        if (attempt === 2) {
+          setError(e instanceof Error ? e.message : 'Не удалось загрузить предложки');
+        } else {
+          await new Promise((r) => setTimeout(r, 1500 * (attempt + 1)));
+        }
+      }
+    }
+    setLoading(false);
   };
 
   useEffect(() => {
+    setRows([]);
     load();
     // Магазин сменился — список другой.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -128,14 +138,6 @@ const FboProposalsPanel = ({
     }
   };
 
-  if (!isAdmin) {
-    return (
-      <p className="text-sm text-muted-foreground">
-        Автопредложения FBO подтверждает администратор.
-      </p>
-    );
-  }
-
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -143,11 +145,17 @@ const FboProposalsPanel = ({
           Предложка собирается на регион Ozon: конкретный склад внутри региона Ozon назначает
           сам при бронировании, и поставка автоматически переписывается на него. Вещи в
           предложке не уходят в подбор, пока её не подтвердят или не отклонят.
+          {' '}Если до дня Газельки предложку не подтвердили, она закрывается сама и вещи
+          возвращаются в подбор.
         </p>
-        <Button type="button" onClick={form} disabled={busy || !shopId}>
-          <Icon name={busy ? 'Loader2' : 'Sparkles'} size={16} className={`mr-2 ${busy ? 'animate-spin' : ''}`} />
-          Сформировать
-        </Button>
+        {isAdmin ? (
+          <Button type="button" onClick={form} disabled={busy || !shopId}>
+            <Icon name={busy ? 'Loader2' : 'Sparkles'} size={16} className={`mr-2 ${busy ? 'animate-spin' : ''}`} />
+            Сформировать
+          </Button>
+        ) : (
+          <p className="text-sm font-medium">Подтверждает или отклоняет администратор.</p>
+        )}
       </div>
       {error && <p className="text-sm text-destructive">{error}</p>}
       {loading && <p className="text-sm text-muted-foreground">Загрузка предложек…</p>}
@@ -170,6 +178,7 @@ const FboProposalsPanel = ({
                 {row.gateTimeslot ? `, ${row.gateTimeslot}` : ''}
               </p>
             </div>
+            {isAdmin && (
             <div className="flex gap-2">
               <Button type="button" variant="outline" disabled={busy} onClick={() => reject(row.id)}>
                 Отклонить
@@ -178,6 +187,7 @@ const FboProposalsPanel = ({
                 Создать поставку
               </Button>
             </div>
+            )}
           </div>
           <ul className="grid gap-1 sm:grid-cols-2">
             {row.articles.map((article) => (
