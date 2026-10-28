@@ -231,6 +231,8 @@ export const useSewingItemsData = () => {
       setAllowedMaterialIds(w.allowedMaterials || []);
       const penaltyRaw = w.settings.cancel_order_penalty?.value ?? w.settings.cancel_order_penalty?.global;
       setCancelOrderPenalty(Number(penaltyRaw) || 0);
+    }).catch(() => {
+      setAllowedMaterialIds(null);
     });
   }, [isProductionRole, effectiveWorkshopId]);
 
