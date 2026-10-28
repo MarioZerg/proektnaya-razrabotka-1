@@ -48,6 +48,7 @@ const SiteProductsTab = ({ shopId }: { shopId: number }) => {
   const [editing, setEditing] = useState<SiteWidthGroup | null>(null);
   const [toggling, setToggling] = useState<string | null>(null);
   const [open, setOpen] = useState<Set<string>>(new Set());
+  const [openMaterials, setOpenMaterials] = useState<Set<string>>(new Set());
   const isAdmin = user?.role === 'admin';
   const actor = { id: user?.id, name: user?.name };
 
@@ -161,6 +162,20 @@ const SiteProductsTab = ({ shopId }: { shopId: number }) => {
     )
     .sort((a, b) => a.title.localeCompare(b.title, 'ru') || (a.width || 0) - (b.width || 0));
 
+  const materialGroups = useMemo(() => {
+    const map = new Map<string, SiteWidthGroup[]>();
+    shown.forEach((g) => map.set(g.title, [...(map.get(g.title) || []), g]));
+    return [...map.entries()];
+  }, [shown]);
+  const autoOpen = !!q || product !== 'all';
+  const toggleMaterial = (title: string) =>
+    setOpenMaterials((prev) => {
+      const next = new Set(prev);
+      if (next.has(title)) next.delete(title);
+      else next.add(title);
+      return next;
+    });
+
   const toggleOpen = (key: string) =>
     setOpen((prev) => {
       const next = new Set(prev);
@@ -170,7 +185,7 @@ const SiteProductsTab = ({ shopId }: { shopId: number }) => {
     });
 
   const views: { value: View; label: string; count: number }[] = [
-    { value: 'active', label: 'Все ширины', count: active.length },
+    { value: 'active', label: 'Все товары', count: active.length },
     { value: 'noMaterials', label: 'Без расхода', count: noMaterials.length },
     { value: 'noPrice', label: 'Без цены', count: noPrice.length },
     { value: 'lowProfit', label: 'Ниже цели', count: lowProfit.length },
@@ -267,13 +282,60 @@ const SiteProductsTab = ({ shopId }: { shopId: number }) => {
               </tr>
             </thead>
             <tbody>
-              {shown.map((g) => {
+              {materialGroups.map(([title, groups]) => {
+                const matOpen = autoOpen || openMaterials.has(title);
+                const ws = groups.map((g) => g.width).filter((w): w is number => w != null);
+                const costs = groups.map((g) => g.cost).filter((c): c is number => c != null);
+                const prices = groups.map(priceOf).filter((c): c is number => c != null);
+                const range = (v: number[]) =>
+                  v.length === 0
+                    ? '—'
+                    : Math.min(...v) === Math.max(...v)
+                      ? rub(v[0])
+                      : `${rub(Math.min(...v))} – ${rub(Math.max(...v))}`;
+                const issues = [
+                  groups.filter((g) => g.noMaterials > 0).length && `без расхода ${groups.filter((g) => g.noMaterials > 0).length}`,
+                  groups.filter((g) => g.price == null || g.price === 'mixed').length &&
+                    `без цены ${groups.filter((g) => g.price == null || g.price === 'mixed').length}`,
+                  groups.filter((g) => lowProfit.includes(g)).length &&
+                    `ниже цели ${groups.filter((g) => lowProfit.includes(g)).length}`,
+                  groups.filter((g) => g.disabled).length && `выкл ${groups.filter((g) => g.disabled).length}`,
+                ].filter(Boolean);
+                return (
+                  <Fragment key={title}>
+                    <tr
+                      className="cursor-pointer border-t-2 border-border bg-muted/40 hover:bg-muted/60"
+                      onClick={() => toggleMaterial(title)}
+                    >
+                      <td className="px-3 py-2.5" colSpan={2}>
+                        <span className="inline-flex items-center gap-1.5 font-semibold">
+                          <Icon name={matOpen ? 'ChevronDown' : 'ChevronRight'} size={16} />
+                          {title}
+                        </span>
+                      </td>
+                      <td className="px-3 py-2.5 text-muted-foreground">
+                        {groups.length} шир.{ws.length > 0 && ` · ${Math.min(...ws)}–${Math.max(...ws)}`}
+                      </td>
+                      <td className="px-3 py-2.5" colSpan={2}>
+                        <span className="text-muted-foreground">себест. </span>
+                        {range(costs)}
+                      </td>
+                      <td className="px-3 py-2.5">{range(prices)}</td>
+                      <td className="px-3 py-2.5" colSpan={3}>
+                        {issues.length ? (
+                          <span className="text-xs text-amber-700">{issues.join(' · ')}</span>
+                        ) : (
+                          <span className="text-xs text-emerald-700">всё заполнено</span>
+                        )}
+                      </td>
+                    </tr>
+                    {matOpen && groups.map((g) => {
                 const isOpen = open.has(g.key);
                 return (
                   <Fragment key={g.key}>
                     <tr className={`border-t border-border align-top ${g.disabled ? 'bg-muted/40' : ''}`}>
-                      <td className="px-3 py-2">
-                        <span className="font-medium">{g.title}</span>
+                      <td className="px-3 py-2 pl-9">
+                        <span className="text-muted-foreground">{g.title}</span>
                         {g.archived && (
                           <Badge variant="outline" className="ml-2 border-amber-300 bg-amber-50 text-amber-800">
                             архив
@@ -421,6 +483,9 @@ const SiteProductsTab = ({ shopId }: { shopId: number }) => {
                         </td>
                       </tr>
                     )}
+                  </Fragment>
+                );
+              })}
                   </Fragment>
                 );
               })}
