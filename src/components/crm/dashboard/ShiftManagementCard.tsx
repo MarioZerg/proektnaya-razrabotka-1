@@ -41,6 +41,7 @@ interface ShiftManagementCardProps {
   onToggle: (employee: EmployeeShiftStatus) => void;
   onSwitchShift: (employeeId: number, shiftId: number) => Promise<void>;
   onToggleFree: (employeeId: number, shiftFree: boolean) => Promise<void>;
+  onAllowOvertime: (employeeId: number) => Promise<void>;
 }
 
 type Filter = 'open' | 'closed' | 'all';
@@ -67,7 +68,20 @@ const ShiftManagementCard = ({
   onToggle,
   onSwitchShift,
   onToggleFree,
+  onAllowOvertime,
 }: ShiftManagementCardProps) => {
+  const [overtimeId, setOvertimeId] = useState<number | null>(null);
+  const now = Date.now();
+  const isTimeOver = (e: EmployeeShiftStatus) =>
+    e.isOpen && !!e.canCloseAt && new Date(e.canCloseAt).getTime() <= now;
+  const handleOvertime = async (e: EmployeeShiftStatus) => {
+    setOvertimeId(e.id);
+    try {
+      await onAllowOvertime(e.id);
+    } finally {
+      setOvertimeId(null);
+    }
+  };
   const [switchTarget, setSwitchTarget] = useState<EmployeeShiftStatus | null>(null);
   const [switchShiftId, setSwitchShiftId] = useState('');
   const [switching, setSwitching] = useState(false);
@@ -239,8 +253,31 @@ const ShiftManagementCard = ({
                     {s.shiftFree ? ' · свободный' : ''}
                     {s.isOpen && s.openedAt ? ` · с ${formatTime(s.openedAt)}` : ''}
                     {s.isGuest && s.sessionWorkshopName ? ` · в ${s.sessionWorkshopName}` : ''}
+                    {s.isOpen && s.canCloseAt ? ` · до ${formatTime(s.canCloseAt)}` : ''}
                   </p>
+                  {isTimeOver(s) && (
+                    <p className="text-[11px] text-amber-700">
+                      {s.overtimeAllowed ? 'Подработка разрешена' : 'Время вышло — заказы не выдаются'}
+                    </p>
+                  )}
                 </div>
+
+                {isTimeOver(s) && !s.overtimeAllowed && (
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    className="h-7 shrink-0 px-2.5 text-xs"
+                    disabled={overtimeId === s.id}
+                    onClick={() => handleOvertime(s)}
+                    title="Разрешить брать заказы сверх смены до её закрытия"
+                  >
+                    {overtimeId === s.id ? (
+                      <Icon name="Loader2" size={13} className="animate-spin" />
+                    ) : (
+                      'Доработать'
+                    )}
+                  </Button>
+                )}
 
                 {/* Главное действие остаётся кнопкой, редкое — уходит в меню:
                     четыре иконки в ряд не помещались на телефоне и заставляли

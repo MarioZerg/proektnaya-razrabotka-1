@@ -10,6 +10,7 @@ import {
   fetchShiftsWithCalendar,
   openShift,
   closeShift,
+  allowOvertime,
   moveShiftToWorkshop,
   type EmployeeShiftStatus,
   type ShiftCalendarDay,
@@ -239,6 +240,17 @@ export const useCrmDashboardData = () => {
     }
   };
 
+  const handleAllowOvertime = async (employeeId: number) => {
+    if (!user?.id) return;
+    try {
+      await allowOvertime(employeeId, user.id);
+      toast({ title: 'Подработка разрешена', description: 'Сотрудник может брать заказы до закрытия смены' });
+      loadShifts();
+    } catch (e) {
+      toast({ title: 'Ошибка', description: e instanceof Error ? e.message : undefined, variant: 'destructive' });
+    }
+  };
+
   const widgets: DashboardWidgetData[] = useMemo(
     () =>
       buildDashboardWidgets({
@@ -279,6 +291,7 @@ export const useCrmDashboardData = () => {
     handleToggleShift,
     handleSwitchShift,
     handleToggleFree,
+    handleAllowOvertime,
   };
 };
 

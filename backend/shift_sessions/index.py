@@ -789,11 +789,14 @@ def handler(event: dict, context) -> dict:
 
             cur.execute(
                 "SELECT DISTINCT ON (ss.user_id) ss.user_id, COALESCE(ss.day_started_at, ss.opened_at), ss.closed_at, "
-                "ss.workshop_id, ss.shift_number, ss.role, w.name "
+                "ss.workshop_id, ss.shift_number, ss.role, w.name, "
+                "  EXISTS (SELECT 1 FROM shift_sessions d WHERE d.user_id = ss.user_id "
+                "          AND d.overtime_allowed_at IS NOT NULL "
+                "          AND COALESCE(d.day_started_at, d.opened_at) = COALESCE(ss.day_started_at, ss.opened_at)) "
                 "FROM shift_sessions ss LEFT JOIN workshops w ON w.id = ss.workshop_id "
                 "ORDER BY ss.user_id, ss.opened_at DESC"
             )
-            latest_by_user = {r[0]: (r[1], r[2], r[3], r[4], r[5], r[6]) for r in cur.fetchall()}
+            latest_by_user = {r[0]: (r[1], r[2], r[3], r[4], r[5], r[6], r[7]) for r in cur.fetchall()}
 
             # СКОЛЬКО ПРИНЕСЁТ СМЕНА.
             #
@@ -861,6 +864,8 @@ def handler(event: dict, context) -> dict:
                     'shiftRate': rate_by_role_workshop.get((role, workshop_name)),
                     'shiftFrom': str(shift_from) if shift_from else None,
                     'shiftTo': str(shift_to) if shift_to else None,
+                    # Админ разрешил доработать этот день сверх смены.
+                    'overtimeAllowed': bool(is_open and latest[6]),
                 })
 
             # Главная просит статусы и календарь ОДНИМ запросом (?withCalendar=YYYY-MM).
@@ -888,6 +893,51 @@ def handler(event: dict, context) -> dict:
         conn = psycopg2.connect(dsn)
         try:
             cur = conn.cursor()
+
+            if action == 'allow_overtime':
+                # Подработка сверх смены: только администратор и только после того,
+                # как основное рабочее время сотрудника вышло. Действует до закрытия
+                # этой смены — завтра снова строго по графику.
+                user_id = body_data.get('userId')
+                actor_id = body_data.get('actorId')
+                if not user_id or not actor_id:
+                    return {'statusCode': 400, 'headers': headers,
+                            'body': json.dumps({'error': 'Укажите userId и actorId'}, ensure_ascii=False)}
+                cur.execute("SELECT role FROM users WHERE id = %s", (int(actor_id),))
+                actor_row = cur.fetchone()
+                if not actor_row or actor_row[0] != 'admin':
+                    return {'statusCode': 403, 'headers': headers,
+                            'body': json.dumps({'error': 'Разрешить подработку может только администратор'},
+                                               ensure_ascii=False)}
+                cur.execute(
+                    "SELECT id, COALESCE(day_started_at, opened_at) FROM shift_sessions "
+                    "WHERE user_id = %s AND closed_at IS NULL ORDER BY opened_at DESC LIMIT 1",
+                    (int(user_id),),
+                )
+                row = cur.fetchone()
+                if not row:
+                    return {'statusCode': 404, 'headers': headers,
+                            'body': json.dumps({'error': 'Смена сотрудника не открыта'}, ensure_ascii=False)}
+                end_at = shift_close_allowed_at(cur, user_id, row[1])
+                if end_at and datetime.now(timezone.utc).replace(tzinfo=None) < end_at:
+                    return {'statusCode': 409, 'headers': headers,
+                            'body': json.dumps({'error': f'Рабочее время ещё не вышло — смена до '
+                                                         f'{msk_from_utc(end_at).strftime("%H:%M")}'},
+                                               ensure_ascii=False)}
+                cur.execute(
+                    "UPDATE shift_sessions SET overtime_allowed_at = now(), overtime_allowed_by = %s WHERE id = %s",
+                    (int(actor_id), row[0]),
+                )
+                cur.execute("SELECT full_name FROM users WHERE id = %s", (int(user_id),))
+                name = (cur.fetchone() or [''])[0]
+                cur.execute(
+                    "INSERT INTO audit_log (user_id, category, action, entity_type, entity_id, description) "
+                    "VALUES (%s, 'shifts', 'allow_overtime', 'user', %s, %s)",
+                    (int(actor_id), int(user_id), f'Разрешил подработку сверх смены: {name}'),
+                )
+                conn.commit()
+                return {'statusCode': 200, 'headers': headers,
+                        'body': json.dumps({'success': True, 'overtimeAllowed': True})}
 
             if action == 'open':
                 user_id = body_data.get('userId')

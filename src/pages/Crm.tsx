@@ -31,6 +31,7 @@ const CrmDashboard = () => {
     handleToggleShift,
     handleSwitchShift,
     handleToggleFree,
+    handleAllowOvertime,
   } = useCrmDashboardData();
 
   const content = (
@@ -68,6 +69,7 @@ const CrmDashboard = () => {
         onToggleShift={handleToggleShift}
         onSwitchShift={handleSwitchShift}
         onToggleFree={handleToggleFree}
+        onAllowOvertime={handleAllowOvertime}
         selectedDate={selectedDate}
         onSelectDate={setSelectedDate}
         calendarDays={calendarDays}

@@ -1609,3 +1609,74 @@ def cut_queue_order_sql(date_expr: str = 'COALESCE(marketplace_created_at, creat
         f"{date_expr} ASC, "
         "group_key NULLS FIRST, group_position ASC NULLS LAST, id ASC"
     )
+
+SHIFT_OVER_ERROR = (
+    'Рабочее время смены закончилось — новые заказы не выдаются. '
+    'Доделайте работу на руках и закройте смену. Хотите подработать — '
+    'предупредите администратора'
+)
+
+
+def shift_time_over(cur, user_id):
+    """Вышло ли рабочее время открытой смены сотрудника.
+
+    Смена длится ровно work_hours (или по графику shift_from/shift_to) от
+    фактического прихода: пришёл в 6:00 при 12 часах — заказы до 18:00.
+    Администратор может разрешить доработать этот день (overtime_allowed_at).
+    Возвращает (вышло_ли, конец_смены_utc).
+    """
+    cur.execute(
+        "SELECT COALESCE(ss.day_started_at, ss.opened_at), ss.overtime_allowed_at, "
+        "  u.work_hours, u.shift_from, u.shift_to "
+        "FROM shift_sessions ss JOIN users u ON u.id = ss.user_id "
+        "WHERE ss.user_id = %s AND ss.closed_at IS NULL ORDER BY ss.opened_at DESC LIMIT 1",
+        (int(user_id),),
+    )
+    row = cur.fetchone()
+    if not row or not row[0]:
+        return False, None
+    started, overtime, work_hours, s_from, s_to = row
+    if work_hours is not None:
+        duration = timedelta(hours=float(work_hours))
+    elif s_from and s_to:
+        a = datetime.combine(datetime(2000, 1, 1).date(), s_from)
+        b = datetime.combine(datetime(2000, 1, 1).date(), s_to)
+        if b <= a:
+            b += timedelta(days=1)
+        duration = b - a
+    else:
+        return False, None
+    if duration <= timedelta(0):
+        return False, None
+    end_at = started + duration
+    if overtime is None and day_overtime_allowed(cur, user_id, started):
+        overtime = True
+    if overtime:
+        return False, end_at
+    return datetime.now(timezone.utc).replace(tzinfo=None) >= end_at, end_at
+
+
+def day_overtime_allowed(cur, user_id, started):
+    """Подработку разрешили на одной из смен этого же рабочего дня (смена роли)."""
+    cur.execute(
+        "SELECT 1 FROM shift_sessions WHERE user_id = %s AND overtime_allowed_at IS NOT NULL "
+        "  AND COALESCE(day_started_at, opened_at) = %s LIMIT 1",
+        (int(user_id), started),
+    )
+    return cur.fetchone() is not None
+
+
+def shift_over_response(headers, end_at):
+    """409: смена по времени закончилась — выдавать работу нельзя."""
+    msk = (end_at + timedelta(hours=3)).strftime('%H:%M') if end_at else ''
+    return {
+        'statusCode': 409,
+        'headers': headers,
+        'body': json.dumps(
+            {
+                'error': SHIFT_OVER_ERROR + (f' (смена до {msk})' if msk else ''),
+                'shiftTimeOver': True,
+            },
+            ensure_ascii=False,
+        ),
+    }

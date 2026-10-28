@@ -32,6 +32,8 @@ export interface EmployeeShiftStatus {
   homeWorkshopName?: string | null;
   /** Сотрудник вышел в чужой цех — работает гостем. */
   isGuest?: boolean;
+  /** Админ разрешил доработать этот день сверх смены. */
+  overtimeAllowed?: boolean;
 }
 
 /** Гостевая смена: сотрудник выходил работать в чужой цех. */
@@ -214,6 +216,10 @@ export const closeShift = (userId: number, closedByAdmin = false, actorId?: numb
     ...(closedByAdmin ? { closedByAdmin: true } : {}),
     ...(actorId ? { actorId } : {}),
   });
+
+/** Админ разрешает доработать сегодня сверх смены — после конца рабочего времени. */
+export const allowOvertime = (userId: number, actorId: number) =>
+  postAction({ action: 'allow_overtime', userId, actorId });
 
 export interface AutoClosedShift {
   userId: number;

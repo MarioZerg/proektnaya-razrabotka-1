@@ -34,6 +34,7 @@ interface CrmDashboardSectionsProps {
   onToggleShift: (employee: EmployeeShiftStatus) => Promise<void>;
   onSwitchShift: (employeeId: number, shiftId: number) => Promise<void>;
   onToggleFree: (employeeId: number, shiftFree: boolean) => Promise<void>;
+  onAllowOvertime: (employeeId: number) => Promise<void>;
   selectedDate: Date | undefined;
   onSelectDate: (date: Date | undefined) => void;
   calendarDays: ShiftCalendarDay[];
@@ -63,6 +64,7 @@ const CrmDashboardSections = ({
   onToggleShift,
   onSwitchShift,
   onToggleFree,
+  onAllowOvertime,
   selectedDate,
   onSelectDate,
   calendarDays,
@@ -114,6 +116,7 @@ const CrmDashboardSections = ({
             onToggle={onToggleShift}
             onSwitchShift={onSwitchShift}
             onToggleFree={onToggleFree}
+            onAllowOvertime={onAllowOvertime}
           />
           <ShiftCalendarCard
             selectedDate={selectedDate}

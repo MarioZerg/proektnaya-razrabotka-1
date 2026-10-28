@@ -17,6 +17,8 @@ from bulk_cancel import (
     restore_single_order,
 )
 from shared import (
+    shift_over_response,
+    shift_time_over,
     order_item_id,
     GROUP_CUT_BATCH,
     STATUS_ORDER,
@@ -157,6 +159,9 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                     'headers': headers,
                     'body': json.dumps({'error': 'Смена не открыта — откройте смену на терминале в цехе'}),
                 }
+            over, end_at = shift_time_over(cur, user_id)
+            if over:
+                return shift_over_response(headers, end_at)
 
             # Сколько нераскроенных заказов у человека на руках. ОТМЕНЁННЫЕ НЕ СЧИТАЕМ.
             #
@@ -2040,6 +2045,9 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                     'body': json.dumps({'error': 'Смена не открыта — откройте смену на терминале в цехе'}),
                 }
             session_workshop_id, session_opened_at = session_row
+            over, end_at = shift_time_over(cur, user_id)
+            if over:
+                return shift_over_response(headers, end_at)
 
             # Заказ Яндекса из нескольких вещей едет по ОДНОМУ общему ярлыку, поэтому его
             # шьёт одна швея целиком. Если у неё уже есть незакрытая связка, лимиты на
@@ -2991,6 +2999,9 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                     }
                 if not conveyor_issue_enabled(cur):
                     return conveyor_issue_blocked_response(headers)
+                over, end_at = shift_time_over(cur, actor_id) if actor_id else (False, None)
+                if over:
+                    return shift_over_response(headers, end_at)
                 if ov_done_at:
                     return {
                         'statusCode': 409,
