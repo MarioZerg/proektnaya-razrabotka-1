@@ -5,6 +5,7 @@
 ткань из расхода + ширина — только если в карточке проставлен расход материалов.
 """
 import json
+import time
 import urllib.error
 import urllib.request
 
@@ -26,11 +27,29 @@ def _cost_map():
     Материалы считаем по КАЖДОЙ высоте отдельно: у высот могут быть разные пакеты.
     Работа цеха и прочие расходы зависят только от ткани и ширины.
     """
-    try:
-        with urllib.request.urlopen(PRODUCT_COST_URL, timeout=20) as r:
-            data = json.loads(r.read().decode('utf-8') or '{}')
-    except Exception:
-        return None
+    # Расчёт себестоимости иногда отвечает ошибкой (база в пик упирается в лимит
+    # запросов) — тогда у всех строк пропадала подсказка цены. Пробуем ещё раз,
+    # а при неудаче отдаём последний удачный расчёт из памяти.
+    data = None
+    for attempt in range(2):
+        try:
+            with urllib.request.urlopen(PRODUCT_COST_URL, timeout=20) as r:
+                data = json.loads(r.read().decode('utf-8') or '{}')
+            break
+        except Exception:
+            if attempt == 0:
+                time.sleep(0.4)
+    if data is None:
+        return _COST_CACHE.get('map')
+    result = _parse_cost_map(data)
+    _COST_CACHE['map'] = result
+    return result
+
+
+_COST_CACHE: dict = {}
+
+
+def _parse_cost_map(data):
     groups = {}
     for g in data.get('groups') or []:
         width = int(float(g.get('width') or 0))

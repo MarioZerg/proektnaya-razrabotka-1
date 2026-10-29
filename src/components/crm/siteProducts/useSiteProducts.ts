@@ -35,8 +35,18 @@ const useSiteProducts = (shopId: number) => {
   const load = () => {
     setLoading(true);
     fetchSiteCatalog()
-      .then(({ items: list, pricing: p }) => {
-        setItems(list);
+      .then(({ items: list, pricing: p, costAvailable }) => {
+        // Себестоимость не посчиталась (сбой расчёта) — оставляем прежнюю,
+        // иначе после сохранения цены у остальных строк пропадала подсказка.
+        setItems((prev) => {
+          if (costAvailable || !prev.length) return list;
+          const old = new Map(prev.map((i) => [i.id, i]));
+          return list.map((i) =>
+            i.cost == null && old.get(i.id)?.cost != null
+              ? { ...i, cost: old.get(i.id)!.cost, costParts: old.get(i.id)!.costParts }
+              : i
+          );
+        });
         if (p) setPricing(p);
       })
       .catch(() => setItems([]))

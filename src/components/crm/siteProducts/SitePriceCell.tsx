@@ -116,6 +116,14 @@ const SitePriceCell = ({ group, pricing, canEdit, actor, onSaved }: Props) => {
           поставить {rub(recommended)}
         </button>
       )}
+      {recommended == null && group.cost == null && (
+        <span
+          className="w-fit text-xs text-muted-foreground"
+          title="Подсказка цены считается от себестоимости: нужна ткань в расходе материалов и её цена по поставкам"
+        >
+          нет себестоимости
+        </span>
+      )}
       {byHeightDiffers && (
         <button
           type="button"
