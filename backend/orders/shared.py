@@ -1617,6 +1617,9 @@ SHIFT_OVER_ERROR = (
 )
 
 
+SHIFT_TIME_ROLES = ('sewer', 'cutter')
+
+
 def shift_time_over(cur, user_id):
     """Вышло ли рабочее время открытой смены сотрудника.
 
@@ -1627,7 +1630,7 @@ def shift_time_over(cur, user_id):
     """
     cur.execute(
         "SELECT COALESCE(ss.day_started_at, ss.opened_at), ss.overtime_allowed_at, "
-        "  u.work_hours, u.shift_from, u.shift_to "
+        "  u.work_hours, u.shift_from, u.shift_to, COALESCE(ss.role, u.role) "
         "FROM shift_sessions ss JOIN users u ON u.id = ss.user_id "
         "WHERE ss.user_id = %s AND ss.closed_at IS NULL ORDER BY ss.opened_at DESC LIMIT 1",
         (int(user_id),),
@@ -1635,7 +1638,11 @@ def shift_time_over(cur, user_id):
     row = cur.fetchone()
     if not row or not row[0]:
         return False, None
-    started, overtime, work_hours, s_from, s_to = row
+    started, overtime, work_hours, s_from, s_to, role = row
+    # Рабочее время контролируем только у швей и закройщиков. Упаковщица может
+    # стикеровать, а кладовщик собирать поставки хоть до конца суток.
+    if role not in SHIFT_TIME_ROLES:
+        return False, None
     if work_hours is not None:
         duration = timedelta(hours=float(work_hours))
     elif s_from and s_to:

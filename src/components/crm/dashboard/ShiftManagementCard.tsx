@@ -73,7 +73,10 @@ const ShiftManagementCard = ({
   const [overtimeId, setOvertimeId] = useState<number | null>(null);
   const now = Date.now();
   const isTimeOver = (e: EmployeeShiftStatus) =>
-    e.isOpen && !!e.canCloseAt && new Date(e.canCloseAt).getTime() <= now;
+    ['sewer', 'cutter'].includes(e.sessionRole || e.role) &&
+    e.isOpen &&
+    !!e.canCloseAt &&
+    new Date(e.canCloseAt).getTime() <= now;
   const handleOvertime = async (e: EmployeeShiftStatus) => {
     setOvertimeId(e.id);
     try {
