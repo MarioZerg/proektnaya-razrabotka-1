@@ -140,7 +140,15 @@ export const useSewingItemsFilters = ({
       // Исключение — уже сшитая вещь на стикеровке: её закрывает упаковщица, и
       // смена упаковщицы не закроется, пока вещь висит. Прятать её из вкладки
       // «Стикеровка» нельзя — иначе «1 заказ на стикеровке», а вкладка пустая.
-      if (isCancelledWithCut(o) && o.sewingStatus !== 'Стикеровка') return false;
+      // Второе исключение — вещь уже «В работе» у швеи: она занимает место в её
+      // лимите, и, спрятав её, мы запирали кнопку «Получить заказ» — швея видела
+      // один заказ из двух и не могла сдать невидимый.
+      if (
+        isCancelledWithCut(o) &&
+        o.sewingStatus !== 'Стикеровка' &&
+        o.sewingStatus !== 'В работе'
+      )
+        return false;
 
       // ВКЛАДКА «ОВЕРЛОК» — ТО, ЧТО УЖЕ ВЫДАНО ШВЕЕ, А НЕ ОЧЕРЕДЬ НА ОБМЁТКУ.
       //
@@ -285,7 +293,10 @@ export const useSewingItemsFilters = ({
       return shownOrders.filter(isCancelledWithCut);
     }
     const workOrders = shownOrders.filter(
-      (o) => !isCancelledWithCut(o) || o.sewingStatus === 'Стикеровка'
+      (o) =>
+        !isCancelledWithCut(o) ||
+        o.sewingStatus === 'Стикеровка' ||
+        o.sewingStatus === 'В работе'
     );
 
     if (status === OVERLOCK_TAB) {
