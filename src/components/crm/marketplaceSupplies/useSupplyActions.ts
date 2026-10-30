@@ -317,7 +317,13 @@ export const useSupplyActions = ({
 
   const handleMoveStatus = () => {
     if (!supply) return;
-    const idx = supplyStatusFlow.indexOf(supply.status);
+    // «Отгружено»/«Принята» ставит система — их нет в цепочке статусов, это этап
+    // после «Отгрузки». Без этой подстановки indexOf давал -1, и кнопка «Отметить
+    // выполненной» отправляла «Открытая»: сервер отвечал «нельзя перевести из
+    // Отгружено в Открытая». Считаем ровно как кнопка в шапке (useSupplyFlags).
+    const flowStatus =
+      supply.status === 'Отгружено' || supply.status === 'Принята' ? 'Отгрузка' : supply.status;
+    const idx = supplyStatusFlow.indexOf(flowStatus);
     const next = supplyStatusFlow[idx + 1];
     if (!next) return;
     if (next === 'Отгрузка' && supply.type === 'FBO' && supply.marketplace === 'OZON') {
