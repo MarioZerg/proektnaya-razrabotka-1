@@ -81,6 +81,15 @@ const pieceStats = (s: Supply): PieceStat[] => {
       className: done >= total ? 'text-emerald-700' : 'text-foreground',
     });
   }
+  if (s.type === 'FBO' && (s.pickingTotal || 0) > 0) {
+    const done = s.pickingDone || 0;
+    const total = s.pickingTotal || 0;
+    stats.push({
+      label: 'С подбора',
+      value: `${done} из ${total}`,
+      className: done >= total ? 'text-emerald-700' : 'text-amber-700',
+    });
+  }
   if (s.readyToScanCount && s.status !== 'Выполнена') {
     stats.push({
       label: 'Ждёт скана',

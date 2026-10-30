@@ -79,6 +79,10 @@ export interface Supply {
   bundlesInSupply?: number | null;
   /** Яндекс FBS: связок, собранных целиком. */
   bundlesComplete?: number | null;
+  /** FBO: штук заявки, закрываемых вещами со склада (с подбора). */
+  pickingTotal?: number | null;
+  /** FBO: из них уже собрано с подбора — снято с полки и отстикеровано. */
+  pickingDone?: number | null;
 }
 
 export interface SupplyItem {

@@ -950,7 +950,19 @@ def handle_get(event: dict, headers: dict, dsn: str) -> dict:
             f"     JOIN orders bo ON bo.id = COALESCE(bg.reserved_order_id, bg.order_id) "
             f"     WHERE bm.supply_id = s.id AND bo.group_key IS NOT NULL "
             f"       AND COALESCE(bo.group_size, 1) > 1 "
-            f"     GROUP BY bo.group_key) g WHERE g.cnt >= g.sz) END) "
+            f"     GROUP BY bo.group_key) g WHERE g.cnt >= g.sz) END), "
+            # FBO: часть заявки закрывается вещами со склада («Со склада»).
+            # Сколько таких штук всего и сколько уже собрано с подбора —
+            # снято с полки и отстикеровано. Без этого «в коробах» и «сшито»
+            # не сходились с планом и было непонятно, где остальное.
+            f"(CASE WHEN s.type = 'FBO' THEN (SELECT COUNT(*) FROM orders po "
+            f"   WHERE po.supply_id = s.id AND COALESCE(po.status, '') <> 'Отменён' "
+            f"     AND po.sewing_status = 'Со склада') END), "
+            f"(CASE WHEN s.type = 'FBO' THEN (SELECT COUNT(*) FROM orders po "
+            f"   JOIN goods_warehouse pg ON pg.id = po.fulfilled_from_stock_id "
+            f"   WHERE po.supply_id = s.id AND COALESCE(po.status, '') <> 'Отменён' "
+            f"     AND po.sewing_status = 'Со склада' "
+            f"     AND pg.shipping_labeled_at IS NOT NULL) END) "
             f"FROM marketplace_supplies s "
             f"LEFT JOIN users u ON u.id = s.created_by "
             f"LEFT JOIN users lu ON lu.id = s.locked_by "
@@ -1005,6 +1017,8 @@ def handle_get(event: dict, headers: dict, dsn: str) -> dict:
                 'wbScannedCount': int(r[37] or 0),
                 'bundlesInSupply': int(r[38]) if r[38] is not None else None,
                 'bundlesComplete': int(r[39]) if r[39] is not None else None,
+                'pickingTotal': int(r[40]) if r[40] is not None else None,
+                'pickingDone': int(r[41]) if r[41] is not None else None,
             }
             for r in cur.fetchall()
         ]
