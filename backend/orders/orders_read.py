@@ -662,6 +662,19 @@ def handle_get(event: dict, headers: dict, dsn: str) -> dict:
         if (params.get('action') or '') == 'sewer_packed':
             return _sewer_packed(cur, headers)
 
+        # Предпросмотр начисления швее: админ в карточке выбирает сотрудника и
+        # сразу видит, сколько ему начислится, когда заказ станет «Готовые»,
+        # и не было ли уже начисления за этот пошив (дублей не бывает).
+        if (params.get('action') or '') == 'sewer_accrual_preview' and order_id:
+            from shared import sewer_accrual_quote
+            try:
+                sewer_id = int(params.get('sewerId') or 0) or None
+            except (TypeError, ValueError):
+                sewer_id = None
+            quote = sewer_accrual_quote(cur, int(order_id), sewer_id)
+            return {'statusCode': 200, 'headers': headers,
+                    'body': json.dumps({'preview': quote}, ensure_ascii=False)}
+
         # Поиск отвечает раньше всего остального: он не зависит ни от смены, ни
         # от роли — это просто выборка по номеру.
         if search:

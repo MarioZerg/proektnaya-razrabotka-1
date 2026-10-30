@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   Select,
   SelectContent,
@@ -18,6 +18,7 @@ import type { Roll } from '@/lib/rollsApi';
 import { statusOptions, employeeLabel } from '@/components/crm/sewingItems/sewingItemsShared';
 import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
 import { formatQuantity } from '@/lib/formatQuantity';
+import SewerAccrualPreviewBox from '@/components/crm/sewingItems/actions/SewerAccrualPreviewBox';
 
 interface AdminActionsCardProps {
   selectedOrder: Order;
@@ -31,7 +32,7 @@ interface AdminActionsCardProps {
   trimRolls: Roll[];
   onStatusChange: (
     status: string,
-    rolls?: { fabricRollId?: number; trimRollId?: number },
+    rolls?: { fabricRollId?: number; trimRollId?: number; sewerUserId?: number },
   ) => void;
   onAssignUser: (userId: string) => void;
   onAssignWorkshop: (workshopId: string) => void;
@@ -69,10 +70,34 @@ const AdminActionsCard = ({
   const selectedFabric = fabricRolls.find((r) => String(r.id) === fabricRollId);
   const selectedTrim = trimRolls.find((r) => String(r.id) === trimRollId);
 
-  const applyStatus = (status: string) => {
-    onStatusChange(status, {
+  // СТАТУС НЕ МЕНЯЕМ СРАЗУ ПО ВЫБОРУ В СПИСКЕ.
+  // Админ выбирает новый статус, указывает, кто шил, и рулон тесьмы, видит
+  // будущее начисление — и только потом жмёт «Перевести». Раньше статус
+  // применялся сразу, а швеёй записывался сам админ: деньги за пошив уходили не тому.
+  const [targetStatus, setTargetStatus] = useState(selectedOrder.sewingStatus);
+  const defaultSewer = selectedOrder.sewerUserId || selectedOrder.assignedUserId;
+  const [sewerId, setSewerId] = useState(defaultSewer ? String(defaultSewer) : '');
+  // Статус применился или открыли другой заказ — форма возвращается к текущему.
+  useEffect(() => {
+    setTargetStatus(selectedOrder.sewingStatus);
+    const d = selectedOrder.sewerUserId || selectedOrder.assignedUserId;
+    setSewerId(d ? String(d) : '');
+  }, [selectedOrder.id, selectedOrder.sewingStatus, selectedOrder.sewerUserId, selectedOrder.assignedUserId]);
+  const statusChanged = targetStatus !== selectedOrder.sewingStatus;
+  const targetIdx = statusOptions.indexOf(targetStatus as (typeof statusOptions)[number]);
+  const needsSewer = targetIdx >= statusOptions.indexOf('Стикеровка');
+  const needsTrim = needsSewer && Boolean(orderDetail?.requiredTrimMaterialId);
+  const sewer = employees.find((e) => String(e.id) === sewerId);
+  // Тесьма уже списана на заказ (например, швеёй) — второй раз не просим.
+  const trimAlready = Boolean(
+    orderDetail?.materialUsage?.some((u) => u.materialId === orderDetail.requiredTrimMaterialId),
+  );
+
+  const applyStatus = () => {
+    onStatusChange(targetStatus, {
       fabricRollId: fabricRollId ? Number(fabricRollId) : undefined,
       trimRollId: trimRollId ? Number(trimRollId) : undefined,
+      sewerUserId: needsSewer && sewerId ? Number(sewerId) : undefined,
     });
   };
 
@@ -84,7 +109,7 @@ const AdminActionsCard = ({
     <CardContent className="grid grid-cols-1 items-start gap-x-4 gap-y-4 sm:grid-cols-2 lg:grid-cols-3">
       <div className="min-w-0 space-y-1.5">
         <Label>Статус пошива</Label>
-        <Select value={selectedOrder.sewingStatus} onValueChange={applyStatus} disabled={saving}>
+        <Select value={targetStatus} onValueChange={setTargetStatus} disabled={saving}>
           <SelectTrigger>
             <SelectValue />
           </SelectTrigger>
@@ -92,11 +117,38 @@ const AdminActionsCard = ({
             {statusOptions.map((s) => (
               <SelectItem key={s} value={s}>
                 {s}
+                {s === selectedOrder.sewingStatus ? ' · сейчас' : ''}
               </SelectItem>
             ))}
           </SelectContent>
         </Select>
+        <p className="text-xs text-muted-foreground">
+          {statusChanged
+            ? `Сейчас: «${selectedOrder.sewingStatus}». Проверьте данные ниже и нажмите «Перевести».`
+            : 'Выберите новый статус — появятся поля для перевода.'}
+        </p>
       </div>
+
+      {statusChanged && needsSewer && (
+        <div className="min-w-0 space-y-1.5">
+          <Label>Кто шил</Label>
+          <Select value={sewerId} onValueChange={setSewerId} disabled={saving}>
+            <SelectTrigger className="h-auto min-h-10 py-1.5 text-left [&>span]:line-clamp-none [&>span]:whitespace-normal">
+              <SelectValue placeholder="Выберите сотрудника" />
+            </SelectTrigger>
+            <SelectContent className="max-w-[calc(100vw-1rem)]">
+              {employees.map((e) => (
+                <SelectItem key={e.id} value={String(e.id)} className="whitespace-normal break-words">
+                  {employeeLabel(e)}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <p className="text-xs text-muted-foreground">
+            Ему пойдёт начисление за пошив, когда заказ станет «Готовые».
+          </p>
+        </div>
+      )}
 
       <div className="min-w-0 space-y-1.5">
         <Label>
@@ -180,7 +232,9 @@ const AdminActionsCard = ({
           </SelectContent>
         </Select>
         <p className="text-xs text-muted-foreground">
-          Только когда переводите на стикеровку или в «Готовые». На «Раскроено» тесьмы ещё нет.
+          {needsTrim && statusChanged
+            ? 'Укажите, с какого рулона списать тесьму на этот заказ.'
+            : 'Только когда переводите на стикеровку или в «Готовые». На «Раскроено» тесьмы ещё нет.'}
         </p>
       </div>
 
@@ -280,6 +334,43 @@ const AdminActionsCard = ({
         )}
       </Button>
       </div>
+
+      {statusChanged && (
+        <div className="space-y-3 rounded-md border border-border bg-muted/30 p-3 sm:col-span-2 lg:col-span-3">
+          <div className="flex flex-wrap items-center gap-2 text-sm">
+            <span className="text-muted-foreground">Перевод:</span>
+            <b>{selectedOrder.sewingStatus}</b>
+            <Icon name="ArrowRight" size={14} className="text-muted-foreground" />
+            <b>{targetStatus}</b>
+          </div>
+          {needsSewer && (
+            <SewerAccrualPreviewBox
+              orderId={selectedOrder.id}
+              sewerId={sewerId ? Number(sewerId) : null}
+              sewerName={sewer?.fullName}
+              immediate={targetStatus === 'Готовые'}
+            />
+          )}
+          <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+            <Button
+              variant="outline"
+              className="w-full sm:w-auto"
+              onClick={() => setTargetStatus(selectedOrder.sewingStatus)}
+              disabled={saving}
+            >
+              Отмена
+            </Button>
+            <Button
+              className="w-full sm:w-auto"
+              onClick={applyStatus}
+              disabled={saving || (needsSewer && !sewerId) || (needsTrim && !trimRollId && !trimAlready)}
+            >
+              <Icon name={saving ? 'Loader2' : 'Check'} size={16} className={saving ? 'mr-2 animate-spin' : 'mr-2'} />
+              Перевести в «{targetStatus}»
+            </Button>
+          </div>
+        </div>
+      )}
     </CardContent>
   </Card>
   );

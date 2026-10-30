@@ -101,7 +101,7 @@ export const useSewingItemOrderDetail = ({
 
   const handleStatusChange = async (
     status: string,
-    rolls?: { fabricRollId?: number; trimRollId?: number },
+    rolls?: { fabricRollId?: number; trimRollId?: number; sewerUserId?: number },
   ) => {
     if (!selectedOrder) return;
     const forward = ['Раскроено', 'В работе', 'Стикеровка', 'Готовые'].includes(status);
@@ -140,13 +140,14 @@ export const useSewingItemOrderDetail = ({
     }
     setSaving(true);
     try {
-      await updateOrder(selectedOrder.id, {
+      const res = await updateOrder(selectedOrder.id, {
         sewingStatus: status as SewingStatus,
         actorId,
         rollId: rolls?.fabricRollId,
         trimRollId: rolls?.trimRollId,
+        sewerUserId: rolls?.sewerUserId,
       });
-      toast({ title: 'Статус обновлён' });
+      toast({ title: 'Статус обновлён', description: res?.accrualNote || undefined });
       const detail = await fetchOrderDetail(selectedOrder.id);
       setOrderDetail(detail);
       setSelectedOrder({ ...selectedOrder, ...detail, sewingStatus: status });

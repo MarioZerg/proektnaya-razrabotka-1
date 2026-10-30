@@ -332,8 +332,13 @@ export const updateOrder = (
     fabricRollId: number;
     /** Рулон тесьмы — только при переводе на стикеровку / в готовые. */
     trimRollId: number;
+    /** Кто шил: ему уйдёт начисление за пошив, когда заказ станет «Готовые». */
+    sewerUserId: number;
   }>
-) => postAction({ action: 'update_order', id, ...fields });
+) => postAction({ action: 'update_order', id, ...fields }) as Promise<{
+  success: true;
+  accrualNote?: string | null;
+}>;
 
 // actorId обязателен: по нему сервер проверяет, что раскраивает именно закройщик.
 export const cutOrder = (id: number, rollId?: number, hangerNumber?: number, actorId?: number) =>
@@ -710,3 +715,24 @@ export const logPrintSheet = (
   postAction({ action: 'log_print_sheet', orderIds, kind, actorId, actorName }).catch(
     () => undefined,
   );
+export interface SewerAccrualPreview {
+  /** Сколько начислится за пошив; 0 — ставки нет (см. reason). */
+  amount: number;
+  description: string | null;
+  reason: string | null;
+  /** Начисление за этот пошив уже есть — второго не будет. */
+  existing: { userId: number; userName: string | null; amount: number; paid: boolean } | null;
+}
+
+/** Что начислится сотруднику за пошив, когда админ закроет заказ в «Готовые». */
+export const fetchSewerAccrualPreview = async (
+  orderId: number,
+  sewerId: number | null,
+): Promise<SewerAccrualPreview> => {
+  const res = await fetch(
+    `${ORDERS_URL}?action=sewer_accrual_preview&id=${orderId}&sewerId=${sewerId ?? ''}`,
+  );
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || !data.preview) throw new Error(data.error || 'Не удалось посчитать начисление');
+  return data.preview;
+};

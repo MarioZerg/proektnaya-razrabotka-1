@@ -1687,3 +1687,93 @@ def shift_over_response(headers, end_at):
             ensure_ascii=False,
         ),
     }
+
+
+def sewer_accrual_quote(cur, order_id, sewer_id):
+    """Сколько начислится швее за пошив заказа — одно правило на расчёт и на показ.
+
+    Тот же расчёт, что у терминала упаковщицы: обычная вещь — ставка за штуку по
+    ширине из тарифов цеха заказа; вещь после оверлока — ставка за пог.м.
+    Цех не проставлен (FBO мимо раскроя) — берём штатный цех швеи.
+
+    Возвращает dict: amount (0 — ставки нет), description, reason (почему 0),
+    existing — уже созданное начисление по заказу (дубль невозможен: на пару
+    (order_id, 'sewer_piece') в базе уникальный индекс).
+    """
+    cur.execute(
+        "SELECT o.width, o.workshop_id, o.order_number, o.overlocked_at, o.sewing_status "
+        "FROM orders o WHERE o.id = %s",
+        (int(order_id),),
+    )
+    row = cur.fetchone()
+    result = {'amount': 0.0, 'description': None, 'reason': None, 'existing': None}
+    if not row:
+        result['reason'] = 'Заказ не найден'
+        return result
+    width, workshop_id, order_number, overlocked_at, sewing_status = row
+
+    cur.execute(
+        "SELECT a.user_id, u.full_name, a.amount, a.paid_at FROM salary_accruals a "
+        "LEFT JOIN users u ON u.id = a.user_id "
+        "WHERE a.order_id = %s AND a.type = 'sewer_piece' LIMIT 1",
+        (int(order_id),),
+    )
+    ex = cur.fetchone()
+    if ex:
+        result['existing'] = {
+            'userId': ex[0], 'userName': ex[1], 'amount': float(ex[2] or 0),
+            'paid': ex[3] is not None,
+        }
+
+    if sewing_status == 'Со склада':
+        result['reason'] = 'Вещь взята со склада готовой — пошива не было'
+        return result
+    if not sewer_id:
+        result['reason'] = 'Не выбран сотрудник'
+        return result
+    if not width:
+        result['reason'] = 'У заказа не указана ширина — ставку не по чему считать'
+        return result
+
+    ws = workshop_id
+    if not ws:
+        cur.execute(
+            "SELECT w.id FROM users u JOIN workshops w ON w.name = CASE "
+            "WHEN u.workshop IN ('Цех №2', 'Тестовый цех (QA)') THEN 'Цех №1' ELSE u.workshop END "
+            "WHERE u.id = %s",
+            (int(sewer_id),),
+        )
+        w_row = cur.fetchone()
+        ws = w_row[0] if w_row else None
+    if not ws:
+        result['reason'] = 'Не определён цех — тариф взять неоткуда'
+        return result
+
+    num = order_number or order_id
+    if overlocked_at:
+        cur.execute(
+            "SELECT rate FROM salary_rates WHERE role = 'sewer_overlock' "
+            "AND material_id IS NULL AND width IS NULL AND workshop_id = %s",
+            (ws,),
+        )
+        r = cur.fetchone()
+        rate = float(r[0]) if r else 0
+        if rate <= 0:
+            result['reason'] = 'В тарифах цеха нет ставки пошива после оверлока'
+            return result
+        meters = round(float(width) / 100, 2)
+        result['amount'] = round(meters * rate, 2)
+        result['description'] = f'Пошив заказа #{num} после оверлока - {meters} пог.м.'
+    else:
+        cur.execute(
+            "SELECT rate FROM salary_rates WHERE role = 'sewer' AND width = %s AND workshop_id = %s",
+            (int(width), ws),
+        )
+        r = cur.fetchone()
+        rate = float(r[0]) if r else 0
+        if rate <= 0:
+            result['reason'] = f'В тарифах цеха нет ставки пошива для ширины {int(width)} см'
+            return result
+        result['amount'] = rate
+        result['description'] = f'Пошив заказа #{num} ({int(width)} см)'
+    return result

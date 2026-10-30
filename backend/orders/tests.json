@@ -174,6 +174,18 @@
       "method": "GET",
       "path": "/?action=sewer_packed",
       "expectedStatus": 200
+    },
+    {
+      "name": "Предпросмотр начисления швее для несуществующего заказа",
+      "method": "GET",
+      "path": "/?action=sewer_accrual_preview&id=999999999&sewerId=1",
+      "expectedStatus": 200,
+      "expectedBody": {
+        "preview": {
+          "reason": "Заказ не найден"
+        }
+      },
+      "bodyMatcher": "partial"
     }
   ]
 }

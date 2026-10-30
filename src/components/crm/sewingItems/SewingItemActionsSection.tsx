@@ -21,7 +21,7 @@ interface SewingItemActionsSectionProps {
   workshops: Workshop[];
   onStatusChange: (
     status: string,
-    rolls?: { fabricRollId?: number; trimRollId?: number },
+    rolls?: { fabricRollId?: number; trimRollId?: number; sewerUserId?: number },
   ) => void;
   onAssignUser: (userId: string) => void;
   onAssignWorkshop: (workshopId: string) => void;

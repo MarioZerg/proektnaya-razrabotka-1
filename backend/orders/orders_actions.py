@@ -42,6 +42,7 @@ from shared import (
     pick_order_trim,
     sewing_wait_for_order,
     consume_trim_roll,
+    sewer_accrual_quote,
     consume_fabric_roll,
     _order_inherited_cut,
     _order_has_type_usage,
@@ -1046,6 +1047,20 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
             current_sewing_for_assign = assign_row[0]
             needs_overlock_first = bool(assign_row[1]) and assign_row[2] is None
 
+            # Сотрудник, которого админ указал при переводе статуса: ему пойдёт
+            # начисление за пошив, когда заказ станет «Готовые».
+            admin_sewer_id = None
+            if body_data.get('sewerUserId') not in (None, '') and 'sewingStatus' in body_data:
+                try:
+                    admin_sewer_id = int(body_data['sewerUserId'])
+                except (TypeError, ValueError):
+                    return {'statusCode': 400, 'headers': headers,
+                            'body': json.dumps({'error': 'Сотрудник указан неверно'}, ensure_ascii=False)}
+                cur.execute("SELECT 1 FROM users WHERE id = %s", (admin_sewer_id,))
+                if not cur.fetchone():
+                    return {'statusCode': 404, 'headers': headers,
+                            'body': json.dumps({'error': 'Сотрудник не найден'}, ensure_ascii=False)}
+
             fields = []
             if 'orderNumber' in body_data:
                 fields.append(f"order_number = '{str(body_data['orderNumber']).replace(chr(39), chr(39)*2)}'")
@@ -1152,7 +1167,15 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                     fields.append("taken_at = COALESCE(taken_at, now())")
                 if moved_idx >= STATUS_ORDER.index('Стикеровка'):
                     fields.append("sewn_at = COALESCE(sewn_at, now())")
-                    fields.append(f"sewer_user_id = COALESCE(sewer_user_id, {actor_int})")
+                    # Швея — тот, кого админ выбрал при переводе, иначе назначенный на
+                    # заказ. Сам админ записывался швеёй, только если не указан никто:
+                    # раньше так и было всегда, и деньги за пошив уходили не тому.
+                    if admin_sewer_id:
+                        fields.append(f"sewer_user_id = {admin_sewer_id}")
+                    else:
+                        fields.append(
+                            f"sewer_user_id = COALESCE(sewer_user_id, assigned_user_id, {actor_int})"
+                        )
                 if moved_idx >= STATUS_ORDER.index('Готовые'):
                     fields.append("packed_at = COALESCE(packed_at, now())")
                     fields.append(f"packer_user_id = COALESCE(packer_user_id, {actor_int})")
@@ -1311,7 +1334,7 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                                 requires_overlock=bool(ov_row and ov_row[0]),
                                 check_workshop_id=mwh[3],
                                 actor_shift_number=None,
-                                sewer_user_id=actor_id,
+                                sewer_user_id=admin_sewer_id or actor_id,
                             )
                             if trim_err:
                                 conn.rollback()
@@ -1337,77 +1360,42 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
             # тарифов цеха заказа, а если цех у заказа не проставлен (FBO
             # приходит в пошив мимо раскроя) — из штатного цеха самой швеи.
             # Повторное начисление невозможно: ON CONFLICT по (order_id, type).
+            accrual_note = ''
             if 'sewingStatus' in body_data and body_data['sewingStatus'] == 'Готовые':
+                # Платим тому, кто записан швеёй (его выбрал админ или он сам сдал
+                # вещь на стикеровку). Назначенный — только запасной вариант.
                 cur.execute(
-                    "SELECT assigned_user_id, width, workshop_id, order_number, sewing_status, "
-                    # Вещь после оверлока оплачивается по другой ставке — см. ниже.
-                    "overlocked_at FROM orders WHERE id = %s",
+                    "SELECT COALESCE(sewer_user_id, assigned_user_id) FROM orders WHERE id = %s",
                     (int(item_id),),
                 )
-                sew_row = cur.fetchone()
-                if sew_row:
-                    (sew_user, sew_width, sew_workshop,
-                     sew_order_number, sew_status, sew_overlocked_at) = sew_row
-
-                    # «Со склада» — вещь взяли готовой, её никто не шил.
-                    if sew_user and sew_width and sew_status != 'Со склада':
-                        if not sew_workshop:
-                            cur.execute(
-                                "SELECT w.id FROM users u JOIN workshops w ON w.name = CASE WHEN u.workshop IN ('Цех №2', 'Тестовый цех (QA)') THEN 'Цех №1' ELSE u.workshop END "
-                                "WHERE u.id = %s",
-                                (int(sew_user),),
-                            )
-                            sw_row = cur.fetchone()
-                            sew_workshop = sw_row[0] if sw_row else None
-
-                        if sew_workshop:
-                            # Вещь, прошедшая оверлок, оплачивается за пог.м. по
-                            # отдельной ставке: край уже обмётан, швее осталось
-                            # пришить тесьму. Точно так же считает терминал
-                            # упаковщицы — правило одно на оба пути закрытия.
-                            if sew_overlocked_at:
-                                cur.execute(
-                                    "SELECT rate FROM salary_rates WHERE role = 'sewer_overlock' "
-                                    "AND material_id IS NULL AND width IS NULL AND workshop_id = %s",
-                                    (sew_workshop,),
-                                )
-                                rate_row = cur.fetchone()
-                                ov_rate = float(rate_row[0]) if rate_row else 0
-                                if ov_rate > 0:
-                                    ov_meters = round(float(sew_width) / 100, 2)
-                                    cur.execute(
-                                        "INSERT INTO salary_accruals "
-                                        "(user_id, type, amount, order_id, description) "
-                                        "VALUES (%s, 'sewer_piece', %s, %s, %s) "
-                                        "ON CONFLICT (order_id, type) "
-                                        "WHERE order_id IS NOT NULL DO NOTHING",
-                                        (int(sew_user), round(ov_meters * ov_rate, 2), int(item_id),
-                                         f'Пошив заказа #{sew_order_number or item_id} '
-                                         f'после оверлока - {ov_meters} пог.м.'),
-                                    )
-                            else:
-                                cur.execute(
-                                    "SELECT rate FROM salary_rates WHERE role = 'sewer' "
-                                    "AND width = %s AND workshop_id = %s",
-                                    (int(sew_width), sew_workshop),
-                                )
-                                rate_row = cur.fetchone()
-                                sew_rate = float(rate_row[0]) if rate_row else 0
-                                if sew_rate > 0:
-                                    cur.execute(
-                                        "INSERT INTO salary_accruals "
-                                        "(user_id, type, amount, order_id, description) "
-                                        "VALUES (%s, 'sewer_piece', %s, %s, %s) "
-                                        "ON CONFLICT (order_id, type) "
-                                        "WHERE order_id IS NOT NULL DO NOTHING",
-                                        (int(sew_user), sew_rate, int(item_id),
-                                         f'Пошив заказа #{sew_order_number or item_id} '
-                                         f'({int(sew_width)} см)'),
-                                    )
+                pay_row = cur.fetchone()
+                pay_user = pay_row[0] if pay_row else None
+                quote = sewer_accrual_quote(cur, int(item_id), pay_user)
+                # ДУБЛЕЙ НЕТ: на пару (заказ, 'sewer_piece') в базе уникальный индекс.
+                # Если начисление за этот пошив уже есть (терминал, прошлый перевод) —
+                # новое не создаётся, сколько бы раз ни переводили статус.
+                if quote['existing']:
+                    accrual_note = (f'. Начисление за пошив уже было: '
+                                    f'{quote["existing"]["userName"]}, {quote["existing"]["amount"]} ₽')
+                elif quote['amount'] > 0:
+                    cur.execute(
+                        "INSERT INTO salary_accruals (user_id, type, amount, order_id, description) "
+                        "VALUES (%s, 'sewer_piece', %s, %s, %s) "
+                        "ON CONFLICT (order_id, type) WHERE order_id IS NOT NULL DO NOTHING "
+                        "RETURNING id",
+                        (int(pay_user), quote['amount'], int(item_id), quote['description']),
+                    )
+                    if cur.fetchone():
+                        cur.execute("SELECT full_name FROM users WHERE id = %s", (int(pay_user),))
+                        nm = cur.fetchone()
+                        accrual_note = f'. Начислено {nm[0] if nm else pay_user}: {quote["amount"]} ₽'
+                elif quote['reason']:
+                    accrual_note = f'. Без начисления за пошив: {quote["reason"]}'
 
             if 'sewingStatus' in body_data:
                 log_desc = (
                     f'Админ перевёл заказ #{item_id} в статус «{body_data["sewingStatus"]}»'
+                    f'{accrual_note}'
                 )
             else:
                 log_desc = f'Изменил заказ #{item_id}'
@@ -1417,7 +1405,9 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                 {k: v for k, v in body_data.items() if k not in ('action', 'id', 'actorId', 'actorName')},
             )
             conn.commit()
-            return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'success': True})}
+            return {'statusCode': 200, 'headers': headers,
+                    'body': json.dumps({'success': True, 'accrualNote': accrual_note.lstrip('. ') or None},
+                                       ensure_ascii=False)}
 
         if action in ('cut', 'cut_group'):
             # 'cut' — раскроить одну вещь.
