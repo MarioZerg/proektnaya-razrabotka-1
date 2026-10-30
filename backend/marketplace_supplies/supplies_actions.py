@@ -1768,8 +1768,55 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                     if not variants:
                         variants = {code}
                 else:
+                    # ЯРЛЫК ДОЛЖЕН БЫТЬ ТЕМ ШТРИХКОДОМ, КОТОРЫЙ ЗНАЕТ OZON (30.10).
+                    #
+                    # Раньше «OZN1207101317» принимался, потому что совпадал с SKU
+                    # товара. Но у вуали штрихкод на OZON другой — OZN1207101316.
+                    # Склад OZON такой ярлык не узнавал, и коробки возвращались
+                    # «неопознанными излишками». Теперь код сверяется со штрихкодами
+                    # карточки OZON; ярлык, собранный из SKU, в короб не кладётся.
                     bare = code[3:] if code.startswith('OZN') else code
-                    variants = {v for v in {code, bare, f'OZN{bare}', bare.lstrip('0')} if v}
+                    cur.execute(
+                        "SELECT mi.id, mi.name, upper(coalesce(mi.barcode, '')), mi.ozon_barcodes, "
+                        "       upper(coalesce(mi.ozon_sku, '')) "
+                        "FROM marketplace_items mi "
+                        "WHERE upper(coalesce(mi.barcode, '')) = %s OR %s = ANY(mi.ozon_barcodes) "
+                        "   OR upper(coalesce(mi.ozon_sku, '')) IN (%s, %s)",
+                        (code, code, bare, bare.lstrip('0') or bare),
+                    )
+                    cand = cur.fetchall()
+
+                    def _known_codes(r):
+                        return [c.upper() for c in (r[3] or [])] or ([r[2]] if r[2] else [])
+
+                    good = [r for r in cand if code in _known_codes(r)]
+                    if not good:
+                        wrong = [r for r in cand if r[4] in (bare, bare.lstrip('0'))
+                                 and _known_codes(r) and code not in _known_codes(r)]
+                        if wrong:
+                            right = next((c for c in _known_codes(wrong[0]) if c.startswith('OZN')),
+                                         _known_codes(wrong[0])[0])
+                            return {
+                                'statusCode': 409,
+                                'headers': headers,
+                                'body': json.dumps({
+                                    'error': f'Неверный ярлык: {code} — это SKU товара, а не его '
+                                             f'штрихкод на OZON. Склад OZON такой ярлык не узнает и '
+                                             f'вернёт вещь излишком. Переклейте ярлык: '
+                                             f'{wrong[0][1]} — {right}',
+                                    'wrongLabel': True,
+                                    'expectedBarcode': right,
+                                }, ensure_ascii=False),
+                            }
+                        variants = {v for v in {code, bare, f'OZN{bare}', bare.lstrip('0')} if v}
+                    else:
+                        # Проверенный товар: ищем вещь по его штрихкоду и SKU, но не
+                        # по «OZN+SKU» — это другой код, у вуали он чужой.
+                        variants = {code}
+                        for r in good:
+                            variants.update(c for c in _known_codes(r) if c)
+                            if r[4]:
+                                variants.add(r[4])
                 vals = ', '.join("'" + v.replace("'", "''") + "'" for v in variants)
 
                 # ВЕЩЬ БЕРЁМ ПРЕЖДЕ ВСЕГО ИЗ ПОДБОРА ЭТОЙ ЖЕ ПОСТАВКИ.

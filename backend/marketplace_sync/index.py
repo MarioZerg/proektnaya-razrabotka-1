@@ -147,6 +147,7 @@ def fetch_ozon_cards(client_id, api_key):
                 row = by_offer.setdefault(key, {'offer_id': key, 'ozon_sku': '', 'name': ''})
                 row['ozon_sku'] = detail['ozon_sku'] or row['ozon_sku']
                 row['name'] = detail['name'] or row['name']
+                row['barcodes'] = detail.get('barcodes') or row.get('barcodes') or []
         except RuntimeError as exc:
             warnings.append(str(exc))
         cards.extend(by_offer.values())
@@ -189,8 +190,72 @@ def fetch_ozon_info(client_id, api_key, product_ids):
                 'offer_id': (it.get('offer_id') or '').strip(),
                 'ozon_sku': _ozon_numeric_sku(it),
                 'name': (it.get('name') or '').strip(),
+                'barcodes': _ozon_card_barcodes(it),
             })
     return out
+
+
+def _ozon_card_barcodes(item):
+    """Штрихкоды товара, как их знает OZON (поле barcodes карточки).
+
+    Именно их читает склад OZON на приёмке FBO. У вуали штрихкод НЕ равен
+    «OZN + SKU» (vyal4_265: SKU 1207101317, штрихкод OZN1207101316) — ярлык,
+    собранный из SKU, склад не узнаёт и возвращает вещь неопознанным излишком.
+    """
+    out = []
+    for val in (item.get('barcodes') or []) + [item.get('barcode')]:
+        code = str(val or '').strip().upper()
+        if code and code not in out:
+            out.append(code)
+    return out
+
+
+def save_ozon_barcodes(cur, shop_id, by_offer):
+    """Записывает штрихкоды OZON в карточки и чинит неверный основной штрихкод.
+
+    by_offer: {offer_id: [штрихкоды]}. Если в карточке стоит код, которого у
+    товара на OZON нет, ставим настоящий (с префиксом OZN, если такой есть) и
+    исправляем его в ещё не отгруженных заказах FBO — с него печатается ярлык.
+    Возвращает (сколько карточек обновили, сколько основных кодов исправили).
+    """
+    rows = [(o, c) for o, c in by_offer.items() if o and c]
+    if not rows:
+        return 0, 0
+    # Одним запросом: по строке на карточку база отвечала «rate limit exceeded».
+    payload = json.dumps({o: c for o, c in rows}, ensure_ascii=False)
+    cur.execute(
+        "WITH src AS (SELECT key AS offer, ARRAY(SELECT jsonb_array_elements_text(value)) AS codes "
+        "             FROM jsonb_each(%s::jsonb)) "
+        "UPDATE marketplace_items mi SET ozon_barcodes = src.codes, ozon_barcodes_at = now() "
+        "FROM src WHERE mi.shop_id = %s AND mi.sku = src.offer",
+        (payload, int(shop_id)),
+    )
+    updated = cur.rowcount
+    # Основной штрихкод, которого у товара на OZON нет, меняем на настоящий
+    # (с префиксом OZN, если такой есть) — с него печатается ярлык FBO.
+    cur.execute(
+        "WITH fix AS ("
+        "  SELECT mi.id, COALESCE((SELECT c FROM unnest(mi.ozon_barcodes) c WHERE c LIKE 'OZN%%' LIMIT 1), "
+        "                         mi.ozon_barcodes[1]) AS main "
+        "  FROM marketplace_items mi "
+        "  WHERE mi.shop_id = %s AND cardinality(mi.ozon_barcodes) > 0 "
+        "    AND NOT (upper(coalesce(mi.barcode, '')) = ANY(mi.ozon_barcodes))) "
+        "UPDATE marketplace_items mi SET barcode = fix.main, updated_at = now() "
+        "FROM fix WHERE mi.id = fix.id RETURNING mi.id",
+        (int(shop_id),),
+    )
+    fixed = cur.rowcount
+    # И в ещё не отгруженных заказах FBO — ярлык печатается из заказа.
+    cur.execute(
+        "UPDATE orders o SET product_barcode = mi.barcode "
+        "FROM marketplace_items mi "
+        "WHERE mi.id = o.marketplace_item_id AND mi.shop_id = %s AND o.order_type = 'FBO' "
+        "  AND cardinality(mi.ozon_barcodes) > 0 "
+        "  AND COALESCE(o.status, '') NOT IN ('Отгружен', 'Выполнен', 'Отменён', 'Доставлен') "
+        "  AND NOT (upper(coalesce(o.product_barcode, '')) = ANY(mi.ozon_barcodes))",
+        (int(shop_id),),
+    )
+    return updated, fixed
 
 
 def _ozon_err(status, data):
@@ -637,6 +702,7 @@ def handle_sync(cur, shop_id):
     errors = []
     ozon_count = 0
     wb_count = 0
+    ozon_codes = {}
 
     if ozon_on and client_id and ozon_key:
         try:
@@ -646,6 +712,8 @@ def handle_sync(cur, shop_id):
                 key = c['offer_id']
                 if not key:
                     continue
+                if c.get('barcodes'):
+                    ozon_codes[key] = c['barcodes']
                 ozon_count += 1
                 m = merged.setdefault(key, _empty_card())
                 m['ozon_sku'] = c['ozon_sku'] or m['ozon_sku']
@@ -726,7 +794,11 @@ def handle_sync(cur, shop_id):
         )
         created += 1
 
+    codes_updated, codes_fixed = save_ozon_barcodes(cur, shop_id, ozon_codes)
+
     return _resp(200, {
+        'ozonBarcodes': codes_updated,
+        'ozonBarcodesFixed': codes_fixed,
         'created': created,
         'linked': linked,
         'ozonCards': ozon_count,
@@ -752,6 +824,25 @@ def handler(event: dict, context) -> dict:
 
     body_data = json.loads(event.get('body') or '{}')
     action = body_data.get('action')
+    if action == 'ozon_barcodes':
+        # Только штрихкоды OZON, без остальной синхронизации: быстро и безопасно.
+        shop_id = body_data.get('shopId')
+        if not shop_id:
+            return _resp(400, {'error': 'Не указан магазин'})
+        conn = psycopg2.connect(os.environ['DATABASE_URL'])
+        try:
+            cur = conn.cursor()
+            client_id, ozon_key, ozon_on = get_ozon_credentials(cur, int(shop_id))
+            if not (ozon_on and client_id and ozon_key):
+                return _resp(400, {'error': 'У магазина не подключён OZON'})
+            cards, warnings = fetch_ozon_cards(client_id, ozon_key)
+            codes = {c['offer_id']: c['barcodes'] for c in cards if c.get('offer_id') and c.get('barcodes')}
+            updated, fixed = save_ozon_barcodes(cur, int(shop_id), codes)
+            conn.commit()
+            return _resp(200, {'cards': len(cards), 'updated': updated, 'fixed': fixed,
+                               'warnings': warnings})
+        finally:
+            conn.close()
     if action != 'sync':
         return _resp(400, {'error': 'Неизвестное действие'})
 
