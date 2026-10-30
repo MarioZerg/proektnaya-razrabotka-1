@@ -59,11 +59,19 @@ const fbsStats = (s: Supply): PieceStat[] => {
 const pieceStats = (s: Supply): PieceStat[] => {
   if (s.type === 'FBS') return fbsStats(s);
   const stats: PieceStat[] = [];
-  if (s.type === 'FBO' && s.plannedQuantity) {
+  // Сколько должно быть в поставке: живой счёт по заказам заявки, растёт при
+  // добавлении товара. Если заказов ещё нет — плановое число из OZON.
+  const required = s.type === 'FBO' ? s.requiredTotal || s.plannedQuantity || 0 : 0;
+  if (s.type === 'FBO' && required > 0) {
+    stats.push({
+      label: 'Всего в поставке',
+      value: String(required),
+      className: 'text-foreground',
+    });
     stats.push({
       label: 'В коробах',
-      value: `${s.itemsCount} из ${s.plannedQuantity}`,
-      className: s.itemsCount >= s.plannedQuantity ? 'text-emerald-700' : 'text-amber-700',
+      value: `${s.itemsCount} из ${required}`,
+      className: s.itemsCount >= required ? 'text-emerald-700' : 'text-amber-700',
     });
   } else {
     stats.push({

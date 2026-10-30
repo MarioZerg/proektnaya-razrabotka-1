@@ -962,7 +962,12 @@ def handle_get(event: dict, headers: dict, dsn: str) -> dict:
             f"   JOIN goods_warehouse pg ON pg.id = po.fulfilled_from_stock_id "
             f"   WHERE po.supply_id = s.id AND COALESCE(po.status, '') <> 'Отменён' "
             f"     AND po.sewing_status = 'Со склада' "
-            f"     AND pg.shipping_labeled_at IS NOT NULL) END) "
+            f"     AND pg.shipping_labeled_at IS NOT NULL) END), "
+            # FBO: сколько всего штук должно быть в поставке — считается вживую
+            # по заказам заявки (сшить + со склада). Добавили товар в поставку —
+            # число сразу растёт. Плановое число из OZON при этом не трогаем.
+            f"(CASE WHEN s.type = 'FBO' THEN (SELECT COUNT(*) FROM orders ao "
+            f"   WHERE ao.supply_id = s.id AND COALESCE(ao.status, '') <> 'Отменён') END) "
             f"FROM marketplace_supplies s "
             f"LEFT JOIN users u ON u.id = s.created_by "
             f"LEFT JOIN users lu ON lu.id = s.locked_by "
@@ -1019,6 +1024,7 @@ def handle_get(event: dict, headers: dict, dsn: str) -> dict:
                 'bundlesComplete': int(r[39]) if r[39] is not None else None,
                 'pickingTotal': int(r[40]) if r[40] is not None else None,
                 'pickingDone': int(r[41]) if r[41] is not None else None,
+                'requiredTotal': int(r[42]) if r[42] is not None else None,
             }
             for r in cur.fetchall()
         ]

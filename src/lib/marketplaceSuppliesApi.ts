@@ -83,6 +83,8 @@ export interface Supply {
   pickingTotal?: number | null;
   /** FBO: из них уже собрано с подбора — снято с полки и отстикеровано. */
   pickingDone?: number | null;
+  /** FBO: сколько всего штук должно быть в поставке — живой счёт по заказам заявки. */
+  requiredTotal?: number | null;
 }
 
 export interface SupplyItem {
