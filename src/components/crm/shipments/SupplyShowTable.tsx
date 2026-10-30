@@ -1,4 +1,5 @@
 import { Badge } from '@/components/ui/badge';
+import AddedAfterCloseBadge from '@/components/crm/shipments/AddedAfterCloseBadge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import {
@@ -140,6 +141,7 @@ const SupplyShowTable = ({
                   {/* Рулон убран администратором: строка приёмки осталась как часть
                       первичного документа, но материала на складе нет. Без этой
                       пометки приёмка обещала бы рулон, которого не существует. */}
+                  <AddedAfterCloseBadge item={item} />
                   {item.removedAt && (
                     <Badge variant="destructive">Убран</Badge>
                   )}

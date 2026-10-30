@@ -1,4 +1,5 @@
 import { Badge } from '@/components/ui/badge';
+import AddedAfterCloseBadge from '@/components/crm/shipments/AddedAfterCloseBadge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import Icon from '@/components/ui/icon';
@@ -61,6 +62,7 @@ const SupplyShowCards = ({
           <div className="mt-2 flex flex-wrap items-center gap-2">
             {/* Рулон убран администратором: позиция осталась в документе приёмки,
                 но материала на складе нет. */}
+            <AddedAfterCloseBadge item={item} />
             {item.removedAt && <Badge variant="destructive">Убран</Badge>}
             {!item.removedAt && item.rollStatus === 'in_storage' && (
               <Badge variant="secondary">На складе</Badge>

@@ -11,6 +11,8 @@ interface SheetLine {
   /** Цена за единицу из прайса поставщика (настройки поставщика). */
   price: number | null;
   currency: string;
+  /** Рулоны, довнесённые после принятия приёмки. */
+  addedLater: number;
 }
 
 const RUB = ['RUB', 'RUR', '₽', 'руб', ''];
@@ -52,11 +54,13 @@ const groupLines = (detail: ShipmentDetail): SheetLine[] => {
     const prev = byKey.get(key);
     const qty = Number(item.quantity) || 0;
     const rolls = item.numberRolls || (item.barcode || item.reservedBarcodes?.length ? 1 : 0);
+    const addedLater = item.addedAfterCloseAt ? rolls : 0;
     if (prev) {
       prev.quantity += qty;
       prev.rolls += rolls;
+      prev.addedLater += addedLater;
     } else {
-      byKey.set(key, { materialName: name, unit, quantity: qty, rolls, price, currency });
+      byKey.set(key, { materialName: name, unit, quantity: qty, rolls, price, currency, addedLater });
     }
   }
   return [...byKey.values()];
@@ -82,7 +86,7 @@ export const printAcceptanceSheet = (detail: ShipmentDetail) => {
     .map(
       (line, i) =>
         `<tr>
-          <td>${escapeHtml(line.materialName)}</td>
+          <td>${escapeHtml(line.materialName)}${line.addedLater ? ` <span class="sub">(довнесено рулонов: ${line.addedLater})</span>` : ''}</td>
           <td>${escapeHtml(line.unit)}</td>
           <td class="num">${escapeHtml(formatQuantity(line.quantity))}</td>
           <td class="num">${line.rolls}</td>

@@ -764,7 +764,8 @@ def handler(event: dict, context) -> dict:
                     # поставки и расчёты с поставщиком. Но позицию подписываем, иначе
                     # приёмка обещает рулон, которого на складе нет.
                     "r.removed_at, r.removed_by_name, r.removed_reason, "
-                    "r.shipment_id, r.purchase_price, r.purchase_currency, r.accepted_at "
+                    "r.shipment_id, r.purchase_price, r.purchase_currency, r.accepted_at, "
+                    "si.added_after_close_at, si.added_after_close_by "
                     "FROM shipment_items si "
                     "LEFT JOIN materials m ON m.id = si.material_id "
                     "LEFT JOIN rolls r ON r.id = si.roll_id "
@@ -824,6 +825,9 @@ def handler(event: dict, context) -> dict:
                         'rollPurchaseCurrency': r[26],
                         # Цех уже принял ЭТОТ рулон: ткани в заявке принимают по отдельности.
                         'rollAcceptedAt': (r[27].isoformat() + 'Z') if r[27] else None,
+                        # Рулон довнесён администратором уже после принятия приёмки.
+                        'addedAfterCloseAt': (r[28].isoformat() + 'Z') if r[28] else None,
+                        'addedAfterCloseBy': r[29],
                     }
                     for r in cur.fetchall()
                 ]
@@ -1818,10 +1822,11 @@ def handler(event: dict, context) -> dict:
                 roll_id = cur.fetchone()[0]
                 cur.execute(
                     "INSERT INTO shipment_items (shipment_id, material_id, barcode, roll_id, quantity, "
-                    "total_quantity, number_rolls, price, currency, supplier_id) "
-                    "VALUES (%s, %s, %s, %s, %s, %s, 1, %s, %s, %s)",
+                    "total_quantity, number_rolls, price, currency, supplier_id, "
+                    "added_after_close_at, added_after_close_by) "
+                    "VALUES (%s, %s, %s, %s, %s, %s, 1, %s, %s, %s, now(), %s)",
                     (int(shipment_id), int(material_id), barcode, roll_id, qty, qty,
-                     price, currency, row_supplier),
+                     price, currency, row_supplier, actor_name),
                 )
                 # Логистика машины теперь делится и на новый рулон.
                 recalc_shipment_costs(cur, shipment_id)

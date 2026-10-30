@@ -124,6 +124,9 @@ export interface ShipmentItem {
   originShipmentId?: number | null;
   rollPurchasePrice?: number | null;
   rollPurchaseCurrency?: string | null;
+  /** Рулон довнесён администратором уже после принятия приёмки. */
+  addedAfterCloseAt?: string | null;
+  addedAfterCloseBy?: string | null;
 }
 
 export interface ShipmentDetail extends Shipment {
