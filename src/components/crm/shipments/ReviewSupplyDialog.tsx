@@ -1,4 +1,4 @@
-import { Dispatch, SetStateAction } from 'react';
+import { Dispatch, SetStateAction, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -87,6 +87,11 @@ const ReviewSupplyDialog = ({
   setLogisticsCost,
   canApprove,
 }: ReviewSupplyDialogProps) => {
+  // Подтверждение — необратимо: материал встаёт на склад. Спрашиваем ещё раз,
+  // чтобы приёмку не закрыли случайно, когда хотели лишь сохранить правку (#1246).
+  const [confirmApprove, setConfirmApprove] = useState(false);
+  const totalRolls = reviewRows.reduce((sum, r) => sum + (Number(r.numberRolls) || 0), 0);
+
   const updateReviewRow = (idx: number, field: keyof ItemRow, value: string) =>
     setReviewRows((r) => r.map((row, i) => (i === idx ? { ...row, [field]: value } : row)));
 
@@ -311,7 +316,8 @@ const ReviewSupplyDialog = ({
                   onClick={onSaveReview}
                   disabled={reviewSaving}
                 >
-                  {reviewSaving ? 'Сохранение...' : 'Сохранить правки'}
+                  <Icon name="Save" size={16} className="mr-1.5" />
+                  {reviewSaving ? 'Сохранение...' : canApprove ? 'Сохранить без принятия' : 'Сохранить правки'}
                 </Button>
                 {/* Отклонить и подтвердить может только администратор: с подтверждением
                     материал встаёт на склад и считается себестоимость. */}
@@ -330,7 +336,7 @@ const ReviewSupplyDialog = ({
                         закрыт: иначе поверх задвоенных остатков ляжет ещё один слой. */}
                     <Button
                       className="order-1 flex-1 sm:order-3"
-                      onClick={onApprove}
+                      onClick={() => setConfirmApprove(true)}
                       disabled={reviewSaving || strayRolls > 0}
                       title={
                         strayRolls > 0
@@ -343,7 +349,12 @@ const ReviewSupplyDialog = ({
                   </>
                 )}
               </div>
-              {!canApprove && (
+              {canApprove ? (
+                <p className="text-xs text-muted-foreground">
+                  «Сохранить без принятия» — правки сохранятся, приёмка останется новой и
+                  материал на склад не встанет. «Подтвердить» — рулоны встают на склад.
+                </p>
+              ) : (
                 <p className="text-xs text-muted-foreground">
                   Поправить состав можно, пока приёмку не принял администратор. После
                   подтверждения материал встаёт на склад, и правки закрываются.
@@ -353,6 +364,30 @@ const ReviewSupplyDialog = ({
           )}
         </DialogContent>
       </Dialog>
+
+      <AlertDialog open={confirmApprove} onOpenChange={setConfirmApprove}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Принять приёмку #{reviewShipment?.id}?</AlertDialogTitle>
+            <AlertDialogDescription>
+              На склад встанет {totalRolls} рулон(ов), посчитается себестоимость. Вернуть
+              приёмку в «новые» после этого нельзя — только довносить рулоны. Если нужно
+              лишь сохранить правки, нажмите «Сохранить без принятия».
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Не принимать</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                setConfirmApprove(false);
+                onApprove();
+              }}
+            >
+              Да, принять на склад
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <AlertDialog open={rejectId !== null} onOpenChange={(open) => !open && setRejectId(null)}>
         <AlertDialogContent>

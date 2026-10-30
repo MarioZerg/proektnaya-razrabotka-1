@@ -48,7 +48,6 @@ const AddRollToClosedDialog = ({ open, onOpenChange, detail, onAdded }: Props) =
   const [materialId, setMaterialId] = useState<string>('');
   const [supplierId, setSupplierId] = useState<string>('');
   const [quantity, setQuantity] = useState('');
-  const [price, setPrice] = useState('');
   const [saving, setSaving] = useState(false);
 
   // Поставщики, которые уже есть в приёмке, — их предлагаем первыми.
@@ -63,7 +62,6 @@ const AddRollToClosedDialog = ({ open, onOpenChange, detail, onAdded }: Props) =
     if (!open) return;
     setMaterialId('');
     setQuantity('');
-    setPrice('');
     setSearch('');
     const first = [...docSupplierIds][0];
     setSupplierId(first ? String(first) : '');
@@ -106,9 +104,8 @@ const AddRollToClosedDialog = ({ open, onOpenChange, detail, onAdded }: Props) =
   );
 
   const qtyNum = Number(quantity.replace(',', '.'));
-  const priceNum = price.trim() ? Number(price.replace(',', '.')) : null;
-  const canSave =
-    !!materialId && qtyNum > 0 && (priceNum == null || (Number.isFinite(priceNum) && priceNum >= 0)) && !saving;
+  // Цену не вводим: сервер сам берёт её из прайса поставщика, как при обычной приёмке.
+  const canSave = !!materialId && qtyNum > 0 && !saving;
 
   const save = async () => {
     if (!canSave) return;
@@ -119,9 +116,6 @@ const AddRollToClosedDialog = ({ open, onOpenChange, detail, onAdded }: Props) =
         materialId: Number(materialId),
         quantity: qtyNum,
         supplierId: supplierId ? Number(supplierId) : null,
-        ...(priceNum != null
-          ? { price: priceNum, currency: listPrice?.currency || supplier?.currency || 'RUB' }
-          : {}),
       });
       toast({
         title: `Рулон ${r.barcode} добавлен в приёмку`,
@@ -206,33 +200,22 @@ const AddRollToClosedDialog = ({ open, onOpenChange, detail, onAdded }: Props) =
               </Select>
             </div>
 
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1">
-                <Label>Метраж{material?.unit ? `, ${material.unit}` : ''}</Label>
-                <Input
-                  inputMode="decimal"
-                  value={quantity}
-                  onChange={(e) => setQuantity(e.target.value)}
-                  placeholder="Например, 50"
-                />
-              </div>
-              <div className="space-y-1">
-                <Label>Цена за ед.</Label>
-                <Input
-                  inputMode="decimal"
-                  value={price}
-                  onChange={(e) => setPrice(e.target.value)}
-                  placeholder={listPrice ? String(listPrice.price) : 'из прайса'}
-                />
-              </div>
+            <div className="space-y-1">
+              <Label>Метраж{material?.unit ? `, ${material.unit}` : ''}</Label>
+              <Input
+                inputMode="decimal"
+                value={quantity}
+                onChange={(e) => setQuantity(e.target.value)}
+                placeholder="Например, 70"
+              />
             </div>
-            <p className="text-xs text-muted-foreground">
-              {listPrice
-                ? `По прайсу поставщика: ${listPrice.price} ${listPrice.currency}. Оставьте поле пустым — возьмётся она.`
-                : materialId
-                  ? 'В прайсе поставщика этой цены нет — укажите её, иначе рулон встанет без себестоимости.'
-                  : 'Цена берётся из прайса поставщика, если поле пустое.'}
-            </p>
+            {materialId && (
+              <p className={`text-xs ${listPrice ? 'text-muted-foreground' : 'text-amber-700'}`}>
+                {listPrice
+                  ? `Цена подставится сама из прайса поставщика: ${listPrice.price} ${listPrice.currency} за ${material?.unit || 'ед.'}.`
+                  : 'В прайсе поставщика нет цены на этот материал — рулон встанет без себестоимости. Добавьте цену в карточке поставщика.'}
+              </p>
+            )}
           </div>
         )}
 
