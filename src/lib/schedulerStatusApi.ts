@@ -1,3 +1,5 @@
+import { getAuthToken } from '@/lib/authToken';
+
 const SCHEDULER_STATUS_URL = 'https://functions.poehali.dev/28ee919b-a6b3-4f53-9efb-d53ce1c8ca63';
 
 /** POEHALI: статус планировщика. FRONTEND-ONLY: сбой GET не писать как «все задания работают». */
@@ -66,9 +68,30 @@ export const fetchSchedulerStatus = async (
   /** Видны ли ссылки запуска: только администратору. */
   canSeeUrls: boolean;
 }> => {
-  const res = await fetch(
-    actorId ? `${SCHEDULER_STATUS_URL}?actorId=${actorId}` : SCHEDULER_STATUS_URL,
-  );
+  void actorId;
+  // Кто пришёл, сервер узнаёт по токену входа — id в адресе больше не решает.
+  const token = getAuthToken();
+  const res = await fetch(SCHEDULER_STATUS_URL, {
+    headers: token ? { 'X-Auth-Token': token } : {},
+  });
   if (!res.ok) throw new Error('Не удалось загрузить состояние заданий');
   return res.json();
+};
+/** Метка в ссылках заданий вместо настоящего ключа. */
+export const CRON_SECRET_PLACEHOLDER = '{CRON_SECRET}';
+
+/**
+ * Ключ планировщика — только администратору, по кнопке. Каждый показ сервер
+ * пишет в журнал и присылает уведомление на панель админа.
+ */
+export const revealCronSecret = async (): Promise<string> => {
+  const token = getAuthToken();
+  const res = await fetch(SCHEDULER_STATUS_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...(token ? { 'X-Auth-Token': token } : {}) },
+    body: JSON.stringify({ action: 'reveal_secret' }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || !data.secret) throw new Error(data.error || 'Не удалось получить ключ');
+  return data.secret as string;
 };

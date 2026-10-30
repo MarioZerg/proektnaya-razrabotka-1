@@ -4,6 +4,8 @@ from datetime import datetime, timedelta, timezone
 
 import psycopg2
 
+from authz import AuthError, auth_error_response, current_user, require_admin
+
 CORS_HEADERS = {
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
@@ -335,6 +337,66 @@ GROUPS = [
 ]
 
 
+# В ссылках вместо ключа — метка. Страница заменяет её настоящим ключом только
+# после «Показать ключ».
+SECRET_PLACEHOLDER = '{CRON_SECRET}'
+
+# Не больше стольких показов ключа одним человеком за 10 минут: если токен
+# админа украли, вытащить ключ втихую много раз не выйдет, а в журнале видно.
+REVEAL_LIMIT = 5
+
+
+def _reveal_secret(event):
+    """Показывает ключ планировщика администратору — по кнопке, с записью в журнал.
+
+    Защита:
+      * кто пришёл — по токену входа на сервере, не по данным запроса;
+      * только администратор, и только он сам: при просмотре чужой панели
+        (вход «глазами сотрудника») ключ не выдаётся;
+      * не чаще REVEAL_LIMIT раз за 10 минут;
+      * каждый показ — запись в журнале и уведомление на панели админа.
+    """
+    secret = os.environ.get('CRON_SECRET', '')
+    if not secret:
+        return _resp(404, {'error': 'Ключ планировщика не задан в секретах проекта'})
+    conn = psycopg2.connect(os.environ['DATABASE_URL'])
+    try:
+        cur = conn.cursor()
+        try:
+            user = require_admin(cur, event)
+        except AuthError as e:
+            conn.commit()
+            return auth_error_response(e, CORS_HEADERS)
+        if user['realUserId'] != user['id']:
+            return _resp(403, {'error': 'Ключ можно посмотреть только из своего входа администратора'})
+        cur.execute(
+            "SELECT COUNT(*) FROM audit_log WHERE action = 'cron_secret_revealed' "
+            "AND user_id = %s AND created_at > now() - interval '10 minutes'",
+            (user['id'],),
+        )
+        if int(cur.fetchone()[0]) >= REVEAL_LIMIT:
+            return _resp(429, {'error': 'Ключ уже показывали несколько раз подряд. Подождите 10 минут'})
+        headers = event.get('headers') or {}
+        ip = ((event.get('requestContext') or {}).get('identity') or {}).get('sourceIp') or ''
+        agent = str({str(k).lower(): v for k, v in headers.items()}.get('user-agent') or '')[:120]
+        cur.execute(
+            "INSERT INTO audit_log (user_id, user_name, category, action, entity_type, description) "
+            "VALUES (%s, %s, 'security', 'cron_secret_revealed', 'scheduler', %s)",
+            (user['id'], user['name'], f'Показан ключ планировщика (IP {ip or "—"}, {agent or "браузер не указан"})'),
+        )
+        cur.execute(
+            "INSERT INTO admin_notifications (kind, title, message, actor_id, actor_name) "
+            "VALUES ('cron_secret_revealed', 'Показан ключ планировщика', %s, %s, %s)",
+            (f'{user["name"]} открыл ключ запуска фоновых заданий. IP {ip or "—"}. '
+             f'Если это были не вы — смените CRON_SECRET в секретах проекта и в планировщике.',
+             user['id'], user['name']),
+        )
+        conn.commit()
+        return _resp(200, {'secret': secret, 'placeholder': SECRET_PLACEHOLDER})
+    finally:
+        conn.close()
+
+
 def _resp(code, body):
     return {'statusCode': code, 'headers': CORS_HEADERS,
             'body': json.dumps(body, ensure_ascii=False, default=str)}
@@ -349,28 +411,30 @@ def handler(event: dict, context) -> dict:
     method = event.get('httpMethod', 'GET')
     if method == 'OPTIONS':
         return {'statusCode': 200, 'headers': CORS_HEADERS, 'body': ''}
+    if method == 'POST':
+        body = json.loads(event.get('body') or '{}')
+        if body.get('action') == 'reveal_secret':
+            return _reveal_secret(event)
+        return _resp(405, {'error': 'Method not allowed'})
     if method != 'GET':
         return _resp(405, {'error': 'Method not allowed'})
-
-    params = event.get('queryStringParameters') or {}
-    actor_id = params.get('actorId')
 
     conn = psycopg2.connect(os.environ['DATABASE_URL'])
     try:
         cur = conn.cursor()
 
-        # ГОТОВЫЕ ССЫЛКИ ОТДАЁМ ТОЛЬКО АДМИНИСТРАТОРУ.
+        # ССЫЛКИ — ТОЛЬКО АДМИНИСТРАТОРУ, И БЕЗ КЛЮЧА.
         #
-        # В ссылке зашит ключ планировщика: кто его знает, тот может запускать загрузки
-        # и автозакрытие смен со штрафами со стороны. Роль берём из базы, а не из
-        # запроса — в запросе её можно подменить, в базе нет.
-        is_admin = False
-        if actor_id:
-            cur.execute("SELECT role FROM users WHERE id = %s", (int(actor_id),))
-            row = cur.fetchone()
-            is_admin = bool(row and row[0] == 'admin')
+        # Раньше админа узнавали по actorId из адреса: подставь чужой id — и получишь
+        # ключ планировщика, а с ним запуск загрузок и автозакрытия смен со штрафами.
+        # Теперь кто пришёл, сервер определяет сам по токену входа. И даже админу в
+        # списке ключ не отдаётся: вместо него метка, а сам ключ — отдельным запросом
+        # по кнопке «Показать ключ», с записью в журнал (см. _reveal_secret).
+        me = current_user(cur, event)
+        conn.commit()
+        is_admin = bool(me and me['role'] == 'admin')
 
-        cron_secret = os.environ.get('CRON_SECRET', '')
+        cron_secret = SECRET_PLACEHOLDER if os.environ.get('CRON_SECRET') else ''
         base = os.environ.get('FUNCTIONS_BASE_URL', 'https://functions.poehali.dev')
 
         keys = "', '".join(j['key'] for j in JOBS)

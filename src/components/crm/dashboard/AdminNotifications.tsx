@@ -33,6 +33,8 @@ const KINDS: Record<string, { icon: string; label: string }> = {
   defect_missing: { icon: 'PackageX', label: 'Брак не доехал' },
   // Кладовщик при приёмке с ПВЗ увидел в пакете не тот товар.
   pvz_substitution: { icon: 'ArrowLeftRight', label: 'Подмена на ПВЗ' },
+  // Администратор открыл ключ запуска фоновых заданий.
+  cron_secret_revealed: { icon: 'KeyRound', label: 'Показан ключ планировщика' },
 };
 
 const kindOf = (kind: string) => KINDS[kind] || { icon: 'Info', label: 'Прочее' };

@@ -7,6 +7,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import Icon from '@/components/ui/icon';
 import { useAuth } from '@/context/AuthContext';
 import SchedulerJobCard from '@/components/crm/scheduler/SchedulerJobCard';
+import CronSecretPanel from '@/components/crm/scheduler/CronSecretPanel';
 import MarketplaceReconcile from '@/components/crm/scheduler/MarketplaceReconcile';
 import {
   fetchSchedulerStatus,
@@ -54,6 +55,8 @@ const SchedulerSettings = () => {
   const [loading, setLoading] = useState(true);
   const [listError, setListError] = useState<string | null>(null);
   const [tab, setTab] = useState<string | null>(null);
+  const [canSeeUrls, setCanSeeUrls] = useState(false);
+  const [cronSecret, setCronSecret] = useState<string | null>(null);
 
   const load = () => {
     setLoading(true);
@@ -65,6 +68,7 @@ const SchedulerSettings = () => {
         setProblems(d.problems);
         setTooOften(d.tooOftenCount ?? 0);
         setExtraPerMonth(d.extraPerMonthTotal ?? 0);
+        setCanSeeUrls(!!d.canSeeUrls);
       })
       .catch((e) => {
         setListError(e instanceof Error ? e.message : 'Не удалось загрузить планировщик');
@@ -197,7 +201,7 @@ const SchedulerSettings = () => {
                   ) : (
                     <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
                       {groupJobs.map((j) => (
-                        <SchedulerJobCard key={j.key} job={j} />
+                        <SchedulerJobCard key={j.key} job={j} secret={cronSecret} />
                       ))}
                     </div>
                   )}
@@ -210,6 +214,8 @@ const SchedulerSettings = () => {
             </TabsContent>
           </Tabs>
         )}
+
+        {isAdmin && canSeeUrls && <CronSecretPanel onSecret={setCronSecret} />}
 
         <Card className="shadow-none">
           <CardContent className="py-4 text-sm text-muted-foreground">

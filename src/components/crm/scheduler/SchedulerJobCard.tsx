@@ -3,7 +3,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import Icon from '@/components/ui/icon';
 import { useToast } from '@/hooks/use-toast';
-import type { SchedulerJob } from '@/lib/schedulerStatusApi';
+import { CRON_SECRET_PLACEHOLDER, type SchedulerJob } from '@/lib/schedulerStatusApi';
 
 /** Когда задание отработало — понятным языком, без дат и секунд. */
 const agoText = (minutes: number | null) => {
@@ -54,8 +54,13 @@ const STATE_STYLE: Record<
 };
 
 /** Одно фоновое задание: что делает, когда отработало и что нашло. */
-const SchedulerJobCard = ({ job }: { job: SchedulerJob }) => {
+const SchedulerJobCard = ({ job, secret }: { job: SchedulerJob; secret?: string | null }) => {
   const { toast } = useToast();
+  // Ключ в адресе — метка {CRON_SECRET}. Настоящий подставляем, только пока
+  // админ открыл его кнопкой «Показать ключ»; иначе копируется адрес с меткой.
+  const fill = (text: string) => (secret ? text.split(CRON_SECRET_PLACEHOLDER).join(secret) : text);
+  const url = job.url ? fill(job.url) : null;
+  const body = job.body ? fill(job.body) : null;
   const st = STATE_STYLE[job.state];
   const [showUrl, setShowUrl] = useState(false);
 
@@ -143,7 +148,7 @@ const SchedulerJobCard = ({ job }: { job: SchedulerJob }) => {
                 <Icon name={showUrl ? 'EyeOff' : 'Link'} size={14} className="mr-1" />
                 {showUrl ? 'Скрыть адрес' : 'Показать адрес'}
               </Button>
-              <Button variant="outline" size="sm" onClick={() => copy(job.url!, 'Адрес')}>
+              <Button variant="outline" size="sm" onClick={() => copy(url!, 'Адрес')}>
                 <Icon name="Copy" size={14} className="mr-1" />
                 Копировать
               </Button>
@@ -160,8 +165,14 @@ const SchedulerJobCard = ({ job }: { job: SchedulerJob }) => {
                   </p>
                 )}
                 <p className="break-all rounded border bg-background px-2 py-1 font-mono-tech text-xs">
-                  {job.url}
+                  {url}
                 </p>
+                {!secret && job.url.includes(CRON_SECRET_PLACEHOLDER) && (
+                  <p className="text-xs text-amber-700">
+                    Вместо {CRON_SECRET_PLACEHOLDER} подставьте ключ — нажмите «Показать ключ» внизу страницы,
+                    и он подставится сам
+                  </p>
+                )}
                 {/* Своя минута у каждого задания: если все стартуют одновременно,
                     база отвечает отказом, и у кладовщиков сканеры выдают ошибку. */}
                 {job.cronLine && (
@@ -188,12 +199,12 @@ const SchedulerJobCard = ({ job }: { job: SchedulerJob }) => {
                   <div className="space-y-1">
                     <p className="text-xs text-muted-foreground">Тело запроса:</p>
                     <p className="break-all rounded border bg-background px-2 py-1 font-mono-tech text-xs">
-                      {job.body}
+                      {body}
                     </p>
                     <Button
                       variant="outline"
                       size="sm"
-                      onClick={() => copy(job.body!, 'Тело запроса')}
+                      onClick={() => copy(body!, 'Тело запроса')}
                     >
                       <Icon name="Copy" size={14} className="mr-1" />
                       Копировать тело
