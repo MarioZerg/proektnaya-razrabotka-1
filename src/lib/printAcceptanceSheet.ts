@@ -148,7 +148,7 @@ export const printAcceptanceSheet = (detail: ShipmentDetail) => {
     </tfoot>
   </table>
   <p class="note">
-    Цены — из прайса поставщика в настройках${rate ? `, валюта переведена по курсу ${money(rate)} ₽` : ''}.
+    Цена из прайса поставщика${rate ? `, валюта переведена по курсу ${money(rate)} ₽` : ''}.
     ${noPrice ? `Без цены: ${noPrice} поз. — в общую сумму не вошли, проверьте прайс поставщика${lines.some((l) => l.price != null && !isRub(l.currency)) && !rate ? ' или укажите курс валюты в приёмке' : ''}.` : ''}
   </p>
   <div class="signs">
