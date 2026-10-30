@@ -26,6 +26,7 @@ import SupplyShowSummary from '@/components/crm/shipments/SupplyShowSummary';
 import SupplyShowCards from '@/components/crm/shipments/SupplyShowCards';
 import SupplyShowTable from '@/components/crm/shipments/SupplyShowTable';
 import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
+import AddRollToClosedDialog from '@/components/crm/shipments/AddRollToClosedDialog';
 
 /**
  * Карточка приёмки от поставщика.
@@ -51,6 +52,7 @@ const SupplyShow = () => {
   const [loading, setLoading] = useState(true);
   const [listError, setListError] = useState<string | null>(null);
   const [search, setSearch] = useState('');
+  const [addRollOpen, setAddRollOpen] = useState(false);
 
   // Правка метража: держим только одну открытую строку — так меньше шансов
   // случайно переписать соседний рулон.
@@ -213,7 +215,21 @@ const SupplyShow = () => {
           onBack={() => navigate(-1)}
           onPrintAllFound={printAllFound}
           onPrintAcceptanceSheet={detail ? () => printAcceptanceSheet(detail) : undefined}
+          onAddRoll={
+            isAdmin && detail?.type === 'from_supplier' && detail.status === 'Завершено'
+              ? () => setAddRollOpen(true)
+              : undefined
+          }
         />
+
+        {detail && isAdmin && (
+          <AddRollToClosedDialog
+            open={addRollOpen}
+            onOpenChange={setAddRollOpen}
+            detail={detail}
+            onAdded={load}
+          />
+        )}
 
         {listError && !detail && (
           <WarehouseFetchError

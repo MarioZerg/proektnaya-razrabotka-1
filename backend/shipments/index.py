@@ -1688,6 +1688,166 @@ def handler(event: dict, context) -> dict:
                     ),
                 }
 
+            if action == 'add_roll_to_closed':
+                """Довнести рулон в уже принятую приёмку от поставщика (только админ).
+
+                ЗАЧЕМ. Рулон приехал в той же машине, но при разгрузке его пропустили, или
+                поставщик довёз его отдельно по той же накладной. Заводить ради одного
+                рулона новую приёмку значит разорвать документ: бухгалтер сверяет с
+                поставщиком одну накладную, а в системе их две.
+
+                Как при обычном подтверждении: новый штрихкод, рулон сразу на складе,
+                цена — из прайса поставщика (или введённая), валюта по курсу приёмки,
+                доля логистики приёмки пересчитывается на всех целых рулонах машины.
+                Если бухгалтер приёмку уже подтвердила — возвращаем её на проверку:
+                сумма документа изменилась.
+                """
+                require_admin(cur, event)
+                shipment_id = body_data.get('id')
+                material_id = body_data.get('materialId')
+                try:
+                    qty = float(body_data.get('quantity') or 0)
+                except (TypeError, ValueError):
+                    qty = 0
+                if not shipment_id or not material_id or qty <= 0:
+                    return {'statusCode': 400, 'headers': headers,
+                            'body': json.dumps({'error': 'Укажите материал и метраж больше нуля'},
+                                               ensure_ascii=False)}
+                if qty > 100000:
+                    return {'statusCode': 400, 'headers': headers,
+                            'body': json.dumps({'error': 'Слишком большой метраж — проверьте число'},
+                                               ensure_ascii=False)}
+
+                cur.execute(
+                    "SELECT type, status, supplier_id, exchange_rate, accountant_status "
+                    "FROM shipments WHERE id = %s FOR UPDATE",
+                    (int(shipment_id),),
+                )
+                sh = cur.fetchone()
+                if not sh:
+                    return {'statusCode': 404, 'headers': headers,
+                            'body': json.dumps({'error': 'Приёмка не найдена'}, ensure_ascii=False)}
+                if sh[0] != 'from_supplier' or sh[1] != 'Завершено':
+                    return {'statusCode': 409, 'headers': headers,
+                            'body': json.dumps({'error': 'Довносить рулон можно только в принятую '
+                                                         'приёмку от поставщика'},
+                                               ensure_ascii=False)}
+                doc_supplier, ship_rate, acc_status = sh[2], sh[3], sh[4]
+
+                row_supplier = body_data.get('supplierId') or doc_supplier
+                row_supplier = int(row_supplier) if row_supplier else None
+
+                cur.execute("SELECT type_id, name, unit FROM materials WHERE id = %s", (int(material_id),))
+                mat = cur.fetchone()
+                if not mat:
+                    return {'statusCode': 404, 'headers': headers,
+                            'body': json.dumps({'error': 'Материал не найден'}, ensure_ascii=False)}
+                type_id, mat_name, mat_unit = mat
+
+                sup = None
+                if row_supplier:
+                    cur.execute(
+                        "SELECT currency, exchange_rate, shortage_norm_percent FROM suppliers WHERE id = %s",
+                        (row_supplier,),
+                    )
+                    sup = cur.fetchone()
+                    if not sup:
+                        return {'statusCode': 404, 'headers': headers,
+                                'body': json.dumps({'error': 'Поставщик не найден'}, ensure_ascii=False)}
+
+                # Цена: введённая администратором, иначе прайс поставщика.
+                price = body_data.get('price')
+                currency = body_data.get('currency')
+                if price in (None, ''):
+                    price = None
+                    if row_supplier:
+                        cur.execute(
+                            "SELECT price, currency FROM supplier_prices "
+                            "WHERE supplier_id = %s AND material_id = %s",
+                            (row_supplier, int(material_id)),
+                        )
+                        pr = cur.fetchone()
+                        if pr:
+                            price, currency = float(pr[0]), pr[1]
+                else:
+                    try:
+                        price = float(price)
+                    except (TypeError, ValueError):
+                        return {'statusCode': 400, 'headers': headers,
+                                'body': json.dumps({'error': 'Цена указана неверно'}, ensure_ascii=False)}
+                    if price < 0:
+                        return {'statusCode': 400, 'headers': headers,
+                                'body': json.dumps({'error': 'Цена не может быть меньше нуля'},
+                                                   ensure_ascii=False)}
+                currency = str(currency or (sup[0] if sup else None) or 'RUB').upper()[:10]
+
+                unit_rate = 1.0
+                if currency != 'RUB':
+                    if row_supplier and doc_supplier and int(row_supplier) != int(doc_supplier) and sup and sup[1]:
+                        unit_rate = float(sup[1])
+                    elif ship_rate:
+                        unit_rate = float(ship_rate)
+                    elif sup and sup[1]:
+                        unit_rate = float(sup[1])
+                    else:
+                        return {'statusCode': 400, 'headers': headers,
+                                'body': json.dumps({'error': f'Цена в {currency}, а курса нет ни в '
+                                                             f'приёмке, ни у поставщика. Укажите курс '
+                                                             f'в карточке поставщика'},
+                                                   ensure_ascii=False)}
+                norm = float(sup[2]) if sup and sup[2] is not None else None
+
+                code = reserve_barcodes(cur, type_id, 1)
+                if not code:
+                    conn.rollback()
+                    return {'statusCode': 409, 'headers': headers,
+                            'body': json.dumps({'error': 'Не удалось выдать штрихкод — попробуйте ещё раз'},
+                                               ensure_ascii=False)}
+                barcode = code[0]
+                qty = round(qty, 3)
+
+                cur.execute(
+                    "INSERT INTO rolls (barcode, material_id, initial_quantity, remaining_quantity, status, "
+                    "supplier_id, shipment_id, purchase_price, purchase_currency, purchase_rate, "
+                    "logistics_per_unit, cost_per_unit, shortage_norm_percent) "
+                    "VALUES (%s, %s, %s, %s, 'in_storage', %s, %s, %s, %s, %s, 0, %s, %s) RETURNING id",
+                    (barcode, int(material_id), qty, qty, row_supplier, int(shipment_id),
+                     price, currency, unit_rate,
+                     round(price * unit_rate, 4) if price is not None else None, norm),
+                )
+                roll_id = cur.fetchone()[0]
+                cur.execute(
+                    "INSERT INTO shipment_items (shipment_id, material_id, barcode, roll_id, quantity, "
+                    "total_quantity, number_rolls, price, currency, supplier_id) "
+                    "VALUES (%s, %s, %s, %s, %s, %s, 1, %s, %s, %s)",
+                    (int(shipment_id), int(material_id), barcode, roll_id, qty, qty,
+                     price, currency, row_supplier),
+                )
+                # Логистика машины теперь делится и на новый рулон.
+                recalc_shipment_costs(cur, shipment_id)
+
+                reopened = False
+                if acc_status == 'confirmed':
+                    cur.execute(
+                        "UPDATE shipments SET accountant_status = 'pending' WHERE id = %s",
+                        (int(shipment_id),),
+                    )
+                    reopened = True
+
+                log_action(
+                    cur, actor_id, actor_name, 'add_roll_to_closed', 'shipment', shipment_id,
+                    f'Довнёс рулон {barcode} в принятую приёмку #{shipment_id}: {mat_name}, '
+                    f'{qty} {mat_unit or ""}'
+                    + (f', цена {price} {currency}' if price is not None else ', без цены')
+                    + ('. Приёмка возвращена бухгалтеру на проверку' if reopened else ''),
+                )
+                conn.commit()
+                return {'statusCode': 200, 'headers': headers,
+                        'body': json.dumps({'success': True, 'barcode': barcode, 'rollId': roll_id,
+                                            'materialName': mat_name, 'unit': mat_unit,
+                                            'quantity': qty, 'accountantReopened': reopened},
+                                           ensure_ascii=False)}
+
             if action == 'update_roll_quantity':
                 """Правка метража одного рулона в уже принятой приёмке (только админ).
 

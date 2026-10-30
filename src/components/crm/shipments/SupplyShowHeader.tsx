@@ -16,6 +16,8 @@ interface Props {
   onBack: () => void;
   onPrintAllFound: () => void;
   onPrintAcceptanceSheet?: () => void;
+  /** Довнести рулон в принятую приёмку — только админу. */
+  onAddRoll?: () => void;
 }
 
 export const SupplyShowHeader = ({
@@ -26,6 +28,7 @@ export const SupplyShowHeader = ({
   onBack,
   onPrintAllFound,
   onPrintAcceptanceSheet,
+  onAddRoll,
 }: Props) => (
   <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
     <div className="min-w-0">
@@ -43,6 +46,12 @@ export const SupplyShowHeader = ({
       )}
     </div>
     <div className="flex w-full shrink-0 flex-col gap-2 sm:w-auto sm:flex-row">
+    {onAddRoll && (
+      <Button className="w-full sm:w-auto" onClick={onAddRoll} disabled={loading}>
+        <Icon name="Plus" size={16} className="mr-1" />
+        Добавить рулон
+      </Button>
+    )}
     {onPrintAcceptanceSheet && (
       <Button
         variant="outline"

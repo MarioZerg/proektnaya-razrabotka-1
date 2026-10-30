@@ -445,3 +445,25 @@ export const accountantCorrectionSupply = (id: number, comment: string) =>
 /** Кладовщик поправил состав и снова отдаёт лист бухгалтеру. */
 export const accountantResubmitSupply = (id: number) =>
   postAction({ action: 'accountant_resubmit', id });
+/**
+ * Довнести рулон в уже принятую приёмку (только администратор).
+ * Цена не указана — берётся из прайса поставщика. Если бухгалтер приёмку уже
+ * подтвердила, она вернётся ей на проверку: сумма документа изменилась.
+ */
+export const addRollToClosedSupply = (payload: {
+  id: number;
+  materialId: number;
+  quantity: number;
+  supplierId?: number | null;
+  price?: number | null;
+  currency?: string | null;
+}) =>
+  postAction({ action: 'add_roll_to_closed', ...payload }) as Promise<{
+    success: true;
+    barcode: string;
+    rollId: number;
+    materialName: string;
+    unit: string | null;
+    quantity: number;
+    accountantReopened: boolean;
+  }>;
