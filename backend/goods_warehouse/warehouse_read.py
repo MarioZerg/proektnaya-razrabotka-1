@@ -1240,6 +1240,12 @@ def handle_get(event: dict, headers: dict, dsn: str) -> dict:
             #
             # Теперь история читается из первоисточника: она никуда не
             # денется, даже когда старые записи журнала подчистятся.
+            # Раскрой и пошив — только заказа, ПОД КОТОРЫЙ ВЕЩЬ СШИЛИ (gw.order_id).
+            # Заказ брони — это покупатель, которому вещь отдали; у него может
+            # быть своя сшитая вещь со своим GW. Раньше брались этапы обоих
+            # заказов, и в истории GW-738282 стояло два раскроя и два пошива:
+            # свой (заказ -174) и чужой (заказ -176, вещь GW-738905).
+            own_order_id = int(own[0]) if own and own[0] else 0
             cur.execute(
                 "SELECT o.order_number, o.cut_at, cu.full_name, "
                 "       o.taken_at, o.sewn_at, sw.full_name, "
@@ -1248,7 +1254,8 @@ def handle_get(event: dict, headers: dict, dsn: str) -> dict:
                 "LEFT JOIN users cu ON cu.id = o.cutter_user_id "
                 "LEFT JOIN users sw ON sw.id = o.sewer_user_id "
                 "LEFT JOIN users pk ON pk.id = o.packer_user_id "
-                f"WHERE o.id IN ({ids_csv})"
+                "WHERE o.id = %s",
+                (own_order_id,),
             )
             stage_events = []
             for st in cur.fetchall():
