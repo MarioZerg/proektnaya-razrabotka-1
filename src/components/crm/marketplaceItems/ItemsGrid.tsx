@@ -50,11 +50,16 @@ const ItemsGrid = ({
 }: ItemsGridProps) => {
   const { toast } = useToast();
 
-  // Копирует код OZON (OZN + ozon_sku) в буфер — им товар добавляют в поставку FBO.
+  // Копирует штрихкод товара OZON в буфер — им товар добавляют в поставку FBO.
+  // Берём штрихкод из карточки: у вуали он НЕ равен «OZN + SKU» (vyal4_265:
+  // SKU 1207101317, штрихкод OZN1207101316). Ярлык «OZN + SKU» склад OZON не
+  // узнаёт и записывает вещь в неопознанные излишки.
   // navigator.clipboard доступен только на HTTPS/localhost, поэтому есть запасной способ
   // через скрытое поле и execCommand — работает и без защищённого контекста.
-  const copyOzonCode = async (ozonSku: string) => {
-    const code = `OZN${ozonSku}`;
+  const ozonCode = (item: { ozonSku?: string | null; barcode?: string | null }) =>
+    item.barcode && item.barcode.toUpperCase().startsWith('OZN') ? item.barcode : `OZN${item.ozonSku}`;
+
+  const copyOzonCode = async (code: string) => {
     let ok = false;
     try {
       if (navigator.clipboard && window.isSecureContext) {
@@ -129,14 +134,14 @@ const ItemsGrid = ({
                       <Badge
                         role="button"
                         tabIndex={0}
-                        onClick={() => copyOzonCode(item.ozonSku!)}
+                        onClick={() => copyOzonCode(ozonCode(item))}
                         onKeyDown={(e) => {
-                          if (e.key === 'Enter' || e.key === ' ') copyOzonCode(item.ozonSku!);
+                          if (e.key === 'Enter' || e.key === ' ') copyOzonCode(ozonCode(item));
                         }}
                         className="max-w-full cursor-pointer gap-1 break-all bg-blue-600 font-mono-tech text-white hover:bg-blue-700"
                         title="SKU товара в OZON. Нажмите, чтобы скопировать код для поставки FBO"
                       >
-                        OZN{item.ozonSku}
+                        {ozonCode(item)}
                         <Icon name="Copy" size={11} />
                       </Badge>
                     )}
