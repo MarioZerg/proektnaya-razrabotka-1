@@ -783,7 +783,11 @@ def delete_piece(cur, conn, event, body):
     # Раз куска больше нет — возвращаем туда, откуда её взяли:
     # с перепаковки — обратно упаковщице, с утиля кладовщика — снова в брак.
     # Раскроенный обратно вещью не станет.
-    if gw_id and status in ('available', 'reserved', 'incoming'):
+    # «Кусок уже ушёл в пошив» (usedInSewing): ткань израсходована, вещи больше
+    # нет — на перепаковку её не возвращаем. Иначе она висит у упаковщицы
+    # (GW-742427 и GW-739073 у Ирины, 27.10).
+    used_in_sewing = bool(body.get('usedInSewing'))
+    if gw_id and status in ('available', 'reserved', 'incoming') and not used_in_sewing:
         back = 'to_dispose' if added_by_role in ('storekeeper', 'admin') else 'repacking'
         cur.execute(
             "UPDATE goods_warehouse SET status = %s, shipped_at = NULL, "
@@ -796,7 +800,9 @@ def delete_piece(cur, conn, event, body):
 
     log_action(
         cur, user['realUserId'], user['name'], 'repair_piece_delete', piece_id,
-        f'Удалён из таблицы перешива кусок {material} {width}x{height} (был «{status}»)',
+        f'Удалён из таблицы перешива кусок {material} {width}x{height} (был «{status}»)'
+        + (' — уже использован в пошиве, вещь не возвращается' if used_in_sewing
+           else (' — вещь возвращена туда, откуда взяли' if gw_id else '')),
     )
     conn.commit()
     return _resp(200, {'success': True})

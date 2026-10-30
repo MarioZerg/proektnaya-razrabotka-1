@@ -345,5 +345,5 @@ export const writeOffRepairPiece = (pieceId: number, reason: string) =>
  * отправили по ошибке, задублировали, завели неверный размер. Списывать
  * такое нельзя, иначе в отчёте появится брак, которого не было.
  */
-export const deleteRepairPiece = (pieceId: number) =>
-  post({ action: 'delete', pieceId });
+export const deleteRepairPiece = (pieceId: number, usedInSewing = false) =>
+  post({ action: 'delete', pieceId, usedInSewing });

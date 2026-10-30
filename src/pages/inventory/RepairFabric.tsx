@@ -20,6 +20,7 @@ import RepairPieceCards from '@/components/crm/repairFabric/RepairPieceCards';
 import RepairPieceDetailDialog from '@/components/crm/repairFabric/RepairPieceDetailDialog';
 import RepairPieceTable from '@/components/crm/repairFabric/RepairPieceTable';
 import RepairPieceManualDialog from '@/components/crm/repairFabric/RepairPieceManualDialog';
+import DeletePieceDialog from '@/components/crm/repairFabric/DeletePieceDialog';
 
 /**
  * КУСКИ НА ПЕРЕШИВ — остатки ткани в цехе.
@@ -147,17 +148,19 @@ const RepairFabric = () => {
    * Вещь, которую отправили в перешив с перепаковки, возвращается в очередь
    * перепаковки: иначе она исчезнет разом отовсюду.
    */
-  const handleDelete = async (piece: RepairPiece) => {
-    const ok = window.confirm(
-      `Удалить из таблицы кусок ${piece.material} ${piece.width}×${piece.height}?\n\n` +
-        'Строка пропадёт насовсем, в отчётах её не будет. ' +
-        'Если кусок был и его испортили — используйте списание, а не удаление.',
-    );
-    if (!ok) return;
+  const [askDelete, setAskDelete] = useState<RepairPiece | null>(null);
+  const handleDelete = (piece: RepairPiece) => setAskDelete(piece);
+
+  const confirmDelete = async (piece: RepairPiece, usedInSewing: boolean) => {
     setDeleting(piece.id);
     try {
-      await deleteRepairPiece(piece.id);
-      toast({ title: 'Кусок удалён из таблицы' });
+      await deleteRepairPiece(piece.id, usedInSewing);
+      toast({
+        title: 'Кусок удалён из таблицы',
+        description: usedInSewing ? 'Вещь не возвращается — кусок ушёл в пошив' : undefined,
+      });
+      setAskDelete(null);
+      setSelected(null);
       load();
     } catch (e) {
       toast({
@@ -312,6 +315,15 @@ const RepairFabric = () => {
           onRequestRemoval={setAskRemoval}
           dismissing={dismissing}
           onDismissRemoval={handleDismissRemoval}
+        />
+
+        <DeletePieceDialog
+          piece={askDelete}
+          busy={deleting != null}
+          onOpenChange={(open) => {
+            if (!open) setAskDelete(null);
+          }}
+          onConfirm={confirmDelete}
         />
 
         <RequestRemovalDialog
