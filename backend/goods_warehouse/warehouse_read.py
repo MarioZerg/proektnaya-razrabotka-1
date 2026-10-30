@@ -645,9 +645,18 @@ def handle_get(event: dict, headers: dict, dsn: str) -> dict:
             cur.execute(
                 # Роль автора: админ разбирает уведомления по участкам
                 # (закройщики, швеи, перепаковка, склад) и по людям.
+                # Должность — та, в которой человек работал В МОМЕНТ события
+                # (смена). Мультиаккаунт переключается: Привезенцева по профилю
+                # швея, но рулоны закрывает на смене закройщика — недостача
+                # рулона подписывалась «швея». Профиль — только если смены нет.
                 "SELECT n.id, n.kind, n.title, n.message, COALESCE(n.actor_name, u.full_name), n.link, "
-                "  n.created_at, n.is_read, n.actor_id, u.role "
+                "  n.created_at, n.is_read, n.actor_id, COALESCE(ss.role, u.role) "
                 "FROM admin_notifications n LEFT JOIN users u ON u.id = n.actor_id "
+                "LEFT JOIN LATERAL (SELECT s.role FROM shift_sessions s "
+                "   WHERE s.user_id = n.actor_id AND s.role IS NOT NULL "
+                "     AND s.opened_at <= n.created_at "
+                "     AND (s.closed_at IS NULL OR s.closed_at >= n.created_at) "
+                "   ORDER BY s.opened_at DESC LIMIT 1) ss ON true "
                 "WHERE n.hidden_at IS NULL "
                 "ORDER BY n.created_at DESC LIMIT 500"
             )
