@@ -2,6 +2,7 @@ import { Fragment } from 'react';
 import { Button } from '@/components/ui/button';
 import Icon from '@/components/ui/icon';
 import SitePricingPanel from '@/components/crm/siteProducts/SitePricingPanel';
+import SiteAutoPriceBar from '@/components/crm/siteProducts/SiteAutoPriceBar';
 import SiteItemMaterialsDialog from '@/components/crm/siteProducts/SiteItemMaterialsDialog';
 import SiteProductsFilters from '@/components/crm/siteProducts/SiteProductsFilters';
 import SiteMaterialRow from '@/components/crm/siteProducts/SiteMaterialRow';
@@ -68,6 +69,17 @@ const SiteProductsTab = ({ shopId }: { shopId: number }) => {
           {syncing ? 'Загружаю…' : 'Загрузить товары с сайта'}
         </Button>
       </div>
+
+      <SiteAutoPriceBar
+        pricing={pricing}
+        manualCount={active.reduce((n, g) => n + g.manualPrices, 0)}
+        canEdit={isAdmin}
+        actor={actor}
+        onChanged={(p) => {
+          setPricing(p);
+          load();
+        }}
+      />
 
       <SitePricingPanel
         pricing={pricing}

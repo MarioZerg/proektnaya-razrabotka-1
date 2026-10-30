@@ -9,6 +9,8 @@ interface Props {
   item: SiteCatalogItem;
   /** Рекомендуемая цена этой высоты по её себестоимости. */
   recommended: number | null;
+  /** Включена автоцена — подсказку не показываем, цена ставится сама. */
+  auto?: boolean;
   canEdit: boolean;
   actor?: { id?: number; name?: string };
   onSaved: () => void;
@@ -17,7 +19,7 @@ interface Props {
 const rub = (v: number) => `${v.toLocaleString('ru-RU', { maximumFractionDigits: 0 })} ₽`;
 
 /** Цена одной высоты — отдельно от остальных высот ширины. */
-const SiteHeightPriceCell = ({ item, recommended, canEdit, actor, onSaved }: Props) => {
+const SiteHeightPriceCell = ({ item, recommended, auto, canEdit, actor, onSaved }: Props) => {
   const { toast } = useToast();
   const [value, setValue] = useState(item.price != null ? String(item.price) : '');
   const [saving, setSaving] = useState(false);
@@ -29,14 +31,14 @@ const SiteHeightPriceCell = ({ item, recommended, canEdit, actor, onSaved }: Pro
   const current = value.trim() ? Number(value.replace(',', '.')) : null;
   const changed = (current ?? null) !== (item.price ?? null);
 
-  const save = async (price: number | null) => {
+  const save = async (price: number | null, manual = true) => {
     if (price !== null && (!Number.isFinite(price) || price <= 0)) {
       toast({ title: 'Цена должна быть больше нуля', variant: 'destructive' });
       return;
     }
     setSaving(true);
     try {
-      const r = await setSitePrice([item.id], price, actor);
+      const r = await setSitePrice([item.id], price, actor, manual);
       toast(
         r.pushed
           ? { title: `Цена ${item.width}×${item.height} отправлена на сайт` }
@@ -67,11 +69,16 @@ const SiteHeightPriceCell = ({ item, recommended, canEdit, actor, onSaved }: Pro
           <Icon name={saving ? 'Loader2' : 'Check'} size={12} className={saving ? 'animate-spin' : ''} />
         </Button>
       )}
-      {recommended != null && recommended !== item.price && !changed && (
+      {auto && item.priceManual && !changed && (
+        <span className="text-[11px] text-amber-700" title="Ручная цена — автоцена её не меняет">
+          вручную
+        </span>
+      )}
+      {!auto && recommended != null && recommended !== item.price && !changed && (
         <button
           type="button"
           disabled={saving}
-          onClick={() => save(recommended)}
+          onClick={() => save(recommended, false)}
           className="text-[11px] text-sky-700 hover:underline"
         >
           {rub(recommended)}

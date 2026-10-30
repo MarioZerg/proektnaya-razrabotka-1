@@ -422,6 +422,7 @@ def handler(event: dict, context) -> dict:
     POST { action: 'set_price', itemId, price } — цена товара (админ), сразу уходит на сайт
     POST { action: 'set_disabled', disabled, itemIds? | materialId? } — выключить/включить на сайте
     POST { action: 'save_pricing', taxPct, acquiringPct, bloggerPct, profitByWidth: {'200': 250, ...} }
+    POST { action: 'auto_prices', force? }   — проставить рекомендованные цены (кроме ручных)
     POST { action: 'low_fabric' }            — ткани меньше 20 м и товары сайта на них
     GET  ?action=status                       — подключён ли магазин
     """
@@ -462,7 +463,20 @@ def handler(event: dict, context) -> dict:
         if action == 'catalog':
             if site_catalog.assign_internal_skus(cur, shop_id):
                 conn.commit()
-            return _resp(200, site_catalog.list_products(cur, shop_id))
+            data = site_catalog.list_products(cur, shop_id)
+            # Автоцена: при каждом открытии товаров подтягиваем цены к текущей
+            # себестоимости (поменялись расходы, поставка ткани) — без кнопок.
+            if data['pricing'].get('autoPrice') and data.get('costAvailable'):
+                auto = site_catalog.auto_prices(cur, shop_id, site_url, api_key if enabled else '', data=data)
+                conn.commit()
+                if auto.get('changed'):
+                    log_action(cur, actor_id, actor_name, 'site_auto_price',
+                               f"мегатюль.рф: автоцена, товаров {auto['changed']}"
+                               + ('' if auto.get('pushed') else f" (на сайт не ушло: {auto.get('pushError')})"))
+                    conn.commit()
+                    data = site_catalog.list_products(cur, shop_id)
+                data['auto'] = auto
+            return _resp(200, data)
 
         if action == 'orders_profit':
             return _resp(200, site_catalog.orders_profit(cur, shop_id, body.get('month')))
@@ -474,11 +488,34 @@ def handler(event: dict, context) -> dict:
             if not site_catalog.is_admin(cur, actor_id):
                 return _resp(403, {'error': 'Настройки цен меняет администратор'})
             code, payload = site_catalog.save_pricing(cur, body)
-            if code == 200:
-                conn.commit()
-            else:
+            if code != 200:
                 conn.rollback()
-            return _resp(code, payload)
+                return _resp(code, payload)
+            conn.commit()
+            if payload.get('autoPrice'):
+                # Настройки поменялись — автоцены сразу пересчитываем и отправляем на сайт.
+                auto = site_catalog.auto_prices(cur, shop_id, site_url, api_key if enabled else '')
+                conn.commit()
+                if auto.get('changed'):
+                    log_action(cur, actor_id, actor_name, 'site_auto_price',
+                               f"мегатюль.рф: автоцена после настроек, товаров {auto['changed']}"
+                               + ('' if auto.get('pushed') else f" (на сайт не ушло: {auto.get('pushError')})"))
+                    conn.commit()
+                payload = {**payload, 'auto': auto}
+            return _resp(200, payload)
+
+        if action == 'auto_prices':
+            if not cron_key and not site_catalog.is_admin(cur, actor_id):
+                return _resp(403, {'error': 'Цены на сайте меняет администратор'})
+            auto = site_catalog.auto_prices(cur, shop_id, site_url, api_key if enabled else '',
+                                            force=bool(body.get('force')))
+            conn.commit()
+            if auto.get('changed'):
+                log_action(cur, actor_id, actor_name, 'site_auto_price',
+                           f"мегатюль.рф: автоцена, товаров {auto['changed']}"
+                           + ('' if auto.get('pushed') else f" (на сайт не ушло: {auto.get('pushError')})"))
+                conn.commit()
+            return _resp(200, auto)
 
         if action in ('set_price', 'set_disabled'):
             if not site_catalog.is_admin(cur, actor_id):
@@ -536,6 +573,19 @@ def handler(event: dict, context) -> dict:
                 except Exception:
                     result = {'error': f'Ошибка {e.code}'}
             if code == 200:
+                # Раз в час вместе с каталогом подтягиваем автоцены: себестоимость
+                # могла измениться (новая поставка ткани, оклады, аренда).
+                try:
+                    auto = site_catalog.auto_prices(cur, shop_id, site_url, api_key)
+                    conn.commit()
+                    if auto.get('changed'):
+                        log_action(cur, actor_id, actor_name, 'site_auto_price',
+                                   f"мегатюль.рф: автоцена по расписанию, товаров {auto['changed']}"
+                                   + ('' if auto.get('pushed') else f" (на сайт не ушло: {auto.get('pushError')})"))
+                    result['autoPrice'] = auto
+                except Exception as e:
+                    conn.rollback()
+                    result['autoPriceError'] = str(e)
                 log_action(cur, actor_id, actor_name, 'site_sync_products',
                            f"мегатюль.рф каталог: новых {result.get('created', 0)}, "
                            f"обновлено {result.get('linked', 0)}, в архив {result.get('archived', 0)}, "

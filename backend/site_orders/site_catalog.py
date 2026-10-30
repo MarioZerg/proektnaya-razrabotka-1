@@ -5,6 +5,7 @@
 ткань из расхода + ширина — только если в карточке проставлен расход материалов.
 """
 import json
+import math
 import time
 import urllib.error
 import urllib.request
@@ -30,6 +31,11 @@ def _cost_map():
     # Расчёт себестоимости иногда отвечает ошибкой (база в пик упирается в лимит
     # запросов) — тогда у всех строк пропадала подсказка цены. Пробуем ещё раз,
     # а при неудаче отдаём последний удачный расчёт из памяти.
+    # В одном запросе себестоимость может понадобиться дважды (каталог → автоцена →
+    # каталог) — не ходим за ней повторно чаще раза в минуту.
+    cached = _COST_CACHE.get('map')
+    if cached is not None and time.time() - _COST_CACHE.get("at", 0) < 15:
+        return cached
     data = None
     for attempt in range(2):
         try:
@@ -43,6 +49,7 @@ def _cost_map():
         return _COST_CACHE.get('map')
     result = _parse_cost_map(data)
     _COST_CACHE['map'] = result
+    _COST_CACHE['at'] = time.time()
     return result
 
 
@@ -159,15 +166,16 @@ def _item_cost(item_materials, fabric_id, width, costs, fixed=None):
 def pricing_settings(cur):
     cur.execute(
         "SELECT min_profit_rub, max_profit_rub, tax_pct, acquiring_pct, blogger_pct, profit_by_width, "
-        "  fixed_mode, site_monthly_units "
+        "  fixed_mode, site_monthly_units, auto_price "
         "FROM site_pricing_settings ORDER BY id LIMIT 1"
     )
-    r = cur.fetchone() or (250, 450, 6, 2, 10, {}, 'shared', 300)
+    r = cur.fetchone() or (250, 450, 6, 2, 10, {}, 'shared', 300, False)
     raw = r[5] if isinstance(r[5], dict) else json.loads(r[5] or '{}')
     return {'minProfitRub': float(r[0]), 'maxProfitRub': float(r[1]), 'taxPct': float(r[2]),
             'acquiringPct': float(r[3]), 'bloggerPct': float(r[4]),
             'profitByWidth': {str(int(float(k))): float(v) for k, v in raw.items()},
-            'fixedMode': r[6] or 'shared', 'siteMonthlyUnits': int(r[7] or 300)}
+            'fixedMode': r[6] or 'shared', 'siteMonthlyUnits': int(r[7] or 300),
+            'autoPrice': bool(r[8])}
 
 
 def save_pricing(cur, body):
@@ -193,6 +201,7 @@ def save_pricing(cur, body):
         if mode not in ('shared', 'site_only'):
             raise ValueError('Неизвестный режим постоянных расходов')
         units = int(float(body.get('siteMonthlyUnits') or cur_p['siteMonthlyUnits']))
+        auto = bool(body['autoPrice']) if 'autoPrice' in body else cur_p['autoPrice']
         if units < 1 or units > 1000000:
             raise ValueError('План продаж сайта — от 1 штуки в месяц')
     except (TypeError, ValueError) as e:
@@ -202,9 +211,9 @@ def save_pricing(cur, body):
     cur.execute(
         "UPDATE site_pricing_settings SET tax_pct = %s, acquiring_pct = %s, blogger_pct = %s, "
         "  profit_by_width = %s::jsonb, fixed_mode = %s, site_monthly_units = %s, "
-        "  updated_at = now(), updated_by = %s "
+        "  auto_price = %s, updated_at = now(), updated_by = %s "
         "WHERE id = (SELECT id FROM site_pricing_settings ORDER BY id LIMIT 1)",
-        (*vals, json.dumps(by_width), mode, units, body.get('actorId')),
+        (*vals, json.dumps(by_width), mode, units, auto, body.get('actorId')),
     )
     return 200, pricing_settings(cur)
 
@@ -248,7 +257,7 @@ def list_products(cur, shop_id):
         "  (SELECT m.material_id FROM marketplace_item_materials m "
         "   JOIN materials x ON x.id = m.material_id JOIN material_types t ON t.id = x.type_id "
         "   WHERE m.marketplace_item_id = mi.id AND t.name = 'Тюль' ORDER BY m.id LIMIT 1), "
-        "  mi.internal_sku "
+        "  mi.internal_sku, mi.site_price_manual "
         "FROM marketplace_items mi WHERE mi.shop_id = %s AND COALESCE(mi.sku, '') NOT LIKE 'dup:%%' "
         "ORDER BY mi.sku",
         (int(shop_id),),
@@ -297,6 +306,8 @@ def list_products(cur, shop_id):
             'cost': cost,
             'costParts': parts,
             'internalSku': r[14],
+            # Цена поставлена руками — автоцена её не трогает.
+            'priceManual': bool(r[15]),
             # ok — ткань в расходе; notInMaterials — ткань есть в справочнике, но не
             # указана в расходе; notInReference — такой ткани в справочнике нет.
             'fabricStatus': fabric_status,
@@ -311,6 +322,53 @@ def list_products(cur, shop_id):
     if fixed:
         fixed['siteSold30'] = site_sold_30
     return {'items': items, 'costAvailable': costs is not None, 'pricing': pricing, 'fixedCosts': fixed}
+
+
+def _recommended(cost, width, p):
+    """Та же формула, что на экране: (себестоимость + прибыль ширины) ÷ доля после %, вверх до 10 ₽."""
+    m = p['profitByWidth']
+    target = m.get(str(int(width))) if width else None
+    if target is None and m:
+        known = sorted(int(k) for k in m)
+        lower = [w for w in known if width and w <= int(width)]
+        target = m[str(lower[-1] if lower else known[0])]
+    share = 1 - (p['taxPct'] + p['acquiringPct'] + p['bloggerPct']) / 100
+    if target is None or share <= 0 or cost is None:
+        return None
+    return float(math.ceil((cost + target) / share / 10) * 10)
+
+
+def auto_prices(cur, shop_id, site_url, api_key, force=False, data=None):
+    """Проставляет рекомендованную цену каждой высоте и отправляет изменённые на сайт.
+
+    Трогаем только активные товары с себестоимостью и без ручной цены.
+    Цена меняется, если отличается от рекомендованной больше чем на 10 ₽ — чтобы
+    копейки в себестоимости не дёргали витрину. force — работает и при выключенной автоцене.
+    """
+    p = pricing_settings(cur)
+    if not p['autoPrice'] and not force:
+        return {'enabled': False, 'changed': 0}
+    data = data or list_products(cur, shop_id)
+    changes = {}
+    for i in data['items']:
+        if i['archivedAt'] or i['priceManual'] or i['cost'] is None:
+            continue
+        rec = _recommended(i['cost'], i['width'], p)
+        if rec is None or rec <= 0:
+            continue
+        if i['price'] is None or abs(rec - i['price']) >= 10:
+            changes[int(i['id'])] = rec
+    if not changes:
+        return {'enabled': True, 'changed': 0, 'pushed': True, 'pushError': None}
+    values = ','.join(f"({k}, {v})" for k, v in changes.items())
+    cur.execute(
+        "UPDATE marketplace_items mi SET site_price = v.price, updated_at = now() "
+        f"FROM (VALUES {values}) AS v(id, price) WHERE mi.id = v.id AND mi.shop_id = %s "
+        "AND NOT mi.site_price_manual",
+        (int(shop_id),),
+    )
+    ok, err = _push_items(cur, list(changes.keys()), site_url, api_key)
+    return {'enabled': True, 'changed': len(changes), 'pushed': ok, 'pushError': err}
 
 
 def push_to_site(site_url, api_key, payload_items):
@@ -367,6 +425,8 @@ def set_price(cur, shop_id, body, site_url, api_key):
     if not ids:
         return 400, {'error': 'Укажите товар'}
     per_item = body.get('prices') or {}
+    # Ручная цена закрепляется: автоцена её не перезапишет. «Вернуть на авто» — manual: false.
+    manual = bool(body.get('manual', True))
     if per_item:
         try:
             pairs = {int(k): round(float(v), 2) for k, v in per_item.items()}
@@ -376,10 +436,10 @@ def set_price(cur, shop_id, body, site_url, api_key):
             return 400, {'error': 'Цена должна быть больше нуля'}
         values = ','.join(f"({k}, {v})" for k, v in pairs.items())
         cur.execute(
-            "UPDATE marketplace_items mi SET site_price = v.price, updated_at = now() "
+            "UPDATE marketplace_items mi SET site_price = v.price, site_price_manual = %s, updated_at = now() "
             f"FROM (VALUES {values}) AS v(id, price) "
             "WHERE mi.id = v.id AND mi.shop_id = %s RETURNING mi.id",
-            (int(shop_id),),
+            (manual, int(shop_id)),
         )
     else:
         price = body.get('price')
@@ -391,9 +451,9 @@ def set_price(cur, shop_id, body, site_url, api_key):
             return 400, {'error': 'Цена должна быть больше нуля'}
         ids_csv = ','.join(str(i) for i in ids)
         cur.execute(
-            f"UPDATE marketplace_items SET site_price = %s, updated_at = now() "
+            f"UPDATE marketplace_items SET site_price = %s, site_price_manual = %s, updated_at = now() "
             f"WHERE id IN ({ids_csv}) AND shop_id = %s RETURNING id",
-            (price_val, int(shop_id)),
+            (price_val, manual and price_val is not None, int(shop_id)),
         )
     done = [r[0] for r in cur.fetchall()]
     if not done:

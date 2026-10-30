@@ -20,6 +20,8 @@ export interface SiteWidthGroup {
   manual: boolean;
   /** Проблема с тканью карточки: нет в справочнике или не указана в расходе. */
   fabricIssue: 'notInMaterials' | 'notInReference' | null;
+  /** Сколько высот с ручной ценой. */
+  manualPrices: number;
 }
 
 const baseName = (name: string) => name.replace(/\s+\d+×\d+$/, '').trim();
@@ -54,6 +56,7 @@ export const groupByWidth = (items: SiteCatalogItem[]): SiteWidthGroup[] => {
       pushError: sorted.find((i) => i.pushError)?.pushError ?? null,
       archived: sorted.every((i) => i.archivedAt),
       manual: sorted.every((i) => !i.siteProductId),
+      manualPrices: sorted.filter((i) => i.priceManual).length,
       fabricIssue: sorted.some((i) => i.fabricStatus === 'notInReference')
         ? 'notInReference'
         : sorted.some((i) => i.fabricStatus === 'notInMaterials')

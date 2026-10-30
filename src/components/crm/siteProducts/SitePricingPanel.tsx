@@ -121,7 +121,11 @@ const SitePricingPanel = ({ pricing, widths, costByWidth, fixedCosts, avgMargin,
         },
         actor
       );
-      toast({ title: 'Настройки цен сохранены', description: 'Подсказки цен в таблице пересчитаны' });
+      const a = (saved as SitePricing & { auto?: { changed: number } }).auto;
+      toast({
+        title: 'Настройки цен сохранены',
+        description: a ? `Автоцена обновила цен на сайте: ${a.changed}` : 'Подсказки цен в таблице пересчитаны',
+      });
       onSaved(saved);
     } catch (e) {
       toast({ title: 'Не удалось сохранить', description: e instanceof Error ? e.message : undefined, variant: 'destructive' });
@@ -322,8 +326,9 @@ const SitePricingPanel = ({ pricing, widths, costByWidth, fixedCosts, avgMargin,
           )}
           {canEdit && !changed && (
             <p className="text-[11px] text-muted-foreground">
-              Сохранение настроек не меняет цены на сайте само: в таблице у каждой ширины появится новая подсказка —
-              нажмите «поставить».
+              {pricing.autoPrice
+                ? 'Автоцена включена: после сохранения цены на сайте пересчитаются сами (кроме ручных).'
+                : 'Автоцена выключена: после сохранения у каждой ширины появится новая подсказка — нажмите «поставить».'}
             </p>
           )}
         </div>

@@ -70,6 +70,8 @@ export interface SiteCatalogItem {
   internalSku?: string | null;
   /** ok — ткань в расходе; notInMaterials — не указана в расходе; notInReference — нет в справочнике. */
   fabricStatus?: 'ok' | 'notInMaterials' | 'notInReference';
+  /** Цена поставлена вручную — автоцена её не меняет. */
+  priceManual?: boolean;
   width: number | null;
   height: number | null;
   material: string | null;
@@ -106,6 +108,15 @@ export interface SitePricing {
   fixedMode?: 'shared' | 'site_only';
   /** План продаж сайта, штук в месяц (для режима site_only). */
   siteMonthlyUnits?: number;
+  /** Автоцена: рекомендованная цена сама ставится и уходит на сайт (кроме ручных). */
+  autoPrice?: boolean;
+}
+
+export interface SiteAutoPriceResult {
+  enabled: boolean;
+  changed: number;
+  pushed?: boolean;
+  pushError?: string | null;
 }
 
 export interface SiteFixedCosts {
@@ -138,7 +149,22 @@ export const fetchSiteCatalog = (): Promise<{
   costAvailable: boolean;
   pricing: SitePricing;
   fixedCosts?: SiteFixedCosts | null;
+  auto?: SiteAutoPriceResult;
 }> => post({ action: 'catalog' });
+
+/** Проставить рекомендованные цены всем товарам без ручной цены и отправить на сайт. */
+export const runSiteAutoPrices = (
+  force: boolean,
+  actor?: { id?: number; name?: string }
+): Promise<SiteAutoPriceResult> =>
+  post({ action: 'auto_prices', force, actorId: actor?.id, actorName: actor?.name });
+
+/** Снять ручную цену: товар снова получает цену автоматически. */
+export const unlockSitePrices = (
+  prices: Record<number, number>,
+  actor?: { id?: number; name?: string }
+): Promise<SitePushResult> =>
+  post({ action: 'set_price', prices, manual: false, actorId: actor?.id, actorName: actor?.name });
 
 export interface SiteOrderProfit {
   id: number;
@@ -184,17 +210,20 @@ export interface SitePushResult {
 /** Своя цена каждой высоте: { id артикула: цена }. */
 export const setSitePrices = (
   prices: Record<number, number>,
-  actor?: { id?: number; name?: string }
+  actor?: { id?: number; name?: string },
+  manual = true
 ): Promise<SitePushResult> =>
-  post({ action: 'set_price', prices, actorId: actor?.id, actorName: actor?.name });
+  post({ action: 'set_price', prices, manual, actorId: actor?.id, actorName: actor?.name });
 
 /** Цена сразу на все высоты одной ширины. */
 export const setSitePrice = (
   itemIds: number[],
   price: number | null,
-  actor?: { id?: number; name?: string }
+  actor?: { id?: number; name?: string },
+  /** false — цена по подсказке: автоцена сможет её дальше менять. */
+  manual = true
 ): Promise<SitePushResult> =>
-  post({ action: 'set_price', itemIds, price, actorId: actor?.id, actorName: actor?.name });
+  post({ action: 'set_price', itemIds, price, manual, actorId: actor?.id, actorName: actor?.name });
 
 export const setSiteDisabled = (
   target: { itemIds?: number[]; materialId?: number },

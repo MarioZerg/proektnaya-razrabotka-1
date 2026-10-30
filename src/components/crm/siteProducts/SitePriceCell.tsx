@@ -3,7 +3,7 @@ import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import Icon from '@/components/ui/icon';
 import { useToast } from '@/hooks/use-toast';
-import { setSitePrice, setSitePrices, type SitePricing } from '@/lib/siteOrdersApi';
+import { setSitePrice, setSitePrices, unlockSitePrices, type SitePricing } from '@/lib/siteOrdersApi';
 import { recommendedPrice } from '@/lib/sitePricing';
 import type { SiteWidthGroup } from '@/components/crm/siteProducts/siteWidthGroups';
 
@@ -41,10 +41,35 @@ const SitePriceCell = ({ group, pricing, canEdit, actor, onSaved }: Props) => {
     Object.keys(byHeight).length > 0 &&
     group.items.some((i) => byHeight[i.id] != null && byHeight[i.id] !== i.price);
 
+  const auto = !!pricing.autoPrice;
+  const manualCount = group.manualPrices;
+
+  const backToAuto = async () => {
+    // Каждой высоте — её рекомендованная цена, и снимаем «вручную».
+    const prices = Object.keys(byHeight).length
+      ? byHeight
+      : Object.fromEntries(group.items.filter((i) => i.price != null).map((i) => [i.id, i.price as number]));
+    if (!Object.keys(prices).length) return;
+    setSaving(true);
+    try {
+      const r = await unlockSitePrices(prices, actor);
+      toast(
+        r.pushed
+          ? { title: 'Цена снова считается автоматически' }
+          : { title: 'Сохранено, на сайт не ушло', description: r.pushError || undefined, variant: 'destructive' }
+      );
+      onSaved();
+    } catch (e) {
+      toast({ title: 'Не удалось сохранить', description: e instanceof Error ? e.message : undefined, variant: 'destructive' });
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const saveByHeight = async () => {
     setSaving(true);
     try {
-      const r = await setSitePrices(byHeight, actor);
+      const r = await setSitePrices(byHeight, actor, false);
       toast(
         r.pushed
           ? { title: `Цены по высотам отправлены на сайт: ${Object.keys(byHeight).length}` }
@@ -58,7 +83,7 @@ const SitePriceCell = ({ group, pricing, canEdit, actor, onSaved }: Props) => {
     }
   };
 
-  const save = async (price: number | null) => {
+  const save = async (price: number | null, manual = true) => {
     if (price !== null && (!Number.isFinite(price) || price <= 0)) {
       toast({ title: 'Цена должна быть больше нуля', variant: 'destructive' });
       return;
@@ -68,7 +93,8 @@ const SitePriceCell = ({ group, pricing, canEdit, actor, onSaved }: Props) => {
       const r = await setSitePrice(
         group.items.map((i) => i.id),
         price,
-        actor
+        actor,
+        manual
       );
       toast(
         r.pushed
@@ -106,11 +132,31 @@ const SitePriceCell = ({ group, pricing, canEdit, actor, onSaved }: Props) => {
           </Button>
         )}
       </div>
-      {recommended != null && recommended !== group.price && (
+      {auto && manualCount === 0 && group.cost != null && (
+        <span className="w-fit text-xs text-emerald-700" title="Цена считается сама от себестоимости и цели прибыли">
+          авто
+        </span>
+      )}
+      {auto && manualCount > 0 && (
+        <span className="flex flex-wrap items-center gap-1 text-xs">
+          <span className="text-amber-700" title="Ручная цена закреплена — автоцена её не меняет">
+            вручную{manualCount < group.items.length ? ` (${manualCount} из ${group.items.length})` : ''}
+          </span>
+          <button
+            type="button"
+            disabled={saving}
+            onClick={backToAuto}
+            className="text-sky-700 hover:underline"
+          >
+            вернуть на авто
+          </button>
+        </span>
+      )}
+      {!auto && recommended != null && recommended !== group.price && (
         <button
           type="button"
           disabled={saving}
-          onClick={() => save(recommended)}
+          onClick={() => save(recommended, false)}
           className="w-fit text-left text-xs text-sky-700 hover:underline"
         >
           поставить {rub(recommended)}
@@ -124,7 +170,7 @@ const SitePriceCell = ({ group, pricing, canEdit, actor, onSaved }: Props) => {
           нет себестоимости
         </span>
       )}
-      {byHeightDiffers && (
+      {!auto && byHeightDiffers && (
         <button
           type="button"
           disabled={saving}

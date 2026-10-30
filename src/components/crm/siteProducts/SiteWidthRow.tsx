@@ -149,6 +149,7 @@ const SiteWidthRow = ({
                       <SiteHeightPriceCell
                         item={i}
                         recommended={i.cost != null ? recommendedPrice(i.cost, g.width, pricing) : null}
+                        auto={!!pricing.autoPrice}
                         canEdit={isAdmin && !i.archivedAt}
                         actor={actor}
                         onSaved={onSaved}

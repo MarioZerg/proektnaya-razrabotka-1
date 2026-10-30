@@ -37,8 +37,15 @@ const useSiteProducts = (shopId: number) => {
   const load = () => {
     setLoading(true);
     fetchSiteCatalog()
-      .then(({ items: list, pricing: p, costAvailable, fixedCosts: f }) => {
+      .then(({ items: list, pricing: p, costAvailable, fixedCosts: f, auto }) => {
         if (f) setFixedCosts(f);
+        if (auto?.changed) {
+          toast(
+            auto.pushed
+              ? { title: `Автоцена: обновлено цен на сайте — ${auto.changed}`, description: 'Себестоимость изменилась, цены подтянуты' }
+              : { title: `Автоцена: ${auto.changed} цен не ушли на сайт`, description: auto.pushError || undefined, variant: 'destructive' }
+          );
+        }
         // Себестоимость не посчиталась (сбой расчёта) — оставляем прежнюю,
         // иначе после сохранения цены у остальных строк пропадала подсказка.
         setItems((prev) => {
