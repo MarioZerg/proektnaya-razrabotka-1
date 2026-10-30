@@ -88,8 +88,11 @@ const ProductCost = () => {
     ? complete.reduce((s, g) => s + g.total, 0) / complete.length
     : 0;
   const productsTotal = groups.reduce((s, g) => s + g.productsCount, 0);
+  const avgSite = complete.length
+    ? complete.reduce((s, g) => s + (g.siteTotal ?? g.total), 0) / complete.length
+    : 0;
   const extrasPerUnit = (data?.extras || [])
-    .filter((e) => e.isActive)
+    .filter((e) => e.isActive && e.channel !== 'site')
     .reduce((s, e) => s + e.perUnit, 0);
 
   return (
@@ -165,6 +168,7 @@ const ProductCost = () => {
             <div className="rounded-lg border border-border p-3">
               <p className="text-xs text-muted-foreground">Средняя себестоимость</p>
               <p className="text-2xl font-bold">{money(avg)} ₽</p>
+              <p className="text-xs text-muted-foreground">маркетплейсы · сайт {money(avgSite)} ₽</p>
             </div>
             <div
               className={`rounded-lg border p-3 ${

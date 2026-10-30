@@ -462,6 +462,41 @@ def _calc_groups(cur, settings, salaried_per_unit=0.0):
     return result, extras
 
 
+def _site_channel(cur, groups, extras, salaried, settings):
+    """Себестоимость для интернет-магазина рядом с маркетплейсами.
+
+    Материалы и сдельная работа одинаковы. Различаются постоянные расходы:
+      · маркетплейсы несут статьи «все каналы» и «маркетплейсы»;
+      · сайт — «все каналы» и «сайт». Режим из настроек цен сайта: shared —
+        ежемесячные суммы делятся на все продажи, site_only — только на план сайта.
+        Ежемесячная статья «только сайт» всегда делится на план сайта.
+    Дописывает в каждую группу siteFixed и siteTotal, mpFixed.
+    """
+    try:
+        cur.execute("SELECT fixed_mode, site_monthly_units FROM site_pricing_settings ORDER BY id LIMIT 1")
+        row = cur.fetchone()
+    except Exception:
+        row = None
+    mode = (row[0] if row else None) or 'shared'
+    units = max(int((row[1] if row else 0) or 300), 1)
+    sal_site = salaried['perUnit'] if mode == 'shared' else salaried['total'] / units
+    site_extra = 0.0
+    for e in extras:
+        if not e['isActive'] or e.get('channel') == 'marketplaces':
+            continue
+        if e.get('isMonthly', True) and (mode == 'site_only' or e.get('channel') == 'site'):
+            site_extra += e['amount'] / units
+        else:
+            site_extra += e['perUnit']
+    site_fixed = round(sal_site + site_extra + settings['overheadPerItem'], 2)
+    for g in groups:
+        mp_fixed = round((g.get('salariedCost') or 0) + (g.get('overhead') or 0), 2)
+        g['mpFixed'] = mp_fixed
+        g['siteFixed'] = site_fixed
+        g['siteTotal'] = round(g['total'] - mp_fixed + site_fixed, 2)
+    return {'mode': mode, 'units': units, 'fixedPerUnit': site_fixed}
+
+
 def handler(event: dict, context) -> dict:
     """Себестоимость одной единицы товара.
 
@@ -497,6 +532,7 @@ def handler(event: dict, context) -> dict:
             sold = _sold_units(cur, 30)
             salaried = _salaried(cur)
             groups, extras = _calc_groups(cur, settings, salaried['perUnit'])
+            site = _site_channel(cur, groups, extras, salaried, settings)
             cur.execute("SELECT id, name FROM workshops WHERE name NOT IN ('Цех №2', 'Тестовый цех (QA)') ORDER BY id")
             workshops = [{'id': r[0], 'name': r[1]} for r in cur.fetchall()]
             return _resp(200, {
@@ -511,6 +547,8 @@ def handler(event: dict, context) -> dict:
                 'salaried': salaried,
                 # Цена каждого материала по последней поставке — для расчёта по конкретной высоте.
                 'materialPrices': {str(k): v['price'] for k, v in _material_prices(cur).items()},
+                # Как постоянные расходы ложатся на вещь интернет-магазина.
+                'site': site,
             })
 
         if method == 'POST':

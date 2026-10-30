@@ -57,9 +57,30 @@ const FabricCostCard = ({ material, widths }: FabricCostCardProps) => {
         </div>
         <div className="shrink-0 text-right">
           <p className="text-2xl font-bold leading-none">{money(g.total)} ₽</p>
-          <p className="text-xs text-muted-foreground">за 1 штуку</p>
+          <p className="text-xs text-muted-foreground">маркетплейсы, за 1 шт</p>
         </div>
       </div>
+
+      {/* Сайт несёт другие постоянные расходы: без «Премиум OZON», а в режиме
+          «только сайт» — оклады и аренду, поделённые на его собственные продажи. */}
+      {g.siteTotal != null && (
+        <div className="mt-2 grid grid-cols-2 gap-2 text-xs">
+          <div className="rounded-md border border-border px-2 py-1.5">
+            <p className="text-muted-foreground">Маркетплейсы</p>
+            <p className="text-sm font-semibold">{money(g.total)} ₽</p>
+            <p className="text-[11px] text-muted-foreground">
+              постоянные {money(g.mpFixed ?? 0)} ₽
+            </p>
+          </div>
+          <div className="rounded-md border border-sky-200 bg-sky-50/60 px-2 py-1.5 dark:border-sky-900 dark:bg-sky-950/20">
+            <p className="text-muted-foreground">Интернет-магазин</p>
+            <p className="text-sm font-semibold">{money(g.siteTotal)} ₽</p>
+            <p className="text-[11px] text-muted-foreground">
+              постоянные {money(g.siteFixed ?? 0)} ₽
+            </p>
+          </div>
+        </div>
+      )}
 
       {/* Переключатель ширин — главный элемент плашки. */}
       <div className="mt-3 flex flex-wrap gap-1">
