@@ -188,10 +188,22 @@ def list_products(cur, shop_id):
     for item_id, mid, name, qty in cur.fetchall():
         if mid is not None:
             mats.setdefault(item_id, []).append((mid, name or '?', float(qty or 0)))
+    # Ткани из справочника — чтобы предупредить, что полотна карточки нет в системе.
+    cur.execute(
+        "SELECT lower(replace(m.name, 'ё', 'е')) FROM materials m "
+        "JOIN material_types t ON t.id = m.type_id WHERE t.name = 'Тюль'"
+    )
+    fabric_names = {r[0].strip() for r in cur.fetchall() if r[0]}
     items = []
     for r in rows:
         parts = _item_cost(mats.get(r[0]), r[13], r[3], costs)
         cost = parts['total'] if parts else None
+        if r[13]:
+            fabric_status = 'ok'
+        elif (r[5] or '').lower().replace('ё', 'е').strip() in fabric_names:
+            fabric_status = 'notInMaterials'
+        else:
+            fabric_status = 'notInReference'
         items.append({
             'id': r[0], 'name': r[1], 'article': r[2], 'width': r[3], 'height': r[4],
             'material': r[5], 'siteProductId': r[6],
@@ -204,6 +216,9 @@ def list_products(cur, shop_id):
             'cost': cost,
             'costParts': parts,
             'internalSku': r[14],
+            # ok — ткань в расходе; notInMaterials — ткань есть в справочнике, но не
+            # указана в расходе; notInReference — такой ткани в справочнике нет.
+            'fabricStatus': fabric_status,
         })
     return {'items': items, 'costAvailable': costs is not None, 'pricing': pricing_settings(cur)}
 

@@ -38,6 +38,11 @@ const SiteMaterialRow = ({
       : Math.min(...v) === Math.max(...v)
         ? rub(v[0])
         : `${rub(Math.min(...v))} – ${rub(Math.max(...v))}`;
+  const fabricIssue = groups.some((g) => g.fabricIssue === 'notInReference')
+    ? 'notInReference'
+    : groups.some((g) => g.fabricIssue === 'notInMaterials')
+      ? 'notInMaterials'
+      : null;
   const issues = [
     groups.filter((g) => g.noMaterials > 0).length && `без расхода ${groups.filter((g) => g.noMaterials > 0).length}`,
     groups.filter((g) => g.price == null || g.price === 'mixed').length &&
@@ -57,6 +62,14 @@ const SiteMaterialRow = ({
           <Icon name={matOpen ? 'ChevronDown' : 'ChevronRight'} size={16} />
           {title}
         </span>
+        {fabricIssue && (
+          <p className="mt-1 flex items-start gap-1 text-xs font-medium text-red-600">
+            <Icon name="TriangleAlert" size={13} className="mt-0.5 shrink-0" />
+            {fabricIssue === 'notInReference'
+              ? 'Такой ткани нет в «Материалах» — заведите её, иначе себестоимость и цену не посчитать'
+              : 'Ткань не указана в расходе карточки — откройте ширину и добавьте её в расход'}
+          </p>
+        )}
       </td>
       <td className="px-3 py-2.5 text-muted-foreground">
         {groups.length} шир.{ws.length > 0 && ` · ${Math.min(...ws)}–${Math.max(...ws)}`}

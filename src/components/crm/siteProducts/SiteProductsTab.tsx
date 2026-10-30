@@ -36,6 +36,8 @@ const SiteProductsTab = ({ shopId }: { shopId: number }) => {
     lowProfit,
     targetOf,
     widths,
+    costByWidth,
+    noFabric,
     priceOf,
     toggleDisabled,
     toggleMaterialDisabled,
@@ -68,10 +70,22 @@ const SiteProductsTab = ({ shopId }: { shopId: number }) => {
       <SitePricingPanel
         pricing={pricing}
         widths={widths}
+        costByWidth={costByWidth}
         canEdit={isAdmin}
         actor={actor}
         onSaved={setPricing}
       />
+
+      {noFabric.length > 0 && (
+        <div className="flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">
+          <Icon name="TriangleAlert" size={16} className="mt-0.5 shrink-0" />
+          <span>
+            Ткани без материала в системе:{' '}
+            <b>{[...new Set(noFabric.map((g) => g.title))].join(', ')}</b>. Без неё не посчитать себестоимость и
+            подсказку цены — заведите ткань в «Материалах» и укажите её в расходе карточки.
+          </span>
+        </div>
+      )}
 
       <SiteProductsFilters
         views={views}

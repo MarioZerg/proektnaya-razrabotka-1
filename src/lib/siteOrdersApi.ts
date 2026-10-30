@@ -68,6 +68,8 @@ export interface SiteCatalogItem {
   name: string;
   article: string | null;
   internalSku?: string | null;
+  /** ok — ткань в расходе; notInMaterials — не указана в расходе; notInReference — нет в справочнике. */
+  fabricStatus?: 'ok' | 'notInMaterials' | 'notInReference';
   width: number | null;
   height: number | null;
   material: string | null;

@@ -18,6 +18,8 @@ export interface SiteWidthGroup {
   pushError: string | null;
   archived: boolean;
   manual: boolean;
+  /** Проблема с тканью карточки: нет в справочнике или не указана в расходе. */
+  fabricIssue: 'notInMaterials' | 'notInReference' | null;
 }
 
 const baseName = (name: string) => name.replace(/\s+\d+×\d+$/, '').trim();
@@ -52,6 +54,11 @@ export const groupByWidth = (items: SiteCatalogItem[]): SiteWidthGroup[] => {
       pushError: sorted.find((i) => i.pushError)?.pushError ?? null,
       archived: sorted.every((i) => i.archivedAt),
       manual: sorted.every((i) => !i.siteProductId),
+      fabricIssue: sorted.some((i) => i.fabricStatus === 'notInReference')
+        ? 'notInReference'
+        : sorted.some((i) => i.fabricStatus === 'notInMaterials')
+          ? 'notInMaterials'
+          : null,
     };
   });
 };

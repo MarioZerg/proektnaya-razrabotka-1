@@ -86,8 +86,9 @@ const useSiteProducts = (shopId: number) => {
   };
 
   const allGroups = useMemo(() => groupByWidth(items), [items]);
-  const active = allGroups.filter((g) => !g.archived);
+  const active = useMemo(() => allGroups.filter((g) => !g.archived), [allGroups]);
   const archived = allGroups.filter((g) => g.archived);
+  const noFabric = active.filter((g) => g.fabricIssue);
   const noMaterials = active.filter((g) => g.noMaterials > 0);
   const noPrice = active.filter((g) => g.price == null || g.price === 'mixed');
   const disabled = active.filter((g) => g.disabled || g.partlyDisabled);
@@ -95,6 +96,14 @@ const useSiteProducts = (shopId: number) => {
   const widths = [...new Set(active.map((g) => g.width).filter((w): w is number => w != null))].sort(
     (a, b) => a - b
   );
+  const costByWidth = useMemo(() => {
+    const map: Record<number, number> = {};
+    active.forEach((g) => {
+      if (g.width == null || g.cost == null) return;
+      map[g.width] = Math.max(map[g.width] ?? 0, g.cost);
+    });
+    return map;
+  }, [active]);
   const priceOf = (g: SiteWidthGroup) => (typeof g.price === 'number' ? g.price : null);
   const lowProfit = active.filter((g) => {
     const price = priceOf(g);
@@ -160,6 +169,7 @@ const useSiteProducts = (shopId: number) => {
 
   const byView: Record<View, SiteWidthGroup[]> = {
     active,
+    noFabric,
     noMaterials,
     noPrice,
     lowProfit,
@@ -205,6 +215,7 @@ const useSiteProducts = (shopId: number) => {
 
   const views: { value: View; label: string; count: number }[] = [
     { value: 'active', label: 'Все товары', count: active.length },
+    { value: 'noFabric', label: 'Нет ткани в системе', count: noFabric.length },
     { value: 'noMaterials', label: 'Без расхода', count: noMaterials.length },
     { value: 'noPrice', label: 'Без цены', count: noPrice.length },
     { value: 'lowProfit', label: 'Ниже цели', count: lowProfit.length },
@@ -235,9 +246,11 @@ const useSiteProducts = (shopId: number) => {
     load,
     handleSync,
     active,
+    noFabric,
     lowProfit,
     targetOf,
     widths,
+    costByWidth,
     priceOf,
     toggleDisabled,
     toggleMaterialDisabled,
