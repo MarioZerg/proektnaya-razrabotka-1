@@ -9,6 +9,24 @@ const humanDay = (ymd: string) => {
 };
 
 const overdueMark = (supplyId: number) => `fbo-overdue:${supplyId}`;
+
+/**
+ * Газелька груз уже приняла — дата отгрузки в прошлом это норма, а не просрочка.
+ *
+ * Принятым считаем груз, если поставка уже отгружена (Отгрузка и дальше),
+ * кладовщик отметил отправку в Газельку, или Газелька забирает сама и на
+ * заявку назначен водитель. Раньше в такой заявке висело «Отгрузка в Газельку
+ * просрочена», хотя короба уже уехали и OZON их принял (#1519).
+ */
+export const gazelkaCargoAccepted = (s: {
+  status?: string | null;
+  gazelkaShippedAt?: string | null;
+  gazelkaPickup?: boolean | null;
+  vehicleAssigned?: boolean;
+}) =>
+  ['Отгрузка', 'Отгружено', 'Принята', 'Выполнена'].includes(s.status || '') ||
+  !!s.gazelkaShippedAt ||
+  (!!s.gazelkaPickup && !!s.vehicleAssigned);
 const printedMark = (supplyId: number, day: string) => `fbo-ozon-printed:${supplyId}:${day}`;
 
 /**

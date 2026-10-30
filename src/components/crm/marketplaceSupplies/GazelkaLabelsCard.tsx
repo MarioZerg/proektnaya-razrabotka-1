@@ -4,7 +4,8 @@ import { Button } from '@/components/ui/button';
 import Icon from '@/components/ui/icon';
 import { useToast } from '@/hooks/use-toast';
 import { fetchGazelkaPlans, type GazelkaPlan } from '@/lib/gazelkaApi';
-import { gazelkaLabelsHold, marketplaceSlotHold, noteOverdueSupply, shipDay } from '@/lib/fboShipDate';
+import { gazelkaCargoAccepted, gazelkaLabelsHold, marketplaceSlotHold, noteOverdueSupply, shipDay } from '@/lib/fboShipDate';
+import { driverAssigned } from '@/lib/gazelkaPlate';
 import type { SupplyDetail } from '@/lib/marketplaceSuppliesApi';
 import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
 
@@ -68,11 +69,19 @@ const GazelkaLabelsCard = ({ supply }: GazelkaLabelsCardProps) => {
   }
 
   const boxesCount = supply.boxes.length || plan?.boxes || 1;
-  const hold =
-    gazelkaLabelsHold(plan?.shipDate, supply.shipToGazelkaAt) ||
-    marketplaceSlotHold(supply.id, supply.shipToGazelkaAt, supply.supplyDate, supply.timeslot);
+  // Груз Газелька уже приняла — дата в прошлом не просрочка.
+  const cargoAccepted = gazelkaCargoAccepted({
+    status: supply.status,
+    gazelkaShippedAt: supply.gazelkaShippedAt,
+    gazelkaPickup: supply.gazelkaPickup,
+    vehicleAssigned: driverAssigned(plan?.vehicleNumber ?? supply.gazelkaVehicleNumber),
+  });
+  const hold = cargoAccepted
+    ? null
+    : gazelkaLabelsHold(plan?.shipDate, supply.shipToGazelkaAt) ||
+      marketplaceSlotHold(supply.id, supply.shipToGazelkaAt, supply.supplyDate, supply.timeslot);
   const day = shipDay(plan?.shipDate) || shipDay(supply.shipToGazelkaAt);
-  if (day) noteOverdueSupply(supply.id, day);
+  if (day && !cargoAccepted) noteOverdueSupply(supply.id, day);
   const ready = !!plan && !hold;
 
   const handlePrint = async () => {

@@ -18,7 +18,7 @@ import { fetchGazelkaPlansForSupply, type GazelkaPlan } from '@/lib/gazelkaApi';
 import { driverAssigned, plateLabel } from '@/lib/gazelkaPlate';
 import { updateSupply, type SupplyDetail } from '@/lib/marketplaceSuppliesApi';
 import { printGazelkaLabels } from '@/lib/gazelkaPackingLabel';
-import { gazelkaLabelsHold, gazelkaShipDay, marketplaceSlotHold, noteOverdueSupply } from '@/lib/fboShipDate';
+import { gazelkaCargoAccepted, gazelkaLabelsHold, gazelkaShipDay, marketplaceSlotHold, noteOverdueSupply } from '@/lib/fboShipDate';
 
 interface GazelkaShippingCardProps {
   supply: SupplyDetail;
@@ -62,11 +62,19 @@ const GazelkaShippingCard = ({ supply, onReload, isManager, gazelkaReady }: Gaze
   }, [supply.id]);
 
   const linkedPlan = plans.find((p) => p.id === supply.gazelkaPlanId);
-  const labelsHold =
-    gazelkaLabelsHold(linkedPlan?.shipDate, supply.shipToGazelkaAt) ||
-    marketplaceSlotHold(supply.id, supply.shipToGazelkaAt, supply.supplyDate, supply.timeslot);
+  // Груз Газелька уже приняла — дата в прошлом не просрочка, предупреждение не нужно.
+  const cargoAccepted = gazelkaCargoAccepted({
+    status: supply.status,
+    gazelkaShippedAt: supply.gazelkaShippedAt,
+    gazelkaPickup: supply.gazelkaPickup,
+    vehicleAssigned: driverAssigned(linkedPlan?.vehicleNumber ?? supply.gazelkaVehicleNumber),
+  });
+  const labelsHold = cargoAccepted
+    ? null
+    : gazelkaLabelsHold(linkedPlan?.shipDate, supply.shipToGazelkaAt) ||
+      marketplaceSlotHold(supply.id, supply.shipToGazelkaAt, supply.supplyDate, supply.timeslot);
   const labelDay = gazelkaShipDay(linkedPlan?.shipDate, supply.shipToGazelkaAt);
-  if (labelDay) noteOverdueSupply(supply.id, labelDay);
+  if (labelDay && !cargoAccepted) noteOverdueSupply(supply.id, labelDay);
 
   const handleSave = async () => {
     setSaving(true);
