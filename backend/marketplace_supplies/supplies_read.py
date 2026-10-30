@@ -928,7 +928,29 @@ def handle_get(event: dict, headers: dict, dsn: str) -> dict:
             f"(s.type = 'FBO' AND COALESCE(s.comment, '') LIKE 'Перенесена из поставки%'), "
             f"(SELECT COUNT(*) FROM marketplace_supply_boxes rb WHERE rb.supply_id = s.id), "
             f"(SELECT COUNT(*) FROM marketplace_supply_boxes rb WHERE rb.supply_id = s.id "
-            f"   AND rb.ozon_cargo_id IS NOT NULL AND rb.sticker_url IS NOT NULL) "
+            f"   AND rb.ozon_cargo_id IS NOT NULL AND rb.sticker_url IS NOT NULL), "
+            # Счётчики FBS для плашки списка: сколько отсканировано у WB и
+            # связки Яндекса — начатые и собранные целиком.
+            f"(SELECT COUNT(*) FROM wb_supply_orders ws "
+            f"   WHERE ws.supply_id = s.id AND ws.scanned_at IS NOT NULL), "
+            f"(CASE WHEN s.marketplace = 'Yandex' AND s.type = 'FBS' THEN ("
+            f"   SELECT COUNT(*) FROM ("
+            f"     SELECT bo.group_key, MAX(bo.group_size) AS sz, COUNT(*) AS cnt "
+            f"     FROM marketplace_supply_items bm "
+            f"     JOIN goods_warehouse bg ON bg.id = bm.goods_warehouse_id "
+            f"     JOIN orders bo ON bo.id = COALESCE(bg.reserved_order_id, bg.order_id) "
+            f"     WHERE bm.supply_id = s.id AND bo.group_key IS NOT NULL "
+            f"       AND COALESCE(bo.group_size, 1) > 1 "
+            f"     GROUP BY bo.group_key) g) END), "
+            f"(CASE WHEN s.marketplace = 'Yandex' AND s.type = 'FBS' THEN ("
+            f"   SELECT COUNT(*) FROM ("
+            f"     SELECT bo.group_key, MAX(bo.group_size) AS sz, COUNT(*) AS cnt "
+            f"     FROM marketplace_supply_items bm "
+            f"     JOIN goods_warehouse bg ON bg.id = bm.goods_warehouse_id "
+            f"     JOIN orders bo ON bo.id = COALESCE(bg.reserved_order_id, bg.order_id) "
+            f"     WHERE bm.supply_id = s.id AND bo.group_key IS NOT NULL "
+            f"       AND COALESCE(bo.group_size, 1) > 1 "
+            f"     GROUP BY bo.group_key) g WHERE g.cnt >= g.sz) END) "
             f"FROM marketplace_supplies s "
             f"LEFT JOIN users u ON u.id = s.created_by "
             f"LEFT JOIN users lu ON lu.id = s.locked_by "
@@ -980,6 +1002,9 @@ def handle_get(event: dict, headers: dict, dsn: str) -> dict:
                 'relabelBoxes': bool(r[34]),
                 'boxesTotal': int(r[35] or 0),
                 'boxesRelabeled': int(r[36] or 0),
+                'wbScannedCount': int(r[37] or 0),
+                'bundlesInSupply': int(r[38]) if r[38] is not None else None,
+                'bundlesComplete': int(r[39]) if r[39] is not None else None,
             }
             for r in cur.fetchall()
         ]

@@ -16,8 +16,48 @@ interface ToMarketplaceCardsProps {
 
 type PieceStat = { label: string; value: string; className: string };
 
+const CLOSED = ['Отгружено', 'Принята', 'Выполнена', 'Отменена'];
+
+/**
+ * FBS: сколько уже отсканировано в поставку, сколько застикеровано в цехе и
+ * ждёт скана, и сколько всего требуется (отсканировано + ждёт).
+ * У Яндекса дополнительно связки: заказ из нескольких вещей едет одним ярлыком,
+ * и пока связка собрана не целиком, отгружать её нельзя.
+ */
+const fbsStats = (s: Supply): PieceStat[] => {
+  const scanned = s.marketplace === 'WB' ? s.wbScannedCount ?? s.itemsCount : s.itemsCount;
+  const open = !CLOSED.includes(s.status);
+  const ready = open ? s.readyToScanCount || 0 : 0;
+  const required = scanned + ready;
+  const stats: PieceStat[] = [
+    {
+      label: 'Отсканировано',
+      value: open ? `${scanned} из ${required}` : String(scanned),
+      className: !open || ready === 0 ? 'text-emerald-700' : 'text-foreground',
+    },
+  ];
+  if (open) {
+    stats.push({
+      label: 'Ждёт скана',
+      value: String(ready),
+      className: ready > 0 ? 'text-amber-700' : 'text-muted-foreground',
+    });
+  }
+  if (s.marketplace === 'Yandex' && (s.bundlesInSupply || 0) > 0) {
+    const done = s.bundlesComplete || 0;
+    const all = s.bundlesInSupply || 0;
+    stats.push({
+      label: 'Связки собраны',
+      value: `${done} из ${all}`,
+      className: done >= all ? 'text-emerald-700' : 'text-amber-700',
+    });
+  }
+  return stats;
+};
+
 /** Штуки по заявке: короба, пошив и то, что ещё не отсканировано. */
 const pieceStats = (s: Supply): PieceStat[] => {
+  if (s.type === 'FBS') return fbsStats(s);
   const stats: PieceStat[] = [];
   if (s.type === 'FBO' && s.plannedQuantity) {
     stats.push({

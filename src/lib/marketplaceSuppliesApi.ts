@@ -73,6 +73,12 @@ export interface Supply {
   boxesTotal?: number;
   /** Сколько коробов уже закрыто в новой заявке и имеет новый стикер. */
   boxesRelabeled?: number;
+  /** WB FBS: заказов, отсканированных в поставку. */
+  wbScannedCount?: number;
+  /** Яндекс FBS: связок (заказ из нескольких вещей) в поставке — начатых. */
+  bundlesInSupply?: number | null;
+  /** Яндекс FBS: связок, собранных целиком. */
+  bundlesComplete?: number | null;
 }
 
 export interface SupplyItem {
