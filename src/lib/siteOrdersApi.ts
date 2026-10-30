@@ -85,6 +85,8 @@ export interface SiteCatalogItem {
   /** Из чего сложилась себестоимость (как в «Себестоимости товара»). */
   costParts?: {
     total: number;
+    /** Материалы + недостачи + сдельная работа: не зависит от объёма продаж. */
+    variable?: number;
     materials: number;
     shortage: number;
     labor: number;
@@ -100,12 +102,42 @@ export interface SitePricing {
   acquiringPct: number;
   /** Доля блогера от цены витрины — сверх нашей прибыли. */
   bloggerPct: number;
+  /** shared — постоянные расходы делятся на все продажи; site_only — только на продажи сайта. */
+  fixedMode?: 'shared' | 'site_only';
+  /** План продаж сайта, штук в месяц (для режима site_only). */
+  siteMonthlyUnits?: number;
+}
+
+export interface SiteFixedCosts {
+  mode: 'shared' | 'site_only';
+  units: number;
+  /** Постоянные расходы на одну вещь сайта при текущем режиме. */
+  perUnit: number;
+  /** Сумма ежемесячных постоянных расходов, которые несёт сайт. */
+  monthlyTotal: number;
+  /** Нормы на вещь, не зависящие от объёма (коробка на N отправок). */
+  perItemNorms: number;
+  lines: {
+    name: string;
+    monthly: number | null;
+    perUnit: number;
+    /** Доля на вещь при делении на все продажи. */
+    perUnitShared: number;
+    isMonthly: boolean;
+    channel: 'all' | 'marketplaces' | 'site';
+  }[];
+  /** Расходы только маркетплейсов — в цену сайта не входят. */
+  skipped: string[];
+  allChannelsUnits: number;
+  salariedMonth?: string | null;
+  siteSold30?: number;
 }
 
 export const fetchSiteCatalog = (): Promise<{
   items: SiteCatalogItem[];
   costAvailable: boolean;
   pricing: SitePricing;
+  fixedCosts?: SiteFixedCosts | null;
 }> => post({ action: 'catalog' });
 
 export interface SiteOrderProfit {

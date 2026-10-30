@@ -64,7 +64,13 @@ export interface ExtraExpense {
   isActive: boolean;
   /** Сколько ложится на одну вещь. */
   perUnit: number;
+  /** all — все каналы; marketplaces — только маркетплейсы; site — только интернет-магазин. */
+  channel?: ExpenseChannel;
+  /** Ежемесячная сумма (аренда, оклад) — зависит от объёма продаж. */
+  isMonthly?: boolean;
 }
+
+export type ExpenseChannel = 'all' | 'marketplaces' | 'site';
 
 export interface CostSettings {
   overheadPerItem: number;
@@ -144,6 +150,8 @@ export const addExtraExpense = (payload: {
   amount: number;
   perItems: number;
   note?: string;
+  channel?: ExpenseChannel;
+  isMonthly?: boolean;
   actorId?: number;
 }) => post({ action: 'add_expense', ...payload });
 
@@ -154,6 +162,8 @@ export const updateExtraExpense = (payload: {
   perItems: number;
   note?: string | null;
   isActive: boolean;
+  channel?: ExpenseChannel;
+  isMonthly?: boolean;
   actorId?: number;
 }) => post({ action: 'update_expense', ...payload });
 

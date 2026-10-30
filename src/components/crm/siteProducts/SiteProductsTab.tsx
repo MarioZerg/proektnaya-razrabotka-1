@@ -14,6 +14,7 @@ const SiteProductsTab = ({ shopId }: { shopId: number }) => {
     items,
     pricing,
     setPricing,
+    fixedCosts,
     materials,
     loading,
     syncing,
@@ -37,6 +38,7 @@ const SiteProductsTab = ({ shopId }: { shopId: number }) => {
     targetOf,
     widths,
     costByWidth,
+    avgMargin,
     noFabric,
     priceOf,
     toggleDisabled,
@@ -71,9 +73,14 @@ const SiteProductsTab = ({ shopId }: { shopId: number }) => {
         pricing={pricing}
         widths={widths}
         costByWidth={costByWidth}
+        fixedCosts={fixedCosts}
+        avgMargin={avgMargin}
         canEdit={isAdmin}
         actor={actor}
-        onSaved={setPricing}
+        onSaved={(p) => {
+          setPricing(p);
+          load();
+        }}
       />
 
       {noFabric.length > 0 && (

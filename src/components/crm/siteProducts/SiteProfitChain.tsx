@@ -123,8 +123,12 @@ const SiteProfitChain = ({ group, pricing }: Props) => {
                   </div>
                 ))}
               <Line label="недостачи материалов" value={parts.shortage} muted />
-              <Line label="работа цеха и оклады" value={parts.labor} muted />
-              <Line label="прочие расходы" value={parts.overhead} muted />
+              <Line label="сдельная работа цеха" value={parts.labor} muted />
+              <Line
+                label={`постоянные: оклады, аренда${pricing.fixedMode === 'site_only' ? ` (÷ ${pricing.siteMonthlyUnits} шт сайта)` : ' (÷ все продажи)'}`}
+                value={parts.overhead}
+                muted
+              />
             </>
           )}
           <div className="border-t border-border pt-1">

@@ -53,21 +53,89 @@ def _parse_cost_map(data):
     groups = {}
     for g in data.get('groups') or []:
         width = int(float(g.get('width') or 0))
+        labor = float(g.get('laborCost') or 0)
+        salaried = float(g.get('salariedCost') or 0)
         parts = {
-            'labor': float(g.get('laborCost') or 0),
-            'overhead': float(g.get('overhead') or 0),
+            # Сдельная работа цеха без окладов: оклады — постоянный расход, считаем отдельно.
+            'labor': round(labor - salaried, 4),
             'shortagePct': float(g.get('shortagePercent') or 0),
         }
         for m in g.get('materials') or []:
             if m.get('typeName') == 'Тюль' and m.get('materialId'):
                 groups.setdefault((int(m['materialId']), width), parts)
     prices = {int(k): float(v or 0) for k, v in (data.get('materialPrices') or {}).items()}
-    shortage_pct = float((data.get('settings') or {}).get('shortagePercent') or 0)
-    return {'groups': groups, 'prices': prices, 'shortagePct': shortage_pct}
+    settings = data.get('settings') or {}
+    shortage_pct = float(settings.get('shortagePercent') or 0)
+    sal = data.get('salaried') or {}
+    return {
+        'groups': groups, 'prices': prices, 'shortagePct': shortage_pct,
+        'extras': data.get('extras') or [],
+        'overheadPerItem': float(settings.get('overheadPerItem') or 0),
+        'salaried': {'total': float(sal.get('total') or 0), 'perUnit': float(sal.get('perUnit') or 0),
+                     'month': sal.get('month'), 'madeUnits': int(sal.get('madeUnits') or 0)},
+        'soldUnits': int((data.get('sold') or {}).get('total') or 0),
+    }
 
 
-def _item_cost(item_materials, fabric_id, width, costs):
-    """Себестоимость одной высоты: её материалы + недостачи + работа и накладные ширины."""
+def fixed_costs(costs, pricing):
+    """Постоянные расходы на одну вещь сайта.
+
+    shared    — как сейчас: оклады и ежемесячные расходы делятся на ВСЕ продажи
+                (сайт + маркетплейсы), сайт несёт свою долю;
+    site_only — сайт работает один: те же ежемесячные суммы делятся только на
+                план продаж сайта в месяц.
+    Расходы «только маркетплейсы» (Премиум OZON) сайт не несёт ни в каком режиме.
+    Не ежемесячные (коробка на 30 отправок) — норма на вещь, от объёма не зависят.
+    """
+    if costs is None:
+        return None
+    mode = pricing.get('fixedMode') or 'shared'
+    units = max(int(pricing.get('siteMonthlyUnits') or 0), 1)
+    lines = []
+    sal = costs['salaried']
+    sal_unit = sal['perUnit'] if mode == 'shared' else sal['total'] / units
+    # perUnitShared — доля при делении на все продажи: по ней экран пересчитывает
+    # пример при переключении режима ещё до сохранения.
+    lines.append({'name': 'Оклады склада, уборки, администратора', 'monthly': round(sal['total'], 2),
+                  'perUnit': round(sal_unit, 2), 'perUnitShared': round(sal['perUnit'], 4),
+                  'isMonthly': True, 'channel': 'all'})
+    skipped = []
+    for e in costs['extras']:
+        if not e.get('isActive'):
+            continue
+        if e.get('channel') == 'marketplaces':
+            skipped.append(e.get('name'))
+            continue
+        monthly = bool(e.get('isMonthly', True))
+        amount = float(e.get('amount') or 0)
+        # Расход только сайта (реклама сайта, хостинг) несёт один сайт в любом режиме.
+        if monthly and (mode == 'site_only' or e.get('channel') == 'site'):
+            per = amount / units
+        else:
+            per = float(e.get('perUnit') or 0)
+        lines.append({'name': e.get('name'), 'monthly': round(amount, 2) if monthly else None,
+                      'perUnit': round(per, 2), 'perUnitShared': float(e.get('perUnit') or 0),
+                      'isMonthly': monthly, 'channel': e.get('channel') or 'all'})
+    if costs['overheadPerItem']:
+        lines.append({'name': 'Прочие расходы (общее поле)', 'monthly': None,
+                      'perUnit': round(costs['overheadPerItem'], 2),
+                      'perUnitShared': costs['overheadPerItem'], 'isMonthly': False, 'channel': 'all'})
+    monthly_total = round(sum(l['monthly'] or 0 for l in lines if l['isMonthly']), 2)
+    return {
+        'mode': mode,
+        'units': units,
+        'perUnit': round(sum(l['perUnit'] for l in lines), 2),
+        'monthlyTotal': monthly_total,
+        'perItemNorms': round(sum(l['perUnit'] for l in lines if not l['isMonthly']), 2),
+        'lines': lines,
+        'skipped': skipped,
+        'allChannelsUnits': costs['soldUnits'],
+        'salariedMonth': sal['month'],
+    }
+
+
+def _item_cost(item_materials, fabric_id, width, costs, fixed=None):
+    """Себестоимость одной высоты: материалы + недостачи + сдельная работа + постоянные на штуку."""
     if not item_materials or not fabric_id or costs is None:
         return None
     grp = costs['groups'].get((int(fabric_id), int(width or 0)))
@@ -81,22 +149,25 @@ def _item_cost(item_materials, fabric_id, width, costs):
     materials = round(sum(x['sum'] for x in lines), 2)
     pct = grp['shortagePct'] or costs['shortagePct']
     shortage = round(materials * pct / 100, 2)
-    total = round(materials + shortage + grp['labor'] + grp['overhead'], 2)
-    return {'total': total, 'materials': materials, 'shortage': shortage,
-            'labor': round(grp['labor'], 2), 'overhead': round(grp['overhead'], 2),
-            'lines': lines}
+    labor = round(grp['labor'], 2)
+    overhead = round(fixed['perUnit'], 2) if fixed else 0.0
+    variable = round(materials + shortage + labor, 2)
+    return {'total': round(variable + overhead, 2), 'variable': variable, 'materials': materials,
+            'shortage': shortage, 'labor': labor, 'overhead': overhead, 'lines': lines}
 
 
 def pricing_settings(cur):
     cur.execute(
-        "SELECT min_profit_rub, max_profit_rub, tax_pct, acquiring_pct, blogger_pct, profit_by_width "
+        "SELECT min_profit_rub, max_profit_rub, tax_pct, acquiring_pct, blogger_pct, profit_by_width, "
+        "  fixed_mode, site_monthly_units "
         "FROM site_pricing_settings ORDER BY id LIMIT 1"
     )
-    r = cur.fetchone() or (250, 450, 6, 2, 10, {})
+    r = cur.fetchone() or (250, 450, 6, 2, 10, {}, 'shared', 300)
     raw = r[5] if isinstance(r[5], dict) else json.loads(r[5] or '{}')
     return {'minProfitRub': float(r[0]), 'maxProfitRub': float(r[1]), 'taxPct': float(r[2]),
             'acquiringPct': float(r[3]), 'bloggerPct': float(r[4]),
-            'profitByWidth': {str(int(float(k))): float(v) for k, v in raw.items()}}
+            'profitByWidth': {str(int(float(k))): float(v) for k, v in raw.items()},
+            'fixedMode': r[6] or 'shared', 'siteMonthlyUnits': int(r[7] or 300)}
 
 
 def save_pricing(cur, body):
@@ -117,15 +188,23 @@ def save_pricing(cur, body):
             if w <= 0 or w > 2000 or p < 0 or p > 100000:
                 raise ValueError(f'Неверная прибыль для ширины {k}')
             by_width[str(w)] = round(p, 2)
+        cur_p = pricing_settings(cur)
+        mode = body.get('fixedMode') or cur_p['fixedMode']
+        if mode not in ('shared', 'site_only'):
+            raise ValueError('Неизвестный режим постоянных расходов')
+        units = int(float(body.get('siteMonthlyUnits') or cur_p['siteMonthlyUnits']))
+        if units < 1 or units > 1000000:
+            raise ValueError('План продаж сайта — от 1 штуки в месяц')
     except (TypeError, ValueError) as e:
         return 400, {'error': str(e)}
     if sum(vals) >= 90:
         return 400, {'error': 'Налог, эквайринг и блогер вместе должны быть меньше 90%'}
     cur.execute(
         "UPDATE site_pricing_settings SET tax_pct = %s, acquiring_pct = %s, blogger_pct = %s, "
-        "  profit_by_width = %s::jsonb, updated_at = now(), updated_by = %s "
+        "  profit_by_width = %s::jsonb, fixed_mode = %s, site_monthly_units = %s, "
+        "  updated_at = now(), updated_by = %s "
         "WHERE id = (SELECT id FROM site_pricing_settings ORDER BY id LIMIT 1)",
-        (*vals, json.dumps(by_width), body.get('actorId')),
+        (*vals, json.dumps(by_width), mode, units, body.get('actorId')),
     )
     return 200, pricing_settings(cur)
 
@@ -176,6 +255,8 @@ def list_products(cur, shop_id):
     )
     rows = cur.fetchall()
     costs = _cost_map()
+    pricing = pricing_settings(cur)
+    fixed = fixed_costs(costs, pricing)
     cur.execute(
         "SELECT mim.marketplace_item_id, mim.material_id, m.name, mim.quantity "
         "FROM marketplace_item_materials mim "
@@ -196,7 +277,7 @@ def list_products(cur, shop_id):
     fabric_names = {r[0].strip() for r in cur.fetchall() if r[0]}
     items = []
     for r in rows:
-        parts = _item_cost(mats.get(r[0]), r[13], r[3], costs)
+        parts = _item_cost(mats.get(r[0]), r[13], r[3], costs, fixed)
         cost = parts['total'] if parts else None
         if r[13]:
             fabric_status = 'ok'
@@ -220,7 +301,16 @@ def list_products(cur, shop_id):
             # указана в расходе; notInReference — такой ткани в справочнике нет.
             'fabricStatus': fabric_status,
         })
-    return {'items': items, 'costAvailable': costs is not None, 'pricing': pricing_settings(cur)}
+    # Сколько вещей сайт реально продал за 30 дней — подсказка для плана продаж.
+    cur.execute(
+        "SELECT COUNT(*) FROM orders WHERE shop_id = %s AND site_order_id IS NOT NULL "
+        "  AND cancelled_at IS NULL AND COALESCE(marketplace_created_at, created_at) >= now() - interval '30 days'",
+        (int(shop_id),),
+    )
+    site_sold_30 = int(cur.fetchone()[0] or 0)
+    if fixed:
+        fixed['siteSold30'] = site_sold_30
+    return {'items': items, 'costAvailable': costs is not None, 'pricing': pricing, 'fixedCosts': fixed}
 
 
 def push_to_site(site_url, api_key, payload_items):
@@ -397,6 +487,7 @@ def orders_profit(cur, shop_id, month=None):
     )
     rows = cur.fetchall()
     costs = _cost_map()
+    fixed = fixed_costs(costs, p)
     item_ids = sorted({r[4] for r in rows if r[4]})
     mats, info = {}, {}
     if item_ids:
@@ -426,7 +517,7 @@ def orders_profit(cur, shop_id, month=None):
         delivery = float(r[7] or 0)
         ozon = float(r[8]) if r[8] is not None else None
         fabric_id, width = info.get(r[4], (None, None))
-        parts = _item_cost(mats.get(r[4]), fabric_id, width, costs) if r[4] else None
+        parts = _item_cost(mats.get(r[4]), fabric_id, width, costs, fixed) if r[4] else None
         cost = parts['total'] if parts else None
         paid = (goods or 0) + delivery
         tax = paid * tax_k

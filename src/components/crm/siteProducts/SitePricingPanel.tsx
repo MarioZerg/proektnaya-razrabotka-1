@@ -3,16 +3,21 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import Icon from '@/components/ui/icon';
 import { useToast } from '@/hooks/use-toast';
-import { saveSitePricing, type SitePricing } from '@/lib/siteOrdersApi';
-import { recommendedPrice, siteProfit, targetProfit } from '@/lib/sitePricing';
+import { saveSitePricing, type SiteFixedCosts, type SitePricing } from '@/lib/siteOrdersApi';
+import { fixedPerUnit, recommendedPrice, siteProfit, targetProfit } from '@/lib/sitePricing';
+import SiteFixedCostsSection from '@/components/crm/siteProducts/SiteFixedCostsSection';
 import { rub } from '@/components/crm/siteProducts/siteProductsShared';
 
 interface Props {
   pricing: SitePricing;
   /** Ширины, которые есть в каталоге сайта. */
   widths: number[];
-  /** Себестоимость по ширине (самая дорогая высота) — для примера цены. */
+  /** Переменная себестоимость по ширине (самая дорогая высота) — без постоянных расходов. */
   costByWidth: Record<number, number>;
+  /** Постоянные расходы: оклады, аренда и т.п. */
+  fixedCosts: SiteFixedCosts | null;
+  /** Средний вклад одной продажи сайта в покрытие постоянных расходов. */
+  avgMargin: { value: number; count: number } | null;
   canEdit: boolean;
   actor?: { id?: number; name?: string };
   onSaved: (p: SitePricing) => void;
@@ -37,9 +42,11 @@ const toDraftWidths = (p: SitePricing) =>
   Object.fromEntries(Object.entries(p.profitByWidth || {}).map(([w, v]) => [w, String(v)]));
 
 /** Настройки цены сайта: проценты с продажи, цель прибыли по ширинам и живой пример расчёта. */
-const SitePricingPanel = ({ pricing, widths, costByWidth, canEdit, actor, onSaved }: Props) => {
+const SitePricingPanel = ({ pricing, widths, costByWidth, fixedCosts, avgMargin, canEdit, actor, onSaved }: Props) => {
   const { toast } = useToast();
   const [pct, setPct] = useState<Record<string, string>>({});
+  const [mode, setMode] = useState<'shared' | 'site_only'>('shared');
+  const [units, setUnits] = useState('');
   const [byWidth, setByWidth] = useState<Record<string, string>>({});
   const [fillAll, setFillAll] = useState('');
   const [saving, setSaving] = useState(false);
@@ -56,6 +63,8 @@ const SitePricingPanel = ({ pricing, widths, costByWidth, canEdit, actor, onSave
   const reset = () => {
     setPct(Object.fromEntries(PCT_FIELDS.map((f) => [f.key, String(pricing[f.key])])));
     setByWidth(toDraftWidths(pricing));
+    setMode(pricing.fixedMode ?? 'shared');
+    setUnits(String(pricing.siteMonthlyUnits ?? 300));
   };
 
   useEffect(reset, [pricing]);
@@ -67,14 +76,17 @@ const SitePricingPanel = ({ pricing, widths, costByWidth, canEdit, actor, onSave
       taxPct: num(pct.taxPct),
       acquiringPct: num(pct.acquiringPct),
       bloggerPct: num(pct.bloggerPct),
+      fixedMode: mode,
+      siteMonthlyUnits: Math.round(num(units)),
       profitByWidth: Object.fromEntries(
         Object.entries(byWidth)
           .filter(([, v]) => v.trim() !== '')
           .map(([w, v]) => [w, num(v)])
       ),
     }),
-    [pricing, pct, byWidth]
+    [pricing, pct, byWidth, mode, units]
   );
+  const fixedUnit = fixedPerUnit(fixedCosts, draft) ?? 0;
 
   const pctSum = draft.taxPct + draft.acquiringPct + draft.bloggerPct;
   const pctInvalid =
@@ -83,7 +95,10 @@ const SitePricingPanel = ({ pricing, widths, costByWidth, canEdit, actor, onSave
     (v) => v.trim() !== '' && (!Number.isFinite(num(v)) || num(v) < 0)
   );
 
+  const unitsInvalid = mode === 'site_only' && (!Number.isFinite(num(units)) || num(units) < 1);
   const changed =
+    mode !== (pricing.fixedMode ?? 'shared') ||
+    Math.round(num(units)) !== (pricing.siteMonthlyUnits ?? 300) ||
     PCT_FIELDS.some((f) => num(pct[f.key]) !== pricing[f.key]) ||
     allWidths.some((w) => (byWidth[String(w)] ?? '') !== String(pricing.profitByWidth?.[String(w)] ?? ''));
 
@@ -101,6 +116,8 @@ const SitePricingPanel = ({ pricing, widths, costByWidth, canEdit, actor, onSave
           bloggerPct: draft.bloggerPct,
           taxPct: draft.taxPct,
           acquiringPct: draft.acquiringPct,
+          fixedMode: mode,
+          siteMonthlyUnits: Math.max(1, Math.round(num(units)) || 1),
         },
         actor
       );
@@ -134,7 +151,10 @@ const SitePricingPanel = ({ pricing, widths, costByWidth, canEdit, actor, onSave
           )}
         </span>
         <span className="flex items-center gap-2 text-xs text-muted-foreground">
-          налог {pricing.taxPct}% · эквайринг {pricing.acquiringPct}% · блогер {pricing.bloggerPct}%
+          налог {pricing.taxPct}% · эквайринг {pricing.acquiringPct}% · блогер {pricing.bloggerPct}% ·{' '}
+          {(pricing.fixedMode ?? 'shared') === 'site_only'
+            ? `только сайт, ${pricing.siteMonthlyUnits} шт/мес`
+            : 'расходы делим со всеми каналами'}
           <Icon name={open ? 'ChevronUp' : 'ChevronDown'} size={16} />
         </span>
       </button>
@@ -143,7 +163,8 @@ const SitePricingPanel = ({ pricing, widths, costByWidth, canEdit, actor, onSave
         <div className="space-y-5 border-t border-border px-4 py-4">
           <div className="rounded-md bg-muted/50 px-3 py-2 text-xs text-muted-foreground">
             <span className="font-medium text-foreground">Цена = </span>
-            (себестоимость + желаемая прибыль) ÷ (100% − налог − эквайринг − блогер), вверх до 10 ₽. Так прибыль
+            (материалы и работа + постоянные расходы на штуку + желаемая прибыль) ÷ (100% − налог − эквайринг −
+            блогер), вверх до 10 ₽. Так прибыль
             остаётся нам, даже если покупка пришла по ссылке блогера. Доставку Ozon сайт прибавляет к цене сам — в
             расчёте её нет.
           </div>
@@ -180,10 +201,23 @@ const SitePricingPanel = ({ pricing, widths, costByWidth, canEdit, actor, onSave
             </p>
           </section>
 
+          <SiteFixedCostsSection
+            step={step(2)}
+            fixedCosts={fixedCosts}
+            mode={mode}
+            units={units}
+            unitsInvalid={unitsInvalid}
+            fixedUnit={fixedUnit}
+            avgMargin={avgMargin}
+            canEdit={canEdit}
+            onMode={setMode}
+            onUnits={setUnits}
+          />
+
           <section className="space-y-2">
             <div className="flex flex-wrap items-end justify-between gap-2">
               <h4 className="flex items-center gap-2 text-sm font-medium">
-                {step(2)}
+                {step(3)}
                 Сколько хотим заработать чистыми с одной штуки
               </h4>
               {canEdit && (
@@ -208,7 +242,8 @@ const SitePricingPanel = ({ pricing, widths, costByWidth, canEdit, actor, onSave
                   <tr>
                     <th className="px-3 py-2 font-medium">Ширина</th>
                     <th className="px-3 py-2 font-medium">Прибыль со штуки</th>
-                    <th className="px-3 py-2 font-medium">Себестоимость</th>
+                    <th className="px-3 py-2 font-medium">Материалы и работа</th>
+                    <th className="px-3 py-2 font-medium">+ Постоянные</th>
                     <th className="px-3 py-2 font-medium">Цена выйдет</th>
                     <th className="px-3 py-2 font-medium">Останется нам: обычная / по блогеру</th>
                   </tr>
@@ -217,7 +252,8 @@ const SitePricingPanel = ({ pricing, widths, costByWidth, canEdit, actor, onSave
                   {allWidths.map((w) => {
                     const own = byWidth[String(w)]?.trim();
                     const target = targetProfit(w, draft);
-                    const cost = costByWidth[w];
+                    const variable = costByWidth[w];
+                    const cost = variable != null ? variable + fixedUnit : undefined;
                     const price = cost != null ? recommendedPrice(cost, w, draft) : null;
                     const base = price != null && cost != null ? siteProfit(price, cost, draft) : null;
                     const blog = price != null && cost != null ? siteProfit(price, cost, draft, true) : null;
@@ -244,7 +280,8 @@ const SitePricingPanel = ({ pricing, widths, costByWidth, canEdit, actor, onSave
                             <p className="text-[11px] text-muted-foreground">как у меньшей ширины</p>
                           )}
                         </td>
-                        <td className="px-3 py-1.5 text-muted-foreground">{cost != null ? rub(cost) : '—'}</td>
+                        <td className="px-3 py-1.5 text-muted-foreground">{variable != null ? rub(variable) : '—'}</td>
+                        <td className="px-3 py-1.5 text-muted-foreground">{variable != null ? rub(fixedUnit) : '—'}</td>
                         <td className="px-3 py-1.5 font-semibold">{price != null ? rub(price) : '—'}</td>
                         <td className="px-3 py-1.5 text-xs">
                           {base && blog ? (
@@ -264,21 +301,21 @@ const SitePricingPanel = ({ pricing, widths, costByWidth, canEdit, actor, onSave
               </table>
             </div>
             <p className="text-[11px] text-muted-foreground">
-              Себестоимость — самая дорогая высота этой ширины среди тканей сайта. Пустое поле — берётся прибыль
+              Материалы и работа — самая дорогая высота этой ширины среди тканей сайта. Постоянные — из шага 2. Пустое поле — берётся прибыль
               ближайшей меньшей ширины. Пример пересчитывается сразу, ещё до сохранения.
             </p>
           </section>
 
           {canEdit && changed && (
             <div className="flex flex-wrap items-center gap-2">
-              <Button size="sm" onClick={save} disabled={saving || pctInvalid || widthInvalid}>
+              <Button size="sm" onClick={save} disabled={saving || pctInvalid || widthInvalid || unitsInvalid}>
                 <Icon name={saving ? 'Loader2' : 'Check'} size={14} className={`mr-1 ${saving ? 'animate-spin' : ''}`} />
                 {saving ? 'Сохраняю…' : 'Сохранить настройки'}
               </Button>
               <Button size="sm" variant="ghost" onClick={reset} disabled={saving}>
                 Отменить изменения
               </Button>
-              {(pctInvalid || widthInvalid) && (
+              {(pctInvalid || widthInvalid || unitsInvalid) && (
                 <span className="text-xs text-red-600">Проверьте значения — есть ошибка</span>
               )}
             </div>

@@ -1,4 +1,4 @@
-import type { SitePricing } from '@/lib/siteOrdersApi';
+import type { SiteFixedCosts, SitePricing } from '@/lib/siteOrdersApi';
 
 export interface SiteProfit {
   tax: number;
@@ -50,3 +50,24 @@ export const recommendedPrice = (cost: number, width: number | null, p: SitePric
   if (target == null || share <= 0) return null;
   return Math.ceil((cost + target) / share / 10) * 10;
 };
+
+/**
+ * Постоянные расходы на одну вещь сайта при режиме из настроек (в т.ч. несохранённых).
+ * shared — доля от деления на все продажи; site_only — ежемесячные суммы ÷ план сайта.
+ * Ежемесячный расход «только сайт» всегда делится на план сайта.
+ */
+export const fixedPerUnit = (fixed: SiteFixedCosts | null | undefined, p: SitePricing): number | null => {
+  if (!fixed) return null;
+  const units = Math.max(Number(p.siteMonthlyUnits) || 0, 1);
+  const siteOnly = p.fixedMode === 'site_only';
+  const sum = fixed.lines.reduce((s, l) => {
+    const perUnit =
+      l.isMonthly && l.monthly != null && (siteOnly || l.channel === 'site') ? l.monthly / units : l.perUnitShared;
+    return s + perUnit;
+  }, 0);
+  return Math.round(sum * 100) / 100;
+};
+
+/** Сколько вещей в месяц нужно продать, чтобы покрыть ежемесячные постоянные расходы. */
+export const breakEvenUnits = (monthlyFixed: number, avgMarginPerUnit: number): number | null =>
+  avgMarginPerUnit > 0 ? Math.ceil(monthlyFixed / avgMarginPerUnit) : null;

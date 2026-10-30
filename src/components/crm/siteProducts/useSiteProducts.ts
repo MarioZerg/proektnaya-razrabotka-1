@@ -7,6 +7,7 @@ import {
   setSiteDisabled,
   syncSiteProducts,
   type SiteCatalogItem,
+  type SiteFixedCosts,
   type SitePricing,
 } from '@/lib/siteOrdersApi';
 import { siteProfit, targetProfit } from '@/lib/sitePricing';
@@ -19,6 +20,7 @@ const useSiteProducts = (shopId: number) => {
   const { user } = useAuth();
   const [items, setItems] = useState<SiteCatalogItem[]>([]);
   const [pricing, setPricing] = useState<SitePricing>(DEFAULT_PRICING);
+  const [fixedCosts, setFixedCosts] = useState<SiteFixedCosts | null>(null);
   const [materials, setMaterials] = useState<Material[]>([]);
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
@@ -35,7 +37,8 @@ const useSiteProducts = (shopId: number) => {
   const load = () => {
     setLoading(true);
     fetchSiteCatalog()
-      .then(({ items: list, pricing: p, costAvailable }) => {
+      .then(({ items: list, pricing: p, costAvailable, fixedCosts: f }) => {
+        if (f) setFixedCosts(f);
         // Себестоимость не посчиталась (сбой расчёта) — оставляем прежнюю,
         // иначе после сохранения цены у остальных строк пропадала подсказка.
         setItems((prev) => {
@@ -100,10 +103,25 @@ const useSiteProducts = (shopId: number) => {
     const map: Record<number, number> = {};
     active.forEach((g) => {
       if (g.width == null || g.cost == null) return;
-      map[g.width] = Math.max(map[g.width] ?? 0, g.cost);
+      // Без постоянных расходов: их панель прибавляет сама по выбранному режиму.
+      const variable = Math.max(
+        ...g.items.map((i) => i.costParts?.variable ?? (i.cost != null ? i.cost - (i.costParts?.overhead ?? 0) : 0))
+      );
+      map[g.width] = Math.max(map[g.width] ?? 0, variable);
     });
     return map;
   }, [active]);
+  // Сколько в среднем одна проданная вещь сайта приносит на покрытие постоянных расходов:
+  // цена − налог − эквайринг − материалы и работа (обычная продажа, без блогера).
+  const avgMargin = useMemo(() => {
+    const list = active
+      .flatMap((g) => g.items)
+      .filter((i) => i.price != null && i.costParts?.variable != null && !i.disabled);
+    if (!list.length) return null;
+    const k = 1 - (pricing.taxPct + pricing.acquiringPct) / 100;
+    const sum = list.reduce((s, i) => s + (i.price as number) * k - (i.costParts?.variable as number), 0);
+    return { value: sum / list.length, count: list.length };
+  }, [active, pricing.taxPct, pricing.acquiringPct]);
   const priceOf = (g: SiteWidthGroup) => (typeof g.price === 'number' ? g.price : null);
   const lowProfit = active.filter((g) => {
     const price = priceOf(g);
@@ -227,6 +245,7 @@ const useSiteProducts = (shopId: number) => {
     items,
     pricing,
     setPricing,
+    fixedCosts,
     materials,
     loading,
     syncing,
@@ -251,6 +270,7 @@ const useSiteProducts = (shopId: number) => {
     targetOf,
     widths,
     costByWidth,
+    avgMargin,
     priceOf,
     toggleDisabled,
     toggleMaterialDisabled,

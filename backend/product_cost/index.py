@@ -158,7 +158,7 @@ def _extra_expenses(cur):
     а оклад в 60 000 ₽ — на 4000 вещей в месяц.
     """
     cur.execute(
-        "SELECT id, name, amount, per_items, note, is_active "
+        "SELECT id, name, amount, per_items, note, is_active, channel, is_monthly "
         "FROM cost_extra_expenses ORDER BY id"
     )
     rows = []
@@ -172,6 +172,12 @@ def _extra_expenses(cur):
             'perItems': per,
             'note': r[4],
             'isActive': bool(r[5]),
+            # Куда относится расход: all — все каналы, marketplaces — только
+            # маркетплейсы, site — только сайт. Сайт не платит за «Премиум OZON».
+            'channel': r[6] or 'all',
+            # Ежемесячный (аренда, оклад) — при расчёте «только сайт» делится на
+            # продажи сайта. Не ежемесячный (коробка на 30 отправок) — норма на вещь.
+            'isMonthly': bool(r[7]),
             # Сколько ложится на одну вещь.
             'perUnit': round(amount / per, 4),
         })
@@ -312,7 +318,9 @@ def _calc_groups(cur, settings, salaried_per_unit=0.0):
     prices = _material_prices(cur)
     cutter_rates, sewer_rates, packer_rate = _rates(cur, settings['workshopId'])
     extras = _extra_expenses(cur)
-    extra_per_unit = round(sum(e['perUnit'] for e in extras if e['isActive']), 4)
+    # Расходы «только для сайта» в себестоимость маркетплейсов не попадают.
+    extra_per_unit = round(sum(e['perUnit'] for e in extras
+                               if e['isActive'] and e.get('channel') != 'site'), 4)
     salaried_cost = round(float(salaried_per_unit or 0), 4)
 
     # Берём ОДИН товар-образец на каждую пару «ткань + ширина»: расход внутри пары
@@ -532,12 +540,18 @@ def handler(event: dict, context) -> dict:
                     return _resp(400, {'error': 'Делить нужно хотя бы на 1 штуку'})
                 note = (body_data.get('note') or '').strip() or None
                 is_active = body_data.get('isActive', True)
+                # Старые экраны правят строку без канала — тогда не сбрасываем его.
+                channel = body_data.get('channel')
+                if channel is not None and channel not in ('all', 'marketplaces', 'site'):
+                    return _resp(400, {'error': 'Неизвестный канал расхода'})
+                is_monthly = body_data.get('isMonthly')
 
                 if action == 'add_expense':
                     cur.execute(
                         "INSERT INTO cost_extra_expenses (name, amount, per_items, note, "
-                        "  is_active) VALUES (%s, %s, %s, %s, %s) RETURNING id",
-                        (name, amount, per_items, note, bool(is_active)),
+                        "  is_active, channel, is_monthly) VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING id",
+                        (name, amount, per_items, note, bool(is_active), channel or 'all',
+                         bool(per_items > 100 if is_monthly is None else is_monthly)),
                     )
                     new_id = cur.fetchone()[0]
                     conn.commit()
@@ -548,8 +562,11 @@ def handler(event: dict, context) -> dict:
                     return _resp(400, {'error': 'Укажите id'})
                 cur.execute(
                     "UPDATE cost_extra_expenses SET name = %s, amount = %s, "
-                    "  per_items = %s, note = %s, is_active = %s WHERE id = %s",
-                    (name, amount, per_items, note, bool(is_active), int(expense_id)),
+                    "  per_items = %s, note = %s, is_active = %s, "
+                    "  channel = COALESCE(%s, channel), is_monthly = COALESCE(%s, is_monthly) "
+                    "WHERE id = %s",
+                    (name, amount, per_items, note, bool(is_active), channel,
+                     None if is_monthly is None else bool(is_monthly), int(expense_id)),
                 )
                 conn.commit()
                 return _resp(200, {'ok': True})

@@ -12,8 +12,15 @@ import {
   updateExtraExpense,
   deleteExtraExpense,
   type ExtraExpense,
+  type ExpenseChannel,
   type SoldUnits,
 } from '@/lib/productCostApi';
+
+const CHANNELS: { value: ExpenseChannel; label: string; hint: string }[] = [
+  { value: 'all', label: 'Все каналы', hint: 'Входит в себестоимость и маркетплейсов, и сайта' },
+  { value: 'marketplaces', label: 'Маркетплейсы', hint: 'Только OZON/WB/Яндекс — в цену сайта не входит' },
+  { value: 'site', label: 'Сайт', hint: 'Только интернет-магазин — маркетплейсы его не несут' },
+];
 
 const money = (v: number) =>
   v.toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -53,7 +60,7 @@ const ExtraExpensesPanel = ({ expenses, sold, onChanged }: ExtraExpensesPanelPro
   const [editPer, setEditPer] = useState('');
 
   const totalPerUnit = expenses
-    .filter((e) => e.isActive)
+    .filter((e) => e.isActive && e.channel !== 'site')
     .reduce((s, e) => s + e.perUnit, 0);
 
   // Окладные строки с устаревшим делителем. Мелкие расходы вроде «коробка на
@@ -175,6 +182,25 @@ const ExtraExpensesPanel = ({ expenses, sold, onChanged }: ExtraExpensesPanelPro
       fail(e, 'Не удалось обновить');
     } finally {
       setSaving(false);
+    }
+  };
+
+  const setMeta = async (x: ExtraExpense, patch: { channel?: ExpenseChannel; isMonthly?: boolean }) => {
+    try {
+      await updateExtraExpense({
+        id: x.id,
+        name: x.name,
+        amount: x.amount,
+        perItems: x.perItems,
+        note: x.note,
+        isActive: x.isActive,
+        channel: patch.channel ?? x.channel ?? 'all',
+        isMonthly: patch.isMonthly ?? x.isMonthly ?? true,
+        actorId: user?.id,
+      });
+      onChanged();
+    } catch (e) {
+      fail(e, 'Не удалось изменить');
     }
   };
 
@@ -337,6 +363,32 @@ const ExtraExpensesPanel = ({ expenses, sold, onChanged }: ExtraExpensesPanelPro
                       {x.note ? ` · ${x.note}` : ''}
                     </p>
                   )}
+                  <div className="mt-1 flex flex-wrap items-center gap-1">
+                    {CHANNELS.map((c) => (
+                      <button
+                        key={c.value}
+                        type="button"
+                        title={c.hint}
+                        onClick={() => (x.channel ?? 'all') !== c.value && setMeta(x, { channel: c.value })}
+                        className={`rounded px-1.5 py-0.5 text-[11px] ${
+                          (x.channel ?? 'all') === c.value
+                            ? 'bg-primary text-primary-foreground'
+                            : 'bg-muted text-muted-foreground hover:bg-muted/70'
+                        }`}
+                      >
+                        {c.label}
+                      </button>
+                    ))}
+                    <span className="mx-1 text-muted-foreground">·</span>
+                    <button
+                      type="button"
+                      onClick={() => setMeta(x, { isMonthly: !(x.isMonthly ?? true) })}
+                      title="Ежемесячный расход (аренда, оклад) дорожает на штуку, когда продаж меньше. Норма на штуку (коробка на 30 отправок) — от объёма не зависит"
+                      className="rounded bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground hover:bg-muted/70"
+                    >
+                      {(x.isMonthly ?? true) ? 'в месяц' : 'норма на штуку'}
+                    </button>
+                  </div>
                   {/* Делитель сильно выше факта — расход недооценён.
                       Молчать об этом нельзя: себестоимость выглядит ниже
                       настоящей, а решения по ценам принимаются по ней. */}

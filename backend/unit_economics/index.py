@@ -1252,7 +1252,7 @@ def _cost_by_group(cur):
     shortage_pct = float(cs[2]) if cs and cs[2] is not None else 5.0
 
     cur.execute(
-        "SELECT amount, per_items FROM cost_extra_expenses WHERE is_active = true"
+        "SELECT amount, per_items FROM cost_extra_expenses WHERE is_active = true AND channel <> 'site'"
     )
     extra_per_unit = 0.0
     for amount, per_items in cur.fetchall():
