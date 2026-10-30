@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { driverAssigned } from '@/lib/gazelkaPlate';
+import { gazelkaCargoAccepted } from '@/lib/fboShipDate';
 import SupplyTypeBadge from './SupplyTypeBadge';
 import RelabelBoxesBadge from './RelabelBoxesBadge';
 import B2bBadge from './B2bBadge';
@@ -256,13 +257,17 @@ const ToMarketplaceCards = ({ supplies, onOpen }: ToMarketplaceCardsProps) => (
                   <span className="whitespace-nowrap text-xs font-medium leading-none text-black">
                     в Газельку {formatDate(s.shipToGazelkaAt)}
                   </span>
-                  {/* Водитель назначен — Газелька груз приняла, таймер больше не нужен. */}
-                  {s.gazelkaPickup && driverAssigned(s.gazelkaVehicleNumber) ? (
+                  {/* Груз Газелька приняла — красного «срок вышел» быть не должно.
+                      Правило то же, что внутри заявки (gazelkaCargoAccepted). */}
+                  {gazelkaCargoAccepted({
+                    status: s.status,
+                    gazelkaShippedAt: s.gazelkaShippedAt,
+                    gazelkaPickup: s.gazelkaPickup,
+                    vehicleAssigned: driverAssigned(s.gazelkaVehicleNumber),
+                  }) ? (
                     <CargoAccepted />
                   ) : (
-                    !['Отгружено', 'Принята', 'Выполнена', 'Отменена'].includes(s.status) && (
-                      <GazelkaCountdown at={s.shipToGazelkaAt} />
-                    )
+                    s.status !== 'Отменена' && <GazelkaCountdown at={s.shipToGazelkaAt} />
                   )}
                 </span>
               )}

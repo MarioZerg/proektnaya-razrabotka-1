@@ -32,6 +32,8 @@ export interface Supply {
   gazelkaPlanId?: number | null;
   /** Госномер с заявки Газельки. Пусто или P303PE797 — водителя ещё нет. */
   gazelkaVehicleNumber?: string | null;
+  /** Когда кладовщик подтвердил, что поставка уехала в Газельку. */
+  gazelkaShippedAt?: string | null;
   shipToGazelkaAt: string | null;
   /** true — Газелька забирает со склада, false — везём на склад Газельки сами. */
   gazelkaPickup?: boolean;
