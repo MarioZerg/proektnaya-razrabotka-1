@@ -43,14 +43,17 @@ const shortOrderNumber = (orderNumber: string): string => {
  * поставки 1457 и платная обработка.
  *
  * Поэтому берём штрихкод товара из заявки (productBarcode — его отдаёт сам
- * OZON при импорте). «OZN + SKU» — только запасной вариант, если штрихкода нет.
+ * OZON при импорте, сверяется с карточкой OZON при синхронизации).
+ *
+ * Запасного «OZN + SKU» больше нет: у вуали он чужой, и такой ярлык склад OZON
+ * возвращает неопознанным излишком (OZN1207101317 вместо OZN1207101316, 30.10).
+ * Нет штрихкода — стикер честно пишет «Код товара не загружен».
  */
 export const fboStickerCode = (order: Pick<Order, 'marketplace' | 'productOzonSku' | 'productBarcode'>): string => {
   const barcode = (order.productBarcode || '').trim();
   if (order.marketplace !== 'OZON') return barcode;
-  if (barcode) return barcode.toUpperCase().startsWith('OZN') ? barcode : `OZN${barcode}`;
-  const sku = (order.productOzonSku || '').trim();
-  return sku ? `OZN${sku}` : '';
+  if (!barcode) return '';
+  return barcode.toUpperCase().startsWith('OZN') ? barcode : `OZN${barcode}`;
 };
 
 /**
