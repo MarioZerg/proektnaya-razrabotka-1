@@ -145,6 +145,33 @@ def parcel_of(it_or_parcel):
     return tracking, label_url
 
 
+TRAFFIC_CHANNELS = ('yandex_direct', 'ads', 'blogger', 'organic')
+
+
+def traffic_of(so):
+    """Откуда пришёл покупатель: канал и, для рекламы, кампания, объявление и ключевая фраза Директа.
+
+    По этим полям считаем отдачу Яндекс Директа и долю рекламы в цене товара.
+    У старых заказов сайта поля traffic нет — канал остаётся пустым.
+    """
+    t = so.get('traffic') or {}
+    channel = str(t.get('channel') or '').strip()
+    if channel not in TRAFFIC_CHANNELS:
+        return None
+
+    def text(key, size):
+        return (str(t.get(key) or '').strip()[:size]) or None
+
+    return {
+        'channel': channel,
+        'campaign': text('campaign', 120),
+        'content': text('ad', 120),
+        'keyword': text('keyword', 255),
+        'yclid': text('yclid', 120),
+        'at': parse_date(t.get('adAt')),
+    }
+
+
 def unit_parcels(so):
     """Отправления заказа по вещам: у КАЖДОЙ вещи своё отправление Ozon.
 
@@ -249,6 +276,7 @@ def sync_orders(cur, shop_id, site_url, api_key, actor_id, actor_name):
             delivery_cost = float(raw_cost) if raw_cost is not None else None
         except (TypeError, ValueError):
             delivery_cost = None
+        traffic = traffic_of(so) or {}
         delivery_share = round(delivery_rub / size, 2) if size else 0
         delivery_cost_share = round(delivery_cost / size, 2) if delivery_cost is not None and size else None
         partner_share = round(partner_total / size, 2) if partner_total is not None and size else None
@@ -261,9 +289,11 @@ def sync_orders(cur, shop_id, site_url, api_key, actor_id, actor_name):
                 "group_key, group_size, group_position, shop_id, site_order_id, site_customer_name, "
                 "site_customer_phone, delivery_tracking_number, delivery_label_url, "
                 "site_goods_rub, site_delivery_rub, site_city, site_partner_code, site_partner_rub, "
-                "site_delivery_cost_rub) "
+                "site_delivery_cost_rub, site_traffic_channel, site_ad_campaign, site_ad_content, "
+                "site_ad_keyword, site_ad_yclid, site_ad_at) "
                 "VALUES (%s, 'IM', 'FBS', 'Новый', %s, 1, 'api', %s, %s, %s, %s, %s, "
-                "%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
+                "%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, "
+                "%s, %s, %s, %s, %s, %s) "
                 "ON CONFLICT (order_number) DO NOTHING RETURNING id",
                 (
                     f'{group_key}-{pos}' if size > 1 else group_key,
@@ -280,6 +310,8 @@ def sync_orders(cur, shop_id, site_url, api_key, actor_id, actor_name):
                     unit_price, delivery_share, city, partner_code,
                     partner_share if partner_code else None,
                     delivery_cost_share,
+                    traffic.get('channel'), traffic.get('campaign'), traffic.get('content'),
+                    traffic.get('keyword'), traffic.get('yclid'), traffic.get('at'),
                 ),
             )
             if cur.fetchone():
@@ -337,6 +369,17 @@ def check_statuses(cur, site_url, api_key, actor_id, actor_name, limit=40):
         )
         rows = cur.fetchall()
         whole_cancelled = str(so.get('status') or '').lower() in CANCEL_WORDS
+
+        # Заказы, загруженные до появления источника, дописываем при сверке.
+        traffic = traffic_of(so)
+        if traffic:
+            cur.execute(
+                "UPDATE orders SET site_traffic_channel = %s, site_ad_campaign = %s, site_ad_content = %s, "
+                "site_ad_keyword = %s, site_ad_yclid = %s, site_ad_at = %s "
+                "WHERE site_order_id = %s AND site_traffic_channel IS NULL",
+                (traffic['channel'], traffic['campaign'], traffic['content'],
+                 traffic['keyword'], traffic['yclid'], traffic['at'], sid),
+            )
 
         delivery = so.get('delivery') or {}
         flat = delivery.get('parcels') or so.get('parcels')

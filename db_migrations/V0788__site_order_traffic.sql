@@ -1,0 +1,7 @@
+ALTER TABLE t_p86119184_proektnaya_razrabotk.orders
+  ADD COLUMN IF NOT EXISTS site_traffic_channel VARCHAR(32),
+  ADD COLUMN IF NOT EXISTS site_ad_campaign VARCHAR(120),
+  ADD COLUMN IF NOT EXISTS site_ad_content VARCHAR(120),
+  ADD COLUMN IF NOT EXISTS site_ad_keyword VARCHAR(255),
+  ADD COLUMN IF NOT EXISTS site_ad_yclid VARCHAR(120),
+  ADD COLUMN IF NOT EXISTS site_ad_at TIMESTAMP NULL;
