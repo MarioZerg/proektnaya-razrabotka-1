@@ -242,3 +242,68 @@ export interface LowFabric {
 
 export const fetchLowFabric = (): Promise<{ threshold: number; fabrics: LowFabric[] }> =>
   post({ action: 'low_fabric' });
+
+/** Чат поддержки мегатюль.рф: покупатели пишут из личного кабинета. */
+export interface SiteChatMessage {
+  id: string;
+  at: string;
+  /** buyer — покупатель, support — ответ магазина. */
+  from: 'buyer' | 'support';
+  text: string;
+  orderNumber: string | null;
+  /** site — кабинет, admin — админка сайта, erp — ERP. */
+  source?: string;
+  author?: string | null;
+}
+
+export interface SiteChatOrder {
+  number: string;
+  createdAt?: string;
+  status?: string;
+  total?: number;
+  city?: string | null;
+  ozonStatus?: string | null;
+  items?: { name: string; size?: string; qty: number; price: number }[];
+}
+
+export interface SiteChat {
+  accountId: string;
+  client: { name?: string | null; phone?: string | null };
+  updatedAt: string;
+  unread: number;
+  lastMessage?: SiteChatMessage | null;
+  orders?: SiteChatOrder[];
+  messages?: SiteChatMessage[];
+}
+
+export interface SiteChatUnread {
+  unread: number;
+  chats: number;
+  lastClient?: string | null;
+  lastText?: string | null;
+  connected?: boolean;
+}
+
+type Actor = { id?: number; name?: string };
+
+export const fetchSiteChats = (actor: Actor): Promise<{ chats: SiteChat[]; unread: number }> =>
+  post({ action: 'chats', actorId: actor.id, actorName: actor.name });
+
+export const fetchSiteChat = (accountId: string, actor: Actor): Promise<{ chat: SiteChat }> =>
+  post({ action: 'chat', accountId, actorId: actor.id, actorName: actor.name });
+
+export const sendSiteChatMessage = (
+  accountId: string,
+  text: string,
+  actor: Actor,
+  orderNumber?: string | null,
+) => post({ action: 'chat_send', accountId, text, orderNumber, actorId: actor.id, actorName: actor.name });
+
+export const markSiteChatRead = (accountId: string, actor: Actor) =>
+  post({ action: 'chat_read', accountId, actorId: actor.id, actorName: actor.name });
+
+export const fetchSiteChatUnread = (actor: Actor): Promise<SiteChatUnread> =>
+  post({ action: 'chat_unread', actorId: actor.id, actorName: actor.name });
+
+/** Событие: в чате что-то прочитали/ответили — счётчик в шапке обновляется сразу. */
+export const SITE_CHAT_CHANGED = 'site-chat-changed';

@@ -23,6 +23,7 @@ import ShiftQrDialog from '@/components/crm/ShiftQrDialog';
 import RadioDialog from '@/components/crm/variki/radio/RadioDialog';
 import MyAvatarButton from '@/components/crm/MyAvatarButton';
 import HeaderSalaryWidget from '@/components/crm/HeaderSalaryWidget';
+import SiteChatNotifier from '@/components/crm/SiteChatNotifier';
 import StorekeeperTasksWidget from '@/components/crm/StorekeeperTasksWidget';
 import DuelWatcher from '@/components/crm/variki/duel/DuelWatcher';
 import { useAuth } from '@/context/AuthContext';
@@ -438,11 +439,15 @@ const CrmLayout = ({ children }: { children: ReactNode }) => {
           >
             <Icon name="QrCode" size={20} />
           </button>
-          {user?.role !== 'accountant' ? (
-            <div className="ml-auto min-w-0">
-              <HeaderSalaryWidget />
-            </div>
-          ) : null}
+          <div className="ml-auto flex min-w-0 items-center gap-2">
+            {/* Новое сообщение покупателя с мегатюль.рф — компактно справа. */}
+            <SiteChatNotifier />
+            {user?.role !== 'accountant' ? (
+              <div className="min-w-0">
+                <HeaderSalaryWidget />
+              </div>
+            ) : null}
+          </div>
         </div>
         </div>
         {/* Задания смены кладовщика — полупрозрачный список под балансом.

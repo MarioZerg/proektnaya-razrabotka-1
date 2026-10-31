@@ -5,7 +5,6 @@ import EmployeeCardDialog from '@/components/crm/users/EmployeeCardDialog';
 import DeleteEmployeeDialog from '@/components/crm/users/DeleteEmployeeDialog';
 import ArchiveEmployeeDialog from '@/components/crm/users/ArchiveEmployeeDialog';
 import EmployeesTabsSwitch from '@/components/crm/users/EmployeesTabsSwitch';
-import CandidateChatsPanel from '@/components/crm/users/CandidateChatsPanel';
 import { useEffect } from 'react';
 import { useEmployeesData } from '@/components/crm/users/useEmployeesData';
 import { useEmployeeCard } from '@/components/crm/users/useEmployeeCard';
@@ -72,11 +71,12 @@ const UsersSettings = () => {
     handleUnlockSalary,
   } = useEmployeeCard({ setEmployees, load });
 
-  const isAdmin = user?.role === 'admin' && !user.isImpersonated;
 
   useEffect(() => {
-    if (!isAdmin && tab === 'candidates') setTab('active');
-  }, [isAdmin, tab, setTab]);
+    // Чат кандидатов с Авито убран: вместо него — чат с покупателями мегатюль.рф
+    // в «Интеграциях». Старая сохранённая вкладка возвращается к сотрудникам.
+    if (tab === 'candidates') setTab('active');
+  }, [tab, setTab]);
 
   return (
     <CrmLayout>
@@ -119,12 +119,9 @@ const UsersSettings = () => {
           setTab={setTab}
           activeCount={activeCount}
           archivedCount={archivedCount}
-          showCandidates={isAdmin}
+          showCandidates={false}
         />
 
-        {isAdmin && tab === 'candidates' ? (
-          <CandidateChatsPanel />
-        ) : (
         <>
         {listError && (
           <WarehouseFetchError
@@ -152,7 +149,6 @@ const UsersSettings = () => {
           currentUserId={user?.id}
         />
         </>
-        )}
       </div>
 
       <EmployeeCardDialog

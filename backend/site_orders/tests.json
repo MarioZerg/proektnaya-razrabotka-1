@@ -80,6 +80,15 @@
         "month": "2026-10"
       },
       "bodyMatcher": "partial"
+    },
+    {
+      "name": "Чат магазина без админа закрыт",
+      "method": "POST",
+      "path": "/",
+      "body": {
+        "action": "chat_unread"
+      },
+      "expectedStatus": 403
     }
   ]
 }

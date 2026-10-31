@@ -18,6 +18,8 @@ import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchE
 import { Button } from '@/components/ui/button';
 import SiteProductsTab from '@/components/crm/siteProducts/SiteProductsTab';
 import SiteOrdersProfitTab from '@/components/crm/siteProducts/SiteOrdersProfitTab';
+import SiteChatsTab from '@/components/crm/siteProducts/SiteChatsTab';
+import { useSearchParams } from 'react-router-dom';
 
 const MarketplaceIntegrationsSettings = () => {
   const { toast } = useToast();
@@ -29,7 +31,12 @@ const MarketplaceIntegrationsSettings = () => {
   const [loading, setLoading] = useState(true);
   const [listError, setListError] = useState<string | null>(null);
   const [savingCode, setSavingCode] = useState<string | null>(null);
-  const [siteTab, setSiteTab] = useState<'keys' | 'products' | 'profit'>('products');
+  // ?tab=chats — сюда ведёт уведомление о новом сообщении в шапке.
+  const [searchParams] = useSearchParams();
+  const openChats = searchParams.get('tab') === 'chats';
+  const [siteTab, setSiteTab] = useState<'keys' | 'products' | 'profit' | 'chats'>(
+    openChats ? 'chats' : 'products',
+  );
   // У магазина мегатюль.рф две вкладки: ключи и «Товары для интеграций».
 
   const load = () => {
@@ -39,7 +46,13 @@ const MarketplaceIntegrationsSettings = () => {
         setListError(null);
         setIntegrations(list);
         setShops(shopList);
-        setShopId((prev) => prev ?? shopList[0]?.id ?? null);
+        setShopId(
+          (prev) =>
+            prev ??
+            (openChats ? shopList.find((s) => s.code === 'megatul_site')?.id : undefined) ??
+            shopList[0]?.id ??
+            null,
+        );
       })
       .catch((e) => {
         setListError(e instanceof Error ? e.message : 'Не удалось загрузить интеграции');
@@ -50,6 +63,13 @@ const MarketplaceIntegrationsSettings = () => {
   useEffect(() => {
     load();
   }, []);
+
+  useEffect(() => {
+    if (!openChats) return;
+    setSiteTab('chats');
+    const site = shops.find((s) => s.code === 'megatul_site');
+    if (site) setShopId(site.id);
+  }, [openChats, searchParams, shops]);
 
   const handleSave = async (
     code: MarketplaceIntegration['marketplaceCode'],
@@ -165,6 +185,7 @@ const MarketplaceIntegrationsSettings = () => {
                   [
                     { value: 'products', label: 'Товары, цены и прибыль', icon: 'Package' },
                     { value: 'profit', label: 'Прибыль заказов', icon: 'Wallet' },
+                    { value: 'chats', label: 'Чат с покупателями', icon: 'MessagesSquare' },
                     { value: 'keys', label: 'Подключение', icon: 'KeyRound' },
                   ] as const
                 ).map((t) => (
@@ -185,6 +206,8 @@ const MarketplaceIntegrationsSettings = () => {
               <SiteProductsTab shopId={shopId} />
             ) : isSiteShop && siteTab === 'profit' ? (
               <SiteOrdersProfitTab />
+            ) : isSiteShop && siteTab === 'chats' ? (
+              <SiteChatsTab />
             ) : (
             <>
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">

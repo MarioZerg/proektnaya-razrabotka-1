@@ -9,6 +9,7 @@ from datetime import datetime
 import psycopg2
 
 import site_catalog
+import site_chats
 
 SHOP_CODE = 'megatul_site'
 DEFAULT_SITE_URL = 'https://xn--80aff0ab3b6do.xn--p1ai'
@@ -537,6 +538,41 @@ def handler(event: dict, context) -> dict:
         if action == 'label':
             code, payload = get_label(cur, body.get('orderId'), (body.get('orderNumber') or '').strip(),
                                       api_key, site_url)
+            return _resp(code, payload)
+
+        # ЧАТ ПОДДЕРЖКИ мегатюль.рф. Переписка с покупателями — только админам.
+        if action in ('chats', 'chat', 'chat_send', 'chat_read', 'chat_unread'):
+            if not site_catalog.is_admin(cur, actor_id):
+                return _resp(403, {'error': 'Чат магазина доступен администратору'})
+            if not api_key or not enabled:
+                if action == 'chat_unread':
+                    return _resp(200, {'unread': 0, 'chats': 0, 'connected': False})
+                return _resp(400, {'error': 'Магазин мегатюль.рф не подключён: заполните ключ доступа '
+                                            'на вкладке «Подключение» и включите интеграцию.'})
+            if action == 'chat_unread':
+                code, payload = site_chats.unread(site_url, api_key)
+                return _resp(code, payload)
+            if action == 'chats':
+                code, payload = site_chats.list_chats(site_url, api_key)
+                return _resp(code, payload)
+            account_id = str(body.get('accountId') or '').strip()
+            if not account_id:
+                return _resp(400, {'error': 'Не указан диалог'})
+            if action == 'chat':
+                code, payload = site_chats.get_chat(site_url, api_key, account_id)
+                return _resp(code, payload)
+            if action == 'chat_read':
+                code, payload = site_chats.mark_read(site_url, api_key, account_id)
+                return _resp(code, payload)
+            code, payload = site_chats.send(
+                site_url, api_key, account_id, body.get('text'),
+                (f"{actor_name}, Мегатюль" if actor_name else 'Мегатюль'),
+                (body.get('orderNumber') or None),
+            )
+            if code == 200:
+                log_action(cur, actor_id, actor_name, 'site_chat_reply',
+                           f'мегатюль.рф: ответ покупателю в чате ({account_id[:12]})')
+                conn.commit()
             return _resp(code, payload)
 
         if not api_key or not enabled:
