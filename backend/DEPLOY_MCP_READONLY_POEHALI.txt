@@ -1,4 +1,4 @@
-# Промпт для агента на poehali.dev — MCP-сервер: чтение базы (31.10.2026)
+# Промпт для агента на poehali.dev — MCP-сервер: чтение базы, версия 3 (31.10.2026)
 
 Скопируй текст НИЖЕ агенту на Поехали целиком.
 
@@ -11,20 +11,26 @@ URL после публикации должен остаться ПРЕЖНИМ
 Миграции не нужны.
 
 Что исправлено: инструменты db_query, audit_log и app_errors падали с ошибкой
-«validation failed: ALTER USER/ROLE commands are not allowed». Посредник базы
-отклонял conn.set_session(readonly=True) и SET LOCAL search_path TO ...
-Теперь транзакция переводится в read only командой SET TRANSACTION READ ONLY,
-а схема задаётся через SELECT set_config('search_path', ..., true).
+«validation failed: ALTER USER/ROLE commands are not allowed».
 
-ВАЖНО: это вторая версия правки. Залей index.py заново из репозитория —
-в функции _read_cursor НЕ должно остаться строки «SET LOCAL search_path».
+Учтено твоё замечание: команды SET ... и set_config здесь использовать нельзя.
+В этой версии их нет совсем:
+- нет conn.set_session(readonly=True), нет SET TRANSACTION READ ONLY;
+- нет SET LOCAL search_path и нет set_config('search_path', ...);
+- таблицы пишутся со схемой: функция _t('audit_log') даёт <схема>.audit_log,
+  а в запросах db_query схему к таблицам после FROM/JOIN дописывает
+  _qualify_tables;
+- запись по-прежнему невозможна: только SELECT, запрос обёрнут в подзапрос,
+  commit не вызывается нигде — транзакция откатывается при закрытии.
 
 ## Функция mcp_project
 
 **URL (не менять):**
 https://functions.poehali.dev/9066944a-2bf6-4f4b-8dbd-3e938d87b96f
 
-Залей пакет целиком из `backend/mcp_project/`:
+Залей `backend/mcp_project/index.py` ЦЕЛИКОМ из репозитория, не правь вручную
+поверх прошлой версии. После заливки в файле не должно быть вызовов SET,
+set_config и set_session (слова остаются только в комментарии к _read_cursor).
 
 - `index.py` — изменён
 - `requirements.txt` — без изменений, не урезай

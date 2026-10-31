@@ -16,8 +16,9 @@ Protocol). Cursor подключает его как набор инструме
 1. ТОЛЬКО ЧТЕНИЕ. Ни один инструмент не меняет ни файл, ни строку в базе.
    Внешний агент — консультант, а не второй хозяин склада. Правки идут через
    обычный git: агент готовит их у себя, человек смотрит и присылает в проект.
-   Поэтому в db_query разрешён только SELECT, и запрос выполняется в транзакции
-   read only — если в тексте спрячут UPDATE, база сама его отклонит.
+   Поэтому в db_query разрешён только SELECT, запрос обёрнут в подзапрос, где
+   Postgres не пускает UPDATE/DELETE, а commit не вызывается нигде — даже
+   прорвавшаяся правка откатится при закрытии соединения.
 
 2. ПАРОЛЬ ОБЯЗАТЕЛЕН. Адрес функции публичный, так что без пароля это была бы
    открытая дверь ко всему коду и данным. Пароль лежит в секрете проекта и
@@ -36,6 +37,7 @@ Protocol). Cursor подключает его как набор инструме
 import hmac
 import json
 import os
+import re
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -273,22 +275,46 @@ def _schema():
 
 
 def _read_cursor(conn):
-    """Курсор в транзакции read only: даже если запрет по тексту обойдут хитрой
-    конструкцией, сама Postgres не даст ничего записать.
+    """Курсор только для чтения.
 
-    conn.set_session(readonly=True) здесь не годится: посредник базы на
-    poehali.dev принимает его за смену роли и отклоняет любой запрос с ошибкой
-    «ALTER USER/ROLE commands are not allowed». SET TRANSACTION READ ONLY
-    действует только на текущую транзакцию и посредником не блокируется.
-
-    По той же причине схема задаётся через SELECT set_config(...), а не
-    SET LOCAL search_path TO ...: эту команду посредник тоже отклоняет.
-    Третий аргумент true — значение живёт только до конца транзакции.
+    Посредник базы на poehali.dev отклоняет любые SET ... и set_config(...)
+    с ошибкой «ALTER USER/ROLE commands are not allowed», поэтому ни read only
+    для транзакции, ни search_path здесь не задаются. Запись всё равно не
+    пройдёт: commit не вызывается нигде, и при закрытии соединения транзакция
+    откатывается. Таблицы пишутся со схемой — см. _t и _qualify_tables.
     """
-    cur = conn.cursor()
-    cur.execute('SET TRANSACTION READ ONLY')
-    cur.execute("SELECT set_config('search_path', %s, true)", (f'{_schema()}, public',))
-    return cur
+    return conn.cursor()
+
+
+def _t(table):
+    """Имя таблицы со схемой проекта: search_path задать нельзя."""
+    return f'{_schema()}.{table}'
+
+
+_TABLE_REF = re.compile(r'(\b(?:from|join)\s+)([a-z_][a-z0-9_]*)\b(?!\s*[.(])', re.I)
+
+
+def _qualify_tables(cur, sql):
+    """Дописывает схему к таблицам проекта после FROM/JOIN в запросе агента.
+
+    Агент пишет «SELECT ... FROM orders», а без search_path база такую таблицу
+    не найдёт. Трогаем только имена, которые реально есть в схеме: функции,
+    подзапросы и уже указанная схема остаются как есть.
+    """
+    cur.execute(
+        "SELECT c.relname FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace "
+        "WHERE n.nspname = %s AND c.relkind IN ('r', 'v', 'm', 'p')",
+        (_schema(),),
+    )
+    tables = {r[0] for r in cur.fetchall()}
+
+    def repl(m):
+        name = m.group(2)
+        if name.lower() in tables:
+            return f'{m.group(1)}{_t(name.lower())}'
+        return m.group(0)
+
+    return _TABLE_REF.sub(repl, sql)
 
 
 def _sql_str(value):
@@ -363,7 +389,9 @@ def tool_db_query(args):
     conn = _connect()
     try:
         cur = _read_cursor(conn)
-        cur.execute(f'SELECT * FROM ({sql}) AS q LIMIT {limit + 1}')
+        # Обёртка в подзапрос — тоже защита: UPDATE/DELETE внутри WITH Postgres
+        # разрешает только на верхнем уровне и здесь отклонит.
+        cur.execute(f'SELECT * FROM ({_qualify_tables(cur, sql)}) AS q LIMIT {limit + 1}')
         cols = [d[0] for d in cur.description]
         rows = cur.fetchall()
     except psycopg2.Error as e:
@@ -417,7 +445,7 @@ def tool_audit_log(args):
         cur = _read_cursor(conn)
         cur.execute(
             'SELECT created_at, user_name, category, action, entity_type, entity_id, description '
-            f'FROM audit_log{clause} ORDER BY created_at DESC LIMIT {limit}'
+            f'FROM {_t("audit_log")}{clause} ORDER BY created_at DESC LIMIT {limit}'
         )
         rows = cur.fetchall()
     except psycopg2.Error as e:
@@ -452,7 +480,7 @@ def tool_app_errors(args):
         if args.get('summary'):
             cur.execute(
                 'SELECT message, count(*), count(DISTINCT user_id), max(occurred_at) '
-                "FROM app_errors WHERE occurred_at > now() - interval '7 days' "
+                f"FROM {_t('app_errors')} WHERE occurred_at > now() - interval '7 days' "
                 f'GROUP BY message ORDER BY count(*) DESC LIMIT {limit}'
             )
             rows = cur.fetchall()
@@ -474,7 +502,7 @@ def tool_app_errors(args):
         cur.execute(
             'SELECT occurred_at, source, level, message, page, user_name, user_role, '
             '  app_version, stack '
-            f'FROM app_errors{clause} ORDER BY occurred_at DESC LIMIT {limit}'
+            f'FROM {_t("app_errors")}{clause} ORDER BY occurred_at DESC LIMIT {limit}'
         )
         rows = cur.fetchall()
     except psycopg2.Error as e:
