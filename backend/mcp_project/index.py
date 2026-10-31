@@ -280,10 +280,14 @@ def _read_cursor(conn):
     poehali.dev принимает его за смену роли и отклоняет любой запрос с ошибкой
     «ALTER USER/ROLE commands are not allowed». SET TRANSACTION READ ONLY
     действует только на текущую транзакцию и посредником не блокируется.
+
+    По той же причине схема задаётся через SELECT set_config(...), а не
+    SET LOCAL search_path TO ...: эту команду посредник тоже отклоняет.
+    Третий аргумент true — значение живёт только до конца транзакции.
     """
     cur = conn.cursor()
     cur.execute('SET TRANSACTION READ ONLY')
-    cur.execute(f'SET LOCAL search_path TO {_schema()}, public')
+    cur.execute("SELECT set_config('search_path', %s, true)", (f'{_schema()}, public',))
     return cur
 
 

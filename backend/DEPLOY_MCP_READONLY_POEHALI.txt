@@ -11,9 +11,13 @@ URL после публикации должен остаться ПРЕЖНИМ
 Миграции не нужны.
 
 Что исправлено: инструменты db_query, audit_log и app_errors падали с ошибкой
-«validation failed: ALTER USER/ROLE commands are not allowed». Причина —
-conn.set_session(readonly=True), посредник базы принимал его за смену роли.
-Теперь транзакция переводится в read only командой SET TRANSACTION READ ONLY.
+«validation failed: ALTER USER/ROLE commands are not allowed». Посредник базы
+отклонял conn.set_session(readonly=True) и SET LOCAL search_path TO ...
+Теперь транзакция переводится в read only командой SET TRANSACTION READ ONLY,
+а схема задаётся через SELECT set_config('search_path', ..., true).
+
+ВАЖНО: это вторая версия правки. Залей index.py заново из репозитория —
+в функции _read_cursor НЕ должно остаться строки «SET LOCAL search_path».
 
 ## Функция mcp_project
 
