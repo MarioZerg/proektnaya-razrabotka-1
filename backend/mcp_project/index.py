@@ -272,6 +272,27 @@ def _schema():
     return os.environ.get('MAIN_DB_SCHEMA') or 'public'
 
 
+def _read_cursor(conn):
+    """Курсор для чтения.
+
+    Посредник базы отклоняет set_session(readonly=True), SET ... search_path и
+    set_config («ALTER USER/ROLE commands are not allowed» / «banned function»),
+    а SET TRANSACTION READ ONLY молча игнорирует. Схема проекта у подключения
+    и так стоит по умолчанию — настраивать ничего не нужно.
+
+    Записать ничего нельзя по другой причине: эта функция никогда не делает
+    commit, а перед закрытием подключения всё откатывает (_close).
+    """
+    return conn.cursor()
+
+
+def _close(conn):
+    try:
+        conn.rollback()
+    finally:
+        conn.close()
+
+
 def _sql_str(value):
     return "'" + str(value).replace("'", "''") + "'"
 
@@ -319,7 +340,7 @@ def tool_db_schema(args):
         lines.append('\nКолонки конкретной таблицы: db_schema с параметром table.')
         return _text_result('\n'.join(lines))
     finally:
-        conn.close()
+        _close(conn)
 
 
 def tool_db_query(args):
@@ -343,21 +364,16 @@ def tool_db_query(args):
 
     conn = _connect()
     try:
-        # read only на уровне базы: даже если запрет по тексту обойдут хитрой
-        # конструкцией, сама Postgres не даст ничего записать.
-        # set_session(readonly=True) посредник базы принимал за смену роли
-        # («ALTER USER/ROLE commands are not allowed»). Read only ставим
-        # на саму транзакцию — первой командой, до любых запросов.
-        cur = conn.cursor()
-        cur.execute('SET TRANSACTION READ ONLY')
-        cur.execute(f'SET LOCAL search_path TO {_schema()}, public')
+        # Даже если запрет по тексту обойдут хитрой конструкцией (WITH ... DELETE),
+        # изменения не сохранятся: commit здесь не делается, _close откатывает всё.
+        cur = _read_cursor(conn)
         cur.execute(f'SELECT * FROM ({sql}) AS q LIMIT {limit + 1}')
         cols = [d[0] for d in cur.description]
         rows = cur.fetchall()
     except psycopg2.Error as e:
         return _text_result(f'Запрос не выполнился: {str(e).strip()}', True)
     finally:
-        conn.close()
+        _close(conn)
 
     truncated = len(rows) > limit
     rows = rows[:limit]
@@ -402,12 +418,7 @@ def tool_audit_log(args):
 
     conn = _connect()
     try:
-        # set_session(readonly=True) посредник базы принимал за смену роли
-        # («ALTER USER/ROLE commands are not allowed»). Read only ставим
-        # на саму транзакцию — первой командой, до любых запросов.
-        cur = conn.cursor()
-        cur.execute('SET TRANSACTION READ ONLY')
-        cur.execute(f'SET LOCAL search_path TO {_schema()}, public')
+        cur = _read_cursor(conn)
         cur.execute(
             'SELECT created_at, user_name, category, action, entity_type, entity_id, description '
             f'FROM audit_log{clause} ORDER BY created_at DESC LIMIT {limit}'
@@ -416,7 +427,7 @@ def tool_audit_log(args):
     except psycopg2.Error as e:
         return _text_result(f'Журнал не прочитался: {str(e).strip()}', True)
     finally:
-        conn.close()
+        _close(conn)
 
     lines = [f'Записей: {len(rows)}']
     for r in rows:
@@ -438,12 +449,7 @@ def tool_app_errors(args):
 
     conn = _connect()
     try:
-        # set_session(readonly=True) посредник базы принимал за смену роли
-        # («ALTER USER/ROLE commands are not allowed»). Read only ставим
-        # на саму транзакцию — первой командой, до любых запросов.
-        cur = conn.cursor()
-        cur.execute('SET TRANSACTION READ ONLY')
-        cur.execute(f'SET LOCAL search_path TO {_schema()}, public')
+        cur = _read_cursor(conn)
 
         # Сводка нужна, чтобы отличить массовую поломку от единичной случайности:
         # одна и та же ошибка у восьми человек и у одного — это разные задачи.
@@ -478,7 +484,7 @@ def tool_app_errors(args):
     except psycopg2.Error as e:
         return _text_result(f'Журнал сбоев не прочитался: {str(e).strip()}', True)
     finally:
-        conn.close()
+        _close(conn)
 
     if not rows:
         return _text_result('Сбоев по этому условию нет')
