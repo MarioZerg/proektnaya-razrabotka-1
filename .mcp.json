@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "proektnaya": {
+      "type": "http",
+      "url": "https://functions.poehali.dev/9066944a-2bf6-4f4b-8dbd-3e938d87b96f",
+      "headers": {
+        "Authorization": "Bearer ${MCP_AGENT_TOKEN}",
+        "X-Github-Token": "${MCP_GITHUB_TOKEN:-}"
+      }
+    }
+  }
+}

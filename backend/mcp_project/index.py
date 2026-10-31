@@ -272,6 +272,21 @@ def _schema():
     return os.environ.get('MAIN_DB_SCHEMA') or 'public'
 
 
+def _read_cursor(conn):
+    """Курсор в транзакции read only: даже если запрет по тексту обойдут хитрой
+    конструкцией, сама Postgres не даст ничего записать.
+
+    conn.set_session(readonly=True) здесь не годится: посредник базы на
+    poehali.dev принимает его за смену роли и отклоняет любой запрос с ошибкой
+    «ALTER USER/ROLE commands are not allowed». SET TRANSACTION READ ONLY
+    действует только на текущую транзакцию и посредником не блокируется.
+    """
+    cur = conn.cursor()
+    cur.execute('SET TRANSACTION READ ONLY')
+    cur.execute(f'SET LOCAL search_path TO {_schema()}, public')
+    return cur
+
+
 def _sql_str(value):
     return "'" + str(value).replace("'", "''") + "'"
 
@@ -343,11 +358,7 @@ def tool_db_query(args):
 
     conn = _connect()
     try:
-        # read only на уровне базы: даже если запрет по тексту обойдут хитрой
-        # конструкцией, сама Postgres не даст ничего записать.
-        conn.set_session(readonly=True)
-        cur = conn.cursor()
-        cur.execute(f'SET LOCAL search_path TO {_schema()}, public')
+        cur = _read_cursor(conn)
         cur.execute(f'SELECT * FROM ({sql}) AS q LIMIT {limit + 1}')
         cols = [d[0] for d in cur.description]
         rows = cur.fetchall()
@@ -399,9 +410,7 @@ def tool_audit_log(args):
 
     conn = _connect()
     try:
-        conn.set_session(readonly=True)
-        cur = conn.cursor()
-        cur.execute(f'SET LOCAL search_path TO {_schema()}, public')
+        cur = _read_cursor(conn)
         cur.execute(
             'SELECT created_at, user_name, category, action, entity_type, entity_id, description '
             f'FROM audit_log{clause} ORDER BY created_at DESC LIMIT {limit}'
@@ -432,9 +441,7 @@ def tool_app_errors(args):
 
     conn = _connect()
     try:
-        conn.set_session(readonly=True)
-        cur = conn.cursor()
-        cur.execute(f'SET LOCAL search_path TO {_schema()}, public')
+        cur = _read_cursor(conn)
 
         # Сводка нужна, чтобы отличить массовую поломку от единичной случайности:
         # одна и та же ошибка у восьми человек и у одного — это разные задачи.

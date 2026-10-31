@@ -1,0 +1,36 @@
+# Промпт для агента на poehali.dev — MCP-сервер: чтение базы (31.10.2026)
+
+Скопируй текст НИЖЕ агенту на Поехали целиком.
+
+---
+
+Ты — агент деплоя на poehali.dev. Проект CRM «Мегатюль».
+Не создавай новую Cloud Function. Обнови существующую функцию mcp_project.
+URL после публикации должен остаться ПРЕЖНИМ.
+Секреты не меняй и не ротируй: MCP_AGENT_TOKEN, DATABASE_URL оставь как есть.
+Миграции не нужны.
+
+Что исправлено: инструменты db_query, audit_log и app_errors падали с ошибкой
+«validation failed: ALTER USER/ROLE commands are not allowed». Причина —
+conn.set_session(readonly=True), посредник базы принимал его за смену роли.
+Теперь транзакция переводится в read only командой SET TRANSACTION READ ONLY.
+
+## Функция mcp_project
+
+**URL (не менять):**
+https://functions.poehali.dev/9066944a-2bf6-4f4b-8dbd-3e938d87b96f
+
+Залей пакет целиком из `backend/mcp_project/`:
+
+- `index.py` — изменён
+- `requirements.txt` — без изменений, не урезай
+- `tests.json` — без изменений
+
+## Проверка после деплоя
+
+Вызови функцию POST-запросом с заголовком Authorization: Bearer <MCP_AGENT_TOKEN>
+и телом:
+
+{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"audit_log","arguments":{"limit":2}}}
+
+Ожидается текст «Записей: 2» и две строки журнала, без «validation failed».
