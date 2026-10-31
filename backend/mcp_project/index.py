@@ -345,8 +345,11 @@ def tool_db_query(args):
     try:
         # read only на уровне базы: даже если запрет по тексту обойдут хитрой
         # конструкцией, сама Postgres не даст ничего записать.
-        conn.set_session(readonly=True)
+        # set_session(readonly=True) посредник базы принимал за смену роли
+        # («ALTER USER/ROLE commands are not allowed»). Read only ставим
+        # на саму транзакцию — первой командой, до любых запросов.
         cur = conn.cursor()
+        cur.execute('SET TRANSACTION READ ONLY')
         cur.execute(f'SET LOCAL search_path TO {_schema()}, public')
         cur.execute(f'SELECT * FROM ({sql}) AS q LIMIT {limit + 1}')
         cols = [d[0] for d in cur.description]
@@ -399,8 +402,11 @@ def tool_audit_log(args):
 
     conn = _connect()
     try:
-        conn.set_session(readonly=True)
+        # set_session(readonly=True) посредник базы принимал за смену роли
+        # («ALTER USER/ROLE commands are not allowed»). Read only ставим
+        # на саму транзакцию — первой командой, до любых запросов.
         cur = conn.cursor()
+        cur.execute('SET TRANSACTION READ ONLY')
         cur.execute(f'SET LOCAL search_path TO {_schema()}, public')
         cur.execute(
             'SELECT created_at, user_name, category, action, entity_type, entity_id, description '
@@ -432,8 +438,11 @@ def tool_app_errors(args):
 
     conn = _connect()
     try:
-        conn.set_session(readonly=True)
+        # set_session(readonly=True) посредник базы принимал за смену роли
+        # («ALTER USER/ROLE commands are not allowed»). Read only ставим
+        # на саму транзакцию — первой командой, до любых запросов.
         cur = conn.cursor()
+        cur.execute('SET TRANSACTION READ ONLY')
         cur.execute(f'SET LOCAL search_path TO {_schema()}, public')
 
         # Сводка нужна, чтобы отличить массовую поломку от единичной случайности:
