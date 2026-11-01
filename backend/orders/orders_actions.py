@@ -2212,6 +2212,27 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                     own_overlock_count = int(cur.fetchone()[0])
                     overlock_ok = max_ov <= 0 or own_overlock_count < max_ov
 
+            # ЧУЖУЮ НАЧАТУЮ СВЯЗКУ НЕ ВЫДАЁМ.
+            #
+            # Связку выдаём целиком, но закройщик мог раскроить её не всю. Остаток,
+            # докроенный позже, достаётся ТОЛЬКО той швее, что начала связку: ярлык
+            # на заказ один, и шить его по частям разными руками нельзя.
+            # Если та швея закрыла смену (ушла домой) — остаток отдаём следующей,
+            # иначе он завис бы до её следующей смены.
+            uid_int = int(user_id)
+            where_parts.append(
+                "(group_key IS NULL OR NOT EXISTS ("
+                "  SELECT 1 FROM orders g WHERE g.group_key = orders.group_key "
+                "   AND g.id <> orders.id AND ("
+                f"    (g.sewing_status = 'В работе' AND g.assigned_user_id <> {uid_int} "
+                "      AND EXISTS (SELECT 1 FROM shift_sessions s "
+                "                  WHERE s.user_id = g.assigned_user_id AND s.closed_at IS NULL))"
+                f"    OR (g.sewing_status = 'Стикеровка' AND g.sewer_user_id <> {uid_int} "
+                "      AND EXISTS (SELECT 1 FROM shift_sessions s "
+                "                  WHERE s.user_id = g.sewer_user_id AND s.closed_at IS NULL))"
+                "  )))"
+            )
+
             if orders_filter_setting == 'fbo':
                 where_parts.append("order_type = 'FBO'")
             elif orders_filter_setting == 'fbs':
