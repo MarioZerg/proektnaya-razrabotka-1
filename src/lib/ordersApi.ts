@@ -613,6 +613,9 @@ export interface SewingWaits {
   inWork: number;
   /** Предел заказов на руках — настройка цеха. По нему кнопка показывает замочек. */
   maxOrders: number;
+  /** Сколько мест текущей пары занято: на руках + уже сданные из этой пары.
+   * Новая пара открывается, только когда сданы все взятые вещи. */
+  batchUsed: number;
   /**
    * ТАЙМЕРЫ ОБМЁТКИ — ОТДЕЛЬНО ОТ ТАЙМЕРОВ ПОШИВА.
    *
@@ -641,6 +644,7 @@ export const fetchSewingWaits = async (userId: number): Promise<SewingWaits> => 
     shiftOpen: true,
     inWork: 0,
     maxOrders: 0,
+    batchUsed: 0,
     overlockWaits: {},
     overlockInWork: 0,
     maxOverlockOrders: 0,
@@ -655,6 +659,7 @@ export const fetchSewingWaits = async (userId: number): Promise<SewingWaits> => 
     shiftOpen: data.shiftOpen !== false,
     inWork: Number(data.inWork) || 0,
     maxOrders: Number(data.maxOrders) || 0,
+    batchUsed: Number(data.batchUsed ?? data.inWork) || 0,
     overlockWaits: data.overlockWaits || {},
     overlockInWork: Number(data.overlockInWork) || 0,
     maxOverlockOrders: Number(data.maxOverlockOrders) || 0,

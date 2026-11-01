@@ -152,7 +152,7 @@ const SewingItemsQueuePanel = ({
           ) : takeLocked ? (
             <>
               <Icon name="Lock" size={16} className="mr-2" />
-              В работе {inWork} из {maxOrders}
+              {inWork > 0 ? `Сдайте пару: на руках ${inWork}` : `В работе ${inWork} из ${maxOrders}`}
             </>
           ) : (
             <>
@@ -165,7 +165,8 @@ const SewingItemsQueuePanel = ({
 
       {isSewer && takeLocked && conveyorIssueEnabled && (
         <p className="text-sm text-muted-foreground">
-          Отправьте хотя бы один заказ на стикеровку — кнопка откроется сразу.
+          Новая пара заказов откроется, когда вы сдадите на стикеровку все взятые вещи.
+          Шейте спокойно: сдавать недошитое, чтобы взять следующий, смысла нет.
         </p>
       )}
 

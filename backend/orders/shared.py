@@ -1230,6 +1230,45 @@ HAT_BOOST_ORDERS = 3
 _HAT_COL: dict = {}
 
 
+def sewer_batch_usage(cur, user_id):
+    """Сколько мест текущей «пары» швеи уже занято.
+
+    ПРАВИЛО ПАРЫ: швея берёт до N заказов (лимит цеха), а следующие получает
+    только когда сдаст ВСЕ взятые. Раньше место освобождалось сразу после сдачи
+    одной вещи: таймер на второй вещи истекал, её сдавали недошитой и тут же
+    набирали новую. Теперь сдать одну, чтобы схватить следующую, бесполезно.
+
+    Пара = вещи на руках (В работе + на оверлоке) + вещи, которые швея сдала
+    с момента, когда взяла самую раннюю из тех, что ещё на руках.
+    Ничего на руках нет — пара закрыта, можно набирать новую.
+    """
+    uid = int(user_id)
+    cur.execute(
+        "SELECT COUNT(*), MIN(started) FROM ("
+        "  SELECT taken_at AS started FROM orders "
+        "   WHERE assigned_user_id = %s AND sewing_status = 'В работе' "
+        "  UNION ALL "
+        "  SELECT overlock_taken_at FROM orders "
+        "   WHERE overlock_user_id = %s AND overlocked_at IS NULL "
+        "     AND requires_overlock = true AND sewing_status = 'Раскроено'"
+        ") a",
+        (uid, uid),
+    )
+    active, batch_start = cur.fetchone()
+    active = int(active or 0)
+    if active == 0 or batch_start is None:
+        return active, active
+    cur.execute(
+        "SELECT COUNT(*) FROM orders "
+        "WHERE ((sewer_user_id = %s AND sewn_at >= %s AND sewing_status <> 'В работе') "
+        "    OR (overlock_user_id = %s AND overlocked_at >= %s)) "
+        "  AND NOT (assigned_user_id = %s AND sewing_status = 'В работе')",
+        (uid, batch_start, uid, batch_start, uid),
+    )
+    done = int(cur.fetchone()[0] or 0)
+    return active, active + done
+
+
 def hat_boost_limit(cur, user_id, max_orders):
     """Кейс бокс: 30 дней можно держать минимум 3 заказа вместо 2."""
     if not user_id or max_orders <= 0:

@@ -29,6 +29,7 @@ from shared import (
     expand_material_names,
     get_setting_int,
     hat_boost_limit,
+    sewer_batch_usage,
     overlock_holder,
     overlock_wait_for_order,
     pick_order_trim,
@@ -802,6 +803,8 @@ def handle_get(event: dict, headers: dict, dsn: str) -> dict:
                     # Лимит общий: обычные «В работе» + вещи на оверлоке вместе.
                     'inWork': in_work_count + overlock_in_work,
                     'maxOrders': max_orders,
+                    # Сколько мест пары занято (на руках + уже сданные из этой пары).
+                    'batchUsed': sewer_batch_usage(cur, waits_user_id)[1],
                     'overlockWaits': overlock_waits,
                     'overlockInWork': overlock_in_work,
                     'maxOverlockOrders': max_overlock,

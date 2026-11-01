@@ -33,6 +33,7 @@ from shared import (
     get_setting_float,
     get_setting_int,
     hat_boost_limit,
+    sewer_batch_usage,
     log_action,
     ozon_cutoff_passed,
     ozon_purchase_marks,
@@ -2075,22 +2076,17 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                 get_setting_int(cur, session_workshop_id, 'max_quantity_orders_to_seamstress', 0),
             )
             if max_orders > 0 and not finishing_group:
-                cur.execute(
-                    "SELECT COUNT(*) FROM orders "
-                    "WHERE (assigned_user_id = %s AND sewing_status = 'В работе') "
-                    "   OR (overlock_user_id = %s AND overlocked_at IS NULL "
-                    "       AND requires_overlock = true AND sewing_status = 'Раскроено')",
-                    (int(user_id), int(user_id)),
-                )
-                in_work = int(cur.fetchone()[0])
-                if in_work >= max_orders:
+                # Правило пары: новые заказы — только когда сданы ВСЕ взятые.
+                in_work, batch_used = sewer_batch_usage(cur, user_id)
+                if batch_used >= max_orders:
                     return {
                         'statusCode': 409,
                         'headers': headers,
                         'body': json.dumps({
-                            'error': f'У вас уже {in_work} заказов в работе (лимит {max_orders}) — '
-                                     f'сначала отправьте их на стикеровку',
+                            'error': f'Сначала сдайте все заказы текущей пары '
+                                     f'(на руках {in_work}) — тогда откроется новая',
                             'inWork': in_work,
+                            'batchUsed': batch_used,
                             'maxOrders': max_orders,
                         }, ensure_ascii=False),
                     }

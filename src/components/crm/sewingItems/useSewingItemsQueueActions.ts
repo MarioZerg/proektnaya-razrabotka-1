@@ -105,6 +105,7 @@ export const useSewingItemsQueueActions = ({
    */
   const [inWork, setInWork] = useState(0);
   const [maxOrders, setMaxOrders] = useState(0);
+  const [batchUsed, setBatchUsed] = useState(0);
   /**
    * ОВЕРЛОК — ОДНА МАШИНА НА ЦЕХ.
    *
@@ -140,6 +141,7 @@ export const useSewingItemsQueueActions = ({
       setSewWaits(left);
       setInWork(res.inWork);
       setMaxOrders(res.maxOrders);
+      setBatchUsed(res.batchUsed);
 
       // Таймеры обмётки держим отдельным набором: это другой этап той же вещи,
       // и подставить сюда таймер пошива значило бы показать чужой отсчёт.
@@ -162,6 +164,7 @@ export const useSewingItemsQueueActions = ({
       setSewWaits({});
       setInWork(0);
       setMaxOrders(0);
+      setBatchUsed(0);
       setOverlockUntil({});
       setOverlockWaits({});
       setOverlockInWork(0);
@@ -377,7 +380,8 @@ export const useSewingItemsQueueActions = ({
     /** Сколько ещё шить каждую вещь: id заказа → секунды. Пустой ключ = можно сдавать. */
     sewWaits,
     /** Лимит на руках исчерпан — на кнопке «Получить заказ» замочек. */
-    takeLocked: maxOrders > 0 && inWork >= maxOrders,
+    /** Правило пары: новые заказы — только когда сданы все взятые. */
+    takeLocked: maxOrders > 0 && batchUsed >= maxOrders,
     conveyorIssueEnabled,
     inWork,
     maxOrders,
