@@ -6,6 +6,7 @@
 """
 import json
 import math
+import re
 import time
 import urllib.error
 import urllib.request
@@ -450,6 +451,94 @@ def push_packages(cur, shop_id, site_url, api_key):
         return {'changed': 0, 'pushed': True, 'pushError': None}
     ok, err = _push_items(cur, ids, site_url, api_key)
     return {'changed': len(ids), 'pushed': ok, 'pushError': err}
+
+
+_SKU_RE = re.compile(r'^([a-z]+)(\d+)_(\d+)$')
+
+
+def copy_packages(cur, shop_id, site_url, api_key):
+    """Переносит упаковку с карточек маркетплейсов на все товары сайта и сразу отправляет её на сайт.
+
+    Сайт и площадки пишут артикул одинаково (mol2_230), поэтому сначала ищем тот же артикул.
+    Если такой высоты на площадке нет — берём ту же ткань и ширину с ближайшей высотой:
+    коробка и вес тюля зависят в основном от ширины. Вписанное вручную не трогаем.
+    """
+    cur.execute(
+        "SELECT lower(x.sku), x.pack_length_mm, x.pack_width_mm, x.pack_height_mm, x.pack_weight_g "
+        "FROM marketplace_items x JOIN shops s ON s.id = x.shop_id "
+        "WHERE s.code <> 'megatul_site' AND x.sku IS NOT NULL AND x.pack_length_mm > 0 "
+        "  AND x.pack_width_mm > 0 AND x.pack_height_mm > 0 AND x.pack_weight_g > 0 "
+        "ORDER BY x.pack_updated_at ASC NULLS FIRST"
+    )
+    exact = {}
+    by_width = {}
+    for sku, l, w, h, g in cur.fetchall():
+        exact[sku] = (l, w, h, g)  # по порядку дат — остаётся самая свежая упаковка артикула
+        m = _SKU_RE.match(sku)
+        if m:
+            by_width.setdefault((m.group(1), int(m.group(2))), {})[int(m.group(3))] = (l, w, h, g)
+
+    cur.execute(
+        "SELECT id, lower(COALESCE(sku, '')), lower(COALESCE(internal_sku, '')), pack_source, "
+        "  pack_length_mm, pack_width_mm, pack_height_mm, pack_weight_g "
+        "FROM marketplace_items WHERE shop_id = %s AND archived_at IS NULL "
+        "  AND COALESCE(sku, '') NOT LIKE 'dup:%%'",
+        (int(shop_id),),
+    )
+    rows = cur.fetchall()
+    updates = []
+    missing = 0
+    for item_id, sku, internal, source, *current in rows:
+        if source == 'manual':
+            continue
+        pack, kind = None, None
+        for code in (sku, internal):
+            if code and code in exact:
+                pack, kind = exact[code], 'ozon'
+                break
+        if not pack:
+            for code in (sku, internal):
+                m = _SKU_RE.match(code or '')
+                heights = by_width.get((m.group(1), int(m.group(2)))) if m else None
+                if heights:
+                    # Ближайшая высота; при равенстве — та, что выше: коробка не окажется мала.
+                    height = int(m.group(3))
+                    near = min(heights, key=lambda h: (abs(h - height), -h))
+                    pack, kind = heights[near], 'ozon_near'
+                    break
+        if not pack:
+            missing += 1
+            continue
+        if tuple(current) != tuple(pack) or source != kind:
+            updates.append((int(item_id), *pack, kind))
+
+    if updates:
+        values = ','.join(f"({i}, {l}, {w}, {h}, {g}, '{k}')" for i, l, w, h, g, k in updates)
+        cur.execute(
+            "UPDATE marketplace_items mi SET pack_length_mm = v.l, pack_width_mm = v.w, "
+            "  pack_height_mm = v.h, pack_weight_g = v.g, pack_source = v.k, pack_updated_at = now(), "
+            "  updated_at = now() "
+            f"FROM (VALUES {values}) AS v(id, l, w, h, g, k) WHERE mi.id = v.id"
+        )
+
+    # На сайт — все товары с упаковкой, а не только изменённые: сайт мог не получить их раньше.
+    cur.execute(
+        "SELECT id FROM marketplace_items WHERE shop_id = %s AND archived_at IS NULL "
+        "  AND COALESCE(sku, '') NOT LIKE 'dup:%%' AND pack_length_mm > 0 AND pack_width_mm > 0 "
+        "  AND pack_height_mm > 0 AND pack_weight_g > 0",
+        (int(shop_id),),
+    )
+    ids = [r[0] for r in cur.fetchall()]
+    ok, err = (True, None)
+    for start in range(0, len(ids), 200):
+        ok, err = _push_items(cur, ids[start:start + 200], site_url, api_key)
+        if not ok:
+            break
+    near = sum(1 for u in updates if u[5] == 'ozon_near')
+    return {
+        'changed': len(updates), 'exact': len(updates) - near, 'near': near,
+        'missing': missing, 'withPackage': len(ids), 'pushed': ok, 'pushError': err,
+    }
 
 
 def set_package(cur, shop_id, body, site_url, api_key):
