@@ -29,7 +29,7 @@ const baseName = (name: string) => name.replace(/\s+\d+×\d+$/, '').trim();
 export const groupByWidth = (items: SiteCatalogItem[]): SiteWidthGroup[] => {
   const map = new Map<string, SiteCatalogItem[]>();
   items.forEach((i) => {
-    const key = `${i.siteProductId || baseName(i.name)}|${i.width ?? '—'}`;
+    const key = `${i.siteProductId || baseName(i.name)}|${i.width ?? '—'}|${i.archivedAt ? 'a' : ''}`;
     map.set(key, [...(map.get(key) || []), i]);
   });
   return [...map.entries()].map(([key, list]) => {
