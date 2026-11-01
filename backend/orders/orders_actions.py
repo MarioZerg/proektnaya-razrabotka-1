@@ -1325,6 +1325,21 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                                 (int(item_id),),
                             )
                             ov_row = cur.fetchone()
+                            # Тесьму берём из цеха и смены того, на кого перевели
+                            # заказ: открытой, а если закрыта — последней (в т.ч.
+                            # гостевой). Иначе рулон его смены в цехе гостя
+                            # отбраковывался как «не вашего цеха».
+                            sewer_ws, sewer_shift = None, None
+                            if admin_sewer_id:
+                                cur.execute(
+                                    "SELECT workshop_id, shift_number FROM shift_sessions "
+                                    "WHERE user_id = %s AND workshop_id IS NOT NULL "
+                                    "ORDER BY (closed_at IS NULL) DESC, opened_at DESC LIMIT 1",
+                                    (admin_sewer_id,),
+                                )
+                                ss_row = cur.fetchone()
+                                if ss_row:
+                                    sewer_ws, sewer_shift = ss_row
                             trim_err = consume_trim_roll(
                                 cur,
                                 order_id=int(item_id),
@@ -1333,8 +1348,8 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                                 width=mwh[1],
                                 height=mwh[2],
                                 requires_overlock=bool(ov_row and ov_row[0]),
-                                check_workshop_id=mwh[3],
-                                actor_shift_number=None,
+                                check_workshop_id=sewer_ws or mwh[3],
+                                actor_shift_number=sewer_shift,
                                 sewer_user_id=admin_sewer_id or actor_id,
                             )
                             if trim_err:

@@ -1747,6 +1747,17 @@ def handler(event: dict, context) -> dict:
                     (int(for_user_id),),
                 )
                 sess = cur.fetchone()
+                # Админ переводит заказ на сотрудника задним числом, когда тот уже
+                # закрыл смену. Тогда берём его ПОСЛЕДНЮЮ смену (в т.ч. гостевую):
+                # тесьма списывается с того цеха и той смены, где он реально шил.
+                if not (sess and sess[0]) and params.get('lastShift') == '1':
+                    cur.execute(
+                        "SELECT ss.workshop_id, ss.shift_number, ss.role FROM shift_sessions ss "
+                        "WHERE ss.user_id = %s AND ss.workshop_id IS NOT NULL "
+                        "ORDER BY ss.opened_at DESC LIMIT 1",
+                        (int(for_user_id),),
+                    )
+                    sess = cur.fetchone()
                 if sess and sess[0]:
                     # Материал показываем по ЦЕХУ, где человек физически находится.
                     # Гость пришёл в чужой цех — работает с материалом ЭТОГО цеха, а

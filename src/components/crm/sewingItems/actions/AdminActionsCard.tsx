@@ -14,7 +14,7 @@ import type { Order, OrderDetail } from '@/lib/ordersApi';
 import type { Employee } from '@/lib/usersApi';
 import type { Workshop } from '@/lib/workshopsApi';
 import type { EmployeeShiftStatus } from '@/lib/shiftSessionsApi';
-import type { Roll } from '@/lib/rollsApi';
+import { fetchRolls, type Roll } from '@/lib/rollsApi';
 import { statusOptions, employeeLabel } from '@/components/crm/sewingItems/sewingItemsShared';
 import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
 import { formatQuantity } from '@/lib/formatQuantity';
@@ -68,7 +68,6 @@ const AdminActionsCard = ({
   const [fabricRollId, setFabricRollId] = useState('');
   const [trimRollId, setTrimRollId] = useState('');
   const selectedFabric = fabricRolls.find((r) => String(r.id) === fabricRollId);
-  const selectedTrim = trimRolls.find((r) => String(r.id) === trimRollId);
 
   // СТАТУС НЕ МЕНЯЕМ СРАЗУ ПО ВЫБОРУ В СПИСКЕ.
   // Админ выбирает новый статус, указывает, кто шил, и рулон тесьмы, видит
@@ -83,6 +82,32 @@ const AdminActionsCard = ({
     const d = selectedOrder.sewerUserId || selectedOrder.assignedUserId;
     setSewerId(d ? String(d) : '');
   }, [selectedOrder.id, selectedOrder.sewingStatus, selectedOrder.sewerUserId, selectedOrder.assignedUserId]);
+  // ТЕСЬМА — СО СМЕНЫ ТОГО, КТО ШИЛ.
+  // Админ переводит заказ на сотрудника, и тесьма списывается с цеха и смены
+  // этого сотрудника: открытой, а если она закрыта — последней (в т.ч. гостевой).
+  // Если в его смене тесьмы нет, сервер сам откроет рулоны других смен того цеха.
+  const [sewerTrimRolls, setSewerTrimRolls] = useState<Roll[] | null>(null);
+  const trimMaterialId = orderDetail?.requiredTrimMaterialId;
+  useEffect(() => {
+    setTrimRollId('');
+    if (!sewerId || !trimMaterialId) {
+      setSewerTrimRolls(null);
+      return;
+    }
+    let alive = true;
+    fetchRolls({ status: 'in_workshop', forUserId: Number(sewerId), forRole: 'sewer', lastShift: true })
+      .then((list) => {
+        if (alive) setSewerTrimRolls(list.filter((r) => r.materialId === trimMaterialId));
+      })
+      .catch(() => {
+        if (alive) setSewerTrimRolls(null);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [sewerId, trimMaterialId]);
+  const shownTrimRolls = sewerTrimRolls ?? trimRolls;
+  const selectedTrim = shownTrimRolls.find((r) => String(r.id) === trimRollId);
   const statusChanged = targetStatus !== selectedOrder.sewingStatus;
   const targetIdx = statusOptions.indexOf(targetStatus as (typeof statusOptions)[number]);
   const needsSewer = targetIdx >= statusOptions.indexOf('Стикеровка');
@@ -219,13 +244,20 @@ const AdminActionsCard = ({
             </SelectValue>
           </SelectTrigger>
           <SelectContent className="max-w-[calc(100vw-1rem)]">
-            {trimRolls.length === 0 ? (
-              <div className="px-2 py-1.5 text-sm text-muted-foreground">Нет рулонов тесьмы в цехе</div>
+            {shownTrimRolls.length === 0 ? (
+              <div className="px-2 py-1.5 text-sm text-muted-foreground">
+                {sewerTrimRolls ? 'В смене сотрудника нет этой тесьмы' : 'Нет рулонов тесьмы в цехе'}
+              </div>
             ) : (
-              trimRolls.map((r) => (
+              shownTrimRolls.map((r) => (
                 <SelectItem key={r.id} value={String(r.id)} className="whitespace-normal break-words">
                   <span className="font-semibold">#{r.barcode}</span> — {formatQuantity(r.remainingQuantity)} {r.unit}
-                  <span className="block text-xs text-muted-foreground">{r.materialName}</span>
+                  <span className="block text-xs text-muted-foreground">
+                    {r.materialName}
+                    {r.workshopName ? ` · ${r.workshopName}` : ''}
+                    {r.shiftNumber ? `, смена ${r.shiftNumber}` : ''}
+                    {r.foreignShift ? ' (чужая смена)' : ''}
+                  </span>
                 </SelectItem>
               ))
             )}
@@ -233,7 +265,9 @@ const AdminActionsCard = ({
         </Select>
         <p className="text-xs text-muted-foreground">
           {needsTrim && statusChanged
-            ? 'Укажите, с какого рулона списать тесьму на этот заказ.'
+            ? sewerTrimRolls
+              ? 'Рулоны из смены выбранного сотрудника (или его гостевой смены).'
+              : 'Укажите, с какого рулона списать тесьму на этот заказ.'
             : 'Только когда переводите на стикеровку или в «Готовые». На «Раскроено» тесьмы ещё нет.'}
         </p>
       </div>

@@ -178,6 +178,8 @@ export const fetchRolls = async (filters?: {
   /** Поиск по штрихкоду. Ищется в базе: список ограничен свежими рулонами,
    * и закрытый рулон полугодовой давности иначе не нашёлся бы. */
   search?: string;
+  /** Смена закрыта — взять последнюю смену сотрудника (перевод заказа админом). */
+  lastShift?: boolean;
 }): Promise<Roll[]> => {
   const params = new URLSearchParams();
   if (filters?.materialId) params.set('material_id', String(filters.materialId));
@@ -186,6 +188,7 @@ export const fetchRolls = async (filters?: {
   if (filters?.forUserId) params.set('forUserId', String(filters.forUserId));
   if (filters?.forRole) params.set('forRole', filters.forRole);
   if (filters?.search) params.set('search', filters.search);
+  if (filters?.lastShift) params.set('lastShift', '1');
   const qs = params.toString();
   const res = await fetch(qs ? `${ROLLS_URL}?${qs}` : ROLLS_URL);
   const data = await res.json();
