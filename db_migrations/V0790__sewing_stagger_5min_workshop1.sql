@@ -1,0 +1,1 @@
+INSERT INTO workshop_settings (workshop_id, key, value) VALUES (1, 'sewing_stagger_minutes', '5') ON CONFLICT (workshop_id, key) DO UPDATE SET value = EXCLUDED.value;
