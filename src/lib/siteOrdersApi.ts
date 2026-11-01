@@ -82,6 +82,13 @@ export interface SiteCatalogItem {
   pushedAt: string | null;
   pushError: string | null;
   materialsCount: number;
+  /** Упаковка для расчёта доставки на сайте, мм и граммы. */
+  packLengthMm?: number | null;
+  packWidthMm?: number | null;
+  packHeightMm?: number | null;
+  packWeightG?: number | null;
+  /** 'ozon' — с карточки OZON, 'manual' — вписано вручную (OZON не перезапишет). */
+  packSource?: 'ozon' | 'manual' | null;
   /** Себестоимость из «Себестоимости товара»; null — расход не проставлен. */
   cost: number | null;
   /** Из чего сложилась себестоимость (как в «Себестоимости товара»). */
@@ -224,6 +231,17 @@ export const setSitePrice = (
   manual = true
 ): Promise<SitePushResult> =>
   post({ action: 'set_price', itemIds, price, manual, actorId: actor?.id, actorName: actor?.name });
+
+/**
+ * Упаковка (мм и граммы) одной высоты или всех высот ширины — и сразу на сайт.
+ * Все значения null — упаковка снимается, её снова подставит OZON при синхронизации.
+ */
+export const setSitePackage = (
+  itemIds: number[],
+  pack: { lengthMm: number | null; widthMm: number | null; heightMm: number | null; weightG: number | null },
+  actor?: { id?: number; name?: string }
+): Promise<SitePushResult> =>
+  post({ action: 'set_package', itemIds, ...pack, actorId: actor?.id, actorName: actor?.name });
 
 export const setSiteDisabled = (
   target: { itemIds?: number[]; materialId?: number },

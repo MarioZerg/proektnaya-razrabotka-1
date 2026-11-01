@@ -8,6 +8,7 @@ import SiteProfitCell from '@/components/crm/siteProducts/SiteProfitCell';
 import SiteProfitChain from '@/components/crm/siteProducts/SiteProfitChain';
 import SitePriceCell from '@/components/crm/siteProducts/SitePriceCell';
 import SiteHeightPriceCell from '@/components/crm/siteProducts/SiteHeightPriceCell';
+import SitePackageCell from '@/components/crm/siteProducts/SitePackageCell';
 import type { SiteWidthGroup } from '@/components/crm/siteProducts/siteWidthGroups';
 import { rub, type SiteActor } from '@/components/crm/siteProducts/siteProductsShared';
 
@@ -111,10 +112,16 @@ const SiteWidthRow = ({
         {g.partlyDisabled && <p className="mt-0.5 text-xs text-amber-700">часть высот выключена</p>}
       </td>
       <td className="px-3 py-2 text-right">
-        <Button size="sm" variant="outline" onClick={() => onEdit(g)}>
-          <Icon name="Pencil" size={14} className="mr-1" />
-          Расход
-        </Button>
+        <div className="flex flex-wrap justify-end gap-1.5">
+          <Button size="sm" variant="outline" onClick={() => onEdit(g)}>
+            <Icon name="Pencil" size={14} className="mr-1" />
+            Расход
+          </Button>
+          <SitePackageCell items={g.items} canEdit={isAdmin && !g.archived} actor={actor} onSaved={onSaved} />
+        </div>
+        <div className="mt-1">
+          <SitePackageCell items={g.items} canEdit={false} onSaved={onSaved} />
+        </div>
       </td>
     </tr>
     {isOpen && (
@@ -130,6 +137,7 @@ const SiteWidthRow = ({
                 <th className="py-1 pr-3 font-medium">Цена</th>
                 <th className="py-1 pr-3 font-medium">Прибыль с блогером</th>
                 <th className="py-1 pr-3 font-medium">Без блогера</th>
+                <th className="py-1 pr-3 font-medium">Упаковка</th>
               </tr>
             </thead>
             <tbody>
@@ -171,6 +179,15 @@ const SiteWidthRow = ({
                     <td className="py-1 pr-3 text-muted-foreground">
                       {noB ? rub(noB.profit) : '—'}
                       {i.disabled ? ' · выкл' : ''}
+                    </td>
+                    <td className="py-1 pr-3">
+                      <SitePackageCell
+                        items={[i]}
+                        canEdit={isAdmin && !i.archivedAt}
+                        actor={actor}
+                        onSaved={onSaved}
+                        compact
+                      />
                     </td>
                   </tr>
                 );

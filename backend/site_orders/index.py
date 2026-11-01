@@ -466,6 +466,7 @@ def handler(event: dict, context) -> dict:
     POST { action: 'set_price', itemId, price } — цена товара (админ), сразу уходит на сайт
     POST { action: 'set_disabled', disabled, itemIds? | materialId? } — выключить/включить на сайте
     POST { action: 'save_pricing', taxPct, acquiringPct, bloggerPct, profitByWidth: {'200': 250, ...} }
+    POST { action: 'set_package', itemIds, lengthMm, widthMm, heightMm, weightG } — упаковка (мм, г), сразу на сайт
     POST { action: 'auto_prices', force? }   — проставить рекомендованные цены (кроме ручных)
     POST { action: 'low_fabric' }            — ткани меньше 20 м и товары сайта на них
     GET  ?action=status                       — подключён ли магазин
@@ -561,14 +562,15 @@ def handler(event: dict, context) -> dict:
                 conn.commit()
             return _resp(200, auto)
 
-        if action in ('set_price', 'set_disabled'):
+        if action in ('set_price', 'set_disabled', 'set_package'):
             if not site_catalog.is_admin(cur, actor_id):
                 return _resp(403, {'error': 'Цены и продажу на сайте меняет администратор'})
-            fn = site_catalog.set_price if action == 'set_price' else site_catalog.set_disabled
+            fn = {'set_price': site_catalog.set_price, 'set_disabled': site_catalog.set_disabled,
+                  'set_package': site_catalog.set_package}[action]
             code, payload = fn(cur, shop_id, body, site_url, api_key if enabled else '')
             if code == 200:
                 conn.commit()
-                what = 'цена' if action == 'set_price' else (
+                what = 'цена' if action == 'set_price' else 'упаковка' if action == 'set_package' else (
                     'выключен' if body.get('disabled') else 'включён')
                 log_action(cur, actor_id, actor_name, f'site_{action}',
                            f"мегатюль.рф: {what}, товаров {payload.get('changed', 1)}"

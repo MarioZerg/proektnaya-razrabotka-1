@@ -257,7 +257,8 @@ def list_products(cur, shop_id):
         "  (SELECT m.material_id FROM marketplace_item_materials m "
         "   JOIN materials x ON x.id = m.material_id JOIN material_types t ON t.id = x.type_id "
         "   WHERE m.marketplace_item_id = mi.id AND t.name = 'Тюль' ORDER BY m.id LIMIT 1), "
-        "  mi.internal_sku, mi.site_price_manual "
+        "  mi.internal_sku, mi.site_price_manual, "
+        "  mi.pack_length_mm, mi.pack_width_mm, mi.pack_height_mm, mi.pack_weight_g, mi.pack_source "
         "FROM marketplace_items mi WHERE mi.shop_id = %s AND COALESCE(mi.sku, '') NOT LIKE 'dup:%%' "
         "ORDER BY mi.sku",
         (int(shop_id),),
@@ -311,6 +312,10 @@ def list_products(cur, shop_id):
             # ok — ткань в расходе; notInMaterials — ткань есть в справочнике, но не
             # указана в расходе; notInReference — такой ткани в справочнике нет.
             'fabricStatus': fabric_status,
+            # Упаковка для расчёта доставки на сайте: мм и граммы.
+            # packSource: 'ozon' — с карточки OZON, 'manual' — вписано здесь.
+            'packLengthMm': r[16], 'packWidthMm': r[17], 'packHeightMm': r[18],
+            'packWeightG': r[19], 'packSource': r[20],
         })
     # Сколько вещей сайт реально продал за 30 дней — подсказка для плана продаж.
     cur.execute(
@@ -445,6 +450,48 @@ def push_packages(cur, shop_id, site_url, api_key):
         return {'changed': 0, 'pushed': True, 'pushError': None}
     ok, err = _push_items(cur, ids, site_url, api_key)
     return {'changed': len(ids), 'pushed': ok, 'pushError': err}
+
+
+def set_package(cur, shop_id, body, site_url, api_key):
+    """Упаковка одной высоты или сразу всех высот ширины (itemIds) — и сразу на сайт.
+
+    Для товаров, которых нет на OZON, это единственный способ задать габариты.
+    Вписанное здесь помечается 'manual': синхронизация с OZON его не перезапишет.
+    Все поля пустые — упаковку снимаем, и при следующей синхронизации её снова
+    подставит OZON, если там есть такой артикул.
+    """
+    ids = sorted({int(i) for i in (body.get('itemIds') or []) if i})
+    if not ids:
+        return 400, {'error': 'Укажите товар'}
+    vals = []
+    for key in ('lengthMm', 'widthMm', 'heightMm', 'weightG'):
+        raw = body.get(key)
+        try:
+            v = None if raw in (None, '') else round(float(raw))
+        except (TypeError, ValueError):
+            return 400, {'error': 'Габариты и вес должны быть числами'}
+        if v is not None and v <= 0:
+            return 400, {'error': 'Габариты и вес должны быть больше нуля'}
+        vals.append(v)
+    filled = [v for v in vals if v is not None]
+    if filled and len(filled) < 4:
+        return 400, {'error': 'Заполните длину, ширину, высоту и вес — или очистите все поля'}
+    if filled and max(vals[:3]) > 3000:
+        return 400, {'error': 'Габарит больше 3 метров — проверьте, что указаны сантиметры'}
+    ids_csv = ','.join(str(i) for i in ids)
+    cur.execute(
+        "UPDATE marketplace_items SET pack_length_mm = %s, pack_width_mm = %s, pack_height_mm = %s, "
+        "  pack_weight_g = %s, pack_source = %s, pack_updated_at = now(), updated_at = now() "
+        f"WHERE id IN ({ids_csv}) AND shop_id = %s RETURNING id",
+        (*vals, 'manual' if filled else None, int(shop_id)),
+    )
+    done = [r[0] for r in cur.fetchall()]
+    if not done:
+        return 404, {'error': 'Товар не найден'}
+    if not filled:
+        return 200, {'saved': True, 'changed': len(done), 'pushed': True, 'pushError': None}
+    ok, err = _push_items(cur, done, site_url, api_key)
+    return 200, {'saved': True, 'changed': len(done), 'pushed': ok, 'pushError': err}
 
 
 def set_price(cur, shop_id, body, site_url, api_key):
