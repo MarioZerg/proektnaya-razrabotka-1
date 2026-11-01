@@ -50,6 +50,24 @@ from shared import (
 )
 
 
+
+def _workshop_fbo_item(cur, goods_id):
+    """Вещь сшита в цехе под заказ FBO, который всё ещё в поставке.
+
+    Такую вещь, убранную из короба, на полку не кладём: она сшита под заявку,
+    ярлык на ней действует. Раньше она уходила «ждёт полку» без ярлыка, и при
+    повторном скане OZN в короб её уже не находили — сканер ругался на чужой
+    заказ FBS (Лен 300x275, поставка #1544, 01.11).
+    """
+    cur.execute(
+        "SELECT 1 FROM goods_warehouse gw JOIN orders o ON o.id = gw.order_id "
+        "WHERE gw.id = %s AND COALESCE(gw.receive_reason, '') = 'fbs_ready' "
+        "  AND gw.shelf_id IS NULL AND o.order_type = 'FBO' AND o.supply_id IS NOT NULL "
+        "  AND COALESCE(o.status, '') NOT IN ('Отменён', 'Отгружен', 'Доставлен')",
+        (int(goods_id),),
+    )
+    return cur.fetchone() is not None
+
 def handle_post(event: dict, headers: dict, dsn: str) -> dict:
     """Обрабатывает POST-запросы модуля поставок."""
     body_data = json.loads(event.get('body') or '{}')
@@ -1412,7 +1430,8 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
             # «на поставку». Ярлык маркетплейса на ней действует, покупатель её ждёт —
             # отправлять её на хранение и рвать связь с заказом нельзя. Кладовщик
             # просто убрал позицию из короба, и она снова доступна к сканированию.
-            back_to_supply = supply_type == 'FBS' and receive_reason == 'fbs_ready'
+            back_to_supply = (supply_type == 'FBS' and receive_reason == 'fbs_ready') \
+                or _workshop_fbo_item(cur, goods_id)
 
             if back_to_supply:
                 cur.execute(
@@ -2843,7 +2862,8 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
             # Вещь, сшитая под FBS-заказ, возвращается в «на поставку»: ярлык на ней
             # действует, покупатель её ждёт. На полку она не едет — просто снова
             # доступна к сканированию в поставку.
-            back_to_supply = supply_type == 'FBS' and receive_reason == 'fbs_ready'
+            back_to_supply = (supply_type == 'FBS' and receive_reason == 'fbs_ready') \
+                or _workshop_fbo_item(cur, goods_id)
             if back_to_supply:
                 cur.execute(
                     "UPDATE goods_warehouse SET status = 'awaiting_supply' "
@@ -2971,7 +2991,8 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                 # Возврат вещи на склад — та же логика, что в remove_box_item:
                 # сшитое под FBS-заказ возвращается в очередь на отгрузку,
                 # остальное ложится на склад свободным остатком.
-                if s_type == 'FBS' and receive_reason == 'fbs_ready':
+                if (s_type == 'FBS' and receive_reason == 'fbs_ready') \
+                        or _workshop_fbo_item(cur, goods_id):
                     cur.execute(
                         "UPDATE goods_warehouse SET status = 'awaiting_supply' "
                         f"WHERE id = {int(goods_id)}"

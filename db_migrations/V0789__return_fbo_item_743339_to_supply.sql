@@ -1,0 +1,1 @@
+UPDATE goods_warehouse SET status = 'awaiting_supply', reserved_order_id = 123717, matched_at = now(), shipping_labeled_at = COALESCE(shipping_labeled_at, received_at) WHERE id = 22082 AND status = 'awaiting_shelf' AND shelf_id IS NULL AND NOT EXISTS (SELECT 1 FROM goods_warehouse h WHERE h.reserved_order_id = 123717 AND h.id <> 22082);
