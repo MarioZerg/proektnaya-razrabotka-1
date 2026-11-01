@@ -26,6 +26,10 @@ interface ItemFormDialogProps {
   editingId: number | null;
   form: ItemFormState;
   setForm: Dispatch<SetStateAction<ItemFormState>>;
+  /** Упаковку правили в этом окне — после сохранения она станет ручной. */
+  packChanged: boolean;
+  /** Откуда упаковка сейчас: с OZON, вписана вручную или ещё не заполнена. */
+  packSource: 'ozon' | 'manual' | null | undefined;
   materials: Material[];
   materialRows: MaterialRow[];
   addMaterialRow: () => void;
@@ -42,6 +46,8 @@ const ItemFormDialog = ({
   editingId,
   form,
   setForm,
+  packChanged,
+  packSource,
   materials,
   materialRows,
   addMaterialRow,
@@ -170,6 +176,45 @@ const ItemFormDialog = ({
             <p className="text-xs text-muted-foreground">
               Печатается на этикетке и сканируется упаковщицей при стикеровке
             </p>
+          </div>
+
+          {/* Упаковка: по ней сайт считает цену доставки. Без неё у всех ширин
+              одной карточки выходила одинаковая доставка. */}
+          <div className="space-y-3 rounded-md border border-border p-3">
+            <div>
+              <p className="text-sm font-medium">Упаковка для доставки</p>
+              <p className="text-xs text-muted-foreground">
+                {packChanged
+                  ? 'Сохранится как ручное значение — синхронизация с OZON его не перезапишет'
+                  : packSource === 'ozon'
+                    ? 'Подтянуто из карточки OZON. Обновляется при синхронизации'
+                    : packSource === 'manual'
+                      ? 'Вписано вручную. Очистите все поля, чтобы снова брать с OZON'
+                      : 'Пусто: подтянется с OZON при синхронизации или впишите сами'}
+              </p>
+            </div>
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+              {(
+                [
+                  ['packLength', 'Длина, см'],
+                  ['packWidth', 'Ширина, см'],
+                  ['packHeight', 'Высота, см'],
+                  ['packWeight', 'Вес, г'],
+                ] as const
+              ).map(([key, label]) => (
+                <div key={key} className="space-y-1.5">
+                  <Label>{label}</Label>
+                  <Input
+                    type="number"
+                    min="0"
+                    step={key === 'packWeight' ? '1' : '0.1'}
+                    inputMode="decimal"
+                    value={form[key]}
+                    onChange={(e) => setForm((f) => ({ ...f, [key]: e.target.value }))}
+                  />
+                </div>
+              ))}
+            </div>
           </div>
 
           <div className="space-y-2">

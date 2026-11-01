@@ -665,6 +665,19 @@ def handler(event: dict, context) -> dict:
                 except Exception as e:
                     conn.rollback()
                     result['autoPriceError'] = str(e)
+                # Габариты, подтянутые с OZON или вписанные вручную, — на сайт,
+                # чтобы доставка считалась по размеру конкретной ширины.
+                try:
+                    packs = site_catalog.push_packages(cur, shop_id, site_url, api_key)
+                    conn.commit()
+                    if packs.get('changed'):
+                        log_action(cur, actor_id, actor_name, 'site_push_packages',
+                                   f"мегатюль.рф: габариты упаковки, товаров {packs['changed']}"
+                                   + ('' if packs.get('pushed') else f" (на сайт не ушло: {packs.get('pushError')})"))
+                    result['packages'] = packs
+                except Exception as e:
+                    conn.rollback()
+                    result['packagesError'] = str(e)
                 log_action(cur, actor_id, actor_name, 'site_sync_products',
                            f"мегатюль.рф каталог: новых {result.get('created', 0)}, "
                            f"обновлено {result.get('linked', 0)}, в архив {result.get('archived', 0)}, "

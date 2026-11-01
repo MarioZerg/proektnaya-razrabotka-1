@@ -258,6 +258,93 @@ def save_ozon_barcodes(cur, shop_id, by_offer):
     return updated, fixed
 
 
+_MM = {'mm': 1, 'cm': 10, 'in': 25.4}
+_G = {'g': 1, 'kg': 1000, 'lb': 453.592}
+
+
+def fetch_ozon_dimensions(client_id, api_key):
+    """Габариты и вес упаковки всех карточек OZON: {offer_id: (длина, ширина, высота мм, вес г)}.
+
+    /v4/product/info/attributes отдаёт depth/width/height в dimension_unit и
+    weight в weight_unit — приводим к миллиметрам и граммам. depth у OZON — длина.
+    """
+    out = {}
+    last_id = ''
+    for _ in range(100):
+        status, data = ozon_post(
+            '/v4/product/info/attributes', client_id, api_key,
+            {'filter': {'visibility': 'ALL'}, 'limit': 1000, 'last_id': last_id, 'sort_dir': 'ASC'},
+        )
+        if status != 200 or not isinstance(data, dict):
+            raise RuntimeError(_ozon_err(status, data))
+        items = data.get('result') or []
+        for it in items:
+            offer = (it.get('offer_id') or '').strip()
+            mm = _MM.get((it.get('dimension_unit') or 'mm').lower())
+            g = _G.get((it.get('weight_unit') or 'g').lower())
+            if not offer or not mm or not g:
+                continue
+            dims = [round(float(it.get(k) or 0) * mm) for k in ('depth', 'width', 'height')]
+            weight = round(float(it.get('weight') or 0) * g)
+            if all(dims) and weight:
+                out[offer] = (*dims, weight)
+        last_id = data.get('last_id') or ''
+        if not last_id or len(items) < 1000:
+            break
+    return out
+
+
+def save_ozon_dimensions(cur, shop_id, dims):
+    """Записывает габариты OZON в карточки магазина и сразу переносит их на сайт.
+
+    Ручные значения (pack_source = 'manual') не трогаем. Возвращает, сколько
+    карточек магазина обновили.
+    """
+    if not dims:
+        return 0
+    payload = json.dumps({o: list(v) for o, v in dims.items()})
+    cur.execute(
+        "WITH src AS (SELECT key AS offer, (value->>0)::int AS l, (value->>1)::int AS w, "
+        "                    (value->>2)::int AS h, (value->>3)::int AS g "
+        "             FROM jsonb_each(%s::jsonb)) "
+        "UPDATE marketplace_items mi SET pack_length_mm = src.l, pack_width_mm = src.w, "
+        "  pack_height_mm = src.h, pack_weight_g = src.g, pack_source = 'ozon', pack_updated_at = now() "
+        "FROM src WHERE mi.shop_id = %s AND mi.sku = src.offer "
+        "  AND mi.pack_source IS DISTINCT FROM 'manual' "
+        "  AND (mi.pack_length_mm, mi.pack_width_mm, mi.pack_height_mm, mi.pack_weight_g) "
+        "      IS DISTINCT FROM (src.l, src.w, src.h, src.g)",
+        (payload, int(shop_id)),
+    )
+    updated = cur.rowcount
+    copy_dims_to_site(cur)
+    return updated
+
+
+def copy_dims_to_site(cur):
+    """Карточкам сайта — габариты того же артикула из магазинов на площадках.
+
+    Сайт и OZON используют один артикул (mol2_230), поэтому вес и коробку
+    берём оттуда, где их уже знает OZON. Ручные значения сайта не трогаем.
+    """
+    cur.execute(
+        "WITH src AS ("
+        "  SELECT DISTINCT ON (lower(x.sku)) lower(x.sku) AS sku, x.pack_length_mm AS l, "
+        "         x.pack_width_mm AS w, x.pack_height_mm AS h, x.pack_weight_g AS g "
+        "  FROM marketplace_items x JOIN shops s ON s.id = x.shop_id "
+        "  WHERE s.code <> 'megatul_site' AND x.pack_weight_g IS NOT NULL AND x.sku IS NOT NULL "
+        "  ORDER BY lower(x.sku), x.pack_updated_at DESC NULLS LAST) "
+        "UPDATE marketplace_items mi SET pack_length_mm = src.l, pack_width_mm = src.w, "
+        "  pack_height_mm = src.h, pack_weight_g = src.g, pack_source = 'ozon', pack_updated_at = now() "
+        "FROM src, shops s "
+        "WHERE s.id = mi.shop_id AND s.code = 'megatul_site' "
+        "  AND src.sku IN (lower(mi.sku), lower(mi.internal_sku)) "
+        "  AND mi.pack_source IS DISTINCT FROM 'manual' "
+        "  AND (mi.pack_length_mm, mi.pack_width_mm, mi.pack_height_mm, mi.pack_weight_g) "
+        "      IS DISTINCT FROM (src.l, src.w, src.h, src.g)"
+    )
+    return cur.rowcount
+
+
 def _ozon_err(status, data):
     if isinstance(data, dict):
         return data.get('message') or json.dumps(data, ensure_ascii=False)
@@ -670,7 +757,11 @@ def handle_site_sync(cur, shop_id, site_url, api_key):
             )
             archived = cur.rowcount
 
+    # Новые карточки сайта сразу получают габариты своего артикула с OZON.
+    dims_copied = copy_dims_to_site(cur)
+
     return _resp(200, {
+        'dimensionsCopied': dims_copied,
         'created': created,
         'linked': updated,
         'updated': updated,
@@ -796,7 +887,17 @@ def handle_sync(cur, shop_id):
 
     codes_updated, codes_fixed = save_ozon_barcodes(cur, shop_id, ozon_codes)
 
+    # Габариты отдельным запросом: если OZON их не отдал, остальная
+    # синхронизация всё равно засчитывается.
+    dims_updated = 0
+    if ozon_on and client_id and ozon_key:
+        try:
+            dims_updated = save_ozon_dimensions(cur, shop_id, fetch_ozon_dimensions(client_id, ozon_key))
+        except Exception as e:
+            errors.append(f'OZON габариты: {e}')
+
     return _resp(200, {
+        'ozonDimensions': dims_updated,
         'ozonBarcodes': codes_updated,
         'ozonBarcodesFixed': codes_fixed,
         'created': created,
@@ -815,7 +916,9 @@ def handler(event: dict, context) -> dict:
     Заполненный артикул и заполненные коды не перезаписывает.
 
     POST / { action: 'sync', shopId } — shopId обязателен: ключи площадок у каждого
-    магазина свои, и карточки должны лечь под его shop_id."""
+    магазина свои, и карточки должны лечь под его shop_id.
+    POST / { action: 'ozon_dimensions', shopId } — только габариты и вес упаковки с OZON
+    (в карточки магазина и в карточки сайта с тем же артикулом)."""
     method = event.get('httpMethod', 'GET')
     if method == 'OPTIONS':
         return {'statusCode': 200, 'headers': CORS_HEADERS, 'body': ''}
@@ -841,6 +944,25 @@ def handler(event: dict, context) -> dict:
             conn.commit()
             return _resp(200, {'cards': len(cards), 'updated': updated, 'fixed': fixed,
                                'warnings': warnings})
+        finally:
+            conn.close()
+    if action == 'ozon_dimensions':
+        # Только габариты и вес OZON: в карточки магазина и следом на сайт.
+        shop_id = body_data.get('shopId')
+        if not shop_id:
+            return _resp(400, {'error': 'Не указан магазин'})
+        conn = psycopg2.connect(os.environ['DATABASE_URL'])
+        try:
+            cur = conn.cursor()
+            client_id, ozon_key, ozon_on = get_ozon_credentials(cur, int(shop_id))
+            if not (ozon_on and client_id and ozon_key):
+                return _resp(400, {'error': 'У магазина не подключён OZON'})
+            dims = fetch_ozon_dimensions(client_id, ozon_key)
+            updated = save_ozon_dimensions(cur, int(shop_id), dims)
+            conn.commit()
+            return _resp(200, {'cards': len(dims), 'updated': updated})
+        except RuntimeError as e:
+            return _resp(400, {'error': f'OZON: {e}'})
         finally:
             conn.close()
     if action != 'sync':

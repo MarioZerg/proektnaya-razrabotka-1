@@ -374,7 +374,8 @@ def auto_prices(cur, shop_id, site_url, api_key, force=False, data=None):
 def push_to_site(site_url, api_key, payload_items):
     """Отправляет цены и признак продажи на сайт: POST {site}/api/crm/prices.
 
-    Тело: {"items": [{"sku", "price", "active"}]}. Сайт отвечает 200 — принято.
+    Тело: {"items": [{"sku", "price", "active", "package"?}]}. Сайт отвечает 200 — принято.
+    package = {"lengthMm", "widthMm", "heightMm", "weightG"} — упаковка для расчёта доставки.
     """
     req = urllib.request.Request(
         f'{site_url}/api/crm/prices',
@@ -401,11 +402,21 @@ def _push_items(cur, ids, site_url, api_key):
         return True, None
     ids_csv = ','.join(str(int(i)) for i in ids)
     cur.execute(
-        f"SELECT id, sku, site_price, site_disabled FROM marketplace_items WHERE id IN ({ids_csv})"
+        "SELECT id, sku, site_price, site_disabled, "
+        "  pack_length_mm, pack_width_mm, pack_height_mm, pack_weight_g "
+        f"FROM marketplace_items WHERE id IN ({ids_csv})"
     )
     rows = cur.fetchall()
-    payload = [{'sku': r[1], 'price': float(r[2]) if r[2] is not None else None,
-                'active': not r[3]} for r in rows if r[1]]
+    payload = []
+    for r in rows:
+        if not r[1]:
+            continue
+        item = {'sku': r[1], 'price': float(r[2]) if r[2] is not None else None, 'active': not r[3]}
+        # Упаковка — чтобы сайт считал доставку по размеру именно этой ширины,
+        # а не одну цену на всю карточку.
+        if all(r[4:8]):
+            item['package'] = {'lengthMm': r[4], 'widthMm': r[5], 'heightMm': r[6], 'weightG': r[7]}
+        payload.append(item)
     ok, err = push_to_site(site_url, api_key, payload) if api_key else (False, 'Магазин не подключён')
     if ok:
         cur.execute(f"UPDATE marketplace_items SET site_pushed_at = now(), site_push_error = NULL "
@@ -413,6 +424,27 @@ def _push_items(cur, ids, site_url, api_key):
     else:
         cur.execute(f"UPDATE marketplace_items SET site_push_error = %s WHERE id IN ({ids_csv})", (err,))
     return ok, err
+
+
+def push_packages(cur, shop_id, site_url, api_key):
+    """Досылает на сайт карточки, у которых упаковка поменялась после последней отправки.
+
+    Габариты приходят с OZON при синхронизации или вписываются вручную — в обоих
+    случаях pack_updated_at становится новее site_pushed_at.
+    """
+    if not api_key:
+        return {'changed': 0, 'pushed': False, 'pushError': 'Магазин не подключён'}
+    cur.execute(
+        "SELECT id FROM marketplace_items WHERE shop_id = %s AND archived_at IS NULL "
+        "  AND pack_updated_at IS NOT NULL "
+        "  AND (site_pushed_at IS NULL OR pack_updated_at > site_pushed_at)",
+        (int(shop_id),),
+    )
+    ids = [r[0] for r in cur.fetchall()]
+    if not ids:
+        return {'changed': 0, 'pushed': True, 'pushError': None}
+    ok, err = _push_items(cur, ids, site_url, api_key)
+    return {'changed': len(ids), 'pushed': ok, 'pushError': err}
 
 
 def set_price(cur, shop_id, body, site_url, api_key):

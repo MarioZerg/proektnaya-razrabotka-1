@@ -1,0 +1,58 @@
+# Промпт для агента на poehali.dev — габариты упаковки товаров (02.11.2026)
+
+Скопируй текст НИЖЕ агенту на Поехали целиком.
+
+---
+
+Ты — агент деплоя на poehali.dev. Проект CRM «Мегатюль».
+Новых Cloud Functions не создавай. Обнови три существующие функции.
+URL всех функций после публикации должны остаться ПРЕЖНИМИ.
+Секреты не меняй и не ротируй.
+
+Зачем: на сайте мегатюль.рф доставка до Москвы у «Молнии» одна и та же
+(230 ₽) и для ширины 200, и для 800. В карточках товаров не было габаритов
+и веса упаковки. Теперь они хранятся по каждому товару, подтягиваются из
+карточек OZON и уходят на сайт.
+
+## 1) Миграция
+
+Применить `db_migrations/V0791__item_package_dims.sql` — добавляет в
+marketplace_items колонки pack_length_mm, pack_width_mm, pack_height_mm,
+pack_weight_g, pack_source, pack_updated_at. Только ADD COLUMN IF NOT EXISTS.
+
+## 2) Функция marketplace_sync (синхронизация карточек)
+
+**URL (не менять):** https://functions.poehali.dev/f43a35f0-f914-443a-92c0-fc08a2a09fa4
+Залей `backend/marketplace_sync/index.py` целиком.
+Новое: при синхронизации магазина с OZON тянет габариты и вес из
+/v4/product/info/attributes, новое действие { action: 'ozon_dimensions', shopId }.
+
+## 3) Функция marketplace_items (карточки товаров)
+
+**URL (не менять):** https://functions.poehali.dev/9959a7b8-9bf6-4fbe-8170-68cc9e031f77
+Залей `backend/marketplace_items/index.py` целиком.
+Новое: отдаёт и принимает packLengthMm, packWidthMm, packHeightMm, packWeightG.
+
+## 4) Функция site_orders (магазин мегатюль.рф)
+
+**URL (не менять):** https://functions.poehali.dev/dbc4d229-e722-40bc-aa47-f47bed23dab5
+Залей пакет `backend/site_orders/` целиком (index.py, site_catalog.py,
+site_chats.py, requirements.txt — не урезай).
+Новое: в /api/crm/prices к товару добавляется поле package; раз в час вместе
+с каталогом досылаются товары с изменившейся упаковкой.
+
+## 5) Фронтенд
+
+Изменены: src/lib/marketplaceItemsApi.ts,
+src/components/crm/marketplaceItems/marketplaceItemsShared.ts,
+src/components/crm/marketplaceItems/ItemFormDialog.tsx,
+src/pages/settings/MarketplaceItemsSettings.tsx.
+В карточке товара появился блок «Упаковка для доставки».
+
+## Проверка после деплоя
+
+1. Справочник товаров → вкладка МЕГАТЮЛЬ → «Синхронизировать».
+   В сообщении должно быть «Габариты упаковки с OZON обновлены: N».
+2. Открой карточку «Молния 800×260» на вкладке мегатюль.рф — в блоке
+   «Упаковка для доставки» должны стоять длина, ширина, высота и вес,
+   подпись «Подтянуто из карточки OZON».

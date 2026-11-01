@@ -28,6 +28,20 @@ export interface MarketplaceItem {
   materialsCount?: number;
   /** id карточки на сайте мегатюль.рф (bambuk, vual…). Пусто — товар заведён вручную. */
   siteProductId?: string | null;
+  /** Упаковка для доставки, мм и граммы. По ней сайт считает цену Ozon Доставки. */
+  packLengthMm?: number | null;
+  packWidthMm?: number | null;
+  packHeightMm?: number | null;
+  packWeightG?: number | null;
+  /** 'ozon' — подтянуто с OZON, 'manual' — вписано вручную (OZON не перезапишет). */
+  packSource?: 'ozon' | 'manual' | null;
+}
+
+export interface ItemPackage {
+  packLengthMm: number | null;
+  packWidthMm: number | null;
+  packHeightMm: number | null;
+  packWeightG: number | null;
 }
 
 export interface MarketplaceItemMaterial {
@@ -86,7 +100,7 @@ export const createMarketplaceItem = (payload: {
   ymSku?: string;
   material?: string;
   barcode?: string;
-}) => postAction({ action: 'create', ...payload });
+} & Partial<ItemPackage>) => postAction({ action: 'create', ...payload });
 
 export const updateMarketplaceItem = (
   id: number,
@@ -101,7 +115,7 @@ export const updateMarketplaceItem = (
     material: string;
     barcode: string;
     shopId: number;
-  }>
+  } & ItemPackage>
 ) => postAction({ action: 'update', id, ...fields });
 
 export const deleteMarketplaceItem = (id: number) => postAction({ action: 'delete', id });
@@ -120,6 +134,8 @@ export interface SyncResult {
   archived?: number;
   restored?: number;
   totalArticles: number;
+  /** Сколько карточек получили габариты и вес упаковки с OZON. */
+  ozonDimensions?: number;
   skipped: number;
   warnings: string[];
 }

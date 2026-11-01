@@ -3,6 +3,44 @@ import os
 
 import psycopg2
 
+# Упаковка: ключ API -> колонка. По ней сайт считает доставку.
+PACK_FIELDS = (
+    ('packLengthMm', 'pack_length_mm'),
+    ('packWidthMm', 'pack_width_mm'),
+    ('packHeightMm', 'pack_height_mm'),
+    ('packWeightG', 'pack_weight_g'),
+)
+PACK_SELECT = "pack_length_mm, pack_width_mm, pack_height_mm, pack_weight_g, pack_source"
+
+
+def _pack_out(r):
+    """Упаковка из 5 колонок PACK_SELECT в ответ API."""
+    return {
+        'packLengthMm': r[0], 'packWidthMm': r[1], 'packHeightMm': r[2],
+        'packWeightG': r[3], 'packSource': r[4],
+    }
+
+
+def _pack_sql(body_data):
+    """SET-части для упаковки, если она пришла в запросе.
+
+    Значения, вписанные руками, помечаем 'manual' — синхронизация с OZON их
+    больше не перезапишет. Все поля пустые — снимаем отметку, и OZON снова
+    сможет подставить свои.
+    """
+    if not any(k in body_data for k, _ in PACK_FIELDS):
+        return []
+    parts = []
+    filled = False
+    for key, col in PACK_FIELDS:
+        val = body_data.get(key)
+        num = round(float(val)) if val not in (None, '') else 0
+        filled = filled or num > 0
+        parts.append(f"{col} = {num if num > 0 else 'NULL'}")
+    parts.append("pack_source = 'manual'" if filled else "pack_source = NULL")
+    parts.append("pack_updated_at = now()")
+    return parts
+
 
 def handler(event: dict, context) -> dict:
     """Управляет товарами на маркетплейсе: карточка товара с артикулами (свой/OZON/WB)
@@ -17,6 +55,8 @@ def handler(event: dict, context) -> dict:
     GET  /?id=1                   - получить детальную карточку товара с расходом материалов
     POST /  { action: 'create', name, shopId, width?, height?, article?, ozonSku?, wbSku?, ymSku?, material?, barcode? }
     POST /  { action: 'update', id, shopId?, name?, width?, height?, article?, ozonSku?, wbSku?, ymSku?, material?, barcode? }
+        create/update также принимают упаковку: packLengthMm, packWidthMm, packHeightMm, packWeightG
+        (мм и граммы). Вписанная руками упаковка помечается 'manual' и OZON её не перезаписывает.
     POST /  { action: 'delete', id }
         - запрещено, если по товару (material+width+height) уже есть заказы (движение)
     POST /  { action: 'set_materials', itemId, materials: [{materialId, quantity}] }
@@ -66,8 +106,8 @@ def handler(event: dict, context) -> dict:
 
             if item_id:
                 cur.execute(
-                    "SELECT id, name, sku, width, height, ozon_sku, wb_sku, material, barcode, created_at, updated_at, ym_sku, shop_id, archived_at "
-                    "FROM marketplace_items WHERE id = %s",
+                    "SELECT id, name, sku, width, height, ozon_sku, wb_sku, material, barcode, created_at, updated_at, ym_sku, shop_id, archived_at, "
+                    f"{PACK_SELECT} FROM marketplace_items WHERE id = %s",
                     (int(item_id),),
                 )
                 row = cur.fetchone()
@@ -107,6 +147,7 @@ def handler(event: dict, context) -> dict:
                     'ymSku': row[11],
                     'shopId': row[12],
                     'archivedAt': row[13].isoformat() + 'Z' if row[13] else None,
+                    **_pack_out(row[14:19]),
                     'materials': materials,
                 }
                 return {'statusCode': 200, 'headers': headers,
@@ -115,7 +156,7 @@ def handler(event: dict, context) -> dict:
             sql = (
                 "SELECT id, name, sku, width, height, ozon_sku, wb_sku, material, barcode, created_at, updated_at, ym_sku, shop_id, archived_at, "
                 "  (SELECT COUNT(*) FROM marketplace_item_materials mim WHERE mim.marketplace_item_id = marketplace_items.id), "
-                "  site_product_id "
+                f"  site_product_id, {PACK_SELECT} "
                 "FROM marketplace_items"
             )
             if shop_id:
@@ -139,6 +180,7 @@ def handler(event: dict, context) -> dict:
                     'archivedAt': r[13].isoformat() + 'Z' if r[13] else None,
                     'materialsCount': int(r[14] or 0),
                     'siteProductId': r[15],
+                    **_pack_out(r[16:21]),
                 }
                 for r in cur.fetchall()
             ]
@@ -193,6 +235,9 @@ def handler(event: dict, context) -> dict:
                     f"RETURNING id"
                 )
                 new_id = cur.fetchone()[0]
+                pack = _pack_sql(body_data)
+                if pack:
+                    cur.execute(f"UPDATE marketplace_items SET {', '.join(pack)} WHERE id = {int(new_id)}")
                 conn.commit()
                 return {'statusCode': 200, 'headers': headers, 'body': json.dumps({'id': new_id})}
 
@@ -224,6 +269,7 @@ def handler(event: dict, context) -> dict:
                 if 'height' in body_data:
                     val = body_data['height']
                     fields.append(f"height = {int(val) if val not in (None, '') else 'NULL'}")
+                fields.extend(_pack_sql(body_data))
                 fields.append("updated_at = now()")
 
                 if not fields:

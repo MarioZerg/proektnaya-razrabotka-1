@@ -21,6 +21,9 @@ import ShopTabs from '@/components/crm/ShopTabs';
 import { fetchMaterialsData, type Material } from '@/lib/materialsApi';
 import {
   emptyForm,
+  mmToCm,
+  cmToMm,
+  toGrams,
   PAGE_SIZE,
   ALL_MATERIALS,
   type ItemFormState,
@@ -30,6 +33,9 @@ import ItemFormDialog from '@/components/crm/marketplaceItems/ItemFormDialog';
 import ItemsToolbar from '@/components/crm/marketplaceItems/ItemsToolbar';
 import ItemsGrid from '@/components/crm/marketplaceItems/ItemsGrid';
 import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
+
+const packKey = (f: ItemFormState) =>
+  [cmToMm(f.packLength), cmToMm(f.packWidth), cmToMm(f.packHeight), toGrams(f.packWeight)].join('|');
 
 const MarketplaceItemsSettings = () => {
   const { toast } = useToast();
@@ -53,6 +59,11 @@ const MarketplaceItemsSettings = () => {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [form, setForm] = useState<ItemFormState>(emptyForm);
+  // Откуда упаковка у редактируемой карточки и какой она была при открытии:
+  // отправляем её, только если поменяли, — иначе любое сохранение карточки
+  // помечало бы габариты OZON как ручные, и синхронизация перестала бы их обновлять.
+  const [packSource, setPackSource] = useState<MarketplaceItem['packSource']>(null);
+  const [packInitial, setPackInitial] = useState('');
   const [materialRows, setMaterialRows] = useState<MaterialRow[]>([]);
   const [saving, setSaving] = useState(false);
   const [deleteId, setDeleteId] = useState<number | null>(null);
@@ -93,13 +104,15 @@ const MarketplaceItemsSettings = () => {
   const openCreate = () => {
     setEditingId(null);
     setForm(emptyForm);
+    setPackSource(null);
+    setPackInitial(packKey(emptyForm));
     setMaterialRows([{ materialId: '', quantity: '' }]);
     setDialogOpen(true);
   };
 
   const openEdit = async (item: MarketplaceItem) => {
     setEditingId(item.id);
-    setForm({
+    const next: ItemFormState = {
       name: item.name,
       width: item.width ? String(item.width) : '',
       height: item.height ? String(item.height) : '',
@@ -109,7 +122,14 @@ const MarketplaceItemsSettings = () => {
       ymSku: item.ymSku || '',
       material: item.material || '',
       barcode: item.barcode || '',
-    });
+      packLength: mmToCm(item.packLengthMm),
+      packWidth: mmToCm(item.packWidthMm),
+      packHeight: mmToCm(item.packHeightMm),
+      packWeight: item.packWeightG ? String(item.packWeightG) : '',
+    };
+    setForm(next);
+    setPackSource(item.packSource ?? null);
+    setPackInitial(packKey(next));
     setDialogOpen(true);
     const detail = await fetchMarketplaceItemDetail(item.id);
     const rows = detail.materials.map((m: MarketplaceItemMaterial) => ({
@@ -145,6 +165,14 @@ const MarketplaceItemsSettings = () => {
         barcode: form.barcode.trim(),
         width: form.width ? Number(form.width) : undefined,
         height: form.height ? Number(form.height) : undefined,
+        ...(packKey(form) !== packInitial
+          ? {
+              packLengthMm: cmToMm(form.packLength),
+              packWidthMm: cmToMm(form.packWidth),
+              packHeightMm: cmToMm(form.packHeight),
+              packWeightG: toGrams(form.packWeight),
+            }
+          : {}),
       };
 
       let itemId = editingId;
@@ -221,7 +249,8 @@ const MarketplaceItemsSettings = () => {
               (res.restored ? ` Вернулись из архива: ${res.restored}.` : '') +
               ' Расход материалов проставьте в карточке товара.'
             : `Всего карточек с площадок: ${res.totalArticles} ` +
-              `(OZON ${res.ozonCards}, WB ${res.wbCards}).`) + warn,
+              `(OZON ${res.ozonCards}, WB ${res.wbCards}).` +
+              (res.ozonDimensions ? ` Габариты упаковки с OZON обновлены: ${res.ozonDimensions}.` : '')) + warn,
       });
       load();
     } catch (err) {
@@ -318,6 +347,8 @@ const MarketplaceItemsSettings = () => {
             editingId={editingId}
             form={form}
             setForm={setForm}
+            packChanged={packKey(form) !== packInitial}
+            packSource={packSource}
             materials={materials}
             materialRows={materialRows}
             addMaterialRow={addMaterialRow}
