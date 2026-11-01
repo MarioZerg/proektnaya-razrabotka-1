@@ -6,6 +6,7 @@
 """
 import json
 import math
+import re
 import time
 import urllib.error
 import urllib.request
@@ -450,6 +451,77 @@ def push_packages(cur, shop_id, site_url, api_key):
         return {'changed': 0, 'pushed': True, 'pushError': None}
     ok, err = _push_items(cur, ids, site_url, api_key)
     return {'changed': len(ids), 'pushed': ok, 'pushError': err}
+
+
+def copy_packages(cur, shop_id, site_url, api_key):
+    """Упаковка с карточек маркетплейсов на все товары сайта — и всё с упаковкой на сайт.
+
+    Сначала тот же артикул (mol2_230 = mol2_230). Нет такой высоты на маркетплейсе —
+    та же ткань и ширина с ближайшей высотой ('ozon_near'). Ручное не трогаем.
+    """
+    cur.execute(
+        "SELECT DISTINCT ON (lower(x.sku)) lower(x.sku), x.pack_length_mm, x.pack_width_mm, "
+        "  x.pack_height_mm, x.pack_weight_g "
+        "FROM marketplace_items x JOIN shops s ON s.id = x.shop_id "
+        "WHERE x.shop_id <> %s AND s.code <> 'megatul_site' AND x.sku IS NOT NULL "
+        "  AND x.pack_length_mm > 0 AND x.pack_width_mm > 0 AND x.pack_height_mm > 0 AND x.pack_weight_g > 0 "
+        "ORDER BY lower(x.sku), x.pack_updated_at DESC NULLS LAST",
+        (int(shop_id),),
+    )
+    exact_map = {r[0]: tuple(r[1:5]) for r in cur.fetchall()}
+    by_base = {}
+    for sku, pack in exact_map.items():
+        m = re.match(r'^(.+?)[_-](\d{2,4})$', sku)
+        if m:
+            by_base.setdefault(m.group(1), []).append((int(m.group(2)), pack))
+
+    cur.execute(
+        "SELECT id, lower(sku), pack_length_mm, pack_width_mm, pack_height_mm, pack_weight_g, pack_source "
+        "FROM marketplace_items WHERE shop_id = %s AND archived_at IS NULL AND sku IS NOT NULL "
+        "  AND COALESCE(sku, '') NOT LIKE 'dup:%%'",
+        (int(shop_id),),
+    )
+    updates = []
+    exact = near = missing = 0
+    for item_id, sku, l, w, h, g, src in cur.fetchall():
+        if src == 'manual':
+            continue
+        pack, source = exact_map.get(sku), 'ozon'
+        if pack:
+            exact += 1
+        else:
+            m = re.match(r'^(.+?)[_-](\d{2,4})$', sku)
+            cands = by_base.get(m.group(1)) if m else None
+            if cands:
+                height = int(m.group(2))
+                pack = min(cands, key=lambda c: (abs(c[0] - height), -c[0]))[1]
+                source = 'ozon_near'
+                near += 1
+            else:
+                missing += 1
+                continue
+        if (l, w, h, g, src) != (*pack, source):
+            updates.append((item_id, *pack, source))
+    if updates:
+        values = ','.join(f"({int(i)}, {int(a)}, {int(b)}, {int(c)}, {int(d)}, '{s}')"
+                          for i, a, b, c, d, s in updates)
+        cur.execute(
+            "UPDATE marketplace_items mi SET pack_length_mm = v.l, pack_width_mm = v.w, "
+            "  pack_height_mm = v.h, pack_weight_g = v.g, pack_source = v.s, "
+            "  pack_updated_at = now(), updated_at = now() "
+            f"FROM (VALUES {values}) AS v(id, l, w, h, g, s) "
+            "WHERE mi.id = v.id AND mi.shop_id = %s AND mi.pack_source IS DISTINCT FROM 'manual'",
+            (int(shop_id),),
+        )
+    cur.execute(
+        "SELECT id FROM marketplace_items WHERE shop_id = %s AND archived_at IS NULL "
+        "  AND pack_weight_g IS NOT NULL AND sku IS NOT NULL",
+        (int(shop_id),),
+    )
+    ids = [r[0] for r in cur.fetchall()]
+    ok, err = _push_items(cur, ids, site_url, api_key) if ids else (True, None)
+    return 200, {'changed': len(updates), 'exact': exact, 'near': near, 'missing': missing,
+                 'withPackage': len(ids), 'pushed': ok, 'pushError': err}
 
 
 def set_package(cur, shop_id, body, site_url, api_key):

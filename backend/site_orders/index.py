@@ -466,6 +466,7 @@ def handler(event: dict, context) -> dict:
     POST { action: 'set_price', itemId, price } — цена товара (админ), сразу уходит на сайт
     POST { action: 'set_disabled', disabled, itemIds? | materialId? } — выключить/включить на сайте
     POST { action: 'save_pricing', taxPct, acquiringPct, bloggerPct, profitByWidth: {'200': 250, ...} }
+    POST { action: 'copy_packages' }      — упаковка с маркетплейсов на все товары сайта (админ)
     POST { action: 'set_package', itemIds, lengthMm, widthMm, heightMm, weightG } — упаковка (мм, г), сразу на сайт
     POST { action: 'auto_prices', force? }   — проставить рекомендованные цены (кроме ручных)
     POST { action: 'low_fabric' }            — ткани меньше 20 м и товары сайта на них
@@ -561,6 +562,19 @@ def handler(event: dict, context) -> dict:
                            + ('' if auto.get('pushed') else f" (на сайт не ушло: {auto.get('pushError')})"))
                 conn.commit()
             return _resp(200, auto)
+
+        if action == 'copy_packages':
+            if not site_catalog.is_admin(cur, actor_id):
+                return _resp(403, {'error': 'Упаковку на сайте меняет администратор'})
+            code, payload = site_catalog.copy_packages(cur, shop_id, site_url, api_key if enabled else '')
+            conn.commit()
+            log_action(cur, actor_id, actor_name, 'site_copy_packages',
+                       f"мегатюль.рф: упаковка с маркетплейсов, обновлено {payload['changed']} "
+                       f"(точно {payload['exact']}, по соседней высоте {payload['near']}, "
+                       f"не нашлось {payload['missing']})"
+                       + ('' if payload.get('pushed') else f" (на сайт не ушло: {payload.get('pushError')})"))
+            conn.commit()
+            return _resp(code, payload)
 
         if action in ('set_price', 'set_disabled', 'set_package'):
             if not site_catalog.is_admin(cur, actor_id):

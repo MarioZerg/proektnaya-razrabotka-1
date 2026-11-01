@@ -55,6 +55,7 @@ const SitePackageCell = ({ items, canEdit, actor, onSaved, compact }: Props) => 
   const missing = packs.filter((p) => !p).length;
   const same = new Set(packs).size === 1;
   const manual = items.some((i) => i.packSource === 'manual');
+  const near = items.some((i) => i.packSource === 'ozon_near');
   const summary =
     missing === items.length
       ? 'нет упаковки'
@@ -111,7 +112,7 @@ const SitePackageCell = ({ items, canEdit, actor, onSaved, compact }: Props) => 
   const label = (
     <span className={missing ? 'text-amber-700' : manual ? '' : 'text-muted-foreground'}>
       {summary}
-      {!missing && !compact && (manual ? ' · вручную' : ' · с OZON')}
+      {!missing && !compact && (manual ? ' · вручную' : near ? ' · с OZON, по соседней высоте' : ' · с OZON')}
     </span>
   );
 

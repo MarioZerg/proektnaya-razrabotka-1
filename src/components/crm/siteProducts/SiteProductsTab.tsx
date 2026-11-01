@@ -3,6 +3,7 @@ import { Button } from '@/components/ui/button';
 import Icon from '@/components/ui/icon';
 import SitePricingPanel from '@/components/crm/siteProducts/SitePricingPanel';
 import SiteAutoPriceBar from '@/components/crm/siteProducts/SiteAutoPriceBar';
+import SiteCopyPackagesButton from '@/components/crm/siteProducts/SiteCopyPackagesButton';
 import SiteItemMaterialsDialog from '@/components/crm/siteProducts/SiteItemMaterialsDialog';
 import SiteProductsFilters from '@/components/crm/siteProducts/SiteProductsFilters';
 import SiteMaterialRow from '@/components/crm/siteProducts/SiteMaterialRow';
@@ -60,7 +61,9 @@ const SiteProductsTab = ({ shopId }: { shopId: number }) => {
           Название, артикул и размер приходят с сайта. Себестоимость — из «Себестоимости товара», если
           проставлен расход. Цена и включение товара отправляются на сайт.
         </p>
-        <Button onClick={handleSync} disabled={syncing}>
+        <div className="flex flex-wrap gap-2">
+          {isAdmin && <SiteCopyPackagesButton actor={actor} onDone={load} />}
+          <Button onClick={handleSync} disabled={syncing}>
           <Icon
             name={syncing ? 'Loader2' : 'RefreshCw'}
             size={16}
@@ -68,6 +71,7 @@ const SiteProductsTab = ({ shopId }: { shopId: number }) => {
           />
           {syncing ? 'Загружаю…' : 'Загрузить товары с сайта'}
         </Button>
+        </div>
       </div>
 
       <SiteAutoPriceBar

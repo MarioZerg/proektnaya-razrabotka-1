@@ -88,7 +88,7 @@ export interface SiteCatalogItem {
   packHeightMm?: number | null;
   packWeightG?: number | null;
   /** 'ozon' — с карточки OZON, 'manual' — вписано вручную (OZON не перезапишет). */
-  packSource?: 'ozon' | 'manual' | null;
+  packSource?: 'ozon' | 'ozon_near' | 'manual' | null;
   /** Себестоимость из «Себестоимости товара»; null — расход не проставлен. */
   cost: number | null;
   /** Из чего сложилась себестоимость (как в «Себестоимости товара»). */
@@ -242,6 +242,20 @@ export const setSitePackage = (
   actor?: { id?: number; name?: string }
 ): Promise<SitePushResult> =>
   post({ action: 'set_package', itemIds, ...pack, actorId: actor?.id, actorName: actor?.name });
+
+export interface SiteCopyPackagesResult {
+  changed: number;
+  exact: number;
+  near: number;
+  missing: number;
+  withPackage: number;
+  pushed: boolean;
+  pushError: string | null;
+}
+
+/** Упаковка с карточек маркетплейсов на все товары сайта — и сразу на сайт. */
+export const copySitePackages = (actor?: { id?: number; name?: string }): Promise<SiteCopyPackagesResult> =>
+  post({ action: 'copy_packages', actorId: actor?.id, actorName: actor?.name });
 
 export const setSiteDisabled = (
   target: { itemIds?: number[]; materialId?: number },
