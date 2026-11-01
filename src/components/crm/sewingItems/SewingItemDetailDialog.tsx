@@ -416,6 +416,7 @@ const SewingItemDetailDialog = ({
                 isCutterView={isCutterView}
                 isSewerView={isSewerView}
                 availableRolls={availableRolls}
+                trimRolls={trimRolls}
                 onSendToStickering={onSendToStickering}
                 sewWaitSec={sewWaitSec}
                 dialogOpen={dialogOpen}

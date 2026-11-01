@@ -30,6 +30,7 @@ interface SewingItemActionsSectionProps {
   isCutterView: boolean;
   isSewerView: boolean;
   availableRolls: Roll[];
+  trimRolls?: Roll[];
   onSendToStickering?: (rollId?: number) => void;
   dialogOpen: boolean;
   /**
@@ -62,6 +63,7 @@ const SewingItemActionsSection = ({
   isCutterView,
   isSewerView,
   availableRolls,
+  trimRolls = [],
   onSendToStickering,
   dialogOpen,
   sewWaitSec = 0,
@@ -242,7 +244,9 @@ const SewingItemActionsSection = ({
       }
       trimRolls={
         orderDetail?.requiredTrimMaterialId
-          ? availableRolls.filter((r) => r.materialId === orderDetail.requiredTrimMaterialId)
+          ? [...trimRolls, ...availableRolls]
+              .filter((r) => r.materialId === orderDetail.requiredTrimMaterialId)
+              .filter((r, i, arr) => arr.findIndex((x) => x.id === r.id) === i)
           : []
       }
       onStatusChange={onStatusChange}

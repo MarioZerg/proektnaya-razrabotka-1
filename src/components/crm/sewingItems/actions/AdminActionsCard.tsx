@@ -90,18 +90,38 @@ const AdminActionsCard = ({
   const trimMaterialId = orderDetail?.requiredTrimMaterialId;
   useEffect(() => {
     setTrimRollId('');
-    if (!sewerId || !trimMaterialId) {
+    if (!trimMaterialId) {
       setSewerTrimRolls(null);
       return;
     }
     let alive = true;
+    // Запасной путь: у сотрудника ни разу не было смены или в его цехе этой
+    // тесьмы нет — показываем все рулоны этой тесьмы в цехах, чтобы админ
+    // не упирался в пустой список и мог перевести заказ.
+    const loadAll = () =>
+      fetchRolls({ status: 'in_workshop', materialId: trimMaterialId })
+        .then((all) => {
+          if (alive) setSewerTrimRolls(all.filter((r) => !r.pendingAcceptance && !r.defectFlaggedAt));
+        })
+        .catch(() => {
+          if (alive) setSewerTrimRolls(null);
+        });
+    if (!sewerId) {
+      loadAll();
+      return () => {
+        alive = false;
+      };
+    }
     fetchRolls({ status: 'in_workshop', forUserId: Number(sewerId), forRole: 'sewer', lastShift: true })
       .then((list) => {
-        if (alive) setSewerTrimRolls(list.filter((r) => r.materialId === trimMaterialId));
+        if (!alive) return;
+        const mine = list.filter(
+          (r) => r.materialId === trimMaterialId && !r.pendingAcceptance && !r.defectFlaggedAt,
+        );
+        if (mine.length) setSewerTrimRolls(mine);
+        else loadAll();
       })
-      .catch(() => {
-        if (alive) setSewerTrimRolls(null);
-      });
+      .catch(loadAll);
     return () => {
       alive = false;
     };
