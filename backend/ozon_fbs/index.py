@@ -320,9 +320,16 @@ def ozon_post_raw(path, client_id, api_key, payload):
             detail = json.loads(detail)
         except Exception:
             pass
+        if e.code == 429:
+            _LAST_LIMIT_HEADERS.clear()
+            _LAST_LIMIT_HEADERS.update({k: v for k, v in (e.headers or {}).items()
+                                        if 'limit' in k.lower() or 'retry' in k.lower()})
         return e.code, detail
     except Exception as e:
         return 0, str(e)
+
+
+_LAST_LIMIT_HEADERS = {}
 
 
 def ozon_error_text(status_code, data):
@@ -2140,6 +2147,56 @@ def find_posting_by_barcode(client_id, api_key, barcode):
     return None, f'OZON не ответил на поиск по штрихкоду (код {status})'
 
 
+def get_label_async(client_id, api_key, posting_number, debug=None, budget=2.2):
+    """Этикетка через задание OZON (package-label/create → /get → file_url).
+
+    Запасной путь, когда /v2/posting/fbs/package-label отвечает 429: лимит у
+    этих методов отдельный. Возвращает (status, pdf_bytes | текст ошибки).
+    """
+    started = time.monotonic()
+    task_id = None
+    for path in ('/v2/posting/fbs/package-label/create', '/v1/posting/fbs/package-label/create'):
+        st, data = ozon_post(path, client_id, api_key, {'posting_number': [posting_number]})
+        if debug is not None:
+            debug.setdefault('asyncCreate', []).append({'path': path, 'status': st,
+                                                        'response': str(data)[:300]})
+        if st != 200 or not isinstance(data, dict):
+            continue
+        res = data.get('result') or {}
+        if res.get('task_id'):
+            task_id = res['task_id']
+        else:
+            tasks = res.get('tasks') or []
+            big = [t for t in tasks if t.get('task_type') == 'big_label'] or tasks
+            if big:
+                task_id = big[0].get('task_id')
+        if task_id:
+            break
+    if not task_id:
+        return 0, 'задание на этикетку не создалось'
+    file_url = None
+    while time.monotonic() - started < budget:
+        time.sleep(0.4)
+        st, data = ozon_post('/v1/posting/fbs/package-label/get', client_id, api_key,
+                             {'task_id': int(task_id)})
+        res = (data or {}).get('result') if isinstance(data, dict) else None
+        if debug is not None:
+            debug['asyncGet'] = {'status': st, 'response': str(data)[:300]}
+        if st == 200 and res:
+            if res.get('file_url'):
+                file_url = res['file_url']
+                break
+            if str(res.get('status')).lower() in ('error', 'failed'):
+                return 0, f"OZON не собрал этикетку: {res.get('error') or res}"
+    if not file_url:
+        return 0, 'OZON не успел подготовить этикетку'
+    try:
+        with urllib.request.urlopen(file_url, timeout=max(0.5, 4.5 - (time.monotonic() - started))) as r:
+            return 200, r.read()
+    except Exception as e:
+        return 0, f'не скачалась этикетка: {e}'
+
+
 def get_posting_label(cur, client_id, api_key, order_number, debug=None):
     """Маркетплейсный ярлык OZON на отправление FBS.
 
@@ -2231,8 +2288,8 @@ def get_posting_label(cur, client_id, api_key, order_number, debug=None):
     label_started = time.monotonic()
     # 429 — OZON просит сбавить темп (лимит запросов в секунду на кабинет): сборка
     # и этикетка идут подряд, а фоном в тот же кабинет ходят загрузки. Пауза и повтор.
-    while status != 200 and retries < 4 and time.monotonic() - label_started < 2.5 and (
-            status == 429 or 'INVALID_ARGUMENT' in str(data)):
+    while status != 200 and time.monotonic() - label_started < 2.5 and (
+            (status == 429 and retries < 1) or ('INVALID_ARGUMENT' in str(data) and retries < 3)):
         retries += 1
         time.sleep(0.8 if status == 429 else 1.2)
         status, data = ozon_post_raw(
@@ -2248,6 +2305,7 @@ def get_posting_label(cur, client_id, api_key, order_number, debug=None):
         if debug is not None:
             debug['labelStatus'] = status
             debug['labelResponse'] = str(data)[:400]
+            debug['limitHeaders'] = dict(_LAST_LIMIT_HEADERS)
         # Отправление уже ушло от нас И этикетку OZON больше не отдаёт — только теперь
         # отправляем вещь на хранение.
         #
@@ -2268,8 +2326,8 @@ def get_posting_label(cur, client_id, api_key, order_number, debug=None):
                 'Нажмите «Распечатать» ещё раз через полминуты.'
             ), None
         if status == 429:
-            return ('OZON сейчас перегружен запросами и не успел отдать этикетку. '
-                    'Нажмите «Распечатать» ещё раз через несколько секунд.'), None
+            return ('OZON временно ограничил выдачу этикеток для кабинета (лимит запросов). '
+                    'Подождите минуту и нажмите «Распечатать» ещё раз.'), None
         return f'OZON не отдал этикетку (код {status}): {str(data)[:250]}', None
     # Этикетка приходит бинарным PDF — отдаём её в base64 как есть, без перекодировок.
     if isinstance(data, (bytes, bytearray)):
