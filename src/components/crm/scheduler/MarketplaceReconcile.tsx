@@ -8,6 +8,9 @@ import {
   pullMissingOzon,
   type ReconcileMarketplace,
 } from '@/lib/marketplaceReconcileApi';
+import { syncWbOrders } from '@/lib/wbFbsApi';
+import { syncYandexOrders } from '@/lib/yandexMarketApi';
+import { useAuth } from '@/context/AuthContext';
 
 const SOURCES: { key: 'ozon' | 'wb' | 'ym'; title: string }[] = [
   { key: 'ozon', title: 'OZON' },
@@ -34,7 +37,16 @@ const MarketplaceReconcile = () => {
   const { toast } = useToast();
   const [data, setData] = useState<Record<string, ReconcileMarketplace>>({});
   const [loading, setLoading] = useState<string | null>(null);
-  const [pulling, setPulling] = useState(false);
+  const [pulling, setPulling] = useState<string | null>(null);
+  const { user } = useAuth();
+
+  /** OZON — точечно по номерам; WB и Яндекс — их обычная загрузка новых заказов. */
+  const pull = async (key: 'ozon' | 'wb' | 'ym', numbers: string[]) => {
+    const actor = { id: user?.id, name: user?.name };
+    if (key === 'ozon') return (await pullMissingOzon(numbers)).created;
+    if (key === 'wb') return (await syncWbOrders(actor)).created;
+    return (await syncYandexOrders(actor)).created;
+  };
 
   const check = async (key: 'ozon' | 'wb' | 'ym') => {
     setLoading(key);
@@ -168,24 +180,21 @@ const MarketplaceReconcile = () => {
                       Загрузка подтянет их сама в ближайшие запуски. Не хотите ждать —
                       заберите сейчас
                     </p>
-                    {/* Догрузка есть только у OZON: там заказы идут сплошным потоком и
-                        ждать четверть часа дороже всего. У WB и Яндекса поток меньше,
-                        плановой загрузки хватает. */}
-                    {s.key === 'ozon' && (
+{(
                       <Button
                         size="sm"
-                        disabled={pulling}
+                        disabled={pulling === s.key}
                         onClick={async () => {
                           const numbers = d.rows.flatMap((r) => r.missingNumbers ?? []);
-                          if (!numbers.length) return;
-                          setPulling(true);
+                          if (s.key === 'ozon' && !numbers.length) return;
+                          setPulling(s.key);
                           try {
-                            const res = await pullMissingOzon(numbers);
+                            const created = await pull(s.key, numbers);
                             toast({
-                              title: `Догружено заказов: ${res.created}`,
+                              title: `Догружено заказов: ${created}`,
                               description: 'Они уже на конвейере',
                             });
-                            await check('ozon');
+                            await check(s.key);
                           } catch (err) {
                             toast({
                               title: 'Не удалось догрузить',
@@ -193,14 +202,14 @@ const MarketplaceReconcile = () => {
                               variant: 'destructive',
                             });
                           } finally {
-                            setPulling(false);
+                            setPulling(null);
                           }
                         }}
                       >
                         <Icon
-                          name={pulling ? 'Loader2' : 'Download'}
+                          name={pulling === s.key ? 'Loader2' : 'Download'}
                           size={14}
-                          className={`mr-1 ${pulling ? 'animate-spin' : ''}`}
+                          className={`mr-1 ${pulling === s.key ? 'animate-spin' : ''}`}
                         />
                         Догрузить сейчас
                       </Button>
