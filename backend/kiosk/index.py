@@ -2151,6 +2151,22 @@ def _handler(event: dict, context) -> dict:
                 )
                 # Стикер вывоза FBO OZON: «bx…»/«boxId: …» — номер коробки в заявке.
                 box_esc = re.sub(r'(?i)^(bx|boxid:?\s*)', '', scan_code.strip()).replace("'", "''")
+                # Код возврата Яндекса печатается с номером грузоместа: 63261716931-1
+                # (и YM-63261716931-1). В базе — номер заказа без «-1».
+                ym_m = re.fullmatch(r'(?i)(?:YM-)?(\d{8,12})(?:-\d{1,3})?', bare_esc)
+                ym_sql = (
+                    f"   OR CAST(o.ym_order_id AS TEXT) = '{ym_m.group(1)}' "
+                    f"   OR mr.return_barcode = '{ym_m.group(1)}' "
+                    f"   OR mr.posting_number = '{ym_m.group(1)}' "
+                    if ym_m else ""
+                )
+                # Номер заказа OZON без номера отправления (06300412-0253) — ищем
+                # отправления этого заказа.
+                oz_m = re.fullmatch(r'\d{8}-\d{4}', bare_esc)
+                oz_sql = (
+                    f"   OR o.ozon_posting_number LIKE '{bare_esc}-%' "
+                    if oz_m else ""
+                )
                 code_match = (
                     f"      mr.return_barcode = '{code_esc}' "
                     f"   OR gw.storage_barcode = '{code_esc.upper()}' "
@@ -2163,7 +2179,7 @@ def _handler(event: dict, context) -> dict:
                     f"   OR o.wb_sticker_barcode = '*{bare_esc}' "
                     f"   OR CAST(o.wb_order_id AS TEXT) = '{bare_esc}' "
                     f"   OR CAST(o.ym_order_id AS TEXT) = '{bare_esc}' "
-                    + sticker_sql
+                    + sticker_sql + ym_sql + oz_sql
                 )
                 cur.execute(
                     "SELECT gw.id, gw.status, gw.storage_barcode, o.order_number, o.product, "
