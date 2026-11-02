@@ -1,0 +1,49 @@
+# Промпт для агента на poehali.dev — виджет налогов в «Финансах» (03.11.2026)
+
+Скопируй текст НИЖЕ агенту на Поехали целиком.
+
+---
+
+Ты — агент деплоя на poehali.dev. Проект CRM «Мегатюль».
+Новых Cloud Functions не создавай. URL функций должны остаться ПРЕЖНИМИ.
+Секреты не меняй и не ротируй (CRON_SECRET, DATABASE_URL оставь как есть).
+
+Зачем: в «Финансах» отдельный от зарплат виджет «Налоги с маркетплейсов»:
+сколько налога (УСН 6% + НДС 5%) к уплате с продаж МЕГАТЮЛЬ на OZON, WB и
+Яндекс Маркете, с разбивкой по площадкам. Налог начисляется 1-го числа за
+прошлый месяц. Админ списывает уплаченное кнопкой «Списать».
+
+## 1) Миграция
+
+Применить `db_migrations/V0792__marketplace_taxes.sql` — создаёт таблицы
+tax_revenue_monthly, tax_accruals, tax_writeoffs (CREATE TABLE IF NOT EXISTS).
+
+## 2) Функция ad_spend
+
+**URL (не менять):** https://functions.poehali.dev/29442dba-b5a9-4e15-b9ba-5fdc52eef574
+Залей пакет `backend/ad_spend/` целиком. ОБЯЗАТЕЛЬНО новый файл
+`taxes.py` рядом с index.py — иначе будет ImportError.
+requirements.txt не урезай.
+Новые действия: taxes, tax_writeoff, tax_writeoff_delete, tax_sync.
+
+## 3) Функция scheduler_status
+
+Залей `backend/scheduler_status/index.py` целиком (URL не менять).
+Новое задание «Отчёты для налогов» (tax_sync).
+
+## 4) Фронтенд
+
+- src/lib/taxesApi.ts — НОВЫЙ
+- src/components/crm/finance/TaxesCard.tsx — НОВЫЙ
+- src/components/crm/finance/AdminFinanceView.tsx — изменён
+
+## 5) Первый запуск — сразу после деплоя
+
+Один раз вызови функцию ad_spend POST-запросом с телом
+{"action": "tax_sync", "cronSecret": "<значение секрета CRON_SECRET>"}
+Она сама пройдёт цепочкой OZON → WB → Яндекс (2–3 минуты) и начислит налог
+за июль–октябрь 2026 (до 01.07.2026 был АУСН — его не считаем).
+Значение секрета никому не показывай.
+
+Через 3 минуты проверь в таблице tax_accruals строки за месяцы 2026-07 …
+2026-10 и пришли сумму total по каждому месяцу и площадке.

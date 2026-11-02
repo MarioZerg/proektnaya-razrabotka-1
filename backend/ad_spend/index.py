@@ -7,6 +7,8 @@ from datetime import datetime, timedelta, timezone
 
 import psycopg2
 
+import taxes
+
 OZON_API = 'https://api-seller.ozon.ru'
 YM_API = 'https://api.partner.market.yandex.ru'
 WB_ADVERT_API = 'https://advert-api.wildberries.ru'
@@ -342,6 +344,94 @@ def _continue_sales(page, days, month_back=0):
         # Обрыв по таймауту — обычное дело: запрос принят, функция работает.
         pass
     return True
+
+
+def _owner(cur, actor_id):
+    """Только администратор (не менеджер): (id, имя) или None. Деньги в бюджет списывает он."""
+    if not actor_id:
+        return None
+    cur.execute("SELECT id, full_name, role FROM users WHERE id = %s", (int(actor_id),))
+    row = cur.fetchone()
+    return (row[0], row[1]) if row and row[2] == 'admin' else None
+
+
+def _continue_tax(payload):
+    """Следующий шаг загрузки отчётов для налогов — тем же приёмом, что продажи."""
+    secret = os.environ.get('CRON_SECRET', '')
+    if not secret:
+        return False
+    req = urllib.request.Request(
+        SELF_URL,
+        data=json.dumps({'action': 'tax_sync', 'cronSecret': secret, **payload}).encode(),
+        headers={'Content-Type': 'application/json'},
+        method='POST',
+    )
+    try:
+        urllib.request.urlopen(req, timeout=1)
+    except Exception:
+        pass
+    return True
+
+
+def _tax_step(cur, conn, body):
+    """Один шаг ежедневной загрузки отчётов для налогов.
+
+    Цепочка: OZON (отчёт о выплатах) → WB (недельные отчёты) → Яндекс
+    (по месяцу за шаг) → начисление. Каждый шаг — отдельный запуск: у
+    функции мало времени. Сбой одной площадки не обрывает остальные.
+
+    Начисление пишется только за закрытые месяцы и только один раз, поэтому
+    ежедневный запуск двигает баланс виджета раз в месяц — 1-го числа.
+    """
+    months = max(1, min(int(body.get('months') or taxes.months_to_load(cur)), 12))
+    step = body.get('step') or 'ozon'
+    month_back = int(body.get('monthBack') or 1)
+    info = {'step': step, 'monthBack': month_back}
+    try:
+        if step == 'ozon':
+            creds, enabled = _credentials(cur, 'ozon')
+            if enabled:
+                info['periods'] = _sync_payouts(cur, creds, months)
+                conn.commit()
+        elif step == 'wb':
+            creds, enabled = _credentials(cur, 'wildberries')
+            if enabled:
+                info['periods'] = _sync_wb_payouts(cur, creds, months * 5 + 1)
+                conn.commit()
+        elif step == 'ym':
+            creds, enabled = _credentials(cur, 'yandex_market')
+            if enabled:
+                info.update(taxes.sync_ym_revenue(cur, creds, month_back))
+                conn.commit()
+    except Exception as e:
+        conn.rollback()
+        info['error'] = str(e)[:300]
+
+    nxt = None
+    if step == 'ozon':
+        nxt = {'step': 'wb'}
+    elif step == 'wb':
+        nxt = {'step': 'ym', 'monthBack': 1}
+    elif step == 'ym' and month_back < months:
+        nxt = {'step': 'ym', 'monthBack': month_back + 1}
+
+    if nxt:
+        info['chained'] = _continue_tax({**nxt, 'months': months})
+        return info
+
+    # Конец цепочки: начисляем закрытые месяцы и отмечаемся для «Планировщика».
+    added = taxes.accrue_missing(cur)
+    s = taxes.summary(cur)
+    desc = (f"Налоги: начислено за {', '.join(sorted({a[0][:7] for a in added}))} "
+            f"{sum(a[2] for a in added):.2f} ₽; " if added else "Налоги: новых начислений нет; ")
+    cur.execute(
+        "INSERT INTO audit_log (category, user_id, user_name, action, entity_type, description) "
+        "VALUES ('integration', NULL, 'Планировщик', 'tax_sync', 'finance', %s)",
+        (desc + f"к уплате {s['balance']:.2f} ₽",),
+    )
+    conn.commit()
+    info['accrued'] = added
+    return info
 
 
 def _sync_realization(cur, headers, month_back=1, offset=0, limit=1000):
@@ -1744,6 +1834,11 @@ def handler(event: dict, context) -> dict:
 
     POST /  { action: 'sync', marketplace }  - загрузить расходы
     POST /  { action: 'sync_nm_ids' }        - подтянуть номера товаров WB
+    POST /  { action: 'taxes' }              - налоги с площадок: начислено, списано, к уплате
+    POST /  { action: 'tax_writeoff', amount, comment? } / { action: 'tax_writeoff_delete', id }
+                                              - только администратор
+    POST /  { action: 'tax_sync' }           - планировщик: отчёты OZON, WB, Яндекса и начисление
+                                              закрытых месяцев (цепочкой)
     GET  /?action=status                     - что сейчас известно о рекламе
     """
     method = event.get('httpMethod', 'GET')
@@ -1789,6 +1884,40 @@ def handler(event: dict, context) -> dict:
                 return _resp(403, {'error': 'Неверный ключ планировщика'})
         elif not _is_admin(cur, body_data.get('actorId')):
             return _resp(403, {'error': 'Доступно администратору'})
+
+        # НАЛОГИ С МАРКЕТПЛЕЙСОВ — блок «Налоги» в «Финансах».
+        if action == 'tax_sync':
+            # Планировщик раз в сутки: отчёты площадок и начисление закрытых месяцев.
+            return _resp(200, _tax_step(cur, conn, body_data))
+
+        if action == 'taxes':
+            return _resp(200, taxes.summary(cur))
+
+        if action in ('tax_writeoff', 'tax_writeoff_delete'):
+            owner = _owner(cur, body_data.get('actorId'))
+            if not owner:
+                return _resp(403, {'error': 'Налоги списывает администратор'})
+            try:
+                if action == 'tax_writeoff':
+                    wid = taxes.write_off(cur, body_data, owner[0], owner[1])
+                    desc = f"Списано налогов {float(body_data.get('amount')):.2f} ₽" + (
+                        f": {body_data.get('comment')}" if body_data.get('comment') else '')
+                else:
+                    amount = taxes.delete_writeoff(cur, body_data.get('id'))
+                    if amount is None:
+                        return _resp(404, {'error': 'Списание не найдено'})
+                    wid = int(body_data.get('id'))
+                    desc = f"Отменено списание налогов {amount:.2f} ₽"
+            except ValueError as e:
+                conn.rollback()
+                return _resp(400, {'error': str(e)})
+            cur.execute(
+                "INSERT INTO audit_log (category, user_id, user_name, action, entity_type, entity_id, description) "
+                "VALUES ('finance', %s, %s, %s, 'tax', %s, %s)",
+                (owner[0], owner[1], action, wid, desc),
+            )
+            conn.commit()
+            return _resp(200, taxes.summary(cur))
 
         if action == 'sync_stocks':
             # Остатки: нужны, чтобы разнести хранение по товарам.

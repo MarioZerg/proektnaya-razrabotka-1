@@ -58,6 +58,7 @@ CRON_LINES = {
     'sales_sync': '21 */2 * * *',
     'ue_sync_prices': '48 */6 * * *',
     'auto_accrue_missed': '16-59/30 * * * *',
+    'tax_sync': '35 4 * * *',
 }
 
 JOBS = [
@@ -226,6 +227,19 @@ JOBS = [
         'everyMin': 120,
         'lateAfter': 480,
         'optional': True,
+    },
+    {
+        'key': 'tax_sync',
+        'title': 'Отчёты для налогов',
+        'func': 'ad_spend',
+        'urlAction': 'tax_sync',
+        'method': 'POST',
+        'purpose': 'Тянет отчёты OZON, WB и Яндекса и 1-го числа начисляет налог за прошлый месяц в «Финансах»',
+        'group': 'service',
+        # Раз в сутки ночью. Начисление за месяц пишется один раз — как только
+        # пришли отчёты (обычно 1-го), поэтому ежедневный запуск баланс не дёргает.
+        'everyMin': 1440,
+        'lateAfter': 2880,
     },
     {
         'key': 'price_robot',
