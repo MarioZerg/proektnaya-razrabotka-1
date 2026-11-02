@@ -2228,9 +2228,13 @@ def get_posting_label(cur, client_id, api_key, order_number, debug=None):
         {'posting_number': [posting_number]},
     )
     retries = 0
-    while status != 200 and 'INVALID_ARGUMENT' in str(data) and retries < 3:
+    label_started = time.monotonic()
+    # 429 — OZON просит сбавить темп (лимит запросов в секунду на кабинет): сборка
+    # и этикетка идут подряд, а фоном в тот же кабинет ходят загрузки. Пауза и повтор.
+    while status != 200 and retries < 4 and time.monotonic() - label_started < 2.5 and (
+            status == 429 or 'INVALID_ARGUMENT' in str(data)):
         retries += 1
-        time.sleep(1.2)
+        time.sleep(0.8 if status == 429 else 1.2)
         status, data = ozon_post_raw(
             '/v2/posting/fbs/package-label', client_id, api_key,
             {'posting_number': [posting_number]},
@@ -2263,6 +2267,9 @@ def get_posting_label(cur, client_id, api_key, order_number, debug=None):
                 'OZON пока не отдал этикетку: он готовит её несколько секунд после сборки. '
                 'Нажмите «Распечатать» ещё раз через полминуты.'
             ), None
+        if status == 429:
+            return ('OZON сейчас перегружен запросами и не успел отдать этикетку. '
+                    'Нажмите «Распечатать» ещё раз через несколько секунд.'), None
         return f'OZON не отдал этикетку (код {status}): {str(data)[:250]}', None
     # Этикетка приходит бинарным PDF — отдаём её в base64 как есть, без перекодировок.
     if isinstance(data, (bytes, bytearray)):
