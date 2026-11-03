@@ -128,7 +128,7 @@ const TaxesCard = () => {
                     <div className="min-w-0">
                       <p className="text-sm font-medium">{mp.label}</p>
                       <p className="text-xs text-muted-foreground">
-                        Продажи {rub(v.net)}
+                        Начислено площадкой {rub(v.net)}
                         {last != null && data.lastMonth && ` · за ${monthLabel(data.lastMonth.month)} +${rub(last)}`}
                       </p>
                     </div>

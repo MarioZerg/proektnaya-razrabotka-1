@@ -22,7 +22,7 @@ export interface TaxSummary {
   vatPct: number;
   /** С какого месяца копится неуплаченный налог (YYYY-MM-01). */
   startMonth: string;
-  /** Начислено с startMonth по площадкам: налог и выручка без возвратов. */
+  /** Начислено с startMonth по площадкам: налог и база (начислено продавцу после удержаний). */
   byMarketplace: Record<TaxMarketplace, { tax: number; net: number }>;
   accrued: number;
   /** Уже уплачено — сумма списаний. */
