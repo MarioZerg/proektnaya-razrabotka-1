@@ -1,0 +1,29 @@
+# Промпт для агента на poehali.dev — изменения карточек за 30 дней (03.11.2026)
+
+Скопируй текст НИЖЕ агенту на Поехали целиком.
+
+---
+
+Ты — агент деплоя на poehali.dev. Проект CRM «Мегатюль».
+Новых Cloud Functions не создавай. Миграций нет. Секреты не меняй.
+
+Зачем: в «Товарах для интеграций» кнопка «Изменения за 30 дней» — список
+карточек OZON и WB магазина, которые менялись за последние 30 дней, с датой
+изменения и выгрузкой в CSV.
+
+## 1) Функция marketplace_sync
+
+**URL (не менять):** https://functions.poehali.dev/f43a35f0-f914-443a-92c0-fc08a2a09fa4
+Залей `backend/marketplace_sync/index.py` целиком.
+Новое действие { action: 'recent_changes', shopId, days }.
+
+## 2) Фронтенд
+
+- src/lib/marketplaceItemsApi.ts — изменён
+- src/components/crm/marketplaceItems/RecentCardChangesDialog.tsx — НОВЫЙ
+- src/pages/settings/MarketplaceItemsSettings.tsx — изменён
+
+## Проверка
+
+Настройки → Товары для интеграций → вкладка МЕГАТЮЛЬ → «Изменения за 30 дней».
+Через 10–60 секунд должна появиться таблица с датами и кнопка «Скачать CSV».

@@ -158,6 +158,36 @@ export const syncMarketplaceItems = async (shopId: number): Promise<SyncResult> 
   return data;
 };
 
+export interface RecentCardChange {
+  marketplace: 'ozon' | 'wildberries';
+  article: string;
+  name: string;
+  /** SKU OZON или nmID WB. */
+  code: string;
+  updatedAt: string;
+  createdAt: string;
+  /** Карточку создали в этом же периоде. */
+  isNew: boolean;
+}
+
+/**
+ * Карточки OZON и WB магазина, изменённые за последние days дней.
+ * Площадки отдают только дату последнего изменения — кто и что правил, через API не узнать.
+ */
+export const fetchRecentCardChanges = async (
+  shopId: number,
+  days = 30
+): Promise<{ days: number; items: RecentCardChange[]; warnings: string[] }> => {
+  const res = await fetch(SYNC_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'recent_changes', shopId, days }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Не удалось получить изменения');
+  return data;
+};
+
 export const setMarketplaceItemMaterials = (
   itemId: number,
   materials: Array<{ materialId: number; quantity: number }>

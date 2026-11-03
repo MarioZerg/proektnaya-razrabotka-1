@@ -3,6 +3,7 @@ import os
 import re
 import urllib.request
 import urllib.error
+from datetime import datetime, timedelta, timezone
 
 import psycopg2
 
@@ -148,6 +149,8 @@ def fetch_ozon_cards(client_id, api_key):
                 row['ozon_sku'] = detail['ozon_sku'] or row['ozon_sku']
                 row['name'] = detail['name'] or row['name']
                 row['barcodes'] = detail.get('barcodes') or row.get('barcodes') or []
+                row['created_at'] = detail.get('created_at') or ''
+                row['updated_at'] = detail.get('updated_at') or ''
         except RuntimeError as exc:
             warnings.append(str(exc))
         cards.extend(by_offer.values())
@@ -191,6 +194,8 @@ def fetch_ozon_info(client_id, api_key, product_ids):
                 'ozon_sku': _ozon_numeric_sku(it),
                 'name': (it.get('name') or '').strip(),
                 'barcodes': _ozon_card_barcodes(it),
+                'created_at': it.get('created_at') or '',
+                'updated_at': it.get('updated_at') or '',
             })
     return out
 
@@ -406,6 +411,8 @@ def fetch_wb_cards(api_key):
                 'wb_sku': barcode.strip(),
                 'wb_nm_id': str(nm).strip() if nm else '',
                 'name': (c.get('title') or c.get('subjectName') or '').strip(),
+                'created_at': c.get('createdAt') or '',
+                'updated_at': c.get('updatedAt') or '',
             })
 
         rc = (data.get('cursor') or {})
@@ -910,6 +917,46 @@ def handle_sync(cur, shop_id):
     })
 
 
+def recent_changes(ozon_client_id, ozon_key, wb_key, days):
+    """Карточки OZON и WB, изменённые за последние days дней, от свежих к старым.
+
+    Дата — последнее изменение карточки любым способом: в кабинете, через API
+    (наши выгрузки цен тоже считаются) или самой площадкой. Карточка, созданная
+    в этом же периоде, помечается как новая.
+    """
+    since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()[:19]
+    items, warnings = [], []
+
+    def add(mp, article, name, code, created, updated):
+        if (updated or '')[:19] < since:
+            return
+        items.append({
+            'marketplace': mp, 'article': article, 'name': name, 'code': code,
+            'updatedAt': updated, 'createdAt': created,
+            'isNew': (created or '')[:19] >= since,
+        })
+
+    if ozon_client_id and ozon_key:
+        try:
+            cards, warn = fetch_ozon_cards(ozon_client_id, ozon_key)
+            warnings.extend(f'OZON: {w}' for w in warn)
+            for c in cards:
+                add('ozon', c['offer_id'], c.get('name') or '', c.get('ozon_sku') or '',
+                    c.get('created_at') or '', c.get('updated_at') or '')
+        except Exception as e:
+            warnings.append(f'OZON: {e}')
+    if wb_key:
+        try:
+            for c in fetch_wb_cards(wb_key):
+                add('wildberries', c['vendor_code'], c.get('name') or '', c.get('wb_nm_id') or '',
+                    c.get('created_at') or '', c.get('updated_at') or '')
+        except Exception as e:
+            warnings.append(f'WB: {e}')
+
+    items.sort(key=lambda x: x['updatedAt'], reverse=True)
+    return {'days': days, 'items': items, 'warnings': warnings}
+
+
 def handler(event: dict, context) -> dict:
     """Синхронизация карточек товаров из OZON и Wildberries (или с сайта мегатюль.рф) в справочник marketplace_items.
     Добавляет новые артикулы и дописывает пустые коды площадок на уже заведённые карточки.
@@ -946,6 +993,22 @@ def handler(event: dict, context) -> dict:
                                'warnings': warnings})
         finally:
             conn.close()
+    if action == 'recent_changes':
+        # Какие карточки менялись на площадках за N дней. Площадки отдают
+        # только дату последнего изменения — ни кто правил, ни что именно.
+        shop_id = body_data.get('shopId')
+        if not shop_id:
+            return _resp(400, {'error': 'Не указан магазин'})
+        days = max(1, min(int(body_data.get('days') or 30), 180))
+        conn = psycopg2.connect(os.environ['DATABASE_URL'])
+        try:
+            cur = conn.cursor()
+            client_id, ozon_key, ozon_on = get_ozon_credentials(cur, int(shop_id))
+            wb_key, wb_on = get_wb_credentials(cur, int(shop_id))
+        finally:
+            conn.close()
+        return _resp(200, recent_changes(client_id if ozon_on else '', ozon_key,
+                                         wb_key if wb_on else '', days))
     if action == 'ozon_dimensions':
         # Только габариты и вес OZON: в карточки магазина и следом на сайт.
         shop_id = body_data.get('shopId')

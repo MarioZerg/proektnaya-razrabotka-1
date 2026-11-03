@@ -31,6 +31,7 @@ import {
 } from '@/components/crm/marketplaceItems/marketplaceItemsShared';
 import ItemFormDialog from '@/components/crm/marketplaceItems/ItemFormDialog';
 import ItemsToolbar from '@/components/crm/marketplaceItems/ItemsToolbar';
+import RecentCardChangesDialog from '@/components/crm/marketplaceItems/RecentCardChangesDialog';
 import ItemsGrid from '@/components/crm/marketplaceItems/ItemsGrid';
 import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
 
@@ -333,6 +334,8 @@ const MarketplaceItemsSettings = () => {
                     : 'Синхронизировать карточки'}
               </span>
             </Button>
+
+          <RecentCardChangesDialog shopId={shopId} shopName={currentShop?.name} />
 
           <ItemFormDialog
             open={dialogOpen}
