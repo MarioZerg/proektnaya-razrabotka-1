@@ -396,7 +396,7 @@ def _tax_step(cur, conn, body):
         elif step == 'wb':
             creds, enabled = _credentials(cur, 'wildberries')
             if enabled:
-                info['periods'] = _sync_wb_payouts(cur, creds, months * 5 + 1)
+                info['periods'] = _sync_wb_payouts(cur, creds, int(body.get('wbWeeks') or months * 5 + 1))
                 conn.commit()
         elif step == 'ym':
             creds, enabled = _credentials(cur, 'yandex_market')
@@ -966,6 +966,35 @@ def _sync_ym_ads(cur, creds, date_from, date_to):
     return saved
 
 
+# Нужные поля нового отчёта WB: полная строка огромна (функция падала по памяти).
+_WB_FIELDS = ['rrdId', 'dateFrom', 'dateTo', 'sellerOperName', 'forPay',
+              'retailAmount', 'deliveryService', 'paidStorage', 'penalty', 'deduction']
+
+
+def _wb_num(v):
+    try:
+        return float(str(v if v is not None else 0).replace(',', '.') or 0)
+    except ValueError:
+        return 0.0
+
+
+def _wb_row_snake(r):
+    """Строка нового отчёта WB (finance-api, camelCase, суммы строками) → поля старого отчёта."""
+    r = r or {}
+    return {
+        'rrd_id': r.get('rrdId') or 0,
+        'date_from': r.get('dateFrom') or '',
+        'date_to': r.get('dateTo') or '',
+        'supplier_oper_name': r.get('sellerOperName') or '',
+        'ppvz_for_pay': _wb_num(r.get('forPay')),
+        'retail_amount': _wb_num(r.get('retailAmount')),
+        'delivery_rub': _wb_num(r.get('deliveryService')),
+        'storage_fee': _wb_num(r.get('paidStorage')),
+        'penalty': _wb_num(r.get('penalty')),
+        'deduction': _wb_num(r.get('deduction')),
+    }
+
+
 def _sync_wb_payouts(cur, creds, weeks=12):
     """Недельные отчёты Wildberries: сколько продали и сколько дошло до счёта.
 
@@ -984,18 +1013,29 @@ def _sync_wb_payouts(cur, creds, weeks=12):
     # Тянем построчно: отчёт большой, поэтому идём страницами по rrd_id.
     rows = []
     rrd = 0
+    # С ноября 2026 WB отключил /api/v5/supplier/reportDetailByPeriod (404) —
+    # детализация теперь в finance-api: POST /api/finance/v1/sales-reports/detailed,
+    # поля в camelCase, деньги строками. Приводим строки к старым именам полей.
     for _ in range(40):
         st, d = _http(
-            'https://statistics-api.wildberries.ru'
-            '/api/v5/supplier/reportDetailByPeriod'
-            f'?dateFrom={since}&dateTo={today}&limit=100000&rrdid={rrd}',
-            'GET', headers, None, timeout=60,
+            'https://finance-api.wildberries.ru/api/finance/v1/sales-reports/detailed',
+            'POST', headers,
+            {'dateFrom': str(since), 'dateTo': str(today), 'limit': 100000,
+             'rrdId': rrd, 'period': 'weekly',
+             **({'fields': _WB_FIELDS} if _WB_FIELDS else {})},
+            timeout=60,
         )
-        if not isinstance(d, list) or not d:
+        if isinstance(d, dict):
+            d = d.get('data') if isinstance(d.get('data'), list) else (d.get('rows') or [])
+        if st == 204:
             break
-        rows.extend(d)
-        rrd = d[-1].get('rrd_id') or 0
-        if len(d) < 100000:
+        if st != 200 or not isinstance(d, list):
+            raise RuntimeError(f'WB отчёт о реализации: код {st}: {str(d)[:200]}')
+        if not d:
+            break
+        rows.extend(_wb_row_snake(r) for r in d)
+        rrd = rows[-1].get('rrd_id') or 0
+        if len(d) < 100000 or not rrd:
             break
 
     if not rows:

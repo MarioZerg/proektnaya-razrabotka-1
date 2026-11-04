@@ -186,6 +186,24 @@
         }
       },
       "bodyMatcher": "partial"
+    },
+    {
+      "name": "Пауза товаров на раскрой читается",
+      "method": "GET",
+      "path": "/?cutPause=1",
+      "expectedStatus": 200
+    },
+    {
+      "name": "Пауза товаров без админа запрещена",
+      "method": "POST",
+      "path": "/",
+      "body": {
+        "action": "set_cut_pause",
+        "paused": [
+          "Тест"
+        ]
+      },
+      "expectedStatus": 401
     }
   ]
 }

@@ -16,9 +16,8 @@ Protocol). Cursor подключает его как набор инструме
 1. ТОЛЬКО ЧТЕНИЕ. Ни один инструмент не меняет ни файл, ни строку в базе.
    Внешний агент — консультант, а не второй хозяин склада. Правки идут через
    обычный git: агент готовит их у себя, человек смотрит и присылает в проект.
-   Поэтому в db_query разрешён только SELECT, запрос обёрнут в подзапрос, где
-   Postgres не пускает UPDATE/DELETE, а commit не вызывается нигде — даже
-   прорвавшаяся правка откатится при закрытии соединения.
+   Поэтому в db_query разрешён только SELECT, и запрос выполняется в транзакции
+   read only — если в тексте спрячут UPDATE, база сама его отклонит.
 
 2. ПАРОЛЬ ОБЯЗАТЕЛЕН. Адрес функции публичный, так что без пароля это была бы
    открытая дверь ко всему коду и данным. Пароль лежит в секрете проекта и
@@ -37,7 +36,6 @@ Protocol). Cursor подключает его как набор инструме
 import hmac
 import json
 import os
-import re
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -279,8 +277,8 @@ def _read_cursor(conn):
 
     Посредник базы отклоняет set_session(readonly=True), SET ... search_path и
     set_config («ALTER USER/ROLE commands are not allowed» / «banned function»),
-    а SET TRANSACTION READ ONLY молча игнорирует. Поэтому схему к таблицам
-    дописывает _qualify_tables, а не search_path.
+    а SET TRANSACTION READ ONLY молча игнорирует. Схема проекта у подключения
+    и так стоит по умолчанию — настраивать ничего не нужно.
 
     Записать ничего нельзя по другой причине: эта функция никогда не делает
     commit, а перед закрытием подключения всё откатывает (_close).
@@ -293,37 +291,6 @@ def _close(conn):
         conn.rollback()
     finally:
         conn.close()
-
-
-def _t(table):
-    """Имя таблицы со схемой проекта: search_path задать нельзя."""
-    return f'{_schema()}.{table}'
-
-
-_TABLE_REF = re.compile(r'(\b(?:from|join)\s+)([a-z_][a-z0-9_]*)\b(?!\s*[.(])', re.I)
-
-
-def _qualify_tables(cur, sql):
-    """Дописывает схему к таблицам проекта после FROM/JOIN в запросе агента.
-
-    Агент пишет «SELECT ... FROM orders», а без search_path база такую таблицу
-    не найдёт. Трогаем только имена, которые реально есть в схеме: функции,
-    подзапросы и уже указанная схема остаются как есть.
-    """
-    cur.execute(
-        "SELECT c.relname FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace "
-        "WHERE n.nspname = %s AND c.relkind IN ('r', 'v', 'm', 'p')",
-        (_schema(),),
-    )
-    tables = {r[0] for r in cur.fetchall()}
-
-    def repl(m):
-        name = m.group(2)
-        if name.lower() in tables:
-            return f'{m.group(1)}{_t(name.lower())}'
-        return m.group(0)
-
-    return _TABLE_REF.sub(repl, sql)
 
 
 def _sql_str(value):
@@ -399,9 +366,8 @@ def tool_db_query(args):
     try:
         # Даже если запрет по тексту обойдут хитрой конструкцией (WITH ... DELETE),
         # изменения не сохранятся: commit здесь не делается, _close откатывает всё.
-        # Схему к таблицам дописываем сами: search_path посредник базы не даёт задать.
         cur = _read_cursor(conn)
-        cur.execute(f'SELECT * FROM ({_qualify_tables(cur, sql)}) AS q LIMIT {limit + 1}')
+        cur.execute(f'SELECT * FROM ({sql}) AS q LIMIT {limit + 1}')
         cols = [d[0] for d in cur.description]
         rows = cur.fetchall()
     except psycopg2.Error as e:
@@ -455,7 +421,7 @@ def tool_audit_log(args):
         cur = _read_cursor(conn)
         cur.execute(
             'SELECT created_at, user_name, category, action, entity_type, entity_id, description '
-            f'FROM {_t("audit_log")}{clause} ORDER BY created_at DESC LIMIT {limit}'
+            f'FROM audit_log{clause} ORDER BY created_at DESC LIMIT {limit}'
         )
         rows = cur.fetchall()
     except psycopg2.Error as e:
@@ -490,7 +456,7 @@ def tool_app_errors(args):
         if args.get('summary'):
             cur.execute(
                 'SELECT message, count(*), count(DISTINCT user_id), max(occurred_at) '
-                f"FROM {_t('app_errors')} WHERE occurred_at > now() - interval '7 days' "
+                "FROM app_errors WHERE occurred_at > now() - interval '7 days' "
                 f'GROUP BY message ORDER BY count(*) DESC LIMIT {limit}'
             )
             rows = cur.fetchall()
@@ -512,7 +478,7 @@ def tool_app_errors(args):
         cur.execute(
             'SELECT occurred_at, source, level, message, page, user_name, user_role, '
             '  app_version, stack '
-            f'FROM {_t("app_errors")}{clause} ORDER BY occurred_at DESC LIMIT {limit}'
+            f'FROM app_errors{clause} ORDER BY occurred_at DESC LIMIT {limit}'
         )
         rows = cur.fetchall()
     except psycopg2.Error as e:

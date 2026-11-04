@@ -182,6 +182,14 @@ const OrdersCards = ({
                         {number}
                       </span>
                     )}
+                    {o.deliveryTrackingNumber && o.deliveryTrackingNumber !== number && (
+                      <span
+                        className="min-w-0 truncate font-mono-tech text-xs text-muted-foreground"
+                        title="Трек Ozon Доставки"
+                      >
+                        Ozon {o.deliveryTrackingNumber}
+                      </span>
+                    )}
                     <ShopBadge name={o.shopName} color={o.shopColor} />
                     {o.cluster && (
                       <span className="text-sm font-semibold text-sky-800">{o.cluster}</span>

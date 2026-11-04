@@ -7,6 +7,7 @@ import StalledShipmentsCard from '@/components/crm/dashboard/StalledShipmentsCar
 import LiveFloorCard from '@/components/crm/dashboard/liveFloor/LiveFloorCard';
 import LiveFloorBoundary from '@/components/crm/dashboard/liveFloor/LiveFloorBoundary';
 import ShortagePenaltyCard from '@/components/crm/dashboard/ShortagePenaltyCard';
+import CutPauseCard from '@/components/crm/dashboard/CutPauseCard';
 import { type DashboardWidgetData } from '@/components/crm/dashboard/dashboardShared';
 import {
   type EmployeeShiftStatus,
@@ -95,6 +96,9 @@ const CrmDashboardSections = ({
         <LiveFloorCard />
       </LiveFloorBoundary>
     )}
+
+    {/* Пауза выдачи товаров на раскрой: кончилась ткань — админ выключает товар. */}
+    {isAdmin && <CutPauseCard />}
 
     {canSeeWorkingToday && <WorkingTodayCard />}
 

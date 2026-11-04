@@ -2,7 +2,6 @@ import { useEffect, useState } from 'react';
 import CrmLayout from '@/components/crm/CrmLayout';
 import { usePolling } from '@/hooks/usePolling';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent } from '@/components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import Icon from '@/components/ui/icon';
 import { useAuth } from '@/context/AuthContext';
@@ -216,16 +215,6 @@ const SchedulerSettings = () => {
         )}
 
         {isAdmin && canSeeUrls && <CronSecretPanel onSecret={setCronSecret} />}
-
-        <Card className="shadow-none">
-          <CardContent className="py-4 text-sm text-muted-foreground">
-            <p className="font-medium text-foreground">Если задание не работает</p>
-            <p className="mt-1">
-              Расписание живёт во внешнем сервисе cron-job.org — там задания включаются и
-              выключаются. Проверьте, что задание включено и последний запуск прошёл без ошибки
-            </p>
-          </CardContent>
-        </Card>
       </div>
     </CrmLayout>
   );

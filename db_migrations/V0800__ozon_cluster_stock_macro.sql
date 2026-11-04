@@ -1,0 +1,1 @@
+ALTER TABLE t_p86119184_proektnaya_razrabotk.ozon_cluster_stock ADD COLUMN IF NOT EXISTS macro_cluster_id BIGINT NULL;

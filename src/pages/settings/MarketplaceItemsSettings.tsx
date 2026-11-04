@@ -30,8 +30,8 @@ import {
   type MaterialRow,
 } from '@/components/crm/marketplaceItems/marketplaceItemsShared';
 import ItemFormDialog from '@/components/crm/marketplaceItems/ItemFormDialog';
-import ItemsToolbar from '@/components/crm/marketplaceItems/ItemsToolbar';
 import RecentCardChangesDialog from '@/components/crm/marketplaceItems/RecentCardChangesDialog';
+import ItemsToolbar from '@/components/crm/marketplaceItems/ItemsToolbar';
 import ItemsGrid from '@/components/crm/marketplaceItems/ItemsGrid';
 import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
 
@@ -50,6 +50,7 @@ const MarketplaceItemsSettings = () => {
   // добавленный в поставку другого, уедет не туда.
   const [shops, setShops] = useState<Shop[]>([]);
   const [shopId, setShopId] = useState<number | null>(null);
+  const [changesOpen, setChangesOpen] = useState(false);
 
   const [skuQuery, setSkuQuery] = useState('');
   // Архив: карточки, удалённые в магазине. По умолчанию скрыты — в работе только живые.
@@ -335,7 +336,21 @@ const MarketplaceItemsSettings = () => {
               </span>
             </Button>
 
-          <RecentCardChangesDialog shopId={shopId} shopName={currentShop?.name} />
+            <Button
+              variant="outline"
+              onClick={() => setChangesOpen(true)}
+              disabled={!shopId}
+              title={shopId ? undefined : 'Выберите вкладку магазина'}
+            >
+              <Icon name="History" size={16} className="mr-1.5" />
+              Изменения за 30 дней
+            </Button>
+            <RecentCardChangesDialog
+              open={changesOpen}
+              onOpenChange={setChangesOpen}
+              shopId={shopId}
+              shopName={currentShop?.name}
+            />
 
           <ItemFormDialog
             open={dialogOpen}

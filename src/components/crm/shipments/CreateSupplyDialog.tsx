@@ -57,7 +57,7 @@ const CreateSupplyDialog = ({
             Новая приёмка
           </Button>
         </DialogTrigger>
-        <DialogContent className="max-w-2xl">
+        <DialogContent className="max-h-[92dvh] max-w-2xl md:max-w-[min(1100px,calc(100vw-4rem))]">
           <DialogHeader>
             <DialogTitle>Приёмка от поставщика</DialogTitle>
           </DialogHeader>

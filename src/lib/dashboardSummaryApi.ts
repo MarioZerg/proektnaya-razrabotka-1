@@ -17,12 +17,14 @@ export interface DashboardSummary {
   newOnConveyor?: number;
   newConveyorFbs?: number;
   newConveyorFbo?: number;
+  /** Новые заказы интернет-магазина (мегатюль.рф) — отдельно от FBS площадок. */
+  newConveyorIm?: number;
   /** Из новых: вещь уже закреплена и висит в подборе на складе. */
   newOnPicking?: number;
   newPickingFbs?: number;
   newPickingFbo?: number;
   /** Путь товара: этап → сколько вещей FBS и FBO. Каждая вещь ровно в одном этапе. */
-  flow?: Partial<Record<'cut' | 'sew' | 'stick' | 'pick' | 'ready' | 'supply', { fbs: number; fbo: number }>>;
+  flow?: Partial<Record<'cut' | 'sew' | 'stick' | 'pick' | 'ready' | 'supply', { fbs: number; fbo: number; im?: number }>>;
   inSewing: number;
   inCutting: number;
   inStickering: number;

@@ -6,7 +6,6 @@ import KioskOrdersScreen from '@/components/crm/kiosk/KioskOrdersScreen';
 import KioskRepackScreen from '@/components/crm/kiosk/KioskRepackScreen';
 import KioskFlyerStickersScreen from '@/components/crm/kiosk/KioskFlyerStickersScreen';
 import KioskCutterSheetScreen from '@/components/crm/kiosk/KioskCutterSheetScreen';
-import KioskReviewsScreen from '@/components/crm/kiosk/KioskReviewsScreen';
 import KioskRollsScreen from '@/components/crm/kiosk/KioskRollsScreen';
 import KioskUnlabeledScreen from '@/components/crm/kiosk/KioskUnlabeledScreen';
 import KioskShiftScreen from '@/components/crm/kiosk/KioskShiftScreen';
@@ -138,12 +137,6 @@ const KioskScreenRouter = ({
           workshopId={currentWorkshopId || Number(workshopId) || null}
           currentUserId={user.id}
         />
-      </div>
-    )}
-
-    {screen === 'reviews' && (
-      <div className="mx-auto max-w-3xl">
-        <KioskReviewsScreen />
       </div>
     )}
 

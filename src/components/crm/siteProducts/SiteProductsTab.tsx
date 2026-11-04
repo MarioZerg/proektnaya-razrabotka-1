@@ -64,13 +64,13 @@ const SiteProductsTab = ({ shopId }: { shopId: number }) => {
         <div className="flex flex-wrap gap-2">
           {isAdmin && <SiteCopyPackagesButton actor={actor} onDone={load} />}
           <Button onClick={handleSync} disabled={syncing}>
-            <Icon
-              name={syncing ? 'Loader2' : 'RefreshCw'}
-              size={16}
-              className={`mr-1.5 ${syncing ? 'animate-spin' : ''}`}
-            />
-            {syncing ? 'Загружаю…' : 'Загрузить товары с сайта'}
-          </Button>
+          <Icon
+            name={syncing ? 'Loader2' : 'RefreshCw'}
+            size={16}
+            className={`mr-1.5 ${syncing ? 'animate-spin' : ''}`}
+          />
+          {syncing ? 'Загружаю…' : 'Загрузить товары с сайта'}
+        </Button>
         </div>
       </div>
 

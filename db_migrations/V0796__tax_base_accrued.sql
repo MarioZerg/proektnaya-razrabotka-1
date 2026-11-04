@@ -1,0 +1,2 @@
+ALTER TABLE t_p86119184_proektnaya_razrabotk.tax_accruals ADD COLUMN IF NOT EXISTS base NUMERIC(14, 2) NULL;
+ALTER TABLE t_p86119184_proektnaya_razrabotk.tax_revenue_monthly ADD COLUMN IF NOT EXISTS fees NUMERIC(14, 2) NOT NULL DEFAULT 0;

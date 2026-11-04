@@ -54,9 +54,16 @@ export const buildDashboardWidgets = ({
         if (!flow || summary.newConveyorFbs == null || summary.newConveyorFbo == null) {
           return undefined;
         }
-        const pair = (v?: { fbs: number; fbo: number }) => ({ fbs: v?.fbs ?? 0, fbo: v?.fbo ?? 0 });
-        const stages: [string, { fbs: number; fbo: number }][] = [
-          ['новые', { fbs: summary.newConveyorFbs, fbo: summary.newConveyorFbo }],
+        // ИМ — заказы интернет-магазина (мегатюль.рф): отдельной колонкой, в FBS
+        // площадок они не входят — так видно, сколько их и на каком они этапе.
+        type Cell = { fbs: number; fbo: number; im: number };
+        const pair = (v?: { fbs: number; fbo: number; im?: number }): Cell => ({
+          fbs: v?.fbs ?? 0,
+          fbo: v?.fbo ?? 0,
+          im: v?.im ?? 0,
+        });
+        const stages: [string, Cell][] = [
+          ['новые', { fbs: summary.newConveyorFbs, fbo: summary.newConveyorFbo, im: summary.newConveyorIm ?? 0 }],
           ['крой', pair(flow.cut)],
           ['пошив', pair(flow.sew)],
           ['стикеровка', pair(flow.stick)],
@@ -64,11 +71,12 @@ export const buildDashboardWidgets = ({
           ['ждёт поставку', pair(flow.ready)],
           ['в поставке', pair(flow.supply)],
         ];
-        const rows = stages.map(([label, v]) => ({ label, values: [v.fbs, v.fbo, v.fbs + v.fbo] }));
+        const rows = stages.map(([label, v]) => ({ label, values: [v.fbs, v.fbo, v.im, v.fbs + v.fbo + v.im] }));
         const tf = stages.reduce((a, [, v]) => a + v.fbs, 0);
         const to = stages.reduce((a, [, v]) => a + v.fbo, 0);
-        rows.push({ label: 'всего', values: [tf, to, tf + to] });
-        return { columns: ['FBS', 'FBO', 'всего'], rows };
+        const ti = stages.reduce((a, [, v]) => a + v.im, 0);
+        rows.push({ label: 'всего', values: [tf, to, ti, tf + to + ti] });
+        return { columns: ['FBS', 'FBO', 'ИМ', 'всего'], rows };
       })(),
       value: (() => {
         const fromServer =
@@ -80,7 +88,7 @@ export const buildDashboardWidgets = ({
         // ждут раскроя. Подбор с полок — отдельная строка, в счётчик не входит,
         // иначе цифра расходилась с таблицей (214 против 201).
         if (summary.flow) {
-          return (summary.newConveyorFbs ?? 0) + (summary.newConveyorFbo ?? 0);
+          return (summary.newConveyorFbs ?? 0) + (summary.newConveyorFbo ?? 0) + (summary.newConveyorIm ?? 0);
         }
         if (fromServer) return (summary.newOnConveyor ?? 0) + (summary.newOnPicking ?? 0);
         if (!orderSchemes) return summary.newOrders;

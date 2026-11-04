@@ -1,4 +1,5 @@
 import { Dispatch, SetStateAction } from 'react';
+import { Link } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -32,6 +33,10 @@ const EditOrderDialog = ({
   onSave,
 }: EditOrderDialogProps) => {
   const shownNumber = editingOrder ? publicOrderNumber(editingOrder) : null;
+  // Заказ интернет-магазина: площадка и тип у него одни и те же, а статус
+  // двигается по конвейеру во вкладке «Товары для пошива». Ручной выбор здесь
+  // только сбивал бы этап: заказ «Выполнен», а вещь ещё не сшита.
+  const isSiteOrder = editingOrder?.marketplace === 'IM';
   const hideSystemNumber = form ? isHiddenSystemNumber(form.orderNumber) : false;
   const productLabel = editingOrder
     ? [editingOrder.material, editingOrder.width && editingOrder.height
@@ -45,12 +50,12 @@ const EditOrderDialog = ({
     <Dialog open={editingOrder !== null} onOpenChange={(open) => !open && onClose()}>
       <DialogContent className="sm:max-w-lg">
         <DialogHeader>
-          <DialogTitle>Изменить заказ</DialogTitle>
+          <DialogTitle>{isSiteOrder ? 'Заказ интернет-магазина' : 'Изменить заказ'}</DialogTitle>
         </DialogHeader>
 
         {form && (
           <div className="space-y-4">
-            {!hideSystemNumber && (
+            {!hideSystemNumber && !isSiteOrder && (
               <div className="space-y-1.5">
                 <Label>Номер заявки</Label>
                 <Input
@@ -59,7 +64,7 @@ const EditOrderDialog = ({
                 />
               </div>
             )}
-            {hideSystemNumber && shownNumber && (
+            {(hideSystemNumber || isSiteOrder) && shownNumber && (
               <p className="font-mono-tech text-sm font-semibold">{shownNumber}</p>
             )}
 
@@ -68,6 +73,30 @@ const EditOrderDialog = ({
               <p className="font-semibold">{productLabel}</p>
             </div>
 
+            {isSiteOrder && (
+              <div className="space-y-2 rounded-md border border-border px-3 py-2 text-sm">
+                <p>
+                  <span className="text-muted-foreground">Интернет-магазин · статус: </span>
+                  <b>{editingOrder?.sewingStatus || form.status}</b>
+                </p>
+                {editingOrder?.deliveryTrackingNumber && (
+                  <p>
+                    <span className="text-muted-foreground">Трек Ozon Доставки: </span>
+                    <span className="font-mono-tech">{editingOrder.deliveryTrackingNumber}</span>
+                  </p>
+                )}
+                <p className="text-xs text-muted-foreground">
+                  Статус меняется по конвейеру во вкладке{' '}
+                  <Link to="/crm/marketplace/sewing-items" className="underline" onClick={onClose}>
+                    «Товары для пошива»
+                  </Link>
+                  .
+                </p>
+              </div>
+            )}
+
+            {!isSiteOrder && (
+            <>
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
                 <Label>Маркетплейс</Label>
@@ -123,7 +152,10 @@ const EditOrderDialog = ({
                 </SelectContent>
               </Select>
             </div>
+            </>
+            )}
 
+            {!isSiteOrder && (
             <Button
               onClick={onSave}
               disabled={saving}
@@ -131,6 +163,7 @@ const EditOrderDialog = ({
             >
               {saving ? <Icon name="Loader2" size={16} className="animate-spin" /> : 'Сохранить'}
             </Button>
+            )}
           </div>
         )}
       </DialogContent>

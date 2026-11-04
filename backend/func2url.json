@@ -1,4 +1,5 @@
 {
+  "fbo_sew_plan": "https://functions.poehali.dev/dc70091f-a346-4658-ac9b-93e5e58f7355",
   "site_orders": "https://functions.poehali.dev/dbc4d229-e722-40bc-aa47-f47bed23dab5",
   "roll_audits": "https://functions.poehali.dev/f107f17f-0fe7-41d9-9e53-9171792b00be",
   "onec": "https://functions.poehali.dev/579112cd-89d1-40d2-a1d7-23411a3654a7",
@@ -19,7 +20,6 @@
   "stocktakes": "https://functions.poehali.dev/a737392b-5582-4cfd-ba50-185a19b73ee9",
   "unit_economics": "https://functions.poehali.dev/4ebd72ad-8ca4-456c-840c-d2db30ce04cd",
   "product_cost": "https://functions.poehali.dev/7e85cd3d-e5cd-44e2-a803-5ff07584de12",
-  "cancellation_analytics": "https://functions.poehali.dev/89778b19-288d-4b45-a9bb-e1e80ac0b285",
   "marketplace_reconcile": "https://functions.poehali.dev/6d6d5a20-18e6-4dea-8ec5-ffef149f45fa",
   "scheduler_status": "https://functions.poehali.dev/28ee919b-a6b3-4f53-9efb-d53ce1c8ca63",
   "data-import": "https://functions.poehali.dev/919a122d-2dd4-4c9d-9eb2-d45f5d9f1744",
@@ -32,7 +32,6 @@
   "marketplace_returns": "https://functions.poehali.dev/015dbb02-13c9-49de-8718-8fe37c329b30",
   "variki": "https://functions.poehali.dev/2ad91f9f-97d9-46d1-a9f4-06ee696d5ec5",
   "hangers": "https://functions.poehali.dev/85bbeb23-4daf-48af-943e-69237b89bdeb",
-  "reviews": "https://functions.poehali.dev/085266ac-7c01-408d-9e05-6a1981f3b41d",
   "marketplace_sync": "https://functions.poehali.dev/f43a35f0-f914-443a-92c0-fc08a2a09fa4",
   "gazelka": "https://functions.poehali.dev/919a040d-f5ad-4fcb-98ee-a0cf8e28b99e",
   "ozon_fbo": "https://functions.poehali.dev/697620a6-2bfe-40f7-af06-0de882dd0391",

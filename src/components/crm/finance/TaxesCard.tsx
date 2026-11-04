@@ -93,7 +93,7 @@ const TaxesCard = () => {
         <CardTitle className="text-base">Налоги с маркетплейсов</CardTitle>
         {data && (
           <p className="text-sm text-muted-foreground">
-            УСН {data.usnPct}% + НДС {data.vatPct}% · начисляется 1-го числа за прошлый месяц
+            УСН {data.usnPct}% + НДС {data.vatPct}% от начисленного продавцу (после комиссий и услуг) · начисляется 1-го числа за прошлый месяц
           </p>
         )}
       </CardHeader>
@@ -128,7 +128,7 @@ const TaxesCard = () => {
                     <div className="min-w-0">
                       <p className="text-sm font-medium">{mp.label}</p>
                       <p className="text-xs text-muted-foreground">
-                        Начислено площадкой {rub(v.net)}
+                        Начислено продавцу {rub(v.net)}
                         {last != null && data.lastMonth && ` · за ${monthLabel(data.lastMonth.month)} +${rub(last)}`}
                       </p>
                     </div>

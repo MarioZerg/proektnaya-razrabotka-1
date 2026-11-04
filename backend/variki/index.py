@@ -7,8 +7,6 @@ from datetime import date
 
 import psycopg2
 
-from duel import handle_duel_get, handle_duel_post
-from shaft import handle_shaft_get, handle_shaft_post
 
 # Внутренняя игровая валюта "Варики" (викторина/лототрон для производственных сотрудников).
 # НЕ финансы — в зарплате/кассе не учитывается. Начисляются в backend/orders при отправке
@@ -318,16 +316,6 @@ def handler(event: dict, context) -> dict:
                     'isBase64Encoded': True,
                 }
 
-            shaft_get = handle_shaft_get(cur, params)
-            if shaft_get is not None:
-                conn.commit()
-                return _resp(shaft_get[0], shaft_get[1])
-
-            duel_get = handle_duel_get(cur, params)
-            if duel_get is not None:
-                conn.commit()
-                return _resp(duel_get[0], duel_get[1])
-
             if params.get('shop'):
                 # Витрина магазина + покупки самого сотрудника. Сюда ходит и админ
                 # (посмотреть, что в продаже), и швея (купить и забрать купон).
@@ -522,14 +510,6 @@ def handler(event: dict, context) -> dict:
             body_data = json.loads(event.get('body') or '{}')
             action = body_data.get('action')
 
-            if action in ('shaft_claim', 'shaft_pay'):
-                shaft_post = handle_shaft_post(cur, action, body_data)
-                if shaft_post[0] >= 400:
-                    conn.rollback()
-                else:
-                    conn.commit()
-                return _resp(shaft_post[0], shaft_post[1])
-
             if action == 'set_radio':
                 user_id = body_data.get('userId')
                 station_id = (body_data.get('stationId') or '').strip()
@@ -554,14 +534,6 @@ def handler(event: dict, context) -> dict:
                 )
                 conn.commit()
                 return _resp(200, {'stationId': station_id})
-
-            if action in ('duel_challenge', 'duel_answer', 'duel_pick'):
-                duel_post = handle_duel_post(cur, action, body_data)
-                if duel_post[0] >= 400:
-                    conn.rollback()
-                else:
-                    conn.commit()
-                return _resp(duel_post[0], duel_post[1])
 
             if action == 'debit':
                 # Списывать варики (игра в лототрон) может только администратор.

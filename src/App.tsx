@@ -61,8 +61,6 @@ const MarketplaceOrders = lazy(() => import("./pages/marketplace/MarketplaceOrde
 const LoginCode = lazy(() => import("./pages/LoginCode"));
 const SewingItems = lazy(() => import("./pages/marketplace/SewingItems"));
 const FboStickers = lazy(() => import("./pages/marketplace/FboStickers"));
-const Reviews = lazy(() => import("./pages/marketplace/Reviews"));
-const CancellationAnalytics = lazy(() => import("./pages/marketplace/CancellationAnalytics"));
 const Finance = lazy(() => import("./pages/Finance"));
 const Buyouts = lazy(() => import("./pages/finance/Buyouts"));
 const Workshops = lazy(() => import("./pages/shifts/Workshops"));
@@ -186,8 +184,6 @@ const App = () => (
             {/* Печать стикеров FBO временно скрыта из меню — позже её интегрируем прямо
                 со склада. Маршрут оставлен рабочим по прямой ссылке. */}
             <Route path="/crm/marketplace/fbo-stickers" element={<FboStickers />} />
-            <Route path="/crm/marketplace/reviews" element={<Reviews />} />
-            <Route path="/crm/marketplace/cancellations" element={<CancellationAnalytics />} />
             <Route path="/crm/finance" element={<Finance />} />
             <Route path="/crm/finance/buyouts" element={<Buyouts />} />
             <Route path="/crm/shifts/workshops" element={<Workshops />} />

@@ -1,11 +1,11 @@
-import { useState } from 'react';
+import { useState, type CSSProperties } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Card } from '@/components/ui/card';
 import Icon from '@/components/ui/icon';
 import LiveCountBoard from '@/components/crm/LiveCountBoard';
 import { useAuth } from '@/context/AuthContext';
 import ProductionCapacityDialog from '@/components/crm/dashboard/ProductionCapacityDialog';
-import ProductionFlowCard from '@/components/crm/dashboard/ProductionFlowCard';
+import ProductionFlowCard, { IM_ORDERS_PATH } from '@/components/crm/dashboard/ProductionFlowCard';
 import { WidgetRunRing } from '@/components/crm/dashboard/ShiftAvatarRail';
 import {
   STAGE_ORDER,
@@ -19,7 +19,10 @@ const WidgetMatrix = ({
   matrix: NonNullable<DashboardWidgetData['matrix']>;
 }) => (
   <div className="min-w-0 overflow-x-auto rounded-md border border-border/70 text-[11px] leading-tight">
-    <div className="grid min-w-[17rem] grid-cols-[6.5rem_repeat(3,minmax(3rem,1fr))]">
+    <div
+      style={{ '--mx-cols': matrix.columns.length } as CSSProperties}
+      className="grid min-w-[17rem] grid-cols-[6.5rem_repeat(var(--mx-cols),minmax(3rem,1fr))]"
+    >
       <div className="bg-muted/60" />
       {matrix.columns.map((column) => (
         <div key={column} className="whitespace-nowrap bg-muted/60 px-1 py-1 text-center text-muted-foreground">
@@ -96,8 +99,15 @@ const DashboardWidgetsGrid = ({ widgets, loading }: DashboardWidgetsGridProps) =
   const canPlan = user?.role === 'admin' || user?.role === 'manager';
   const spotlight = widgets.find((widget) => widget.spotlight);
   // Очередь на раскрой — строка «новые»: первая колонка FBS, вторая FBO.
-  const conveyorCount = (label: string) =>
-    spotlight?.matrix?.rows.find((row) => row.label === 'новые')?.values[label === 'FBS' ? 0 : 1] ?? 0;
+  // Колонки: FBS, FBO, ИМ, всего. Заказы ИМ шьются срочно, как FBS, — в расчёте
+  // мощности считаем их вместе с FBS.
+  const conveyorCount = (label: string) => {
+    const row = spotlight?.matrix?.rows.find((r) => r.label === 'новые');
+    if (!row) return 0;
+    if (label === 'FBO') return row.values[1] ?? 0;
+    const hasIm = spotlight?.matrix?.columns.includes('ИМ');
+    return (row.values[0] ?? 0) + (hasIm ? row.values[2] ?? 0 : 0);
+  };
 
   // Два блока: производство и склад. Пустые не показываем — у швеи нет складских
   // показателей, и заголовок без единой плитки был бы просто шумом.
@@ -162,6 +172,7 @@ const DashboardWidgetsGrid = ({ widgets, loading }: DashboardWidgetsGridProps) =
                   loading={loading}
                   onOpen={() => navigate(w.path)}
                   onCapacity={w.spotlight && canPlan ? () => setCapacityOpen(true) : undefined}
+                  onOpenIm={w.spotlight ? () => navigate(IM_ORDERS_PATH) : undefined}
                 />
               );
             }

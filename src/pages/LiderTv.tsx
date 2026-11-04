@@ -1,4 +1,3 @@
-import { withNightSlowdown } from '@/lib/workingHours';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import Icon from '@/components/ui/icon';
 import { buildLiveFloorView, useLiveFloorData } from '@/components/crm/dashboard/liveFloor/useLiveFloorData';
@@ -8,12 +7,9 @@ import LiderTvPeople from '@/components/lider/LiderTvPeople';
 import LiderTvFeed from '@/components/lider/LiderTvFeed';
 import LiderTvBubbles from '@/components/lider/LiderTvBubbles';
 import LiveFloorBoundary from '@/components/crm/dashboard/liveFloor/LiveFloorBoundary';
-import LiderTvDuel from '@/components/lider/LiderTvDuel';
 import LiderTvRadio from '@/components/lider/LiderTvRadio';
 import { useTvRadio } from '@/components/lider/useTvRadio';
 import { useSlowScroll } from '@/components/lider/useSlowScroll';
-import { fetchTvDuel, type TvDuel } from '@/lib/varikiApi';
-import { playDuelStart, playDuelWin } from '@/lib/gameSounds';
 import { useTvCanvas } from '@/components/lider/useTvCanvas';
 import { useTvBuildWatch } from '@/components/lider/useTvBuildWatch';
 
@@ -41,8 +37,6 @@ const LiderTv = () => {
   const scrollRef = useRef<HTMLDivElement>(null);
   const panRef = useRef<HTMLDivElement>(null);
   useTvBuildWatch();
-  const [duel, setDuel] = useState<TvDuel | null>(null);
-  const playedDuel = useRef(new Set<string>());
   const [screen, setScreen] = useState<'floor' | 'bubbles'>(() =>
     new URLSearchParams(window.location.search).get('screen') === 'bubbles' ? 'bubbles' : 'floor',
   );
@@ -58,44 +52,9 @@ const LiderTv = () => {
     removeComet,
   } = useLiveFloorData(true);
 
-  const duelActive = Boolean(duel);
   // Радио живёт выше экрана цеха: нет связи с цехом или идёт загрузка — музыка
   // всё равно играет и не начинается заново при каждой перерисовке.
   const { station: radio, blocked: radioBlocked } = useTvRadio();
-
-  useEffect(() => {
-    let stop = false;
-    const tick = () => {
-      fetchTvDuel()
-        .then((next) => {
-          if (!stop) setDuel(next);
-        })
-        .catch(() => undefined);
-    };
-    tick();
-    // Пока дуэли нет — раз в 30 секунд (ночью в десять раз реже): ТВ висит сутками,
-    // и опрос раз в 10 секунд давал почти 9 тысяч вызовов в день впустую.
-    const timer = window.setInterval(tick, duelActive ? 3000 : withNightSlowdown(30000));
-    return () => {
-      stop = true;
-      window.clearInterval(timer);
-    };
-  }, [duelActive]);
-
-  useEffect(() => {
-    if (!duel) return;
-    if (duel.phase === 'draw' && !playedDuel.current.has(`${duel.id}:draw`)) {
-      playedDuel.current.add(`${duel.id}:draw`);
-      playDuelStart();
-    }
-    if (
-      (duel.phase === 'award' || duel.phase === 'done') &&
-      !playedDuel.current.has(`${duel.id}:win`)
-    ) {
-      playedDuel.current.add(`${duel.id}:win`);
-      playDuelWin();
-    }
-  }, [duel]);
 
   const view = useMemo(() => buildLiveFloorView(data, 'all', clockOffset), [data, clockOffset]);
   const floorReady = Boolean(view);
@@ -289,7 +248,6 @@ const LiderTv = () => {
           </div>
         )}
         <LiderTvRadio station={radio} blocked={radioBlocked} />
-        {duel && <LiderTvDuel duel={duel} />}
       </div>
     </div>
   );

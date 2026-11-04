@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, type CSSProperties } from 'react';
 
 const MATRIX_OPEN_KEY = 'dash-flow-matrix-open';
 import Icon from '@/components/ui/icon';
@@ -32,18 +32,41 @@ const matrixHeader = (column: string) => {
 };
 
 /** Таблица FBS/FBO — крупный текст, иначе на телефоне штуки не читаются. */
-const Matrix = ({ matrix }: { matrix: NonNullable<DashboardWidgetData['matrix']> }) => (
+/** Заказы интернет-магазина идут в общем «Конвейере» — колонка ИМ открывает его с фильтром площадки. */
+export const IM_ORDERS_PATH = '/crm/marketplace/sewing-items?mp=IM';
+
+const Matrix = ({
+  matrix,
+  onOpenColumn,
+}: {
+  matrix: NonNullable<DashboardWidgetData['matrix']>;
+  onOpenColumn?: (column: string) => void;
+}) => (
   <div className="min-w-0 overflow-x-auto rounded-md border border-border/70">
-    <div className="grid w-full grid-cols-[minmax(6.5rem,auto)_repeat(3,minmax(0,1fr))] text-sm leading-snug">
+    <div
+      style={{ '--mx-cols': matrix.columns.length } as CSSProperties}
+      className="grid w-full grid-cols-[minmax(6.5rem,auto)_repeat(var(--mx-cols),minmax(0,1fr))] text-sm leading-snug">
       <div className="bg-muted/60" />
-      {matrix.columns.map((column) => (
-        <div
-          key={column}
-          className="bg-muted/60 px-1 py-1.5 text-center text-xs font-medium leading-tight text-muted-foreground sm:px-1.5 sm:text-sm"
-        >
-          {matrixHeader(column)}
-        </div>
-      ))}
+      {matrix.columns.map((column) =>
+        column === 'ИМ' && onOpenColumn ? (
+          <button
+            key={column}
+            type="button"
+            onClick={() => onOpenColumn(column)}
+            title="Открыть заказы интернет-магазина"
+            className="bg-muted/60 px-1 py-1.5 text-center text-xs font-semibold leading-tight text-teal-700 underline underline-offset-2 hover:bg-teal-50 sm:px-1.5 sm:text-sm"
+          >
+            {column}
+          </button>
+        ) : (
+          <div
+            key={column}
+            className="bg-muted/60 px-1 py-1.5 text-center text-xs font-medium leading-tight text-muted-foreground sm:px-1.5 sm:text-sm"
+          >
+            {matrixHeader(column)}
+          </div>
+        ),
+      )}
       {matrix.rows.flatMap((row) => [
         <div
           key={`${row.label}-name`}
@@ -53,7 +76,19 @@ const Matrix = ({ matrix }: { matrix: NonNullable<DashboardWidgetData['matrix']>
         >
           {row.label}
         </div>,
-        ...row.values.map((value, index) => (
+        ...row.values.map((value, index) =>
+          matrix.columns[index] === 'ИМ' && onOpenColumn ? (
+            <button
+              key={`${row.label}-${matrix.columns[index]}`}
+              type="button"
+              onClick={() => onOpenColumn('ИМ')}
+              className={`border-t border-border/70 px-1.5 py-1.5 text-center text-base font-semibold tabular-nums text-teal-700 hover:bg-teal-50 sm:text-lg ${
+                row.label === 'всего' ? 'font-bold' : ''
+              }`}
+            >
+              {value}
+            </button>
+          ) : (
           <div
             key={`${row.label}-${matrix.columns[index]}`}
             className={`border-t border-border/70 px-1.5 py-1.5 text-center text-base font-semibold tabular-nums sm:text-lg ${
@@ -62,7 +97,8 @@ const Matrix = ({ matrix }: { matrix: NonNullable<DashboardWidgetData['matrix']>
           >
             {value}
           </div>
-        )),
+          ),
+        ),
       ])}
     </div>
   </div>
@@ -73,11 +109,14 @@ const ProductionFlowCard = ({
   loading,
   onOpen,
   onCapacity,
+  onOpenIm,
 }: {
   widget: DashboardWidgetData;
   loading: boolean;
   onOpen: () => void;
   onCapacity?: () => void;
+  /** Открыть «Товары для пошива» с заказами интернет-магазина. */
+  onOpenIm?: () => void;
 }) => {
   const [pressed, setPressed] = useState(false);
   // Путь товара по этапам свёрнут по умолчанию: на главной видна только строка
@@ -166,6 +205,11 @@ const ProductionFlowCard = ({
                 <span>
                   {widget.matrix.columns[1]} <b className="text-foreground">{totalRow.values[1]}</b>
                 </span>
+                {widget.matrix.columns.length >= 4 && (
+                  <span>
+                    {widget.matrix.columns[2]} <b className="text-foreground">{totalRow.values[2]}</b>
+                  </span>
+                )}
               </span>
             )}
             <Icon
@@ -180,7 +224,7 @@ const ProductionFlowCard = ({
             }`}
           >
             <div className="min-h-0 overflow-hidden">
-              <Matrix matrix={widget.matrix} />
+              <Matrix matrix={widget.matrix} onOpenColumn={onOpenIm ? () => onOpenIm() : undefined} />
             </div>
           </div>
         </div>

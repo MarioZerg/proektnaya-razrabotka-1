@@ -46,14 +46,18 @@ export const cutSpeedRank = (o: Order): number => {
 /**
  * Сравнение двух заказов в очереди на раскрой.
  *
- * Уровни сверху вниз: залежавшиеся → FBS → скорость раскроя → дата заказа.
+ * Уровни сверху вниз, как на сервере: интернет-магазин → FBS → залежавшиеся →
+ * скорость раскроя → дата заказа.
  */
 export const compareCutQueue = (a: Order, b: Order): number => {
-  const overdue = Number(isOverdueForCut(b)) - Number(isOverdueForCut(a));
-  if (overdue !== 0) return overdue;
+  const im = Number(b.marketplace === 'IM') - Number(a.marketplace === 'IM');
+  if (im !== 0) return im;
 
   const fbs = Number(b.orderType === 'FBS') - Number(a.orderType === 'FBS');
   if (fbs !== 0) return fbs;
+
+  const overdue = Number(isOverdueForCut(b)) - Number(isOverdueForCut(a));
+  if (overdue !== 0) return overdue;
 
   const speed = cutSpeedRank(a) - cutSpeedRank(b);
   if (speed !== 0) return speed;

@@ -25,7 +25,6 @@ import MyAvatarButton from '@/components/crm/MyAvatarButton';
 import HeaderSalaryWidget from '@/components/crm/HeaderSalaryWidget';
 import SiteChatNotifier from '@/components/crm/SiteChatNotifier';
 import StorekeeperTasksWidget from '@/components/crm/StorekeeperTasksWidget';
-import DuelWatcher from '@/components/crm/variki/duel/DuelWatcher';
 import { useAuth } from '@/context/AuthContext';
 import { navByRole, roleLabels, isStorekeeperRole } from '@/lib/roles';
 import { fetchTestAccounts, type TestAccount } from '@/lib/authApi';
@@ -454,7 +453,6 @@ const CrmLayout = ({ children }: { children: ReactNode }) => {
             Сам решает, показываться ли: только кладовщику и только при
             открытой смене. */}
         <StorekeeperTasksWidget topOffset={headerOffset} />
-        {user?.id && user.role === 'sewer' ? <DuelWatcher userId={user.id} /> : null}
         {/* Сбой внутри страницы не должен гасить меню и весь экран. */}
         <div className="p-3 sm:p-6">
           {/* key по адресу: при переходе на другую страницу защита пересоздаётся,

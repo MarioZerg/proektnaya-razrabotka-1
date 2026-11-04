@@ -9,11 +9,6 @@ interface Props {
   onDone: () => void;
 }
 
-/**
- * Упаковка для доставки — сразу всем товарам сайта с карточек маркетплейсов.
- * Тот же артикул на OZON — берём его коробку и вес; такой высоты там нет — ту же ширину с ближайшей высотой.
- * Вписанное вручную не трогает.
- */
 const SiteCopyPackagesButton = ({ actor, onDone }: Props) => {
   const { toast } = useToast();
   const [busy, setBusy] = useState(false);

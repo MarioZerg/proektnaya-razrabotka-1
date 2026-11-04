@@ -107,6 +107,8 @@ export interface Order {
    */
   isCancelled?: boolean | null;
   ozonPostingNumber?: string | null;
+  /** Трек Ozon Доставки у заказов мегатюль.рф (Y731764E7E48-433E). */
+  deliveryTrackingNumber?: string | null;
   /** Штрихкод товара маркетплейса (из справочника, фиксируется при импорте OZON FBO) —
    * печатается на стикере FBO сшитого товара. */
   productBarcode?: string | null;
@@ -588,6 +590,24 @@ export const fetchConveyorIssue = async (): Promise<boolean> => {
 
 export const setConveyorIssue = (enabled: boolean): Promise<{ conveyorIssueEnabled: boolean }> =>
   postAction({ action: 'set_conveyor_issue', enabled });
+
+export interface CutPauseState {
+  /** Ткани, которые сейчас не выдаются закройщикам. */
+  paused: string[];
+  /** Все ткани и сколько заказов по каждой ждёт раскроя. */
+  materials: { name: string; count: number }[];
+}
+
+/** Ткани, выдача которых на раскрой временно остановлена (ткань закончилась). */
+export const fetchCutPause = async (): Promise<CutPauseState> => {
+  const res = await fetch(`${ORDERS_URL}?cutPause=1`);
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Не удалось загрузить паузы');
+  return { paused: data.paused || [], materials: data.materials || [] };
+};
+
+export const setCutPause = (paused: string[]): Promise<{ paused: string[] }> =>
+  postAction({ action: 'set_cut_pause', paused });
 
 /**
  * Сколько ещё шить каждую вещь, взятую швеёй в работу.

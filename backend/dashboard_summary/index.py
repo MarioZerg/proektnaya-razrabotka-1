@@ -34,8 +34,23 @@ NOT_CANCELLED = (
 
 ON_OVERLOCK = ("(COALESCE(requires_overlock, false) AND overlocked_at IS NULL "
                "AND overlock_user_id IS NOT NULL)")
-FLOW_ORDER_COLS = ['flow_cut_fbs', 'flow_cut_fbo', 'flow_sew_fbs', 'flow_sew_fbo', 'flow_stick_fbs', 'flow_stick_fbo']
-FLOW_GOODS_COLS = ['flow_pick_fbs', 'flow_pick_fbo', 'flow_ready_fbs', 'flow_ready_fbo', 'flow_supply_fbs', 'flow_supply_fbo']
+FLOW_ORDER_COLS = ['flow_cut_fbs', 'flow_cut_fbo', 'flow_cut_im', 'flow_sew_fbs', 'flow_sew_fbo', 'flow_sew_im',
+                   'flow_stick_fbs', 'flow_stick_fbo', 'flow_stick_im']
+# Заказы интернет-магазина считаем отдельной колонкой «ИМ», а из FBS/FBO площадок
+# исключаем — иначе вещь попала бы в две клетки сразу.
+NOT_IM = "COALESCE(marketplace, '') <> 'IM'"
+KIND_SQL = {
+    'FBS': f"order_type = 'FBS' AND {NOT_IM}",
+    'FBO': f"order_type = 'FBO' AND {NOT_IM}",
+    'IM': "marketplace = 'IM'",
+}
+KIND_SQL_O = {
+    'FBS': "o.order_type = 'FBS' AND COALESCE(o.marketplace, '') <> 'IM'",
+    'FBO': "o.order_type = 'FBO' AND COALESCE(o.marketplace, '') <> 'IM'",
+    'IM': "o.marketplace = 'IM'",
+}
+FLOW_GOODS_COLS = ['flow_pick_fbs', 'flow_pick_fbo', 'flow_pick_im', 'flow_ready_fbs', 'flow_ready_fbo', 'flow_ready_im',
+                   'flow_supply_fbs', 'flow_supply_fbo', 'flow_supply_im']
 
 # Рулон считается заканчивающимся, если в нём меньше 20 погонных метров.
 ROLL_LOW_STOCK_THRESHOLD = 20
@@ -145,8 +160,11 @@ def handler(event: dict, context) -> dict:
             # Ушедшие на подбор получают статус «Со склада» и из этой цифры выпадают,
             # хотя кладовщик их ещё не собрал.
             f"COUNT(*) FILTER (WHERE sewing_status = 'Новый' AND source = 'api' AND COALESCE(status, '') NOT IN ('Отгружен', 'Доставлен', 'Выполнен') AND {NOT_CANCELLED}) AS new_on_conveyor, "
-            f"COUNT(*) FILTER (WHERE sewing_status = 'Новый' AND source = 'api' AND COALESCE(status, '') NOT IN ('Отгружен', 'Доставлен', 'Выполнен') AND order_type = 'FBS' AND {NOT_CANCELLED}) AS new_conveyor_fbs, "
-            f"COUNT(*) FILTER (WHERE sewing_status = 'Новый' AND source = 'api' AND COALESCE(status, '') NOT IN ('Отгружен', 'Доставлен', 'Выполнен') AND order_type = 'FBO' AND {NOT_CANCELLED}) AS new_conveyor_fbo, "
+            f"COUNT(*) FILTER (WHERE sewing_status = 'Новый' AND source = 'api' AND COALESCE(status, '') NOT IN ('Отгружен', 'Доставлен', 'Выполнен') AND order_type = 'FBS' AND {NOT_IM} AND {NOT_CANCELLED}) AS new_conveyor_fbs, "
+            f"COUNT(*) FILTER (WHERE sewing_status = 'Новый' AND source = 'api' AND COALESCE(status, '') NOT IN ('Отгружен', 'Доставлен', 'Выполнен') AND order_type = 'FBO' AND {NOT_IM} AND {NOT_CANCELLED}) AS new_conveyor_fbo, "
+            # Интернет-магазин (мегатюль.рф) — отдельной колонкой: заказы сайта
+            # приходят как FBS, и раньше растворялись в FBS площадок.
+            f"COUNT(*) FILTER (WHERE sewing_status = 'Новый' AND source = 'api' AND COALESCE(status, '') NOT IN ('Отгружен', 'Доставлен', 'Выполнен') AND marketplace = 'IM' AND {NOT_CANCELLED}) AS new_conveyor_im, "
             f"COUNT(*) FILTER (WHERE sewing_status = 'Со склада' AND source = 'api' AND {NOT_CANCELLED} "
             "  AND EXISTS (SELECT 1 FROM goods_warehouse gw "
             "    WHERE gw.reserved_order_id = orders.id "
@@ -177,7 +195,7 @@ def handler(event: dict, context) -> dict:
             # Конвейер считаем по заказам (крой, пошив, стикеровка), дальше вещь
             # живёт на складе и считается в flow_part — так клетки не пересекаются.
             + ''.join(
-                f"COUNT(*) FILTER (WHERE order_type = '{t}' AND {st} "
+                f"COUNT(*) FILTER (WHERE {KIND_SQL[t]} AND {st} "
                 # Этап цеха — физическое место вещи: считаем её там, где она лежит,
                 # даже если заказ на площадке уже закрыт. Так строки таблицы
                 # совпадают с плитками «В пошиве», «На стикеровке».
@@ -188,7 +206,7 @@ def handler(event: dict, context) -> dict:
                 for k, st in (('flow_cut', f"(sewing_status = 'На раскрое' OR (sewing_status = 'Раскроено' AND NOT {ON_OVERLOCK}))"),
                               ('flow_sew', f"(sewing_status = 'В работе' OR (sewing_status = 'Раскроено' AND {ON_OVERLOCK}))"),
                               ('flow_stick', "sewing_status = 'Стикеровка'"))
-                for t in ('FBS', 'FBO')
+                for t in ('FBS', 'FBO', 'IM')
             ) +
             "0 AS _end "
             "FROM orders)",
@@ -196,17 +214,17 @@ def handler(event: dict, context) -> dict:
             # Вещи на складе под живыми заказами: подбор → собрано → в поставке.
             "flow_part AS (SELECT "
             + ''.join(
-                f"COUNT(*) FILTER (WHERE o.order_type = '{t}' AND {cond}) AS {k}_{t.lower()}, "
+                f"COUNT(*) FILTER (WHERE {KIND_SQL_O[t]} AND {cond}) AS {k}_{t.lower()}, "
                 for k, cond in (
                     ('flow_pick', "NOT x.live AND g.status = 'picking' AND g.shipping_labeled_at IS NULL"),
                     ('flow_ready', "NOT x.live AND NOT (g.status = 'picking' AND g.shipping_labeled_at IS NULL)"),
                     ('flow_supply', "x.live"),
                 )
-                for t in ('FBS', 'FBO')
+                for t in ('FBS', 'FBO', 'IM')
             ) +
             "0 AS _end "
             "FROM goods_warehouse g "
-            "JOIN (SELECT id, order_type FROM orders "
+            "JOIN (SELECT id, order_type, marketplace FROM orders "
             f"      WHERE {NOT_CANCELLED} "
             "        AND COALESCE(status, '') NOT IN ('Отгружен', 'Доставлен', 'Выполнен')) o "
             "  ON o.id = g.reserved_order_id "
@@ -250,6 +268,7 @@ def handler(event: dict, context) -> dict:
             "ship_part.not_shipped", "ship_part.not_received", "dup_part.duplicates",
             "orders_part.new_on_conveyor", "orders_part.new_conveyor_fbs", "orders_part.new_conveyor_fbo",
             "orders_part.new_on_picking", "orders_part.new_picking_fbs", "orders_part.new_picking_fbo",
+            "orders_part.new_conveyor_im",
         ] + [f"orders_part.{c}" for c in FLOW_ORDER_COLS] + [f"flow_part.{c}" for c in FLOW_GOODS_COLS]
         from_parts = ["orders_part", "ship_part", "dup_part", "flow_part"]
 
@@ -340,9 +359,10 @@ def handler(event: dict, context) -> dict:
             'newOnPicking': int(row[12] or 0),
             'newPickingFbs': int(row[13] or 0),
             'newPickingFbo': int(row[14] or 0),
+            'newConveyorIm': int(row[15] or 0),
         }
         flow_cols = FLOW_ORDER_COLS + FLOW_GOODS_COLS
-        flow_vals = row[15:15 + len(flow_cols)]
+        flow_vals = row[16:16 + len(flow_cols)]
         # {stage: {fbs, fbo}} — путь товара: крой, пошив, стикеровка, подбор,
         # собрано (ждёт скан в поставку), в поставке.
         flow = {}
@@ -350,7 +370,7 @@ def handler(event: dict, context) -> dict:
             stage, kind = col[len('flow_'):].rsplit('_', 1)
             flow.setdefault(stage, {})[kind] = int(val or 0)
         result['flow'] = flow
-        base = 15 + len(flow_cols)
+        base = 16 + len(flow_cols)
 
         if warehouse:
             result['lowStockRolls'] = row[base]

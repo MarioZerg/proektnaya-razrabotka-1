@@ -2,13 +2,14 @@
 
 Считаем только магазин МЕГАТЮЛЬ и только площадки (без сайта).
 
-БАЗА — сумма, которую площадка начислила продавцу за месяц: продажи минус
-возвраты, комиссия, логистика и услуги площадки (решение владельца,
-03.11.2026). Полная выручка с баллами площадки давала базу вдвое больше.
-Переводы своих же денег на счёт сюда не попадают вовсе.
+БАЗА — с 03.11.2026 сумма, НАЧИСЛЕННАЯ продавцу площадкой (после комиссий,
+логистики и услуг), а не полная выручка. Ниже — прежнее описание выручки.
+Доход — цена, по которой площадка продала вещь: деньги покупателя плюс то,
+что площадка доплатила за свои скидки. Комиссия, логистика и хранение доход
+не уменьшают. Переводы своих же денег на счёт сюда не попадают вовсе.
 
-НДС 5% считается внутри базы: НДС = база × 5 / 105. УСН берётся с базы
-без НДС: УСН = (база − НДС) × 6%.
+НДС 5% уже сидит внутри цены: НДС = выручка × 5 / 105. Доход для УСН берётся
+без НДС: УСН = (выручка − НДС) × 6%.
 
 НАЧИСЛЕНИЕ РАЗ В МЕСЯЦ. За закрытый месяц налог записывается в tax_accruals
 один раз — как только отчёты площадки за него пришли (обычно 1-го числа) —
@@ -16,12 +17,11 @@
 сколько к уплате за прошлый месяц, а не плавающая цифра.
 
 Источники по площадкам:
-  * OZON — отчёт о выплатах (cash-flow statement): accrued_amount за периоды
-    месяца. Готов сразу после конца месяца;
-  * WB — еженедельный отчёт о реализации (accrued_amount), неделя идёт в
-    месяц своего конца;
-  * Яндекс Маркет — доставленные заказы из статистики заказов минус
-    комиссии Яндекса по ним.
+  * OZON — отчёт о выплатах (cash-flow statement): orders_amount за периоды
+    месяца. Совпадает с отчётом о реализации до десятых процента, но готов
+    сразу после конца месяца, а реализация — только через несколько дней;
+  * WB — еженедельный отчёт о реализации, неделя идёт в месяц своего конца;
+  * Яндекс Маркет — доставленные заказы из статистики заказов.
 """
 import json
 import urllib.error
@@ -72,11 +72,14 @@ def _enabled(cur):
 
 
 def _month_revenue(cur, code, month):
-    """(продажи, возвраты, база налога) площадки за месяц или None, если отчёт не готов.
+    """(выручка, возвраты, база) площадки за месяц или None, если отчёт ещё не готов.
 
-    База — начислено продавцу: продажи минус возвраты, комиссия, логистика и
-    услуги. Готов — значит, данные площадки забирали уже после конца месяца:
-    иначе в них нет последних дней, и начисление вышло бы заниженным навсегда.
+    БАЗА НАЛОГА — сумма, которую площадка НАЧИСЛИЛА продавцу: продажи минус
+    возвраты, комиссия, логистика и прочие услуги площадки. Так решил владелец
+    (03.11.2026); выручку и возвраты храним рядом — для сверки.
+
+    Готов — значит, данные площадки забирали уже после конца месяца: иначе
+    в них нет последних дней, и начисление вышло бы заниженным навсегда.
     """
     end = _next_month(month)
     if code in ('ozon', 'wildberries'):
@@ -84,22 +87,22 @@ def _month_revenue(cur, code, month):
         synced = cur.fetchone()[0]
         if not synced or synced.date() < end:
             return None
-        # OZON делит периоды по месяцам — берём по началу; неделя WB идёт в месяц своего конца.
+        # OZON кладёт период в месяц его начала, WB — неделю в месяц её конца.
         col = 'period_start' if code == 'ozon' else 'period_end'
         cur.execute(
             "SELECT COALESCE(sum(orders_amount), 0), COALESCE(-sum(returns_amount), 0), "
-            "  COALESCE(sum(accrued_amount), 0) "
+            "       COALESCE(sum(accrued_amount), 0) "
             f"FROM marketplace_payouts WHERE marketplace_code = %s AND {col} >= %s AND {col} < %s",
             (code, month, end),
         )
     else:
         cur.execute(
-            "SELECT revenue, returns, revenue - returns - fees FROM tax_revenue_monthly "
+            "SELECT revenue, returns, revenue - returns - COALESCE(fees, 0) FROM tax_revenue_monthly "
             "WHERE marketplace_code = %s AND month = %s AND synced_at >= %s",
             (code, month, end),
         )
     row = cur.fetchone()
-    return tuple(float(v or 0) for v in row) if row else None
+    return (float(row[0] or 0), float(row[1] or 0), float(row[2] or 0)) if row else None
 
 
 def accrue_missing(cur):
@@ -108,7 +111,8 @@ def accrue_missing(cur):
     usn, vat = s['usnPct'], s['vatPct']
     this_month = _month(date.today())
     enabled = _enabled(cur)
-    cur.execute("SELECT month, marketplace_code FROM tax_accruals")
+    # Старые начисления от полной выручки (base пустой) пересчитываем заново.
+    cur.execute("SELECT month, marketplace_code FROM tax_accruals WHERE base IS NOT NULL")
     done = {(r[0], r[1]) for r in cur.fetchall()}
 
     added = []
@@ -121,11 +125,16 @@ def accrue_missing(cur):
             if rr is None:
                 continue
             revenue, returns, base = rr
+            base = max(base, 0.0)
             vat_sum = base * vat / (100 + vat) if vat else 0.0
             usn_sum = (base - vat_sum) * usn / 100
             cur.execute(
                 "INSERT INTO tax_accruals (month, marketplace_code, revenue, returns, base, vat, usn, total) "
-                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s) ON CONFLICT DO NOTHING",
+                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s) "
+                "ON CONFLICT (month, marketplace_code) DO UPDATE SET revenue = EXCLUDED.revenue, "
+                "  returns = EXCLUDED.returns, base = EXCLUDED.base, vat = EXCLUDED.vat, "
+                "  usn = EXCLUDED.usn, total = EXCLUDED.total, created_at = now() "
+                "WHERE tax_accruals.base IS NULL",
                 (m, code, round(revenue, 2), round(returns, 2), round(base, 2), round(vat_sum, 2),
                  round(usn_sum, 2), round(vat_sum + usn_sum, 2)),
             )
@@ -161,7 +170,7 @@ def summary(cur):
 
     # Закрытые месяцы, где отчёт какой-то площадки ещё не пришёл.
     enabled = _enabled(cur)
-    cur.execute("SELECT month, marketplace_code FROM tax_accruals")
+    cur.execute("SELECT month, marketplace_code FROM tax_accruals WHERE base IS NOT NULL")
     done = {(r[0], r[1]) for r in cur.fetchall()}
     waiting = []
     m = s['startMonth']
@@ -237,9 +246,8 @@ def sync_ym_revenue(cur, creds, month_back=1):
     """Выручка Яндекс Маркета за месяц по доставленным заказам.
 
     Статистика заказов отдаёт JSON сразу: цену покупателя по каждой позиции,
-    субсидии площадки за скидки, сколько штук вернули и комиссии Яндекса по
-    заказу (fees — вычитаются из базы налога). Месяц — по дате последнего
-    статуса (доставка или возврат).
+    субсидии площадки за скидки и сколько штук вернули. Месяц — по дате
+    последнего статуса (доставка или возврат).
     """
     api_key = (creds.get('apiKey') or '').strip()
     campaign = str(creds.get('campaignId') or '').strip()
@@ -282,11 +290,12 @@ def sync_ym_revenue(cur, creds, month_back=1):
             for s in o.get('subsidies') or []:
                 amt = float(s.get('amount') or 0)
                 subsidy += -amt if s.get('operationType') == 'DEDUCTION' else amt
+            # Комиссии и услуги Яндекса по заказу (размещение, доставка, приём платежа).
+            for c in o.get('commissions') or []:
+                fees += float(c.get('actual') if c.get('actual') is not None else c.get('predicted') or 0)
             share = ret_total / buyer_total if buyer_total else 0.0
             revenue += buyer_total + subsidy
             returns += ret_total + subsidy * share
-            # Комиссии Яндекса по заказу (размещение, доставка, приём платежа…).
-            fees += sum(abs(float(c.get('actual') or 0)) for c in (o.get('commissions') or []))
             orders += 1
         token = (res.get('paging') or {}).get('nextPageToken') or ''
         if not token:

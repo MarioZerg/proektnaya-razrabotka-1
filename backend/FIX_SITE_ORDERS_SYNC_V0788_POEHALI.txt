@@ -1,0 +1,44 @@
+# Промпт для агента CRM на poehali.dev — заказы мегатюль.рф не попадают на конвейер (04.11.2026)
+
+Скопируй текст НИЖЕ агенту CRM целиком.
+
+---
+
+Ты — агент проекта CRM на poehali.dev.
+
+Проблема: оплаченный заказ сайта мегатюль.рф MT-2407 (Бамбук 700×250, покупатель
+Владимир, Краснодар) не появляется на конвейере во вкладке «Интернет-магазин».
+Сайт отдаёт заказ корректно: GET /api/crm/orders?status=paid возвращает его
+каждые 30 минут.
+
+Функция site_orders, action 'sync', падает при записи заказа:
+
+  File "/function/code/index.py", line 286, in sync_orders
+    cur.execute(  -- INSERT INTO orders (...)
+  psycopg2.errors.InsufficientPrivilege: object not found
+
+В этом INSERT пишутся колонки источника трафика из миграции
+db_migrations/V0788__site_order_traffic.sql:
+site_traffic_channel, site_ad_campaign, site_ad_content, site_ad_keyword,
+site_ad_yclid, site_ad_at. В коммите 8d8d5165 было сказано «сначала применить
+миграцию, потом выкладывать функцию site_orders». Похоже, функция выложена,
+а миграция V0788 к базе не применена. Колонки из V0774/V0775
+(site_partner_rub, site_delivery_cost_rub и др.) в базе есть — их читает
+action 'orders_profit' без ошибок.
+
+Что сделать:
+
+1. Проверь, есть ли в таблице orders колонки из V0788. Если нет — примени
+   миграцию V0788__site_order_traffic.sql (ADD COLUMN IF NOT EXISTS, безопасна).
+   Если колонки есть — найди, какой объект INSERT в sync_orders не находит
+   (колонка, последовательность, ограничение для ON CONFLICT (order_number)),
+   и исправь.
+
+2. Запусти site_orders с { "action": "sync" } и убедись, что ответ
+   {"created": 1, "orders": ["MT-2407"], ...} без ошибки.
+
+3. Проверь, что заказ SITE-MT-2407 стоит в «Новых» на вкладке «Интернет-магазин»,
+   и что после { "action": "check_statuses" } у него подтянулся трек Ozon
+   Y731764E7E48-433E и этикетка.
+
+4. Пришли: что было причиной, что исправлено, ответ sync.

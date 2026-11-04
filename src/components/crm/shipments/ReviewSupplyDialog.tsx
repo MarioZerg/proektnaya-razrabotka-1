@@ -146,7 +146,7 @@ const ReviewSupplyDialog = ({
     <>
       {/* Карточка подтверждения поставки администратором */}
       <Dialog open={!!reviewShipment} onOpenChange={(open) => !open && onOpenChange(false)}>
-        <DialogContent className="max-w-2xl">
+        <DialogContent className="max-h-[92dvh] max-w-2xl md:max-w-[min(1100px,calc(100vw-4rem))]">
           <DialogHeader>
             <DialogTitle>
               {canApprove ? 'Проверка' : 'Редактирование'} поставки #{reviewShipment?.id}

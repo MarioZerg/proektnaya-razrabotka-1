@@ -1,7 +1,6 @@
 import CrmLayout from '@/components/crm/CrmLayout';
 import FinanceSummaryCard from '@/components/crm/finance/FinanceSummaryCard';
 import SalaryPayoutsTable from '@/components/crm/finance/SalaryPayoutsTable';
-import ShaftPremiumsCard from '@/components/crm/finance/ShaftPremiumsCard';
 import TaxesCard from '@/components/crm/finance/TaxesCard';
 import SalaryRatesCard from '@/components/crm/finance/SalaryRatesCard';
 import CashBoxCard from '@/components/crm/finance/CashBoxCard';
@@ -234,7 +233,6 @@ const AdminFinanceView = ({
       {/* Налоги с маркетплейсов — отдельно от зарплат: копятся из отчётов площадок. */}
       <TaxesCard />
 
-      <ShaftPremiumsCard onPaid={onRetryCash} />
 
       <SalaryPayoutsTable
         payouts={payouts}

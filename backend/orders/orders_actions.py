@@ -17,6 +17,9 @@ from bulk_cancel import (
     restore_single_order,
 )
 from shared import (
+    cut_paused_sql,
+    cut_paused_products,
+    CUT_PAUSE_KEY,
     shift_over_response,
     shift_time_over,
     order_item_id,
@@ -94,6 +97,45 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
             return handle_bulk_cancel(
                 cur, conn, headers, body_data, admin['realUserId'], admin['name'],
             )
+
+        # Пауза выдачи отдельных товаров на раскрой (кончилась ткань).
+        if action == 'set_cut_pause':
+            try:
+                admin = require_admin(cur, event)
+            except AuthError as e:
+                return auth_error_response(e, headers)
+            raw = body_data.get('paused') or []
+            seen, paused = set(), []
+            for x in raw if isinstance(raw, list) else []:
+                name = ' '.join(str(x).split())[:80]
+                if name and name.lower() not in seen:
+                    seen.add(name.lower())
+                    paused.append(name)
+            before = cut_paused_products(cur)
+            cur.execute(
+                "INSERT INTO system_settings (key, value) VALUES (%s, %s) "
+                "ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()",
+                (CUT_PAUSE_KEY, json.dumps(paused, ensure_ascii=False)),
+            )
+            off = [n for n in paused if n.lower() not in {b.lower() for b in before}]
+            on = [b for b in before if b.lower() not in seen]
+            parts = []
+            if off:
+                parts.append('остановил выдачу: ' + ', '.join(off))
+            if on:
+                parts.append('возобновил выдачу: ' + ', '.join(on))
+            if parts:
+                log_action(
+                    cur, admin['realUserId'], admin['name'],
+                    'set_cut_pause', 'system', None,
+                    'Раскрой — ' + '; '.join(parts),
+                )
+            conn.commit()
+            return {
+                'statusCode': 200,
+                'headers': headers,
+                'body': json.dumps({'paused': paused}, ensure_ascii=False),
+            }
 
         # Рубильник на главной: админ выключает выдачу заказов всем сразу.
         if action == 'set_conveyor_issue':
@@ -315,6 +357,7 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                 }
 
             names_csv = ','.join("'" + n.replace("'", "''") + "'" for n in allowed_names)
+            paused_sql = cut_paused_sql(cur)
             # Порядок очереди задан одним местом — cut_queue_order_sql (shared.py):
             # залежавшиеся заказы, затем FBS, затем быстрые в раскрое ткани, затем
             # дата заказа. Здесь его не дублируем, чтобы выдача стека и предпросмотр
@@ -396,9 +439,10 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                 # и отменённый заказ попадал закройщику в стек: ткань резали на вещь,
                 # которую уже никто не ждёт.
                 f"AND NOT ({cancelled_sql('')}) "
-                "AND material IN (" + names_csv + ") "
+                "AND material IN (" + names_csv + ") " + paused_sql
                 + single_sql +
-                "ORDER BY (order_type = 'FBS') DESC, " + cut_ozon_last_sql + cut_queue_order_sql()
+                "ORDER BY (marketplace = 'IM') DESC, (order_type = 'FBS') DESC, "
+                + cut_ozon_last_sql + cut_queue_order_sql()
                 + " LIMIT %s FOR UPDATE SKIP LOCKED",
                 (stack_size,),
             )
@@ -454,7 +498,7 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                 f"AND {HELD_BY_SHELF_SQL}"
                     f"AND NOT ({cancelled_sql('')}) "
                     f"AND group_key IN ({keys_csv}) "
-                    "AND material IN (" + names_csv + ") "
+                    "AND material IN (" + names_csv + ") " + paused_sql + 
                     "FOR UPDATE SKIP LOCKED"
                 )
                 group_ids = sorted({r[0] for r in cur.fetchall()})
@@ -496,7 +540,7 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                     f"AND NOT ({cancelled_sql('')}) "
                     "AND marketplace = 'OZON' "
                     "AND ozon_posting_number IS NOT NULL "
-                    "AND material IN (" + names_csv + ") "
+                    "AND material IN (" + names_csv + ") " + paused_sql + 
                     # Префикс отправления — номер покупки без хвоста «-1», «-3».
                     "AND regexp_replace(ozon_posting_number, '-[0-9]+$', '') IN ("
                     "  SELECT regexp_replace(ozon_posting_number, '-[0-9]+$', '') "
@@ -641,7 +685,7 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                         "AND fulfilled_from_stock_id IS NULL "
                 f"AND {HELD_BY_SHELF_SQL}"
                         f"AND NOT ({cancelled_sql('')}) "
-                        "AND material IN (" + names_csv + ") "
+                        "AND material IN (" + names_csv + ") " + paused_sql + 
                         "AND (group_key IS NULL OR COALESCE(group_size, 1) <= 1) "
                         f"AND ({ozon_split_purchase_sql('')}) LIMIT 1"
                     )
@@ -2277,6 +2321,9 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
             # FBS-заказы ВСЕГДА идут первыми в очереди — это жёсткое правило, оно важнее
             # любых настроек приоритета цеха и отсечки OZON: раньше после отсечки
             # FBO с WB/Яндекса обгонял OZON FBS.
+            # Интернет-магазин — раньше всех, даже FBS площадок и OZON: свой
+            # покупатель, оплатил напрямую, заказов единицы в день.
+            order_parts.append("(marketplace = 'IM') DESC")
             order_parts.append("(order_type = 'FBS') DESC")
             if ozon_last:
                 order_parts.append("(marketplace = 'OZON') ASC")

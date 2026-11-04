@@ -71,7 +71,11 @@ export const useSewingItemsFilters = ({
   const [widthFilter, setWidthFilter] = useState('all');
   const [heightFilter, setHeightFilter] = useState('all');
   const [workshopFilter, setWorkshopFilter] = useState('all');
-  const [marketplaceFilter, setMarketplaceFilter] = useState('all');
+  // Площадку можно задать в ссылке (?mp=IM): колонка «ИМ» на главной открывает
+  // общий конвейер сразу с заказами интернет-магазина.
+  const [marketplaceFilter, setMarketplaceFilter] = useState(
+    () => new URLSearchParams(window.location.search).get('mp') || 'all'
+  );
   // Период выполнения работы — только для вкладки «Готовые». Швея и закройщик сверяют
   // по нему свою выработку: «что я сделала за эту неделю». Пустые значения = без границ.
   const [doneFrom, setDoneFrom] = useState('');
@@ -180,7 +184,13 @@ export const useSewingItemsFilters = ({
   // «Срочные FBS» (?type=FBS), видела одну вещь из двух, а кнопка «В работе 2 из 2»
   // уверяла, что их две, — заказ будто «пропадал».
   const passesUserFilters = (o: Order) => {
-    if (searchQuery.trim() && !o.orderNumber.toLowerCase().includes(searchQuery.trim().toLowerCase())) return false;
+    if (searchQuery.trim()) {
+      // Ищем по любому номеру: нашему, отправления Ozon и треку Ozon Доставки
+      // у заказов сайта — покупатель и курьер называют именно их.
+      const q = searchQuery.trim().toLowerCase();
+      const numbers = [o.orderNumber, o.ozonPostingNumber, o.deliveryTrackingNumber];
+      if (!numbers.some((n) => (n || '').toLowerCase().includes(q))) return false;
+    }
     // «Юр. лицо» — не тип заказа, а признак покупателя: такие заказы бывают
     // и FBS, и FBO, поэтому проверяем отдельным условием.
     if (typeFilter === 'legal' && !o.isLegalEntity) return false;

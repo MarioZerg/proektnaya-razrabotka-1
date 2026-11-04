@@ -1294,6 +1294,35 @@ def hat_boost_limit(cur, user_id, max_orders):
     return max_orders
 
 
+CUT_PAUSE_KEY = 'cut_paused_products'
+
+
+def cut_paused_products(cur) -> list:
+    """Ткани, выдачу которых на раскрой админ временно выключил (ткань кончилась).
+
+    Хранится в system_settings списком названий материалов из справочника
+    («Шифон», «Лен»). Заказ с такой тканью закройщикам не выдаётся.
+    """
+    cur.execute("SELECT value FROM system_settings WHERE key = %s", (CUT_PAUSE_KEY,))
+    row = cur.fetchone()
+    if not row or not row[0]:
+        return []
+    try:
+        items = json.loads(row[0])
+    except Exception:
+        return []
+    return [str(x).strip() for x in items if str(x).strip()] if isinstance(items, list) else []
+
+
+def cut_paused_sql(cur, alias: str = '') -> str:
+    """SQL-кусок « AND material NOT IN (...) » по выключенным тканям. Пусто, если пауз нет."""
+    names = expand_material_names(cut_paused_products(cur))
+    if not names:
+        return ' '
+    csv = ','.join("'" + n.replace("'", "''") + "'" for n in names)
+    return f" AND COALESCE({alias}material, '') NOT IN ({csv}) "
+
+
 CONVEYOR_ISSUE_KEY = 'conveyor_issue_enabled'
 CONVEYOR_ISSUE_OFF_ERROR = (
     'Конвейер выключен администратором — заказы сейчас не выдают'
@@ -1622,6 +1651,7 @@ def cut_queue_order_sql(date_expr: str = 'COALESCE(marketplace_created_at, creat
 
     Уровни, сверху вниз:
 
+    00. Интернет-магазин (marketplace='IM') — раньше всех, включая OZON.
     0. FBS — всегда раньше FBO.
     1. ЗАЛЕЖАВШИЕСЯ ЗАКАЗЫ (старше двух суток) — вперёд остальных своего типа,
        независимо от ткани. Это страховка: без неё сетка и мрамор откладывались бы каждый
@@ -1641,7 +1671,12 @@ def cut_queue_order_sql(date_expr: str = 'COALESCE(marketplace_created_at, creat
     # двое суток вся она становится «залежавшейся» и раньше обгоняла свежие
     # FBS: 19–20.10 раскроили 430 FBO, пока 200 FBS ждали. Срок FBS — сутки,
     # поэтому сначала FBS, а «залежавшиеся» поднимаются уже внутри своего типа.
+    # ЗАКАЗЫ ИНТЕРНЕТ-МАГАЗИНА (мегатюль.рф) — ПЕРВЫМИ, ДАЖЕ РАНЬШЕ OZON.
+    # Это наш покупатель, оплативший напрямую: ждёт посылку Ozon Доставкой и
+    # пишет нам, а не в поддержку площадки. Их единицы в день — очередь они не
+    # задерживают, а срок у них самый жёсткий.
     return (
+        "(marketplace = 'IM') DESC, "
         "(order_type = 'FBS') DESC, "
         f"({overdue}) DESC, "
         + cut_speed_order_sql(column, overdue) +

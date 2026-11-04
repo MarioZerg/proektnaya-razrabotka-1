@@ -9,6 +9,7 @@ import SupplyTypeWidgets from '@/components/crm/marketplaceSupplies/SupplyTypeWi
 import ToMarketplaceFilters from '@/components/crm/marketplaceSupplies/ToMarketplaceFilters';
 import ToMarketplaceTable from '@/components/crm/marketplaceSupplies/ToMarketplaceTable';
 import FboProposalsPanel from '@/components/crm/marketplaceSupplies/FboProposalsPanel';
+import FboSewPlanPanel from '@/components/crm/marketplaceSupplies/sewPlan/FboSewPlanPanel';
 import ConfirmFbsSupplyDialog from '@/components/crm/marketplaceSupplies/ConfirmFbsSupplyDialog';
 import { createOptions } from '@/components/crm/marketplaceSupplies/toMarketplaceConstants';
 import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
@@ -50,7 +51,7 @@ const ToMarketplace = () => {
     ? [{ marketplace: 'IM', type: 'FBS' as const, label: 'Отгрузка' }]
     : availableCreateOptions;
 
-  const [feed, setFeed] = useState<'supplies' | 'proposals'>('supplies');
+  const [feed, setFeed] = useState<'supplies' | 'proposals' | 'sew'>('supplies');
 
   return (
     <CrmLayout>
@@ -68,7 +69,7 @@ const ToMarketplace = () => {
         <ShopTabs shops={shops} value={shopId} onChange={setShopId} />
 
         {!isSiteShop && (
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           <Button
             type="button"
             variant={feed === 'supplies' ? 'default' : 'outline'}
@@ -83,10 +84,28 @@ const ToMarketplace = () => {
           >
             Авто предложения поставки FBO
           </Button>
+          {user?.role === 'admin' && (
+            <Button
+              type="button"
+              variant={feed === 'sew' ? 'default' : 'outline'}
+              onClick={() => setFeed('sew')}
+            >
+              Поставка FBO в пошив
+            </Button>
+          )}
         </div>
         )}
 
-        {feed === 'proposals' && !isSiteShop ? (
+        {feed === 'sew' && !isSiteShop ? (
+          <FboSewPlanPanel
+            shopId={shopId}
+            isAdmin={user?.role === 'admin'}
+            onOpenSupply={(id) => {
+              setFeed('supplies');
+              navigate(`/crm/shipments/to-marketplace/${id}`);
+            }}
+          />
+        ) : feed === 'proposals' && !isSiteShop ? (
           <FboProposalsPanel
             shopId={shopId}
             actorId={user?.id}

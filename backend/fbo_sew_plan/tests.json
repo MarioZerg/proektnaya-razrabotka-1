@@ -1,0 +1,6 @@
+{"tests": [
+  {"name": "OPTIONS preflight", "method": "OPTIONS", "path": "/", "expectedStatus": 200},
+  {"name": "GET not allowed", "method": "GET", "path": "/", "expectedStatus": 405},
+  {"name": "Build without login rejected", "method": "POST", "path": "/", "body": {"action": "build", "shopId": 1, "pieces": 100}, "expectedStatus": 401},
+  {"name": "Cron without secret rejected", "method": "POST", "path": "/", "body": {"action": "sync_all"}, "expectedStatus": 403}
+]}

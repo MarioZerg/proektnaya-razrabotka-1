@@ -18,6 +18,8 @@ import psycopg2
 
 from floor_race import build_race
 from shared import (
+    cut_paused_sql,
+    cut_paused_products,
     order_item_id,
     CANCELLED_ORDERS_LIMIT,
     CANCELLED_SQL,
@@ -82,6 +84,9 @@ ORDER_LIST_COLUMNS = (
     # для таймлайна в карточке товара. Стоят сразу после cut/sewn, чтобы
     # хвост колонок (вешалка, магазин, оверлок, отмена) остался с конца.
     "o.taken_at, o.packed_at, o.overlock_taken_at, "
+    # Трек Ozon Доставки у заказов мегатюль.рф — r[43]. Читаем по номеру с
+    # начала, хвост (вешалка, магазин, оверлок…) считается с конца и не сдвигается.
+    "o.delivery_tracking_number, "
     # Название вешалки — последним полем, чтобы не сдвигать индексы
     # остальных колонок (их читают по номерам).
     "hg.name, "
@@ -222,6 +227,7 @@ def _row_to_order(r) -> dict:
         'takenAt': (r[40].isoformat() + 'Z') if r[40] else None,
         'packedAt': (r[41].isoformat() + 'Z') if r[41] else None,
         'overlockTakenAt': (r[42].isoformat() + 'Z') if r[42] else None,
+        'deliveryTrackingNumber': r[43],
     }
 
 
@@ -255,8 +261,8 @@ def _handle_search(cur, headers: dict, query: str) -> dict:
     есть в базе, но в список не попадает, и искать его было негде.
 
     Здесь запрос идёт прямо в базу по номеру, безо всяких лимитов свежести:
-    сколько бы лет заказу ни было, по номеру он найдётся. Ищем по трём номерам
-    сразу — нашему, отправления OZON и заказа покупателя Яндекса: в жизни
+    сколько бы лет заказу ни было, по номеру он найдётся. Ищем по всем номерам
+    сразу — нашему, отправления OZON, WB, Яндекса и треку Ozon Доставки: в жизни
     спрашивают любым из них, а человек за прилавком не обязан знать, чей это
     номер.
     """
@@ -267,10 +273,15 @@ def _handle_search(cur, headers: dict, query: str) -> dict:
         "   OR COALESCE(o.ozon_posting_number, '') ILIKE %s "
         "   OR COALESCE(o.wb_order_id::text, '') ILIKE %s "
         "   OR COALESCE(o.ym_order_id::text, '') ILIKE %s "
+        # Заказы мегатюль.рф едут через Ozon Доставку: у них свой трек вида
+        # Y731764E7E48-433E, а не номер отправления маркетплейса. Покупатель и
+        # курьер называют именно его — без этой строки заказ находился только
+        # по номеру сайта SITE-MT-….
+        "   OR COALESCE(o.delivery_tracking_number, '') ILIKE %s "
         # Свежие сверху: чаще ищут недавний заказ, а не однофамильца из архива.
         "ORDER BY o.id DESC "
         f"LIMIT {SEARCH_LIMIT}",
-        (like, like, like, like),
+        (like, like, like, like, like),
     )
     orders = _strip_empty([_row_to_order(r) for r in cur.fetchall()])
     return {
@@ -688,6 +699,33 @@ def handle_get(event: dict, headers: dict, dsn: str) -> dict:
                 }
             return _handle_search(cur, headers, search)
 
+        if params.get('cutPause'):
+            # Ткани для тумблеров паузы: активные материалы типа «Тюль» и сколько
+            # заказов по каждой ждёт раскроя.
+            cur.execute(
+                "SELECT m.name FROM materials m LEFT JOIN material_types t ON t.id = m.type_id "
+                "WHERE m.status = 'active' AND COALESCE(t.name, '') = 'Тюль' "
+                "ORDER BY m.sort_order NULLS LAST, m.name"
+            )
+            names = [r[0] for r in cur.fetchall()]
+            cur.execute(
+                "SELECT material, COUNT(*) FROM orders WHERE sewing_status = 'Новый' "
+                "AND fulfilled_from_stock_id IS NULL AND material IS NOT NULL "
+                "AND COALESCE(status, '') <> 'Отменён' AND cancelled_at IS NULL "
+                "GROUP BY material"
+            )
+            queue = {r[0]: int(r[1]) for r in cur.fetchall()}
+            materials = [
+                {'name': n, 'count': sum(queue.get(x, 0) for x in expand_material_names([n]))}
+                for n in names
+            ]
+            return {
+                'statusCode': 200,
+                'headers': headers,
+                'body': json.dumps({'paused': cut_paused_products(cur), 'materials': materials},
+                                   ensure_ascii=False),
+            }
+
         if params.get('conveyor'):
             return {
                 'statusCode': 200,
@@ -867,7 +905,7 @@ def handle_get(event: dict, headers: dict, dsn: str) -> dict:
                 "SELECT id, group_key, group_size FROM orders WHERE sewing_status = 'Новый' "
                 "AND fulfilled_from_stock_id IS NULL "
                 "AND COALESCE(status, '') <> 'Отменён' "
-                "AND material IN (" + p_names_csv + ") "
+                "AND material IN (" + p_names_csv + ") " + cut_paused_sql(cur) +
                 "ORDER BY " + cut_queue_order_sql() + " LIMIT %s",
                 (p_stack_size,),
             )
