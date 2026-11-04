@@ -468,6 +468,7 @@ def handler(event: dict, context) -> dict:
     POST { action: 'save_pricing', taxPct, acquiringPct, bloggerPct, profitByWidth: {'200': 250, ...} }
     POST { action: 'copy_packages' }      — упаковка с маркетплейсов на все товары сайта (админ)
     POST { action: 'set_package', itemIds, lengthMm, widthMm, heightMm, weightG } — упаковка (мм, г), сразу на сайт
+    POST { action: 'copy_packages' }         — упаковка с маркетплейсов на все товары сайта и сразу на сайт
     POST { action: 'auto_prices', force? }   — проставить рекомендованные цены (кроме ручных)
     POST { action: 'low_fabric' }            — ткани меньше 20 м и товары сайта на них
     GET  ?action=status                       — подключён ли магазин
@@ -564,6 +565,7 @@ def handler(event: dict, context) -> dict:
             return _resp(200, auto)
 
         if action == 'copy_packages':
+            # Упаковка с карточек маркетплейсов — на все товары сайта, и сразу на сайт.
             if not site_catalog.is_admin(cur, actor_id):
                 return _resp(403, {'error': 'Упаковку на сайте меняет администратор'})
             code, payload = site_catalog.copy_packages(cur, shop_id, site_url, api_key if enabled else '')

@@ -87,7 +87,7 @@ export interface SiteCatalogItem {
   packWidthMm?: number | null;
   packHeightMm?: number | null;
   packWeightG?: number | null;
-  /** 'ozon' — с карточки OZON, 'manual' — вписано вручную (OZON не перезапишет). */
+  /** ozon — с той же карточки, ozon_near — ближайшая высота той же ширины, manual — вписано вручную. */
   packSource?: 'ozon' | 'ozon_near' | 'manual' | null;
   /** Себестоимость из «Себестоимости товара»; null — расход не проставлен. */
   cost: number | null;
@@ -245,15 +245,18 @@ export const setSitePackage = (
 
 export interface SiteCopyPackagesResult {
   changed: number;
+  /** Тот же артикул / соседняя высота той же ширины. */
   exact: number;
   near: number;
+  /** Товаров, для которых на маркетплейсах не нашлось упаковки. */
   missing: number;
+  /** Всего товаров с упаковкой — все они отправлены на сайт. */
   withPackage: number;
   pushed: boolean;
   pushError: string | null;
 }
 
-/** Упаковка с карточек маркетплейсов на все товары сайта — и сразу на сайт. */
+/** Упаковка с карточек маркетплейсов на все товары сайта (ручную не трогает) — и сразу на сайт. */
 export const copySitePackages = (actor?: { id?: number; name?: string }): Promise<SiteCopyPackagesResult> =>
   post({ action: 'copy_packages', actorId: actor?.id, actorName: actor?.name });
 
