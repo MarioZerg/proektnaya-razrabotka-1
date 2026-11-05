@@ -1,0 +1,25 @@
+# Одна облачная функция poehali как служба: systemctl start yarplan-fn@orders
+[Unit]
+Description=yarplan function %i
+After=network.target postgresql.service
+
+[Service]
+User=yarplan
+Group=yarplan
+Environment=FN_DIR=/opt/yarplan/app/backend/%i
+# gunicorn держит служебные файлы в домашней папке — даём ей временную, своей у службы нет
+Environment=HOME=/run/yarplan-fn/%i
+EnvironmentFile=/opt/yarplan/.env
+WorkingDirectory=/opt/yarplan/app/backend/%i
+RuntimeDirectory=yarplan-fn/%i
+ExecStart=/opt/yarplan/venv/bin/gunicorn runner:app \
+  --pythonpath /opt/yarplan/deploy \
+  --bind unix:/run/yarplan-fn/%i/sock \
+  --umask 007 \
+  --workers 2 --threads 4 --timeout 300 --graceful-timeout 30 \
+  --access-logfile - --error-logfile -
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

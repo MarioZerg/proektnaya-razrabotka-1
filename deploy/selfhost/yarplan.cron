@@ -1,0 +1,42 @@
+# Фоновые задания системы — вместо cron.мегатюль.рф. Время московское.
+#
+# Состав и частота — как в cron.мегатюль.рф на 05.11.2026 (13 заданий,
+# сверено по журналу запусков). Минуты разнесены, чтобы задания не
+# стартовали одновременно; частота та же.
+#
+# ВНИМАНИЕ: включать (класть в /etc/cron.d/yarplan) только в ночь переезда,
+# одновременно с отключением этих заданий в cron.мегатюль.рф. Два
+# планировщика сразу — двойные загрузки и двойные статусы.
+SHELL=/bin/bash
+CRON_TZ=Europe/Moscow
+J=/opt/yarplan/deploy/run_job.sh
+
+# --- приём заказов
+1-59/15 * * * *  root $J ozon_fbs sync_orders
+4-59/15 * * * *  root $J wb_fbs sync_orders
+7-59/15 * * * *  root $J yandex_market sync
+9-59/30 * * * *  root $J site_orders sync
+27 * * * *       root $J site_orders sync_products
+
+# --- отмены и статусы
+29 * * * *       root $J ozon_fbs refresh_all_statuses
+57 * * * *       root $J wb_fbs check_statuses
+3 * * * *        root $J yandex_market check_statuses
+19-59/20 * * * * root $J site_orders check_statuses
+
+# --- склад и цех
+12 * * * *       root $J marketplace_returns sync
+33 * * * *       root $J ozon_fbs split_pending
+13-59/30 * * * * root $J marketplace_supplies auto_statuses POST
+48 */6 * * *     root $J unit_economics auto_sync_prices POST
+
+# --- ЕСТЬ В КОДЕ, НО СЕЙЧАС НЕ ЗАПУСКАЮТСЯ. Включать только осознанно:
+# робот цен сам меняет цены на площадках, автозакрытие смен ставит штрафы.
+#42 * * * *       root $J price_robot run POST
+#5 3 * * *        root $J shift_sessions auto_close POST
+#16-59/30 * * * * root $J salary auto_accrue POST
+#35 4 * * *       root $J ad_spend tax_sync POST
+#21 */2 * * *     root $J ad_spend sync_sales POST
+#10 4 * * *       root $J ad_spend sync POST
+#50 3 * * *       root $J promotion capture POST
+#38 * * * *       root $J fbo_sew_plan sync_all POST
