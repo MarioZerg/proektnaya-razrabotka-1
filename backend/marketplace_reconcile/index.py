@@ -5,6 +5,7 @@ import urllib.request
 from datetime import datetime, timedelta, timezone
 
 import psycopg2
+from authz import guard_request
 
 CORS = {
     'Access-Control-Allow-Origin': '*',
@@ -200,6 +201,11 @@ def handler(event: dict, context) -> dict:
     Показывает администратору, не теряются ли заказы по дороге. Только чтение —
     ничего не создаёт и не меняет ни у нас, ни на площадках.
     """
+    # Вход по токену и настоящий actorId — см. authz.guard_request.
+    denied = guard_request(event)
+    if denied:
+        return denied
+
     if event.get('httpMethod') == 'OPTIONS':
         return {'statusCode': 200, 'headers': CORS, 'body': ''}
     if event.get('httpMethod', 'GET') != 'GET':

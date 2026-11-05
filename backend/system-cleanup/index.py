@@ -2,6 +2,7 @@ import json
 import os
 
 import psycopg2
+from authz import guard_request
 
 
 # Фраза, которую администратор вводит руками. Защита от случайного нажатия:
@@ -194,6 +195,11 @@ def handler(event: dict, context) -> dict:
     Returns:
         HTTP-ответ со сводкой: что и сколько удалено
     """
+    # Вход по токену и настоящий actorId — см. authz.guard_request.
+    denied = guard_request(event, roles=('admin',))
+    if denied:
+        return denied
+
     method = event.get('httpMethod', 'GET')
     headers = {
         'Access-Control-Allow-Origin': '*',

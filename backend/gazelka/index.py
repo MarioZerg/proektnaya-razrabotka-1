@@ -5,6 +5,7 @@ import urllib.error
 import re
 
 import psycopg2
+from authz import guard_request
 
 # API сервиса грузоперевозок Газелька (gazelka.space). Только чтение заявок для привязки к
 # нашим FBO-поставкам. Ключ — в секрете GAZELKA_API_KEY (Bearer).
@@ -162,6 +163,11 @@ def handler(event: dict, context) -> dict:
     Returns:
         dict: HTTP-ответ со списком заявок Газельки
     """
+    # Вход по токену и настоящий actorId — см. authz.guard_request.
+    denied = guard_request(event)
+    if denied:
+        return denied
+
     method = event.get('httpMethod', 'GET')
     if method == 'OPTIONS':
         return {'statusCode': 200, 'headers': CORS_HEADERS, 'body': ''}

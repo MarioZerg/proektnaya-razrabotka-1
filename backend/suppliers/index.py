@@ -4,6 +4,7 @@ import os
 import psycopg2
 
 from onec_flush import enqueue_onec_entity, flush_onec_outbox
+from authz import guard_request
 
 
 def handler(event: dict, context) -> dict:
@@ -27,6 +28,11 @@ def handler(event: dict, context) -> dict:
     Returns:
         dict: HTTP-ответ со списком/результатом операции над поставщиками
     """
+    # Вход по токену и настоящий actorId — см. authz.guard_request.
+    denied = guard_request(event)
+    if denied:
+        return denied
+
     method = event.get('httpMethod', 'GET')
 
     if method == 'OPTIONS':

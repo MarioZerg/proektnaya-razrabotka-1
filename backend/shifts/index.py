@@ -4,6 +4,7 @@ from calendar import monthrange
 from datetime import date, timedelta
 
 import psycopg2
+from authz import guard_request
 
 # Закрытые цеха: производство осталось только в «Цех №1». Строки цехов и их
 # смен в базе сохранены (на них ссылается история), поэтому из всех выдач их
@@ -146,6 +147,11 @@ def handler(event: dict, context) -> dict:
     Returns:
         dict: HTTP-ответ со списком/детальными данными/результатом операции
     """
+    # Вход по токену и настоящий actorId — см. authz.guard_request.
+    denied = guard_request(event)
+    if denied:
+        return denied
+
     method = event.get('httpMethod', 'GET')
 
     if method == 'OPTIONS':

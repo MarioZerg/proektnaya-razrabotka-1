@@ -6,6 +6,7 @@
 """
 import json
 import math
+import os
 import re
 import time
 import urllib.error
@@ -40,7 +41,10 @@ def _cost_map():
     data = None
     for attempt in range(2):
         try:
-            with urllib.request.urlopen(PRODUCT_COST_URL, timeout=20) as r:
+            # Служебный вызов: себестоимость пускает только вошедших или по ключу.
+            req = urllib.request.Request(
+                PRODUCT_COST_URL, headers={'X-Cron-Secret': os.environ.get('CRON_SECRET', '')})
+            with urllib.request.urlopen(req, timeout=20) as r:
                 data = json.loads(r.read().decode('utf-8') or '{}')
             break
         except Exception:

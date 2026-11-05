@@ -119,7 +119,9 @@ def _margin_index():
     for scheme in ('FBS', 'FBO'):
         try:
             req = urllib.request.Request(
-                f'{UNIT_ECONOMICS_URL}?marketplace=ozon&scheme={scheme}')
+                f'{UNIT_ECONOMICS_URL}?marketplace=ozon&scheme={scheme}',
+                # Служебный вызов: юнит-экономика пускает только вошедших или по ключу.
+                headers={'X-Cron-Secret': os.environ.get('CRON_SECRET', '')})
             with urllib.request.urlopen(req, timeout=25) as r:
                 data = json.loads(r.read().decode())
         except Exception:

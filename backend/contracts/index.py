@@ -13,6 +13,7 @@ import requests
 
 import templates
 from pdf_builder import build_contract_pdf
+from authz import guard_request
 
 
 MAX_API_URL = 'https://platform-api2.max.ru'
@@ -213,6 +214,11 @@ def handler(event: dict, context) -> dict:
     Returns:
         dict: HTTP-ответ со списком договоров или результатом операции
     """
+    # Вход по токену и настоящий actorId — см. authz.guard_request.
+    denied = guard_request(event)
+    if denied:
+        return denied
+
     method = event.get('httpMethod', 'GET')
     headers = {
         'Access-Control-Allow-Origin': '*',

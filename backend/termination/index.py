@@ -27,6 +27,7 @@ import psycopg2
 import requests
 
 from termination_pdf import build_termination_pdf
+from authz import guard_request
 
 MAX_API_URL = 'https://platform-api2.max.ru'
 
@@ -237,6 +238,11 @@ def handler(event: dict, context) -> dict:
     POST /  { action: 'confirm', terminationId, actorId }
     POST /  { action: 'reject', terminationId, actorId, reason }
     """
+    # Вход по токену и настоящий actorId — см. authz.guard_request.
+    denied = guard_request(event)
+    if denied:
+        return denied
+
     method = event.get('httpMethod', 'GET')
     if method == 'OPTIONS':
         return {'statusCode': 200, 'headers': CORS_HEADERS, 'body': ''}

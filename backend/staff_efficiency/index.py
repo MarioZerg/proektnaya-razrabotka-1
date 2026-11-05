@@ -4,6 +4,7 @@ from datetime import datetime, timedelta
 from decimal import Decimal
 
 import psycopg2
+from authz import guard_request
 
 CORS = {
     'Access-Control-Allow-Origin': '*',
@@ -250,6 +251,11 @@ def handler(event: dict, context) -> dict:
     Данные считаются на лету по журналу заказов, поэтому цифры всегда свежие —
     отдельного ночного пересчёта не требуется.
     """
+    # Вход по токену и настоящий actorId — см. authz.guard_request.
+    denied = guard_request(event)
+    if denied:
+        return denied
+
     if event.get('httpMethod') == 'OPTIONS':
         return {'statusCode': 200, 'headers': {**CORS, 'Access-Control-Max-Age': '86400'}, 'body': ''}
 

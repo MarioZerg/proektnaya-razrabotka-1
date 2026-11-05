@@ -2,6 +2,7 @@ import json
 import os
 
 import psycopg2
+from authz import guard_request, request_method, request_query, request_body
 
 CLOSED_WORKSHOP_NAMES = ('Цех №2', 'Тестовый цех (QA)')
 
@@ -97,6 +98,11 @@ def handler(event: dict, context) -> dict:
     Returns:
         dict: HTTP-ответ со списком/детальными данными/результатом операции над цехами
     """
+    # Вход по токену и настоящий actorId — см. authz.guard_request.
+    denied = guard_request(event, public=lambda event: request_method(event) == 'GET' and not request_query(event).get('id'))
+    if denied:
+        return denied
+
     method = event.get('httpMethod', 'GET')
 
     if method == 'OPTIONS':

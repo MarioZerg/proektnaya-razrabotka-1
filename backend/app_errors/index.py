@@ -30,6 +30,7 @@ import json
 import os
 
 import psycopg2
+from authz import guard_request, request_method, request_query, request_body
 
 CORS_HEADERS = {
     'Access-Control-Allow-Origin': '*',
@@ -92,6 +93,11 @@ def handler(event: dict, context) -> dict:
     GET  /?limit=50            - список сбоев (только администратор)
     GET  /?summary=1           - сводка: какие ошибки повторяются чаще всего
     """
+    # Вход по токену и настоящий actorId — см. authz.guard_request.
+    denied = guard_request(event, public=lambda event: request_method(event) == 'POST')
+    if denied:
+        return denied
+
     method = event.get('httpMethod', 'POST')
     if method == 'OPTIONS':
         return {'statusCode': 200, 'headers': CORS_HEADERS, 'body': ''}

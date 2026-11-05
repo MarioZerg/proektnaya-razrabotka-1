@@ -4,6 +4,7 @@ import os
 import uuid
 
 import psycopg2
+from authz import guard_request
 
 # Снимок полки — пометка «контейнер стоит здесь», не архив. Браузер уже
 # сжимает кадр, а сервер не принимает то, что всё равно не влезет в вызов.
@@ -75,6 +76,11 @@ def handler(event: dict, context) -> dict:
     Returns:
         dict: HTTP-ответ со списком/результатом операции над полками
     """
+    # Вход по токену и настоящий actorId — см. authz.guard_request.
+    denied = guard_request(event)
+    if denied:
+        return denied
+
     method = event.get('httpMethod', 'GET')
 
     if method == 'OPTIONS':

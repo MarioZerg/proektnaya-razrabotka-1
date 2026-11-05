@@ -6,6 +6,7 @@ import uuid
 from datetime import date
 
 import psycopg2
+from authz import guard_request, request_method, request_query, request_body
 
 
 # Внутренняя игровая валюта "Варики" (викторина/лототрон для производственных сотрудников).
@@ -200,6 +201,11 @@ def handler(event: dict, context) -> dict:
     POST / { action: 'cancel_purchase', actorId, purchaseId, reason }
         - покупка отменена, варики возвращаются сотруднику
     """
+    # Вход по токену и настоящий actorId — см. authz.guard_request.
+    denied = guard_request(event, public=lambda event: request_method(event) == 'GET' and request_query(event).get('radio') == '1' and not request_query(event).get('userId'))
+    if denied:
+        return denied
+
     method = event.get('httpMethod', 'GET')
     if method == 'OPTIONS':
         return {'statusCode': 200, 'headers': CORS_HEADERS, 'body': ''}

@@ -2,6 +2,7 @@ import json
 import os
 
 import psycopg2
+from authz import guard_request
 
 # Упаковка: ключ API -> колонка. По ней сайт считает доставку.
 PACK_FIELDS = (
@@ -69,6 +70,11 @@ def handler(event: dict, context) -> dict:
     Returns:
         dict: HTTP-ответ со списком/детальными данными/результатом операции
     """
+    # Вход по токену и настоящий actorId — см. authz.guard_request.
+    denied = guard_request(event)
+    if denied:
+        return denied
+
     method = event.get('httpMethod', 'GET')
 
     if method == 'OPTIONS':

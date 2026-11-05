@@ -5,6 +5,7 @@ import urllib.request
 import urllib.error
 
 import psycopg2
+from authz import guard_request
 
 # Синхронизация карточек товаров из OZON и Wildberries в справочник marketplace_items.
 # Тянет реально заведённые на площадках карточки и добавляет недостающие артикулы.
@@ -1028,6 +1029,11 @@ def handler(event: dict, context) -> dict:
     (в карточки магазина и в карточки сайта с тем же артикулом).
     POST / { action: 'recent_changes', shopId, days } — карточки OZON и WB магазина,
     изменённые за последние days дней (по умолчанию 30), с датой изменения."""
+    # Вход по токену и настоящий actorId — см. authz.guard_request.
+    denied = guard_request(event)
+    if denied:
+        return denied
+
     method = event.get('httpMethod', 'GET')
     if method == 'OPTIONS':
         return {'statusCode': 200, 'headers': CORS_HEADERS, 'body': ''}

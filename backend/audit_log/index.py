@@ -3,6 +3,7 @@ import os
 from datetime import datetime, timedelta
 
 import psycopg2
+from authz import guard_request
 
 # Человеческие названия действий. В базе действие хранится техническим кодом
 # ('take_order'), а админу нужно читаемое «Швея взяла заказ в работу».
@@ -388,6 +389,11 @@ def handler(event: dict, context) -> dict:
     Returns:
         dict: HTTP-ответ с лентой событий, сводкой или списком сотрудников
     """
+    # Вход по токену и настоящий actorId — см. authz.guard_request.
+    denied = guard_request(event)
+    if denied:
+        return denied
+
     method = event.get('httpMethod', 'GET')
 
     if method == 'OPTIONS':

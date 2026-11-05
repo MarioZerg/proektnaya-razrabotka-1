@@ -10,6 +10,7 @@ from datetime import datetime, timedelta
 import certifi
 import psycopg2
 import requests
+from authz import guard_request, request_method, request_query, request_body
 
 
 MAX_API_URL = 'https://platform-api2.max.ru'
@@ -291,6 +292,11 @@ def handler(event: dict, context) -> dict:
         dict: HTTP 200 с пустым телом (подтверждение получения webhook) либо
         результат служебного действия
     """
+    # Вход по токену и настоящий actorId — см. authz.guard_request.
+    denied = guard_request(event, public=lambda event: request_method(event) == 'POST' and 'action' not in request_body(event), roles=('admin',))
+    if denied:
+        return denied
+
     method = event.get('httpMethod', 'GET')
 
     if method == 'OPTIONS':

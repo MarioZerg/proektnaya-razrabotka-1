@@ -2,6 +2,7 @@ import json
 import os
 
 import psycopg2
+from authz import guard_request
 
 
 def log_action(cur, actor_id, actor_name, action, entity_type, entity_id, description, details=None):
@@ -49,6 +50,11 @@ def handler(event: dict, context) -> dict:
     Returns:
         dict: HTTP-ответ со сводкой материалов в цехах и списком колонок смен
     """
+    # Вход по токену и настоящий actorId — см. authz.guard_request.
+    denied = guard_request(event)
+    if denied:
+        return denied
+
     method = event.get('httpMethod', 'GET')
 
     if method == 'OPTIONS':

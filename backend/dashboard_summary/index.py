@@ -2,6 +2,7 @@ import json
 import os
 
 import psycopg2
+from authz import guard_request
 
 # Статусы OZON, при которых шить уже нечего: покупатель отказался либо отправление
 # собрано и уехало. В счётчике срочных они создавали ложную гору работы.
@@ -79,6 +80,11 @@ def handler(event: dict, context) -> dict:
     получается около килобайта вместо 4.5 МБ, а формулы повторяют прежние
     один в один, чтобы цифры на экране не изменились.
     """
+    # Вход по токену и настоящий actorId — см. authz.guard_request.
+    denied = guard_request(event)
+    if denied:
+        return denied
+
     method = event.get('httpMethod', 'GET')
     headers = {
         'Access-Control-Allow-Origin': '*',

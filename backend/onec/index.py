@@ -5,6 +5,7 @@ import urllib.error
 import urllib.request
 
 import psycopg2
+from authz import guard_request
 
 
 def handler(event: dict, context) -> dict:
@@ -18,6 +19,11 @@ def handler(event: dict, context) -> dict:
     GET  /              — сколько ещё не ушло
     POST / {action:'flush'} — отправить пачку pending
     """
+    # Вход по токену и настоящий actorId — см. authz.guard_request.
+    denied = guard_request(event, roles=('admin',))
+    if denied:
+        return denied
+
     method = event.get('httpMethod', 'GET')
 
     if method == 'OPTIONS':

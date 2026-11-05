@@ -4,6 +4,7 @@ import json
 import os
 
 import psycopg2
+from authz import guard_request
 
 
 # Импорт исторических данных из старой системы (cpanel).
@@ -31,6 +32,11 @@ def handler(event: dict, context) -> dict:
     Returns:
         HTTP-ответ со сводкой по загруженным данным
     """
+    # Вход по токену и настоящий actorId — см. authz.guard_request.
+    denied = guard_request(event, roles=('admin',))
+    if denied:
+        return denied
+
     method = event.get('httpMethod', 'POST')
     headers = {
         'Access-Control-Allow-Origin': '*',

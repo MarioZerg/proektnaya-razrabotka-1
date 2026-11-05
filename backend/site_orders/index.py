@@ -654,7 +654,9 @@ def handler(event: dict, context) -> dict:
             req = urllib.request.Request(
                 PRODUCTS_SYNC_URL,
                 data=json.dumps({'action': 'sync', 'shopId': shop_id}).encode('utf-8'),
-                headers={'Content-Type': 'application/json'},
+                # Служебный вызов: синхронизация карточек пускает только вошедших или по ключу.
+                headers={'Content-Type': 'application/json',
+                         'X-Cron-Secret': os.environ.get('CRON_SECRET', '')},
                 method='POST',
             )
             try:

@@ -4,6 +4,7 @@ import urllib.error
 import urllib.request
 
 import psycopg2
+from authz import guard_request
 
 OZON_API_BASE = 'https://api-seller.ozon.ru'
 
@@ -546,6 +547,11 @@ def handler(event: dict, context) -> dict:
     POST /  { action: 'refresh', marketplaceCode, actorId? }  - свежий код из кабинета
     POST /  { action: 'pickup_list' }        - что и где ждёт получения на ПВЗ
     """
+    # Вход по токену и настоящий actorId — см. authz.guard_request.
+    denied = guard_request(event)
+    if denied:
+        return denied
+
     method = event.get('httpMethod', 'GET')
     if method == 'OPTIONS':
         return {'statusCode': 200, 'headers': CORS_HEADERS, 'body': ''}
