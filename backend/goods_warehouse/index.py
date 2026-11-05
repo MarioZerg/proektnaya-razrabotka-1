@@ -19,6 +19,7 @@ import psycopg2
 
 from warehouse_read import handle_get
 from warehouse_actions import handle_post
+from authz import guard_request
 
 
 def handler(event: dict, context) -> dict:
@@ -99,6 +100,11 @@ def handler(event: dict, context) -> dict:
     Returns:
         dict: HTTP-ответ со списком/результатом операции над складом товара
     """
+    # Вход по токену и настоящий actorId — см. authz.guard_request.
+    denied = guard_request(event)
+    if denied:
+        return denied
+
     method = event.get('httpMethod', 'GET')
     method = event.get('httpMethod', 'GET')
 

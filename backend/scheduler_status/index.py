@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 import psycopg2
 
 from authz import AuthError, auth_error_response, current_user, require_admin
+from authz import guard_request
 
 CORS_HEADERS = {
     'Access-Control-Allow-Origin': '*',
@@ -436,6 +437,11 @@ def handler(event: dict, context) -> dict:
     Показывает администратору, живы ли задания планировщика. Только чтение журнала —
     ничего не запускает и не меняет.
     """
+    # Вход по токену и настоящий actorId — см. authz.guard_request.
+    denied = guard_request(event)
+    if denied:
+        return denied
+
     method = event.get('httpMethod', 'GET')
     if method == 'OPTIONS':
         return {'statusCode': 200, 'headers': CORS_HEADERS, 'body': ''}

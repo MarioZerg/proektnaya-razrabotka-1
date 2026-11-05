@@ -15,6 +15,7 @@ import vacations as vacation_mod
 import candidate_chats
 from max_avatars import sync_max_avatars
 from onec_flush import enqueue_onec_entity, flush_onec_outbox
+from authz import guard_request, request_method, request_query, request_body
 
 
 ROLES = {'sewer', 'cutter', 'packer', 'packer_returns', 'storekeeper', 'senior_storekeeper',
@@ -181,6 +182,11 @@ def handler(event: dict, context) -> dict:
     Returns:
         dict: HTTP-ответ со списком/результатом операции над пользователями
     """
+    # Вход по токену и настоящий actorId — см. authz.guard_request.
+    denied = guard_request(event, public=lambda event: request_method(event) == "POST" and (candidate_chats.is_webhook(request_body(event)) or not request_body(event)))
+    if denied:
+        return denied
+
     method = event.get('httpMethod', 'GET')
 
     if method == 'OPTIONS':

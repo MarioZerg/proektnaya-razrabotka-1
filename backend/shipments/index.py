@@ -14,6 +14,7 @@ from authz import (
     require_auth,
     require_role,
 )
+from authz import guard_request
 
 
 VALID_TYPES = {'from_supplier', 'to_workshop', 'return_to_supplier', 'defect_writeoff', 'workshop_writeoff'}
@@ -702,6 +703,11 @@ def handler(event: dict, context) -> dict:
     Returns:
         dict: HTTP-ответ со списком/детальными данными/результатом операции
     """
+    # Вход по токену и настоящий actorId — см. authz.guard_request.
+    denied = guard_request(event)
+    if denied:
+        return denied
+
     method = event.get('httpMethod', 'GET')
 
     if method == 'OPTIONS':

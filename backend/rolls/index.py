@@ -10,6 +10,7 @@ from authz import (
     require_admin,
     require_role,
 )
+from authz import guard_request
 
 # Сколько рулонов отдаём в общий список. Больше на экране всё равно не смотрят:
 # страница показывает по 20 с кнопкой «показать ещё», а конкретный рулон ищут
@@ -593,6 +594,11 @@ def handler(event: dict, context) -> dict:
     Returns:
         dict: HTTP-ответ со списком/результатом операции над рулонами
     """
+    # Вход по токену и настоящий actorId — см. authz.guard_request.
+    denied = guard_request(event)
+    if denied:
+        return denied
+
     method = event.get('httpMethod', 'GET')
 
     if method == 'OPTIONS':

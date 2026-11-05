@@ -3,6 +3,7 @@ import os
 import urllib.request
 
 import psycopg2
+from authz import guard_request
 
 CORS = {
     'Access-Control-Allow-Origin': '*',
@@ -789,6 +790,11 @@ def handler(event: dict, context) -> dict:
     GET  /?action=bought_feed&page=1 — лента выкупленных заказов.
     POST / { action: 'refresh_sales', months } — обновить продажи сейчас.
     """
+    # Вход по токену и настоящий actorId — см. authz.guard_request.
+    denied = guard_request(event)
+    if denied:
+        return denied
+
     method = event.get('httpMethod', 'GET')
 
     if method == 'OPTIONS':

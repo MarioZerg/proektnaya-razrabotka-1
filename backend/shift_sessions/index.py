@@ -5,6 +5,7 @@ from datetime import date, datetime, timedelta, timezone
 import psycopg2
 
 from storekeeper_tasks import MANUAL_TASKS, build_tasks, blocking_tasks
+from authz import guard_request
 
 # ЕДИНОЕ ВРЕМЯ СИСТЕМЫ — МОСКОВСКОЕ (UTC+3).
 #
@@ -589,6 +590,11 @@ def handler(event: dict, context) -> dict:
     Returns:
         dict: HTTP-ответ со списком сотрудников/статусом операции/календарём
     """
+    # Вход по токену и настоящий actorId — см. authz.guard_request.
+    denied = guard_request(event)
+    if denied:
+        return denied
+
     method = event.get('httpMethod', 'GET')
 
     if method == 'OPTIONS':

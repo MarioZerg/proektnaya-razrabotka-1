@@ -4,6 +4,7 @@ import os
 import psycopg2
 
 from shelf_pick import pick_inventory_shelf
+from authz import guard_request
 
 CORS_HEADERS = {
     'Access-Control-Allow-Origin': '*',
@@ -45,7 +46,9 @@ def _kick_stock_rematch():
         GOODS_WAREHOUSE_URL,
         data=json.dumps({'action': 'rematch_stock',
                          'actorName': 'Система (после инвентаризации)'}).encode(),
-        headers={'Content-Type': 'application/json'},
+        # Служебный вызов: склад пускает только вошедших или по ключу расписания.
+        headers={'Content-Type': 'application/json',
+                 'X-Cron-Secret': os.environ.get('CRON_SECRET', '')},
         method='POST',
     )
     try:
@@ -230,6 +233,11 @@ def handler(event: dict, context) -> dict:
     POST / { action: 'approve', stocktakeId }       - админ: подтвердить, списать недостачу
     POST / { action: 'reject', stocktakeId, reason }- админ: вернуть на пересчёт
     """
+    # Вход по токену и настоящий actorId — см. authz.guard_request.
+    denied = guard_request(event)
+    if denied:
+        return denied
+
     method = event.get('httpMethod', 'GET')
     if method == 'OPTIONS':
         return {'statusCode': 200, 'headers': CORS_HEADERS, 'body': ''}

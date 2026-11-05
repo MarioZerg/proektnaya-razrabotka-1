@@ -10,6 +10,7 @@ from authz import (
     require_admin,
     require_role,
 )
+from authz import guard_request
 
 CORS_HEADERS = {
     'Access-Control-Allow-Origin': '*',
@@ -1130,6 +1131,11 @@ def handler(event: dict, context) -> dict:
     POST / { action: 'delete', pieceId }
         - администратор удаляет строку из таблицы перешива насовсем.
     """
+    # Вход по токену и настоящий actorId — см. authz.guard_request.
+    denied = guard_request(event)
+    if denied:
+        return denied
+
     method = event.get('httpMethod', 'GET')
     if method == 'OPTIONS':
         return {'statusCode': 200, 'headers': CORS_HEADERS, 'body': ''}

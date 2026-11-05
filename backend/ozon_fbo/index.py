@@ -390,7 +390,9 @@ def _kick_stock_rematch(actor_name=None):
         GOODS_WAREHOUSE_URL,
         data=json.dumps({'action': 'rematch_stock',
                          'actorName': f'Система (импорт FBO{", " + actor_name if actor_name else ""})'}).encode(),
-        headers={'Content-Type': 'application/json'},
+        # Служебный вызов: склад пускает только вошедших или по ключу расписания.
+        headers={'Content-Type': 'application/json',
+                 'X-Cron-Secret': os.environ.get('CRON_SECRET', '')},
         method='POST',
     )
     try:

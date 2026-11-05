@@ -19,6 +19,7 @@ from shared import log_action, run_auto_statuses
 
 from supplies_read import handle_get
 from supplies_actions import handle_post
+from authz import guard_request
 
 
 def _handler(event: dict, context) -> dict:
@@ -115,6 +116,11 @@ def handler(event: dict, context) -> dict:
     случае откатывается — ничего не записано, поэтому отвечаем понятным 503,
     а не обрывом, который сканер показывает как «Failed to fetch».
     """
+    # Вход по токену и настоящий actorId — см. authz.guard_request.
+    denied = guard_request(event)
+    if denied:
+        return denied
+
     try:
         return _handler(event, context)
     except psycopg2.OperationalError:

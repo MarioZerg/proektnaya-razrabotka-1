@@ -7,6 +7,7 @@ import urllib.request
 from datetime import datetime, timedelta, timezone
 
 import psycopg2
+from authz import guard_request
 
 # Возвраты тянем ТОЛЬКО НА ЧТЕНИЕ: списки заявок на возврат у OZON и WB. Ничего на стороне
 # маркетплейса не подтверждаем и не отклоняем — решение принимает кладовщик, когда вещь
@@ -1960,6 +1961,11 @@ def handler(event: dict, context) -> dict:
     Returns:
         dict: HTTP-ответ со списком возвратов или результатом действия
     """
+    # Вход по токену и настоящий actorId — см. authz.guard_request.
+    denied = guard_request(event)
+    if denied:
+        return denied
+
     method = event.get('httpMethod', 'GET')
     if method == 'OPTIONS':
         return {'statusCode': 200, 'headers': CORS_HEADERS, 'body': ''}

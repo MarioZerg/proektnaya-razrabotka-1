@@ -8,6 +8,7 @@ import urllib.error
 import psycopg2
 import random as _random_mod
 import time as _time_mod
+from authz import guard_request
 
 # Яндекс Маркет Partner API. Работает ТОЛЬКО НА ЧТЕНИЕ: тянет новые заказы FBS и их
 # статусы, но не двигает заказы на стороне Яндекса (не собирает и не отгружает).
@@ -958,6 +959,11 @@ def _is_cron_call(event: dict) -> bool:
 
 def handler(event: dict, context) -> dict:
     """Точка входа: вызов планировщика переживает перегрузку базы повтором."""
+    # Вход по токену и настоящий actorId — см. authz.guard_request.
+    denied = guard_request(event)
+    if denied:
+        return denied
+
     if not _is_cron_call(event):
         return _handler_impl(event, context)
     started = _time_mod.monotonic()

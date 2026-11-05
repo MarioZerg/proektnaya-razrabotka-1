@@ -11,6 +11,7 @@ from authz import (
     require_admin,
 )
 from onec_flush import flush_onec_outbox
+from authz import guard_request
 
 # Бонусная программа швей: сколько метров нужно сдать на стикеровку за календарный
 # месяц и сколько за это платим. Первый расчётный период — сентябрь 2026.
@@ -562,6 +563,11 @@ def handler(event: dict, context) -> dict:
     Returns:
         dict: HTTP-ответ со сводкой/списком начислений/результатом операции
     """
+    # Вход по токену и настоящий actorId — см. authz.guard_request.
+    denied = guard_request(event)
+    if denied:
+        return denied
+
     method = event.get('httpMethod', 'GET')
 
     if method == 'OPTIONS':

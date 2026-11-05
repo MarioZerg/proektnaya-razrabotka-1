@@ -16,6 +16,7 @@ import psycopg2
 
 from orders_read import handle_get
 from orders_actions import handle_post
+from authz import guard_request, request_method, request_query, request_body
 
 
 def handler(event: dict, context) -> dict:
@@ -161,6 +162,11 @@ def handler(event: dict, context) -> dict:
     Returns:
         dict: HTTP-ответ со списком/результатом операции над заказами
     """
+    # Вход по токену и настоящий actorId — см. authz.guard_request.
+    denied = guard_request(event, public=lambda event: request_method(event) == "GET" and request_query(event).get("liveFloor") == "1")
+    if denied:
+        return denied
+
     method = event.get('httpMethod', 'GET')
     method = event.get('httpMethod', 'GET')
 
