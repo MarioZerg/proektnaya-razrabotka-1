@@ -104,6 +104,11 @@ const SupplyReceiveRows = ({
     unit: string;
   } | null>(null);
   const [lastScan, setLastScan] = useState<LastScan | null>(null);
+  // Какие ткани развёрнуты. Явный выбор человека — здесь; без него раскрыта
+  // только последняя ткань (её сейчас заполняют) и недозаполненные. Иначе на
+  // приёмке из десятка тканей окно превращалось в длинную портянку строк.
+  const [openOverride, setOpenOverride] = useState<Record<number, boolean>>({});
+  const [showCalc, setShowCalc] = useState<Record<number, boolean>>({});
   const pendingLastScan = useRef<LastScan | null>(null);
   const scanTargetRef = useRef(scanTarget);
   scanTargetRef.current = scanTarget;
@@ -151,6 +156,13 @@ const SupplyReceiveRows = ({
   const applyScannedMeterage = (qty: string) => {
     const target = scanTargetRef.current;
     if (!target) return;
+    // Считанный с бирки метраж должен быть виден: разворачиваем его ткань.
+    const gi = groups.findIndex(
+      (g) =>
+        rows[g[0]].materialId === target.materialId &&
+        (rows[g[0]].supplierId || '') === target.supplierId,
+    );
+    if (gi >= 0) setOpenOverride((o) => ({ ...o, [gi]: true }));
     setRows((r) => {
       const result = applyMeterageScan(r, target, qty);
       pendingLastScan.current = result.last;
@@ -194,9 +206,16 @@ const SupplyReceiveRows = ({
 
   return (
     <div className="space-y-2">
-      {groups.map((group) => {
+      {groups.map((group, gi) => {
         const head = rows[group[0]];
         const unit = materialUnit(head.materialId) || 'ед.';
+        const materialName = materials.find((m) => String(m.id) === head.materialId)?.name;
+        const supplierName = suppliers.find((s) => String(s.id) === head.supplierId)?.name;
+        // Недозаполненная ткань всегда раскрыта: иначе пустую строку не заметят.
+        const incomplete =
+          !head.materialId || !head.supplierId || group.some((idx) => !(num(rows[idx].quantity) > 0));
+        const open = openOverride[gi] ?? (groups.length <= 1 || gi === groups.length - 1 || incomplete);
+        const toggle = () => setOpenOverride((o) => ({ ...o, [gi]: !open }));
         const filled = group
           .map((idx, lineNo) => {
             const rolls = lineRolls(rows[idx]);
@@ -210,8 +229,47 @@ const SupplyReceiveRows = ({
         return (
           <div
             key={`${group[0]}-${head.materialId}-${head.supplierId || ''}`}
-            className="min-w-0 space-y-1.5 rounded-md border border-border p-2"
+            className={`min-w-0 rounded-md border ${
+              open ? 'border-primary/40 bg-card' : 'border-border bg-muted/30'
+            }`}
           >
+            {/* Шапка ткани: что, от кого и сколько. Нажатие сворачивает строки
+                рулонов — в свёрнутом виде ткань занимает одну строку. */}
+            <button
+              type="button"
+              onClick={toggle}
+              aria-expanded={open}
+              className="flex w-full min-w-0 items-center gap-2 rounded-md px-2 py-2 text-left hover:bg-muted/50 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+            >
+              <Icon
+                name={open ? 'ChevronDown' : 'ChevronRight'}
+                size={16}
+                className="shrink-0 text-muted-foreground"
+              />
+              <span className="min-w-0 flex-1">
+                <span className={`block truncate text-sm font-medium ${materialName ? '' : 'text-muted-foreground'}`}>
+                  {materialName || 'Материал не выбран'}
+                </span>
+                <span className="block truncate text-xs text-muted-foreground">
+                  {supplierName || 'Поставщик не выбран'} · строк {group.length}
+                </span>
+              </span>
+              <span className="shrink-0 text-right tabular-nums">
+                <span className="block text-sm font-semibold">
+                  {sumQty.toLocaleString('ru-RU')} {unit}
+                </span>
+                <span className="block text-xs text-muted-foreground">{sumRolls} рул.</span>
+              </span>
+              {incomplete && (
+                <span
+                  className="h-2 w-2 shrink-0 rounded-full bg-amber-500"
+                  title="Есть незаполненные поля"
+                />
+              )}
+            </button>
+
+            {open && (
+            <div className="space-y-1.5 border-t border-border p-2">
             <div className="flex min-w-0 flex-col gap-1.5 sm:flex-row sm:items-center">
               <Select
                 value={head.materialId || undefined}
@@ -356,25 +414,45 @@ const SupplyReceiveRows = ({
               </Button>
             </div>
 
-            {filled.length > 0 && (
-              <div className="rounded-md bg-muted/50 px-2 py-1.5 text-xs tabular-nums">
-                <ul className="space-y-0.5 text-muted-foreground">
-                  {filled.map((x) => (
-                    <li key={x.n}>
-                      {x.n}. {x.qty.toLocaleString('ru-RU')} {unit} × {x.rolls} рул. ={' '}
-                      {x.total.toLocaleString('ru-RU')} {unit}
-                    </li>
-                  ))}
-                </ul>
-                <p className="mt-1 font-medium text-foreground">
-                  Итого: {sumQty.toLocaleString('ru-RU')} {unit}
-                  <span className="font-normal text-muted-foreground"> · {sumRolls} рул.</span>
-                </p>
+            {/* Итог ткани — в шапке. Построчный расчёт раньше всегда висел под
+                строками и удваивал длину окна; теперь он по кнопке. */}
+            {filled.length > 1 && (
+              <div className="rounded-md bg-muted/50 px-2 py-1 text-xs tabular-nums">
+                <button
+                  type="button"
+                  className="flex w-full items-center gap-1 py-0.5 text-left text-muted-foreground hover:text-foreground"
+                  onClick={() => setShowCalc((c) => ({ ...c, [gi]: !c[gi] }))}
+                >
+                  <Icon name={showCalc[gi] ? 'ChevronDown' : 'ChevronRight'} size={12} />
+                  Расчёт по строкам
+                </button>
+                {showCalc[gi] && (
+                  <ul className="space-y-0.5 pb-1 pl-4 text-muted-foreground">
+                    {filled.map((x) => (
+                      <li key={x.n}>
+                        {x.n}. {x.qty.toLocaleString('ru-RU')} {unit} × {x.rolls} рул. ={' '}
+                        {x.total.toLocaleString('ru-RU')} {unit}
+                      </li>
+                    ))}
+                  </ul>
+                )}
               </div>
+            )}
+            </div>
             )}
           </div>
         );
       })}
+
+      {groups.length > 1 && (
+        <p className="px-1 text-right text-xs tabular-nums text-muted-foreground">
+          Всего тканей {groups.length} ·{' '}
+          {groups
+            .reduce((s, g) => s + g.reduce((a, idx) => a + lineRolls(rows[idx]), 0), 0)
+            .toLocaleString('ru-RU')}{' '}
+          рул.
+        </p>
+      )}
 
       <Button
         type="button"
