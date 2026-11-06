@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Card, CardContent } from '@/components/ui/card';
 import Icon from '@/components/ui/icon';
-import type { Order, OrderType } from '@/lib/ordersApi';
+import type { Order } from '@/lib/ordersApi';
 import { fetchMaterialsData } from '@/lib/materialsApi';
 import MaterialNeedsTable, {
   byMaterial,
@@ -17,24 +17,41 @@ interface OrdersSummaryProps {
  * покупателя, под FBO — партией на склад площадки, индивидуальные считают отдельно
  * от маркетплейсов. Ткань под них закупают разными партиями, поэтому и метраж
  * нужен раздельный, а не общим котлом. */
-const GROUPS: { type: OrderType; title: string; hint: string; icon: string }[] = [
+const GROUPS: {
+  key: string;
+  title: string;
+  hint: string;
+  icon: string;
+  match: (o: Order) => boolean;
+}[] = [
   {
-    type: 'FBS',
+    key: 'FBS',
     title: 'FBS',
     hint: 'под заказы покупателей',
     icon: 'Truck',
+    // Заказы сайта тоже заведены как FBS, но считаем их своим блоком ниже.
+    match: (o) => o.orderType === 'FBS' && o.marketplace !== 'IM',
   },
   {
-    type: 'FBO',
+    key: 'IM',
+    title: 'Интернет-магазин',
+    hint: 'заказы с сайта мегатюль.рф',
+    icon: 'Store',
+    match: (o) => o.marketplace === 'IM',
+  },
+  {
+    key: 'FBO',
     title: 'FBO',
     hint: 'партией на склад площадки',
     icon: 'Boxes',
+    match: (o) => o.orderType === 'FBO' && o.marketplace !== 'IM',
   },
   {
-    type: 'Индивидуальный',
+    key: 'Индивидуальный',
     title: 'Индивидуальные',
     hint: 'вне маркетплейсов',
     icon: 'UserRound',
+    match: (o) => o.orderType === 'Индивидуальный' && o.marketplace !== 'IM',
   },
 ];
 
@@ -110,7 +127,7 @@ const OrdersSummary = ({ orders }: OrdersSummaryProps) => {
   // Пустые схемы не показываем: FBO-заказов может не быть вовсе, и пустой блок
   // только занимал бы место. Появятся — блок встанет сам.
   const groups = GROUPS.map((g) => {
-    const list = newOrders.filter((o) => o.orderType === g.type);
+    const list = newOrders.filter(g.match);
     return { ...g, list, rows: byMaterial(list) };
   }).filter((g) => g.list.length > 0);
 
@@ -137,7 +154,7 @@ const OrdersSummary = ({ orders }: OrdersSummaryProps) => {
               складе. Кладовщик отгружает в цех нужные рулоны, закупщик видит, что
               пора дозаказать. */}
           {groups.map((g) => (
-            <div key={g.type} className="mt-3 border-t border-border pt-3">
+            <div key={g.key} className="mt-3 border-t border-border pt-3">
               <div className="mb-1.5 flex flex-wrap items-baseline gap-x-2">
                 <span className="flex items-center gap-1.5 text-sm font-semibold">
                   <Icon name={g.icon} size={14} className="text-muted-foreground" />

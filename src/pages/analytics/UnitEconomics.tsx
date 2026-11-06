@@ -11,6 +11,7 @@ import { useToast } from '@/hooks/use-toast';
 import { useAuth } from '@/context/AuthContext';
 import MarketplaceTab from '@/components/crm/economics/MarketplaceTab';
 import CompareTab from '@/components/crm/economics/CompareTab';
+import BuyoutsPanel from '@/components/crm/buyouts/BuyoutsPanel';
 import {
   fetchEconomics,
   saveEconomicsSettings,
@@ -202,6 +203,9 @@ const UnitEconomics = () => {
             <TabsTrigger value="wildberries">Wildberries</TabsTrigger>
             <TabsTrigger value="yandex_market">Яндекс Маркет</TabsTrigger>
             <TabsTrigger value="compare">Сравнение площадок</TabsTrigger>
+            {/* Выкупы — фактические деньги по забранным заказам. Раньше были
+                отдельным пунктом меню; рядом с расчётом их удобнее сверять. */}
+            <TabsTrigger value="buyouts">Выкупы</TabsTrigger>
           </TabsList>
 
           {(['ozon', 'wildberries', 'yandex_market'] as MarketplaceCode[]).map((code) => (
@@ -214,6 +218,10 @@ const UnitEconomics = () => {
 
           <TabsContent value="compare" className="mt-4">
             {tab === 'compare' && <CompareTab />}
+          </TabsContent>
+
+          <TabsContent value="buyouts" className="mt-4">
+            {tab === 'buyouts' && <BuyoutsPanel />}
           </TabsContent>
         </Tabs>
       </div>

@@ -2044,16 +2044,40 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                         )
                         rate_row = cur.fetchone()
                         rate = float(rate_row[0]) if rate_row else 0
-                        if rate > 0:
-                                cur.execute("SELECT name FROM materials WHERE id = %s", (fabric_material_id,))
-                                mat_name = cur.fetchone()[0]
+                        # Заказ интернет-магазина оплачивается отдельной ставкой
+                        # (role='cutter_im'): фиксированная сумма за крой, одна на все
+                        # ткани и ширины. Так деньги за сайт видны отдельно от маркетплейсов.
+                        cur.execute("SELECT marketplace FROM orders WHERE id = %s", (int(item_id),))
+                        mp_row = cur.fetchone()
+                        is_im = bool(mp_row and mp_row[0] == 'IM')
+                        im_rate = 0.0
+                        if is_im:
+                                cur.execute(
+                                        "SELECT rate FROM salary_rates WHERE role = 'cutter_im' "
+                                        "AND material_id IS NULL AND width IS NULL AND workshop_id = %s",
+                                        (cutter_workshop_for_rate,),
+                                )
+                                im_row = cur.fetchone()
+                                im_rate = float(im_row[0]) if im_row else 0.0
+                        cur.execute("SELECT name FROM materials WHERE id = %s", (fabric_material_id,))
+                        mat_name = (cur.fetchone() or [''])[0]
+                        if is_im and im_rate > 0:
+                                cur.execute(
+                                        "INSERT INTO salary_accruals (user_id, type, amount, order_id, description) "
+                                        "VALUES (%s, 'cutter_cut', %s, %s, %s) "
+                                        "ON CONFLICT (order_id, type) WHERE order_id IS NOT NULL DO NOTHING",
+                                        (int(cutter_id), round(im_rate, 2), int(item_id),
+                                         f'Раскрой ИМ-заказа #{item_id} ({mat_name} {int(width)} см) - за крой'),
+                                )
+                        elif rate > 0 and not is_im:
                                 pay_meters = round(float(width) / 100, 2)
                                 amount = round(pay_meters * rate, 2)
                                 cur.execute(
-                                        f"INSERT INTO salary_accruals (user_id, type, amount, order_id, description) "
-                                        f"VALUES ({int(cutter_id)}, 'cutter_cut', {amount}, {int(item_id)}, "
-                                        f"'Раскрой заказа #{item_id} ({mat_name} {int(width)} см) - {pay_meters} пог.м.') "
-                                        f"ON CONFLICT (order_id, type) WHERE order_id IS NOT NULL DO NOTHING"
+                                        "INSERT INTO salary_accruals (user_id, type, amount, order_id, description) "
+                                        "VALUES (%s, 'cutter_cut', %s, %s, %s) "
+                                        "ON CONFLICT (order_id, type) WHERE order_id IS NOT NULL DO NOTHING",
+                                        (int(cutter_id), amount, int(item_id),
+                                         f'Раскрой заказа #{item_id} ({mat_name} {int(width)} см) - {pay_meters} пог.м.'),
                                 )
 
                 cut_done.append(item_id)

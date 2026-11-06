@@ -148,7 +148,8 @@ def auto_accrue_missed(cur, only_user_id=None, only_stage=None, limit=40, note='
 
     if only_stage in (None, 'Раскрой'):
         cur.execute(
-            "SELECT o.id, o.order_number, o.width, o.workshop_id, o.material, o.cutter_user_id "
+            "SELECT o.id, o.order_number, o.width, o.workshop_id, o.material, o.cutter_user_id, "
+            "       o.marketplace "
             "FROM orders o "
             "WHERE o.cut_at IS NOT NULL AND o.cutter_user_id IS NOT NULL "
             "  AND COALESCE(o.source, '') <> 'import' "
@@ -158,9 +159,19 @@ def auto_accrue_missed(cur, only_user_id=None, only_stage=None, limit=40, note='
             + u_filter['cutter_user_id'] + " ORDER BY o.cut_at LIMIT %s",
             (int(limit),),
         )
-        for oid, onum, width, ows, mat_name, uid in cur.fetchall():
+        for oid, onum, width, ows, mat_name, uid, mp in cur.fetchall():
             ws = ows or user_ws.get(uid)
             mat_id = mat_by_name.get(mat_name)
+            if mp == 'IM':
+                # Интернет-магазин: своя ставка за крой, одна на все ткани.
+                im_rate = rates.get(('cutter_im', ws, None, None), 0) if ws else 0
+                if not (width and im_rate > 0):
+                    skipped += 1
+                    continue
+                rows_out.append((uid, 'cutter_cut', round(im_rate, 2), oid,
+                                 f'Раскрой ИМ-заказа #{onum or oid} ({mat_name or ""} '
+                                 f'{int(width)} см) - за крой ({note})'))
+                continue
             rate = rates.get(('cutter', ws, mat_id, None), 0) if (ws and mat_id) else 0
             if not (width and rate > 0):
                 skipped += 1
@@ -779,6 +790,16 @@ def handler(event: dict, context) -> dict:
                     if needed_materials:
                         conn.commit()
 
+                    # Ставка закройщика за крой заказа интернет-магазина: одна на все
+                    # ткани. Заводим 15 ₽ (решение владельца 07.11.2026), дальше
+                    # админ меняет её на этой странице.
+                    cur.execute(
+                        "INSERT INTO salary_rates (role, material_id, width, rate, workshop_id) "
+                        "VALUES ('cutter_im', NULL, NULL, 15, %s) "
+                        "ON CONFLICT (workshop_id, role, COALESCE(material_id, 0), COALESCE(width, 0)) "
+                        "DO NOTHING",
+                        (int(workshop_id_filter),),
+                    )
                     # Страховка: тариф перепаковки возвратов у упаковщицы (за штуку, размер
                     # не важен). Создаём со значением 0, если его в цехе ещё нет — например,
                     # цех завели раньше, чем появился этот вид оплаты.

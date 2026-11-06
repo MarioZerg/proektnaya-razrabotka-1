@@ -176,12 +176,7 @@ const SewingItems = () => {
       <div className="space-y-4 sm:space-y-6">
         <h1 className="text-xl font-bold">Товары для пошива</h1>
 
-        <SiteOrdersSwitch
-          conveyorCount={conveyorCount}
-          canSync={!isProductionRole}
-          actor={{ id: user?.id, name: user?.name }}
-          onSynced={load}
-        />
+        <SiteOrdersSwitch conveyorCount={conveyorCount} />
 
         <SewingItemsHeaderControls
           isProductionRole={isProductionRole}

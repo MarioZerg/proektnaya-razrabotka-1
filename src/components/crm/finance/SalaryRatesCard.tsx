@@ -49,7 +49,9 @@ const RateRow = ({
 
   return (
     <div className="flex items-center justify-between gap-3 rounded-md border border-border p-2.5">
-      <span className="text-sm">{label || '—'}</span>
+      <span className="text-sm">
+        {label || (rate.role === 'cutter_im' ? 'За один крой, любая ткань' : '—')}
+      </span>
       <div className="flex items-center gap-1.5">
         <Input
           type="number"
@@ -79,6 +81,7 @@ const RateRow = ({
  */
 const rateGroupTitles: Record<string, string> = {
   packer_repack: 'Перепаковка возвратов',
+  cutter_im: 'Закройщик — интернет-магазин',
   overlock: 'Оверлок',
   sewer_overlock: 'Швея — после оверлока',
   packer_overlock: 'Упаковщик — после оверлока',
@@ -87,6 +90,7 @@ const rateGroupTitles: Record<string, string> = {
 /** packer_repack — не должность, а вид оплаты упаковщицы; в списке сразу после её ставки. */
 const ROLE_ORDER: string[] = [
   'cutter',
+  'cutter_im',
   'sewer',
   'sewer_overlock',
   'overlock',
@@ -131,6 +135,7 @@ const ratesForRole = (rates: SalaryRate[], role: string): SalaryRate[] =>
   rates.filter((r) => {
     if (r.role !== role) return false;
     if (role === 'cutter') return r.width === null;
+    if (role === 'cutter_im') return r.materialId === null && r.width === null;
     if (role === 'packer') return r.materialId === null && r.width === null;
     if (role === 'packer_repack') return r.width === null;
     if (role === 'packer_returns') return r.materialId === null && r.width === null;

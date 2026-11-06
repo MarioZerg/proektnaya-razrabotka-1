@@ -19,7 +19,7 @@ import {
 import Icon from '@/components/ui/icon';
 
 export type StatusFilter = 'new' | 'in_progress' | 'done' | 'cancelled';
-export type MarketplaceFilter = 'all' | 'OZON' | 'WB' | 'Yandex';
+export type MarketplaceFilter = 'all' | 'OZON' | 'WB' | 'Yandex' | 'IM';
 export type TypeFilter = 'all' | 'FBO' | 'FBS' | 'Индивидуальный';
 
 const STATUS_TABS: { value: StatusFilter; label: string }[] = [
@@ -236,6 +236,7 @@ const OrdersToolbar = ({
             <SelectItem value="OZON">OZON</SelectItem>
             <SelectItem value="WB">Wildberries</SelectItem>
             <SelectItem value="Yandex">Яндекс.Маркет</SelectItem>
+            <SelectItem value="IM">Интернет-магазин</SelectItem>
           </SelectContent>
         </Select>
         <Select value={typeFilter} onValueChange={(v) => onTypeChange(v as TypeFilter)}>
