@@ -8,7 +8,6 @@
  * сайта) и дополнительно приходит в адресе возврата (?t=...).
  */
 const KEY = 'maxLoginToken';
-const CLAIM_KEY = 'maxLoginClaim';
 /** Метка на сервере живёт 15 минут — дольше хранить её незачем. */
 const TTL_MS = 15 * 60 * 1000;
 
@@ -60,24 +59,4 @@ export const clearMaxLoginToken = () => {
   } catch {
     // ничего страшного
   }
-};
-
-/**
- * Захватить готовый код для входа. Открытыми могут быть две вкладки сайта с
- * одной меткой (старая и та, что открыла кнопка возврата из MAX). Код
- * одноразовый: если войдут обе, вторая получит «неверный или устаревший код».
- * Входит та вкладка, что захватила код первой; вторая ждёт и подхватывает вход.
- */
-export const claimMaxCode = (code: string): boolean => {
-  try {
-    const raw = localStorage.getItem(CLAIM_KEY);
-    if (raw) {
-      const { c, at } = JSON.parse(raw) as { c?: string; at?: number };
-      if (c === code && at && Date.now() - at < 30_000) return false;
-    }
-    localStorage.setItem(CLAIM_KEY, JSON.stringify({ c: code, at: Date.now() }));
-  } catch {
-    // без localStorage вкладки друг друга не видят — просто входим
-  }
-  return true;
 };

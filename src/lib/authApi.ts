@@ -200,8 +200,11 @@ export interface MaxVerifyResult {
 }
 
 /** Проверяет код, присланный ботом MAX. Возвращает пользователя и список его должностей. */
-export const verifyMaxCode = (code: string): Promise<MaxVerifyResult> =>
-  postAuthAction({ action: 'max_verify_code', code });
+/** loginToken — метка вкладки, по которой код подставился сам. С ней сервер
+ * пускает тем же кодом и вторую вкладку сайта (код одноразовый только для
+ * ручного ввода). */
+export const verifyMaxCode = (code: string, loginToken?: string | null): Promise<MaxVerifyResult> =>
+  postAuthAction({ action: 'max_verify_code', code, loginToken: loginToken || undefined });
 
 // Заявка на доступ убрана с экрана входа: вход в систему только через MAX. Бот сам
 // заводит нового человека по номеру телефона и присылает код, должность он выбирает

@@ -407,12 +407,30 @@ def handler(event: dict, context) -> dict:
         conn = psycopg2.connect(dsn)
         try:
             cur = conn.cursor()
-            cur.execute(
-                f"SELECT id, {id_column} FROM {sessions_table} "
-                "WHERE code = %s AND used = false AND expires_at > now() ORDER BY id DESC LIMIT 1",
-                (code,),
-            )
-            session_row = cur.fetchone()
+            session_row = None
+            login_token = str(body_data.get('loginToken') or '').strip()
+            if login_token:
+                # Код подставился сам по метке вкладки. Открытых вкладок сайта
+                # бывает несколько (старая и та, что открыла кнопка возврата из
+                # MAX), и все ждут одну метку. Код одноразовый, поэтому первая
+                # входила, а остальные висели на «Код получен». Владелец метки
+                # (она есть только у его браузера) может войти этим кодом из
+                # любой своей вкладки, пока код не истёк.
+                cur.execute(
+                    f"SELECT s.id, s.{id_column} FROM max_login_tokens t "
+                    f"JOIN {sessions_table} s ON s.code = t.code AND s.{id_column} = t.max_user_id "
+                    "WHERE t.token = %s AND t.code = %s AND t.expires_at > now() "
+                    "  AND s.expires_at > now() ORDER BY s.id DESC LIMIT 1",
+                    (login_token, code),
+                )
+                session_row = cur.fetchone()
+            if not session_row:
+                cur.execute(
+                    f"SELECT id, {id_column} FROM {sessions_table} "
+                    "WHERE code = %s AND used = false AND expires_at > now() ORDER BY id DESC LIMIT 1",
+                    (code,),
+                )
+                session_row = cur.fetchone()
             if not session_row:
                 return {'statusCode': 401, 'headers': headers, 'body': json.dumps({'error': 'Неверный или устаревший код'})}
 

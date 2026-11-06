@@ -17,7 +17,6 @@ import {
   getMaxLoginToken,
   setMaxLoginToken,
   clearMaxLoginToken,
-  claimMaxCode,
 } from '@/lib/maxLoginToken';
 import RoleSelectScreen from '@/components/auth/RoleSelectScreen';
 import PendingApprovalScreen from '@/components/auth/PendingApprovalScreen';
@@ -54,6 +53,16 @@ const LoginCode = () => {
   useEffect(() => {
     if (user) navigate('/crm', { replace: true });
   }, [user, navigate]);
+
+  // Вошли в соседней вкладке сайта (выбрали должность там) — эта вкладка тоже
+  // переходит в систему, а не остаётся висеть на экране входа.
+  useEffect(() => {
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === 'megatul_user' && e.newValue) window.location.replace('/crm');
+    };
+    window.addEventListener('storage', onStorage);
+    return () => window.removeEventListener('storage', onStorage);
+  }, []);
 
   // Метка вкладки: её положила главная страница перед уходом в мессенджер. Если
   // страницу открыли напрямую, метки нет — запросим свою вместе со ссылкой на бота.
@@ -144,8 +153,7 @@ const LoginCode = () => {
         if (!status.code) return;
         setCode(status.code);
         setAutoCode(true);
-        // Код из этой метки забрала соседняя вкладка — ждём её входа.
-        if (!claimMaxCode(status.code)) return;
+        const tokenUsed = loginToken;
         clearMaxLoginToken();
         // Опрос по этой метке закончен: при ошибке не долбим сервер одним и тем
         // же отработанным кодом каждые 2 секунды.
@@ -153,7 +161,9 @@ const LoginCode = () => {
         setLoginToken(null);
         setVerifying(true);
         try {
-          await applyAuthResult(await verifyMaxCode(status.code));
+          // С меткой сервер пускает этим кодом любую вкладку этого браузера:
+          // какую бы человек ни открыл, вход пройдёт в ней.
+          await applyAuthResult(await verifyMaxCode(status.code, tokenUsed));
         } catch (err) {
           if (enteredElsewhere()) {
             window.location.replace('/crm');
