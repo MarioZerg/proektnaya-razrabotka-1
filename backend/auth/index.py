@@ -240,6 +240,12 @@ def handler(event: dict, context) -> dict:
         return_url = str(body_data.get('returnUrl') or '').strip()
         if not return_url.startswith('https://') or len(return_url) > 300:
             return_url = None
+        elif '?' not in return_url and '#' not in return_url:
+            # Метку кладём прямо в ссылку возврата. Кнопка «Вернуться на сайт» в MAX
+            # часто открывает сайт в НОВОЙ вкладке или во встроенном браузере, где
+            # метки этой вкладки нет: страница ждала код по чужой, пустой метке,
+            # и он не подставлялся. С меткой в адресе код находится всегда.
+            return_url = f'{return_url}?t={login_token}'
         conn = psycopg2.connect(dsn)
         try:
             cur = conn.cursor()

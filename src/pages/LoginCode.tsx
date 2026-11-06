@@ -13,6 +13,12 @@ import {
   enterRole,
   type UserRoleEntry,
 } from '@/lib/authApi';
+import {
+  getMaxLoginToken,
+  setMaxLoginToken,
+  clearMaxLoginToken,
+  claimMaxCode,
+} from '@/lib/maxLoginToken';
 import RoleSelectScreen from '@/components/auth/RoleSelectScreen';
 import PendingApprovalScreen from '@/components/auth/PendingApprovalScreen';
 
@@ -51,25 +57,41 @@ const LoginCode = () => {
 
   // Метка вкладки: её положила главная страница перед уходом в мессенджер. Если
   // страницу открыли напрямую, метки нет — запросим свою вместе со ссылкой на бота.
-  const [loginToken, setLoginToken] = useState<string | null>(() =>
-    sessionStorage.getItem('maxLoginToken'),
-  );
+  // Метка берётся из адреса (?t=, её кладёт кнопка «Вернуться на сайт» в MAX)
+  // или из памяти браузера, общей для всех вкладок сайта.
+  const [loginToken, setLoginToken] = useState<string | null>(() => getMaxLoginToken());
   const [autoCode, setAutoCode] = useState(false);
   // Бот ждёт номер: человек в системе ещё не зарегистрирован.
   const [awaitingContact, setAwaitingContact] = useState(false);
 
-  useEffect(() => {
+  /** Новая метка и ссылка на бота: при первом открытии без метки, а также
+   * когда старая протухла или её код не подошёл — иначе кнопка «Открыть чат
+   * с ботом» вела бы по отработанной метке, и код снова не подставился бы. */
+  const refreshToken = (replace: boolean) => {
     fetchMaxBotUrl()
       .then(({ botUrl: url, loginToken: fresh }) => {
         setBotUrl(url);
-        if (!loginToken && fresh) {
-          sessionStorage.setItem('maxLoginToken', fresh);
+        if (fresh && (replace || !getMaxLoginToken())) {
+          setMaxLoginToken(fresh);
           setLoginToken(fresh);
         }
       })
       .catch(() => {
         // FRONTEND-ONLY: не прячем уже полученную ссылку на бота.
       });
+  };
+
+  useEffect(() => {
+    const t = getMaxLoginToken();
+    // Пришли по адресу возврата из MAX — запоминаем метку для остальных вкладок
+    // и убираем её из адресной строки.
+    if (t) {
+      setMaxLoginToken(t);
+      if (window.location.search.includes('t=')) {
+        window.history.replaceState(null, '', window.location.pathname);
+      }
+    }
+    refreshToken(false);
     // Ссылку тянем один раз: новая метка при каждом рендере обесценивала бы старую.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -89,35 +111,85 @@ const LoginCode = () => {
     if (!loginToken || pendingUser || verifying) return;
     let stop = false;
 
+    let busy = false;
+
+    // Вход уже сделала другая вкладка сайта (общая память браузера) — просто
+    // переходим в систему, а не пытаемся ещё раз войти тем же одноразовым кодом.
+    const enteredElsewhere = () => {
+      try {
+        return !!localStorage.getItem('megatul_user');
+      } catch {
+        return false;
+      }
+    };
+
     const tick = async () => {
-      if (stop) return;
+      if (stop || busy) return;
+      if (enteredElsewhere()) {
+        window.location.replace('/crm');
+        return;
+      }
+      busy = true;
       try {
         const status = await fetchMaxLoginStatus(loginToken);
         if (stop) return;
+        if (status.expired) {
+          // Метка протухла (больше 15 минут) — заводим новую молча.
+          clearMaxLoginToken();
+          setLoginToken(null);
+          refreshToken(true);
+          return;
+        }
         setAwaitingContact(status.awaitingContact);
         if (!status.code) return;
-        sessionStorage.removeItem('maxLoginToken');
         setCode(status.code);
         setAutoCode(true);
+        // Код из этой метки забрала соседняя вкладка — ждём её входа.
+        if (!claimMaxCode(status.code)) return;
+        clearMaxLoginToken();
+        // Опрос по этой метке закончен: при ошибке не долбим сервер одним и тем
+        // же отработанным кодом каждые 2 секунды.
+        stop = true;
+        setLoginToken(null);
         setVerifying(true);
         try {
           await applyAuthResult(await verifyMaxCode(status.code));
         } catch (err) {
-          setError(err instanceof Error ? err.message : 'Не удалось подтвердить код');
+          if (enteredElsewhere()) {
+            window.location.replace('/crm');
+            return;
+          }
+          setError(
+            (err instanceof Error ? err.message : 'Не удалось подтвердить код') +
+              '. Откройте чат с ботом ещё раз — придёт новый код.',
+          );
           setAutoCode(false);
+          setCode('');
+          refreshToken(true);
         } finally {
           setVerifying(false);
         }
       } catch {
         // Молчим: сеть могла моргнуть, следующая попытка через пару секунд.
+      } finally {
+        busy = false;
       }
     };
 
+    // Вернулись из мессенджера — проверяем сразу, не дожидаясь таймера: пока
+    // вкладка была скрыта, браузер мог притормозить опрос.
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') void tick();
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    window.addEventListener('focus', onVisible);
     const timer = setInterval(tick, 2000);
-    tick();
+    void tick();
     return () => {
       stop = true;
       clearInterval(timer);
+      document.removeEventListener('visibilitychange', onVisible);
+      window.removeEventListener('focus', onVisible);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loginToken, pendingUser, verifying]);

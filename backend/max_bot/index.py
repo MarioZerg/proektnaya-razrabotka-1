@@ -11,6 +11,7 @@ import certifi
 import psycopg2
 import requests
 from authz import guard_request, request_method, request_query, request_body
+from max_avatar import refresh_max_avatar
 
 
 MAX_API_URL = 'https://platform-api2.max.ru'
@@ -153,6 +154,20 @@ def send_max_message(max_user_id: str, text: str, with_contact_button: bool = Fa
         verify=_get_ca_bundle(),
     )
     resp.raise_for_status()
+
+
+def refresh_avatar_safely(max_user_id: str, chat_id) -> None:
+    """Освежить фото сотрудника из MAX после ответа боту. Любая ошибка здесь
+    не должна мешать входу — фото подождёт до следующего раза."""
+    try:
+        conn = psycopg2.connect(os.environ['DATABASE_URL'])
+        try:
+            refresh_max_avatar(conn.cursor(), max_user_id, chat_id)
+            conn.commit()
+        finally:
+            conn.close()
+    except Exception as e:  # noqa: BLE001
+        print(f'max avatar refresh failed: {type(e).__name__}: {e}')
 
 
 def normalize_phone(raw: str) -> str | None:
@@ -400,6 +415,10 @@ def handler(event: dict, context) -> dict:
                 'номером телефона и войти в систему.',
                 with_contact_button=True,
             )
+        # Номер личного чата есть только в событиях бота — запоминаем его и
+        # заодно подтягиваем фото профиля (код к этому моменту уже отправлен).
+        if known:
+            refresh_avatar_safely(max_user_id, body_data.get('chat_id'))
         return {'statusCode': 200, 'headers': headers, 'body': ''}
 
     if update_type == 'message_created':
@@ -411,11 +430,6 @@ def handler(event: dict, context) -> dict:
             or ' '.join(filter(None, [sender.get('first_name'), sender.get('last_name')]))
             or 'Сотрудник'
         )
-
-        # Фото профиля из MAX. Люди уже поставили себе аватар в мессенджере — берём
-        # его, чтобы в чате и списках сотрудник узнавался по лицу, а не по инициалам.
-        # Ключ у MAX менялся между версиями API, поэтому смотрим оба варианта.
-        sender_avatar = (sender.get('avatar_url') or sender.get('photo_url') or '').strip()
 
         phone_raw, contact_name = extract_phone_from_message(message)
         if contact_name:
@@ -453,24 +467,17 @@ def handler(event: dict, context) -> dict:
 
             if row:
                 user_id = row[0]
-                # Обновляем фото при каждом входе: сменил аватар в MAX — сменится
-                # и в системе. Пишем в отдельное поле, чтобы не затереть фото,
-                # загруженное администратором вручную: оно главнее.
-                if sender_avatar:
-                    cur.execute(
-                        "UPDATE users SET max_avatar_url = %s WHERE id = %s",
-                        (sender_avatar, user_id),
-                    )
+                # Фото из MAX подтягивается после ответа боту (refresh_avatar_safely):
+                # в самом сообщении его нет, только в описании личного чата.
             else:
                 salt = secrets.token_hex(16)
                 dummy_hash = hashlib.sha256(secrets.token_bytes(16)).hexdigest()
                 login = f'max{max_user_id}{secrets.token_hex(2)}'
                 cur.execute(
                     "INSERT INTO users (login, password_hash, password_salt, full_name, role, phone, "
-                    "max_user_id, registered_via_max, is_active, max_avatar_url) "
-                    "VALUES (%s, %s, %s, %s, '', %s, %s, true, true, %s) RETURNING id",
-                    (login, dummy_hash, salt, sender_name[:200], phone_norm, max_user_id,
-                     sender_avatar or None),
+                    "max_user_id, registered_via_max, is_active) "
+                    "VALUES (%s, %s, %s, %s, '', %s, %s, true, true) RETURNING id",
+                    (login, dummy_hash, salt, sender_name[:200], phone_norm, max_user_id),
                 )
                 user_id = cur.fetchone()[0]
 
@@ -493,6 +500,7 @@ def handler(event: dict, context) -> dict:
             f'Код для входа в МЕГАТЮЛЬ: {code}\n{hint} Код действует {CODE_TTL_MINUTES} минут.',
             return_url=back_url,
         )
+        refresh_avatar_safely(max_user_id, (message.get('recipient') or {}).get('chat_id'))
         return {'statusCode': 200, 'headers': headers, 'body': ''}
 
     return {'statusCode': 200, 'headers': headers, 'body': ''}

@@ -308,7 +308,13 @@ _avatar_sync_at = 0.0
 
 
 def _fetch_max_avatars(max_ids: list) -> dict:
-    """user_id MAX → url фото. Пустой словарь, если токена нет или MAX не ответил."""
+    """user_id MAX → url фото. Пустой словарь, если токена нет или MAX не ответил.
+
+    Метода GET /users у MAX нет (отвечает 404): фото отсюда не приходило ни разу,
+    а запрос уходил каждые 5 минут. Фото теперь подтягивает бот при входе
+    (max_bot/max_avatar.py) прямо в users.avatar_url — здесь ничего не делаем.
+    """
+    return {}
     token = (os.environ.get('MAX_BOT_TOKEN') or '').strip()
     if not token or not max_ids:
         return {}

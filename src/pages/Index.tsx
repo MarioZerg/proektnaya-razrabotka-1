@@ -7,6 +7,7 @@ import Icon from '@/components/ui/icon';
 import { useAuth } from '@/context/AuthContext';
 import type { Role } from '@/lib/roles';
 import { fetchMaxBotUrl, enterRole, type UserRoleEntry } from '@/lib/authApi';
+import { setMaxLoginToken } from '@/lib/maxLoginToken';
 import OnlineNowBadge from '@/components/auth/OnlineNowBadge';
 import RoleSelectScreen from '@/components/auth/RoleSelectScreen';
 import PendingApprovalScreen from '@/components/auth/PendingApprovalScreen';
@@ -52,7 +53,7 @@ const Index = () => {
       .then(({ botUrl: url, loginToken }) => {
         setBotError(null);
         setBotUrl(url);
-        if (loginToken) sessionStorage.setItem('maxLoginToken', loginToken);
+        if (loginToken) setMaxLoginToken(loginToken);
       })
       .catch((e) => {
         setBotError(e instanceof Error ? e.message : 'Не удалось получить ссылку на бота');
