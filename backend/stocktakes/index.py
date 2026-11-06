@@ -24,6 +24,21 @@ STOREKEEPER_ROLES = ('storekeeper', 'senior_storekeeper')
 # кладовщик заболел, — вкладка для него выглядела бы пустой и мёртвой.
 COUNTING_ROLES = STOREKEEPER_ROLES + ('admin',)
 
+# Пока инвентаризация в одном из этих статусов, новую начать нельзя: идёт
+# пересчёт, его вернули на доработку или результат ждёт решения админа.
+# Освобождает только подтверждение или отмена (отменить ждущую — админ).
+OPEN_STATUSES = ('in_progress', 'rejected', 'pending_approval')
+
+# Вещь, разложенная на полку ПОСЛЕ начала пересчёта, кладовщику не попадалась —
+# требовать её скан и тем более списывать нельзя. Момент раскладки — наклейка
+# складского стикера (storage_labeled_at), для старых записей — приёмка.
+# Подставляется в WHERE вместе с id инвентаризации (%s).
+SHELVED_BEFORE_START = (
+    "COALESCE(gw.storage_labeled_at, gw.received_at) IS NULL "
+    "OR COALESCE(gw.storage_labeled_at, gw.received_at) <= "
+    "   (SELECT st.started_at FROM stocktakes st WHERE st.id = %s)"
+)
+
 # Вещи, которые ОБЯЗАНЫ лежать на полке и потому участвуют в пересчёте.
 # Всё остальное (уехало в поставку, списано, у покупателя) физически на складе
 # отсутствует — требовать его скан значило бы плодить ложные недостачи.
@@ -123,10 +138,11 @@ def build_report(cur, stocktake_id):
         "LEFT JOIN orders o ON o.id = gw.order_id "
         "LEFT JOIN shelves sh ON sh.id = gw.shelf_id "
         "WHERE gw.status = %s AND gw.shelf_id IS NOT NULL "
+        f"  AND ({SHELVED_BEFORE_START}) "
         "  AND NOT EXISTS (SELECT 1 FROM stocktake_scans s "
         "                  WHERE s.stocktake_id = %s AND s.goods_warehouse_id = gw.id) "
         "ORDER BY sh.name NULLS LAST, gw.storage_barcode",
-        (COUNTABLE_STATUS, int(stocktake_id)),
+        (COUNTABLE_STATUS, int(stocktake_id), int(stocktake_id)),
     )
     missing = [
         {
@@ -144,10 +160,11 @@ def build_report(cur, stocktake_id):
 
     # Сколько вещей уже разложено по полкам. Без полки в это число не входят:
     # их ещё не уложили, и требовать с них скан нельзя.
+    # Разложенное уже после начала пересчёта сюда не входит — см. SHELVED_BEFORE_START.
     cur.execute(
         "SELECT COUNT(*) FROM goods_warehouse gw "
-        "WHERE gw.status = %s AND gw.shelf_id IS NOT NULL",
-        (COUNTABLE_STATUS,),
+        f"WHERE gw.status = %s AND gw.shelf_id IS NOT NULL AND ({SHELVED_BEFORE_START})",
+        (COUNTABLE_STATUS, int(stocktake_id)),
     )
     expected = int(cur.fetchone()[0] or 0)
 
@@ -157,15 +174,17 @@ def build_report(cur, stocktake_id):
     extra = [f for f in found if not f['goodsWarehouseId']]
 
     # По полкам: кладовщику удобно сверять стеллаж за стеллажом.
+    # Раньше вещи и сканы полки присоединялись одним JOIN и перемножались:
+    # полка со 98 вещами и 102 сканами показывала «9996 из 9996». Теперь каждое
+    # число — отдельный подсчёт.
     cur.execute(
         "SELECT sh.id, sh.name, "
-        "  COUNT(gw.id) FILTER (WHERE gw.status = %s), "
-        "  COUNT(s.id) "
-        "FROM shelves sh "
-        "LEFT JOIN goods_warehouse gw ON gw.shelf_id = sh.id AND gw.status = %s "
-        "LEFT JOIN stocktake_scans s ON s.stocktake_id = %s AND s.shelf_id = sh.id "
-        "GROUP BY sh.id, sh.name ORDER BY sh.name",
-        (COUNTABLE_STATUS, COUNTABLE_STATUS, int(stocktake_id)),
+        "  (SELECT COUNT(*) FROM goods_warehouse gw WHERE gw.shelf_id = sh.id "
+        f"     AND gw.status = %s AND ({SHELVED_BEFORE_START})), "
+        "  (SELECT COUNT(*) FROM stocktake_scans s "
+        "     WHERE s.stocktake_id = %s AND s.shelf_id = sh.id) "
+        "FROM shelves sh ORDER BY sh.name",
+        (COUNTABLE_STATUS, int(stocktake_id), int(stocktake_id)),
     )
     shelves = [
         {'shelfId': r[0], 'shelfName': r[1], 'expected': int(r[2] or 0), 'found': int(r[3] or 0)}
@@ -284,21 +303,35 @@ def handler(event: dict, context) -> dict:
             if actor_role not in COUNTING_ROLES:
                 return _resp(403, {'error': 'Инвентаризацию проводит кладовщик или администратор'})
             # Две параллельные инвентаризации привели бы к двойному пересчёту
-            # одних и тех же полок и спору, чей результат верный.
+            # одних и тех же полок и спору, чей результат верный. Ждущая решения
+            # админа тоже держит место: новая, начатая поверх, списала бы ту же
+            # недостачу второй раз. Освобождает подтверждение или отмена админом.
             cur.execute(
-                "SELECT id FROM stocktakes WHERE status IN ('in_progress', 'rejected') LIMIT 1"
+                "SELECT id, status FROM stocktakes WHERE status IN %s "
+                "ORDER BY started_at DESC LIMIT 1",
+                (OPEN_STATUSES,),
             )
             existing = cur.fetchone()
             if existing:
-                return _resp(409, {
-                    'error': 'Инвентаризация уже идёт — продолжите её или закройте',
-                    'stocktakeId': existing[0],
-                })
-            cur.execute(
-                "INSERT INTO stocktakes (status, started_by, started_by_name) "
-                "VALUES ('in_progress', %s, %s) RETURNING id",
-                (int(actor_id) if actor_id else None, actor_name),
-            )
+                if existing[1] == 'pending_approval':
+                    msg = (f'Инвентаризация №{existing[0]} ждёт решения администратора. '
+                           'Новую можно начать, когда её подтвердят или отменят')
+                else:
+                    msg = (f'Инвентаризация №{existing[0]} уже идёт — продолжите её, '
+                           'закройте или отмените')
+                return _resp(409, {'error': msg, 'stocktakeId': existing[0]})
+            try:
+                cur.execute(
+                    "INSERT INTO stocktakes (status, started_by, started_by_name) "
+                    "VALUES ('in_progress', %s, %s) RETURNING id",
+                    (int(actor_id) if actor_id else None, actor_name),
+                )
+            except psycopg2.IntegrityError:
+                # Двое нажали «Начать» одновременно: вторую не пускает индекс
+                # uq_stocktakes_one_open (V0807).
+                conn.rollback()
+                return _resp(409, {'error': 'Инвентаризацию только что начал другой сотрудник — '
+                                            'обновите страницу'})
             new_id = cur.fetchone()[0]
             log_action(cur, actor_id, actor_name, 'stocktake_start', new_id,
                        'Начата инвентаризация склада товара')
@@ -400,6 +433,15 @@ def handler(event: dict, context) -> dict:
             barcode = (body_data.get('barcode') or '').strip().upper()
             if not stocktake_id or not barcode:
                 return _resp(400, {'error': 'Укажите стикер'})
+            # Убрать скан можно только из идущего пересчёта. Раньше его можно было
+            # снять и у закрытой инвентаризации, которая ждёт админа: найденная
+            # вещь молча превращалась в недостачу и списывалась при подтверждении.
+            cur.execute("SELECT status FROM stocktakes WHERE id = %s", (int(stocktake_id),))
+            st_row = cur.fetchone()
+            if not st_row:
+                return _resp(404, {'error': 'Инвентаризация не найдена'})
+            if st_row[0] not in ('in_progress', 'rejected'):
+                return _resp(409, {'error': 'Инвентаризация закрыта — сканы менять нельзя'})
             cur.execute(
                 "DELETE FROM stocktake_scans WHERE stocktake_id = %s AND storage_barcode = %s",
                 (int(stocktake_id), barcode),
@@ -487,6 +529,7 @@ def handler(event: dict, context) -> dict:
                 "  dispose_reason = %s, disposed_at = now(), disposed_by = %s, "
                 "  shelf_id = NULL, reserved_order_id = NULL, matched_at = NULL "
                 "WHERE gw.status = %s AND gw.shelf_id IS NOT NULL "
+                f"  AND ({SHELVED_BEFORE_START}) "
                 "  AND NOT EXISTS (SELECT 1 FROM stocktake_scans s "
                 "                  WHERE s.stocktake_id = %s AND s.goods_warehouse_id = gw.id) "
                 "RETURNING gw.id",
@@ -495,6 +538,7 @@ def handler(event: dict, context) -> dict:
                     f'Утилизирована по инвентаризации №{stocktake_id}',
                     int(actor_id) if actor_id else None,
                     COUNTABLE_STATUS,
+                    int(stocktake_id),
                     int(stocktake_id),
                 ),
             )
@@ -641,6 +685,11 @@ def handler(event: dict, context) -> dict:
                 "WHERE id = %s AND status = 'pending_approval'",
                 (reason, int(stocktake_id)),
             )
+            if cur.rowcount == 0:
+                # Раньше «Вернуть на пересчёт» отвечало «успешно» и писало журнал,
+                # даже если инвентаризация уже не ждала решения.
+                conn.rollback()
+                return _resp(409, {'error': 'Инвентаризация не ждёт подтверждения'})
             log_action(
                 cur, actor_id, actor_name, 'stocktake_reject', stocktake_id,
                 f'Инвентаризация возвращена на пересчёт: {reason}',

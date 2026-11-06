@@ -284,7 +284,21 @@ const Stocktakes = () => {
               </div>
             )}
 
-            {!active && canCount && !listError && (
+            {/* Пока прошлая инвентаризация ждёт решения админа, новую не начинаем:
+                иначе одна и та же недостача списалась бы дважды. Сервер это тоже
+                не пустит — здесь просто не показываем бесполезную кнопку. */}
+            {!active && pending && canCount && !isAdmin && !listError && (
+              <div className="rounded-md border border-dashed border-border p-6 text-center">
+                <Icon name="Clock" size={36} className="mx-auto text-muted-foreground" />
+                <p className="mt-2 font-medium">Новую инвентаризацию пока начать нельзя</p>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  Инвентаризация №{pending.id} ждёт решения администратора. Новую можно
+                  начать, когда её подтвердят или отменят
+                </p>
+              </div>
+            )}
+
+            {!active && !pending && canCount && !listError && (
               <div className="rounded-md border border-dashed border-border p-6 text-center">
                 <Icon name="ClipboardCheck" size={36} className="mx-auto text-muted-foreground" />
                 <p className="mt-2 font-medium">Пересчёт не идёт</p>
