@@ -296,7 +296,6 @@ def handler(event: dict, context) -> dict:
     denied = guard_request(event, public=lambda event: request_method(event) == 'POST' and 'action' not in request_body(event), roles=('admin',))
     if denied:
         return denied
-
     method = event.get('httpMethod', 'GET')
 
     if method == 'OPTIONS':

@@ -102,7 +102,6 @@ def handler(event: dict, context) -> dict:
     denied = guard_request(event, public=lambda event: request_method(event) == 'GET' and not request_query(event).get('id'))
     if denied:
         return denied
-
     method = event.get('httpMethod', 'GET')
 
     if method == 'OPTIONS':

@@ -90,9 +90,7 @@ def _economics(marketplace, scheme='FBS'):
     """Расчёт юнит-экономики по площадке — оттуда берём маржу по каждому размеру."""
     st, data = _http(
         f'{UNIT_ECONOMICS_URL}?marketplace={marketplace}&scheme={scheme}',
-        'GET', timeout=25,
-        # Служебный вызов: юнит-экономика пускает только вошедших или по ключу.
-        headers={'X-Cron-Secret': os.environ.get('CRON_SECRET', '')},
+        'GET', headers={'X-Cron-Secret': os.environ.get('CRON_SECRET', '')}, timeout=25,
     )
     if st != 200 or not isinstance(data, dict):
         return None

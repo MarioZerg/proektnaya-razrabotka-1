@@ -121,7 +121,6 @@ def _margin_index():
         try:
             req = urllib.request.Request(
                 f'{UNIT_ECONOMICS_URL}?marketplace=ozon&scheme={scheme}',
-                # Служебный вызов: юнит-экономика пускает только вошедших или по ключу.
                 headers={'X-Cron-Secret': os.environ.get('CRON_SECRET', '')})
             with urllib.request.urlopen(req, timeout=25) as r:
                 data = json.loads(r.read().decode())
@@ -794,7 +793,6 @@ def handler(event: dict, context) -> dict:
     denied = guard_request(event)
     if denied:
         return denied
-
     method = event.get('httpMethod', 'GET')
 
     if method == 'OPTIONS':

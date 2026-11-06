@@ -5,8 +5,8 @@
 ткань из расхода + ширина — только если в карточке проставлен расход материалов.
 """
 import json
-import math
 import os
+import math
 import re
 import time
 import urllib.error
@@ -41,10 +41,8 @@ def _cost_map():
     data = None
     for attempt in range(2):
         try:
-            # Служебный вызов: себестоимость пускает только вошедших или по ключу.
-            req = urllib.request.Request(
-                PRODUCT_COST_URL, headers={'X-Cron-Secret': os.environ.get('CRON_SECRET', '')})
-            with urllib.request.urlopen(req, timeout=20) as r:
+            with urllib.request.urlopen(urllib.request.Request(
+                    PRODUCT_COST_URL, headers={'X-Cron-Secret': os.environ.get('CRON_SECRET', '')}), timeout=20) as r:
                 data = json.loads(r.read().decode('utf-8') or '{}')
             break
         except Exception:

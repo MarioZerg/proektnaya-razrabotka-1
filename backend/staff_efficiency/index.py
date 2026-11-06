@@ -255,7 +255,6 @@ def handler(event: dict, context) -> dict:
     denied = guard_request(event)
     if denied:
         return denied
-
     if event.get('httpMethod') == 'OPTIONS':
         return {'statusCode': 200, 'headers': {**CORS, 'Access-Control-Max-Age': '86400'}, 'body': ''}
 

@@ -117,6 +117,12 @@ export interface SupplyItem {
   shelfId?: number | null;
   /** Кто наклеил ярлык отправления на эту вещь. */
   labeledByName?: string | null;
+  /** Весь конвейер вещи: кто кроил, шил, обмётывал, упаковал и добавил в поставку. */
+  cutterName?: string | null;
+  sewerName?: string | null;
+  overlockName?: string | null;
+  packerName?: string | null;
+  addedByName?: string | null;
   /** Заказ юрлица (B2B). */
   isB2b?: boolean;
 }

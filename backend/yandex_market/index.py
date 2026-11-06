@@ -963,7 +963,6 @@ def handler(event: dict, context) -> dict:
     denied = guard_request(event)
     if denied:
         return denied
-
     if not _is_cron_call(event):
         return _handler_impl(event, context)
     started = _time_mod.monotonic()

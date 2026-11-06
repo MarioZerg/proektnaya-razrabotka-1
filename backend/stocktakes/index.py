@@ -46,9 +46,7 @@ def _kick_stock_rematch():
         GOODS_WAREHOUSE_URL,
         data=json.dumps({'action': 'rematch_stock',
                          'actorName': 'Система (после инвентаризации)'}).encode(),
-        # Служебный вызов: склад пускает только вошедших или по ключу расписания.
-        headers={'Content-Type': 'application/json',
-                 'X-Cron-Secret': os.environ.get('CRON_SECRET', '')},
+        headers={'Content-Type': 'application/json', 'X-Cron-Secret': os.environ.get('CRON_SECRET', '')},
         method='POST',
     )
     try:
@@ -237,7 +235,6 @@ def handler(event: dict, context) -> dict:
     denied = guard_request(event)
     if denied:
         return denied
-
     method = event.get('httpMethod', 'GET')
     if method == 'OPTIONS':
         return {'statusCode': 200, 'headers': CORS_HEADERS, 'body': ''}

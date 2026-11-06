@@ -1,0 +1,2 @@
+ALTER TABLE t_p86119184_proektnaya_razrabotk.marketplace_supply_items ADD COLUMN IF NOT EXISTS added_by integer;
+ALTER TABLE t_p86119184_proektnaya_razrabotk.marketplace_supply_items ADD COLUMN IF NOT EXISTS added_at timestamp DEFAULT now();

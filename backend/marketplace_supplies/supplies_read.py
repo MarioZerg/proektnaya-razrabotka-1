@@ -229,7 +229,14 @@ def handle_get(event: dict, headers: dict, dsn: str) -> dict:
                 "gw.storage_barcode, gw.shelf_id, "
                 "COALESCE(ro.marketplace, o.marketplace), gw.shipping_labeled_by_name, "
                 # Стикер связки — им вещь сканируют в поставку.
-                "gw.bundle_barcode "
+                "gw.bundle_barcode, "
+                # Весь конвейер вещи: кто кроил, шил, обмётывал, упаковал и кто
+                # положил её в поставку. Люди — от заказа, под который вещь сшита.
+                "(SELECT full_name FROM users WHERE id = COALESCE(o.cutter_user_id, ro.cutter_user_id)), "
+                "(SELECT full_name FROM users WHERE id = COALESCE(o.sewer_user_id, ro.sewer_user_id)), "
+                "(SELECT full_name FROM users WHERE id = COALESCE(o.overlock_user_id, ro.overlock_user_id)), "
+                "(SELECT full_name FROM users WHERE id = COALESCE(o.packer_user_id, ro.packer_user_id)), "
+                "(SELECT full_name FROM users WHERE id = msi.added_by) "
                 "FROM marketplace_supply_items msi "
                 "LEFT JOIN goods_warehouse gw ON gw.id = msi.goods_warehouse_id "
                 "LEFT JOIN orders o ON o.id = gw.order_id "
@@ -282,6 +289,11 @@ def handle_get(event: dict, headers: dict, dsn: str) -> dict:
                     # Стикер связки: им вещь сканируется в поставку, потому что
                     # ярлык маркетплейса у связки один на все вещи.
                     'bundleBarcode': r[20],
+                    'cutterName': r[21],
+                    'sewerName': r[22],
+                    'overlockName': r[23],
+                    'packerName': r[24],
+                    'addedByName': r[25],
                 }
                 for r in cur.fetchall()
             ]

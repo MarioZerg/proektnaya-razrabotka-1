@@ -374,7 +374,8 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                 if row[0] != 'in_stock':
                     return {'statusCode': 409, 'headers': headers, 'body': json.dumps({'error': f'Товар #{gid} недоступен'})}
                 cur.execute(
-                    f"INSERT INTO marketplace_supply_items (supply_id, goods_warehouse_id) VALUES ({supply_id}, {int(gid)})"
+                    "INSERT INTO marketplace_supply_items (supply_id, goods_warehouse_id, added_by) VALUES (%s, %s, %s)",
+                    (int(supply_id), int(gid), int(actor_id) if str(actor_id or '').isdigit() else None),
                 )
                 cur.execute(f"UPDATE goods_warehouse SET status = 'reserved' WHERE id = {int(gid)}")
 
@@ -687,7 +688,8 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                 "                AND COALESCE(_ms.status, '') "
                 "                    NOT IN ('Выполнена', 'Отменена')) "
                 "WHERE (o.order_number = '{code}' OR o.ozon_posting_number = '{code}' "
-                "       OR (o.marketplace = 'IM' AND o.delivery_tracking_number = '{code}')) "
+                "       OR (o.marketplace = 'IM' AND (o.delivery_tracking_number = '{code}' "
+                "                                     OR o.delivery_barcode = '{code}'))) "
                 "ORDER BY (gw.shipping_labeled_at IS NOT NULL) DESC, "
                 "         (msi.id IS NULL) DESC, "
                 "         gw.shipping_labeled_at DESC NULLS LAST, "
@@ -1147,7 +1149,8 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                 }
 
             cur.execute(
-                f"INSERT INTO marketplace_supply_items (supply_id, goods_warehouse_id) VALUES ({int(supply_id)}, {goods_id})"
+                "INSERT INTO marketplace_supply_items (supply_id, goods_warehouse_id, added_by) VALUES (%s, %s, %s)",
+                (int(supply_id), int(goods_id), int(actor_id) if str(actor_id or '').isdigit() else None),
             )
             cur.execute(f"UPDATE goods_warehouse SET status = 'reserved' WHERE id = {goods_id}")
 
@@ -2392,9 +2395,10 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
 
                 cur.execute(
                     "INSERT INTO marketplace_supply_items "
-                    "  (supply_id, goods_warehouse_id, box_id, scan_id) "
-                    "VALUES (%s, %s, %s, %s) RETURNING id",
-                    (int(supply_id), int(fbo_gid), int(box_id), scan_id),
+                    "  (supply_id, goods_warehouse_id, box_id, scan_id, added_by) "
+                    "VALUES (%s, %s, %s, %s, %s) RETURNING id",
+                    (int(supply_id), int(fbo_gid), int(box_id), scan_id,
+                     int(actor_id) if str(actor_id or '').isdigit() else None),
                 )
                 new_item_id = cur.fetchone()[0]
 
@@ -2597,7 +2601,9 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                 "  AND EXISTS (SELECT 1 FROM marketplace_supplies _ls "
                 "              WHERE _ls.id = msi.supply_id "
                 "                AND COALESCE(_ls.status, '') NOT IN ('Выполнена', 'Отменена')) "
-                "WHERE (o.order_number = '{code}' OR o.ozon_posting_number = '{code}') "
+                "WHERE (o.order_number = '{code}' OR o.ozon_posting_number = '{code}' "
+                "       OR (o.marketplace = 'IM' AND (o.delivery_tracking_number = '{code}' "
+                "                                     OR o.delivery_barcode = '{code}'))) "
                 "ORDER BY (msi.id IS NULL) DESC, (gw.shipping_labeled_at IS NOT NULL) DESC, "
                 "         (gw.status = 'awaiting_supply') DESC, "
                 "         (gw.reserved_order_id = o.id) DESC LIMIT 1"
@@ -2733,8 +2739,10 @@ def handle_post(event: dict, headers: dict, dsn: str) -> dict:
                 }
 
             cur.execute(
-                f"INSERT INTO marketplace_supply_items (supply_id, goods_warehouse_id, box_id) "
-                f"VALUES ({supply_id}, {goods_id}, {int(box_id)}) RETURNING id"
+                "INSERT INTO marketplace_supply_items (supply_id, goods_warehouse_id, box_id, added_by) "
+                "VALUES (%s, %s, %s, %s) RETURNING id",
+                (int(supply_id), int(goods_id), int(box_id),
+                 int(actor_id) if str(actor_id or '').isdigit() else None),
             )
             item_id = cur.fetchone()[0]
             cur.execute(f"UPDATE goods_warehouse SET status = 'reserved' WHERE id = {goods_id}")

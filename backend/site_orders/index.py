@@ -451,8 +451,42 @@ def get_label(cur, order_id, order_number, api_key, site_url=DEFAULT_SITE_URL):
     except Exception as e:
         return 502, {'error': f'Не удалось скачать этикетку: {e}'}
     kind = 'pdf' if ('pdf' in ctype or content[:4] == b'%PDF') else 'png'
+    if kind == 'pdf':
+        remember_label_barcode(cur, order_id, order_number, content)
     return 200, {'kind': kind, 'base64': base64.b64encode(content).decode('ascii'),
                  'trackingNumber': tracking}
+
+
+def label_barcode(content):
+    """Код из QR этикетки Ozon Доставки — он же напечатан цифрами над QR («ПВЗ • 4021…»).
+
+    Кладовщик пикает в поставку именно этот QR, а сайт присылает только трек-номер.
+    """
+    try:
+        import io
+        import re
+        from pypdf import PdfReader
+        text = ' '.join((p.extract_text() or '') for p in PdfReader(io.BytesIO(content)).pages)
+    except Exception:
+        return None
+    m = re.search(r'ПВЗ\s*\S?\s*(\d{10,20})', text) or re.search(r'\b(\d{12,20})\b', text)
+    return m.group(1) if m else None
+
+
+def remember_label_barcode(cur, order_id, order_number, content):
+    code = label_barcode(content)
+    if not code:
+        return
+    if order_id:
+        cur.execute("UPDATE orders SET delivery_barcode = %s WHERE id = %s AND marketplace = 'IM'",
+                    (code, int(order_id)))
+    else:
+        cur.execute(
+            "UPDATE orders SET delivery_barcode = %s WHERE marketplace = 'IM' "
+            "AND (order_number = %s OR delivery_tracking_number = %s)",
+            (code, order_number, order_number),
+        )
+    cur.connection.commit()
 
 
 def handler(event: dict, context) -> dict:
@@ -654,9 +688,7 @@ def handler(event: dict, context) -> dict:
             req = urllib.request.Request(
                 PRODUCTS_SYNC_URL,
                 data=json.dumps({'action': 'sync', 'shopId': shop_id}).encode('utf-8'),
-                # Служебный вызов: синхронизация карточек пускает только вошедших или по ключу.
-                headers={'Content-Type': 'application/json',
-                         'X-Cron-Secret': os.environ.get('CRON_SECRET', '')},
+                headers={'Content-Type': 'application/json', 'X-Cron-Secret': os.environ.get('CRON_SECRET', '')},
                 method='POST',
             )
             try:

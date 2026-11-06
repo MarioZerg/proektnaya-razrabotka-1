@@ -6,6 +6,7 @@ import type { SupplyDetail } from '@/lib/marketplaceSuppliesApi';
 import { mpStatusInfo } from '@/components/crm/marketplaceSupplies/marketplaceSuppliesShared';
 import CancelledItemShelfCell from '../CancelledItemShelfCell';
 import { sizeOf, type Row } from './fbsChecklistShared';
+import ConveyorCell from './ConveyorCell';
 
 interface FbsChecklistRowProps {
   row: Row;
@@ -109,7 +110,9 @@ const FbsChecklistRow = ({
                   <TableCell className={row.justScanned ? 'text-lg font-bold' : undefined}>
                     {sizeOf(row.width, row.height)}
                   </TableCell>
-                  <TableCell className="text-sm">{row.labeledByName || '—'}</TableCell>
+                  <TableCell className="min-w-[150px]">
+                    <ConveyorCell row={row} />
+                  </TableCell>
                   <TableCell>
                     {item?.isCancelled ? (
                       <Badge variant="destructive">ЗАКАЗ ОТМЕНЁН</Badge>

@@ -48,6 +48,11 @@ const FbsSupplyChecklist = ({
     width: item.width,
     height: item.height,
     labeledByName: item.labeledByName ?? null,
+    cutterName: item.cutterName,
+    sewerName: item.sewerName,
+    overlockName: item.overlockName,
+    packerName: item.packerName,
+    addedByName: item.addedByName,
     item,
     groupKey: item.groupKey ?? null,
     bundleBarcode: item.bundleBarcode ?? null,
@@ -61,6 +66,9 @@ const FbsSupplyChecklist = ({
     width: a.width,
     height: a.height,
     labeledByName: a.labeledByName,
+    cutterName: a.cutterName,
+    sewerName: a.sewerName,
+    packerName: a.packerName,
     shelfName: a.shelfName,
     groupKey: a.groupKey ?? null,
     bundleBarcode: a.bundleBarcode ?? null,
@@ -225,7 +233,7 @@ const FbsSupplyChecklist = ({
               <TableHead className="text-primary-foreground">Заказ</TableHead>
               <TableHead className="text-primary-foreground">Материал</TableHead>
               <TableHead className="text-primary-foreground">Размер</TableHead>
-              <TableHead className="text-primary-foreground">Кто стикеровал</TableHead>
+              <TableHead className="text-primary-foreground">Конвейер</TableHead>
               <TableHead className="text-primary-foreground">Статус</TableHead>
               {canEditItems && <TableHead className="text-primary-foreground"></TableHead>}
             </TableRow>

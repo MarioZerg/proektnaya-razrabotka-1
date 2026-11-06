@@ -23,7 +23,6 @@ def handler(event: dict, context) -> dict:
     denied = guard_request(event, roles=('admin',))
     if denied:
         return denied
-
     method = event.get('httpMethod', 'GET')
 
     if method == 'OPTIONS':

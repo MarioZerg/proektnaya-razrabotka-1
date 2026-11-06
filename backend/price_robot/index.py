@@ -276,7 +276,6 @@ def _push(mp, items, actor_id):
     body = json.dumps(payload).encode('utf-8')
     req = urllib.request.Request(PRICE_PUSH_URL, method='POST', data=body)
     req.add_header('Content-Type', 'application/json')
-    # Служебный вызов: функция цен пускает только вошедших или по ключу расписания.
     req.add_header('X-Cron-Secret', os.environ.get('CRON_SECRET', ''))
     # Ждать долго нечего: наш собственный вызов оборвётся раньше. Лучше
     # быстро вернуть ошибку и дослать пачку следующим кругом, чем висеть

@@ -186,7 +186,6 @@ def handler(event: dict, context) -> dict:
     denied = guard_request(event, public=lambda event: request_method(event) == "POST" and (candidate_chats.is_webhook(request_body(event)) or not request_body(event)))
     if denied:
         return denied
-
     method = event.get('httpMethod', 'GET')
 
     if method == 'OPTIONS':

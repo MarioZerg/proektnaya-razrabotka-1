@@ -166,7 +166,6 @@ def handler(event: dict, context) -> dict:
     denied = guard_request(event, public=lambda event: request_method(event) == "GET" and request_query(event).get("liveFloor") == "1")
     if denied:
         return denied
-
     method = event.get('httpMethod', 'GET')
     method = event.get('httpMethod', 'GET')
 

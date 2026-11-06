@@ -205,7 +205,6 @@ def handler(event: dict, context) -> dict:
     denied = guard_request(event, public=lambda event: request_method(event) == 'GET' and request_query(event).get('radio') == '1' and not request_query(event).get('userId'))
     if denied:
         return denied
-
     method = event.get('httpMethod', 'GET')
     if method == 'OPTIONS':
         return {'statusCode': 200, 'headers': CORS_HEADERS, 'body': ''}

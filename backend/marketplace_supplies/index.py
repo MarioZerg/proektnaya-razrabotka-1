@@ -120,7 +120,6 @@ def handler(event: dict, context) -> dict:
     denied = guard_request(event)
     if denied:
         return denied
-
     try:
         return _handler(event, context)
     except psycopg2.OperationalError:

@@ -9,6 +9,12 @@ export interface Row {
   width: number | null;
   height: number | null;
   labeledByName: string | null;
+  /** Кто делал вещь на конвейере. */
+  cutterName?: string | null;
+  sewerName?: string | null;
+  overlockName?: string | null;
+  packerName?: string | null;
+  addedByName?: string | null;
   shelfName?: string | null;
   /** Стикер связки (YM-…) — им сканируют вещь в поставку. */
   bundleBarcode?: string | null;
