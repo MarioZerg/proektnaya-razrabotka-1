@@ -174,7 +174,16 @@ def auto_accrue_missed(cur, only_user_id=None, only_stage=None, limit=40, note='
         cur.execute(
             "SELECT o.id, o.order_number, o.width, o.workshop_id, o.overlocked_at, o.sewer_user_id "
             "FROM orders o WHERE o.sewer_user_id IS NOT NULL AND o.sewn_at IS NOT NULL "
-            "  AND o.sewing_status = 'Готовые' AND o.cut_given_to_order_id IS NULL "
+            # Сшитое оплачивается и тогда, когда заказ отменили уже после пошива
+            # (решение владельца 06.11.2026): работа сделана, вещь существует.
+            # Штатно швее платят при закрытии стикеровки, а до неё отменённый
+            # заказ не доходит. Вещь, переданная другому заказу
+            # (cut_given_to_order_id), оплачивается на нём — здесь не дублируем.
+            "  AND (o.sewing_status = 'Готовые' OR o.status = 'Отменён' "
+            "       OR o.sewing_status = 'Отменён' OR o.cancelled_at IS NOT NULL "
+            "       OR strpos(lower(COALESCE(o.ozon_status, '')), 'cancel') = 1 "
+            "       OR strpos(upper(COALESCE(o.ym_status, '')), 'CANCEL') > 0) "
+            "  AND o.cut_given_to_order_id IS NULL "
             "  AND NOT EXISTS (SELECT 1 FROM salary_accruals a "
             "                  WHERE a.order_id = o.id AND a.type = 'sewer_piece')"
             + u_filter['sewer_user_id'] + " ORDER BY o.sewn_at LIMIT %s",

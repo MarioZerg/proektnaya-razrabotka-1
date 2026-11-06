@@ -608,12 +608,16 @@ def _cancel_locally(cur, order_id):
     """Снятие заказа у себя: с конвейера убран, из истории не стёрт.
 
     Заказ помечается отменённым, а не удаляется: по нему потом разбирают, почему
-    сорвалась отгрузка. Невыплаченные начисления по нему снимаются — платить не за
-    что, вещь не шили; уже выплаченные остаются, деньги человек получил.
+    сорвалась отгрузка. Невыплаченные начисления по нему снимаются, кроме оплаты
+    швее за уже сшитую вещь — работа сделана; уже выплаченные остаются.
     """
+    # Оплату за уже сшитую вещь не снимаем: швея работу сделала (решение
+    # владельца 06.11.2026). Если её ещё нет — доначислит автоначисление.
     cur.execute(
-        "DELETE FROM salary_accruals WHERE order_id = %s AND paid_at IS NULL",
-        (order_id,),
+        "DELETE FROM salary_accruals WHERE order_id = %s AND paid_at IS NULL "
+        "  AND NOT (type = 'sewer_piece' AND EXISTS ("
+        "    SELECT 1 FROM orders o WHERE o.id = %s AND o.sewn_at IS NOT NULL))",
+        (order_id, order_id),
     )
     cur.execute(
         "UPDATE orders SET status = 'Отменён', sewing_status = 'Отменён', "
