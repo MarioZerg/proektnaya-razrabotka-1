@@ -29,12 +29,14 @@ J=/opt/yarplan/deploy/run_job.sh
 33 * * * *       root $J ozon_fbs split_pending
 13-59/30 * * * * root $J marketplace_supplies auto_statuses POST
 48 */6 * * *     root $J unit_economics auto_sync_prices POST
+# Страховка зарплаты: доначисляет этап, если начисление при закрытии не прошло
+# (включено 06.11.2026 по итогам аудита).
+16-59/30 * * * * root $J salary auto_accrue POST
 
 # --- ЕСТЬ В КОДЕ, НО СЕЙЧАС НЕ ЗАПУСКАЮТСЯ. Включать только осознанно:
 # робот цен сам меняет цены на площадках, автозакрытие смен ставит штрафы.
 #42 * * * *       root $J price_robot run POST
 #5 3 * * *        root $J shift_sessions auto_close POST
-#16-59/30 * * * * root $J salary auto_accrue POST
 #35 4 * * *       root $J ad_spend tax_sync POST
 #21 */2 * * *     root $J ad_spend sync_sales POST
 #10 4 * * *       root $J ad_spend sync POST

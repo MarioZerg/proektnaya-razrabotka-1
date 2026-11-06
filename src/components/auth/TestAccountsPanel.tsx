@@ -10,6 +10,7 @@ const roleIcons: Record<TestAccount['role'], string> = {
   sewer: 'Shirt',
   cutter: 'Scissors',
   packer: 'PackageCheck',
+  packer_returns: 'Undo2',
   cleaner: 'Sparkles',
   manager: 'Briefcase',
   accountant: 'Calculator',

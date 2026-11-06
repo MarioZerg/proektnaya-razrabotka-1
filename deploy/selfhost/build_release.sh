@@ -65,6 +65,13 @@ cd /opt/yarplan
 rm -rf site.new app.new && mkdir -p site.new app.new
 tar -xzf /tmp/site.tgz -C site.new
 tar -xzf /tmp/backend.tgz -C app.new
+# Файлы прошлых сборок оставляем ещё на 14 дней: у сотрудника может быть открыта
+# старая версия, и при переходе по разделам она запросит свой кусок кода. Без
+# него вкладка перезагружалась бы посреди работы.
+if [ -d site/assets ]; then
+  cp -np site/assets/* site.new/assets/ 2>/dev/null || true
+  find site.new/assets -type f -mtime +14 -delete
+fi
 chown -R root:yarplan site.new app.new && chmod -R g+rX,o-rwx site.new app.new
 rm -rf site.old app.old
 [ -d site ] && mv site site.old

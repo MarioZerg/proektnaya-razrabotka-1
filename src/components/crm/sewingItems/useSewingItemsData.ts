@@ -4,7 +4,7 @@ import { useAuth } from '@/context/AuthContext';
 import { fetchOrders, type Order } from '@/lib/ordersApi';
 import { fetchEmployees, type Employee } from '@/lib/usersApi';
 import { fetchMaterialsData, type Material } from '@/lib/materialsApi';
-import { fetchWorkshops, fetchWorkshopDetail, type Workshop } from '@/lib/workshopsApi';
+import { fetchWorkshops, fetchWorkshopDetail, isRetiredWorkshop, type Workshop } from '@/lib/workshopsApi';
 import { fetchRolls, type Roll } from '@/lib/rollsApi';
 import { fetchEmployeeShifts } from '@/lib/shiftSessionsApi';
 import {
@@ -222,7 +222,9 @@ export const useSewingItemsData = () => {
   useEffect(() => {
     // Ткани цеха нужны ВСЕМ производственным ролям, а не только закройщику: швея и
     // упаковщица работают в том же цехе и не должны видеть в фильтре чужие материалы.
-    if (!isProductionRole || !effectiveWorkshopId) {
+    // Закрытый цех (у сотрудника он остался в профиле или смене) не запрашиваем:
+    // запрос заведомо падал «Этот цех закрыт» и писал сбой в журнал.
+    if (!isProductionRole || !effectiveWorkshopId || isRetiredWorkshop({ id: effectiveWorkshopId })) {
       setAllowedMaterialIds(null);
       return;
     }

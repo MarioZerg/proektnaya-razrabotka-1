@@ -185,6 +185,8 @@ const CreateOzonFboDialog = ({
                         </span>
                       </span>
                     </div>
+                    {/* На телефоне колонки не влезали и вылезали за край окна. */}
+                    <div className="overflow-x-auto">
                     <table className="w-full text-[11px]">
                       <thead>
                         <tr className="text-muted-foreground">
@@ -228,6 +230,7 @@ const CreateOzonFboDialog = ({
                         })}
                       </tbody>
                     </table>
+                    </div>
                   </div>
                 )}
 

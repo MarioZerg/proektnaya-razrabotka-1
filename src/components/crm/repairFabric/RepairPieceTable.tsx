@@ -109,8 +109,8 @@ const RepairPieceTable = ({
                 )}
               </TableCell>
             )}
-            <TableCell className="text-muted-foreground">
-              <Icon name="ChevronRight" size={16} title="Открыть историю" />
+            <TableCell className="text-muted-foreground" title="Открыть историю">
+              <Icon name="ChevronRight" size={16} />
             </TableCell>
             {!isAdmin && canRequestRemoval && (
               <TableCell className="text-right" onClick={(e) => e.stopPropagation()}>

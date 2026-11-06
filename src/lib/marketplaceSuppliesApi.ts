@@ -11,7 +11,9 @@ const SUPPLIES_URL = 'https://functions.poehali.dev/d0a75e82-2c63-440c-8eae-dd03
  * «Отгружено» (FBS) и «Принята» (FBO OZON) ставит система сама — между
  * «Отгрузкой» и «Выполнена». Через 12/24 часа поставка закрывается сама.
  */
-export type SupplyStatus = 'Открытая' | 'На сборке' | 'Отгрузка' | 'Отгружено' | 'Принята' | 'Выполнена';
+// «Отменена» ставит сервер (отменённая заявка FBO), экран её проверяет — в типе её
+// не было, и такие проверки компилятор считал невозможными.
+export type SupplyStatus = 'Открытая' | 'На сборке' | 'Отгрузка' | 'Отгружено' | 'Принята' | 'Выполнена' | 'Отменена';
 export type SupplyType = 'FBO' | 'FBS';
 export type OzonDeliveryMethod = 'direct' | 'cross_docking';
 export type PackagingType = 'boxes' | 'pallets';

@@ -58,6 +58,8 @@ const SupplyCandidatesPanel = ({
               Нет заказов этого маркетплейса с тем же кластером
             </p>
           ) : (
+            // На телефоне колонки не влезали и вылезали за край экрана.
+            <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead className="bg-muted/50">
                 <tr>
@@ -78,6 +80,7 @@ const SupplyCandidatesPanel = ({
                 ))}
               </tbody>
             </table>
+            </div>
           )}
         </div>
       </CollapsibleContent>

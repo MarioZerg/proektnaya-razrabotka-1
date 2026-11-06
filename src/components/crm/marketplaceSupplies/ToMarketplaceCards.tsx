@@ -194,7 +194,7 @@ const ToMarketplaceCards = ({ supplies, onOpen }: ToMarketplaceCardsProps) => (
           <Badge className={statusVariant[s.status]?.className || ''}>{s.status}</Badge>
         </div>
         </div>
-        {(s.type === 'FBS' || s.supplyDate || (s.type !== 'FBS' && s.shipToGazelkaAt)) && (
+        {(s.type === 'FBS' || s.supplyDate || s.shipToGazelkaAt) && (
           <>
             <div className="border-t border-border" />
             <div className="flex items-center gap-2 px-3 py-2">
