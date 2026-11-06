@@ -8,6 +8,7 @@ from datetime import datetime, timedelta, timezone
 import psycopg2
 
 import taxes
+from authz import guard_request
 
 OZON_API = 'https://api-seller.ozon.ru'
 YM_API = 'https://api.partner.market.yandex.ru'
@@ -1881,6 +1882,11 @@ def handler(event: dict, context) -> dict:
                                               закрытых месяцев (цепочкой)
     GET  /?action=status                     - что сейчас известно о рекламе
     """
+    # Вход по токену и настоящий actorId — см. authz.guard_request.
+    denied = guard_request(event)
+    if denied:
+        return denied
+
     method = event.get('httpMethod', 'GET')
     if method == 'OPTIONS':
         return {'statusCode': 200, 'headers': CORS_HEADERS, 'body': ''}

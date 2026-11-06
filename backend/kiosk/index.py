@@ -6,6 +6,7 @@ import urllib.request
 from datetime import datetime, timedelta, date
 
 import psycopg2
+from authz import guard_request, request_method, request_query, request_body
 
 
 _RU_TO_EN = dict(zip(
@@ -3388,6 +3389,12 @@ def _handler(event: dict, context) -> dict:
                 # Фильтр по датам приходит с экрана; если его нет — берём последние N дней.
                 date_from = (body_data.get('dateFrom') or '').strip()
                 date_to = (body_data.get('dateTo') or '').strip()
+                # Даты подставляются в текст запроса — пускаем только ГГГГ-ММ-ДД,
+                # иначе через поле даты можно было выполнить свой SQL.
+                if date_from and not re.fullmatch(r'\d{4}-\d{2}-\d{2}', date_from):
+                    date_from = ''
+                if date_to and not re.fullmatch(r'\d{4}-\d{2}-\d{2}', date_to):
+                    date_to = ''
                 conds = ["d.received_at IS NOT NULL"]
                 if date_from:
                     conds.append(f"d.received_at >= '{date_from}'::date")
@@ -4146,6 +4153,20 @@ def handler(event: dict, context) -> dict:
     При пике нагрузки база отвечает «rate limit exceeded»: транзакция
     откатывается, ничего не записано. Отвечаем понятным 503 вместо обрыва.
     """
+    # Вход по токену и настоящий actorId — см. authz.guard_request.
+    denied = guard_request(event, public=lambda event: request_method(event) == "POST" and request_body(event).get("action") == "login_by_code")
+    if denied:
+        return denied
+
+    # Брак сдаёт тот, кто вошёл на терминал: в этих действиях сотрудник приходит
+    # полем userId, и его тоже нельзя подменить из браузера.
+    user = event.get('authUser')
+    if user:
+        body = request_body(event)
+        if body.get('action') in ('defect_scan_roll', 'defect_writeoff') and 'userId' in body:
+            body['userId'] = user['id']
+            event['body'] = json.dumps(body, ensure_ascii=False)
+
     try:
         return _handler(event, context)
     except psycopg2.OperationalError:

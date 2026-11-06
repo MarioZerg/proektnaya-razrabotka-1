@@ -13,6 +13,7 @@ import psycopg2
 from psycopg2.extras import execute_values
 
 from authz import AuthError, auth_error_response, require_role
+from authz import guard_request
 
 # OZON Seller API (Supply Order — заявки FBO). Ключ боевой (у OZON нет тестового контура),
 # поэтому функция работает ТОЛЬКО НА ЧТЕНИЕ заявок и их состава. Единственное изменение,
@@ -2082,6 +2083,11 @@ def handler(event: dict, context) -> dict:
     Returns:
         dict: HTTP-ответ со списком заявок / результатом импорта
     """
+    # Вход по токену и настоящий actorId — см. authz.guard_request.
+    denied = guard_request(event)
+    if denied:
+        return denied
+
     method = event.get('httpMethod', 'GET')
     if method == 'OPTIONS':
         return {'statusCode': 200, 'headers': CORS_HEADERS, 'body': ''}

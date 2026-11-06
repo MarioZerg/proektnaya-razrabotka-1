@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import urllib.request
 
 import psycopg2
@@ -336,8 +337,10 @@ def _bought_feed(cur, page=1, per_page=10, date_from=None, date_to=None,
     per_page = min(50, max(1, int(per_page or 10)))
 
     def _clean_date(v):
+        # Строго ГГГГ-ММ-ДД из цифр: дата подставляется в текст запроса, и прежняя
+        # проверка «дефисы на 5-м и 8-м месте» пропускала кавычки между ними.
         v = (v or '').strip()[:10]
-        return v if len(v) == 10 and v[4] == '-' and v[7] == '-' else None
+        return v if re.fullmatch(r'\d{4}-\d{2}-\d{2}', v) else None
 
     d_from = _clean_date(date_from)
     d_to = _clean_date(date_to)

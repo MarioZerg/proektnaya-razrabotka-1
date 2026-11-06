@@ -7,6 +7,7 @@ import urllib.request
 import certifi
 import psycopg2
 import requests
+from authz import guard_request
 
 CORS_HEADERS = {
     'Access-Control-Allow-Origin': '*',
@@ -611,6 +612,11 @@ def handler(event: dict, context) -> dict:
     POST { action: 'move', step, itemIds?, scope?, note? } — сдвинуть цены
     POST { action: 'run', cronSecret }  — дослать незаконченный шаг
     """
+    # Вход по токену и настоящий actorId — см. authz.guard_request.
+    denied = guard_request(event)
+    if denied:
+        return denied
+
     method = event.get('httpMethod', 'GET')
     if method == 'OPTIONS':
         return {'statusCode': 200, 'headers': CORS_HEADERS, 'body': ''}
