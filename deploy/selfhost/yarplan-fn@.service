@@ -9,6 +9,9 @@ Group=yarplan
 Environment=FN_DIR=/opt/yarplan/app/backend/%i
 # gunicorn держит служебные файлы в домашней папке — даём ей временную, своей у службы нет
 Environment=HOME=/run/yarplan-fn/%i
+# Время как на poehali: UTC. Код пишет datetime.now()/utcnow() и сравнивает с now()
+# в базе — при московском времени сервера всё новое уезжало бы на 3 часа вперёд.
+Environment=TZ=UTC
 EnvironmentFile=/opt/yarplan/.env
 WorkingDirectory=/opt/yarplan/app/backend/%i
 RuntimeDirectory=yarplan-fn/%i
