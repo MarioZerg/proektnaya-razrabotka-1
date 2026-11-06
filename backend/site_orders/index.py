@@ -6,10 +6,26 @@ import urllib.parse
 import urllib.request
 from datetime import datetime
 
+import hmac
+
 import psycopg2
 
 import site_catalog
 import site_chats
+from authz import guard_request, request_body, request_method, request_query
+
+
+def _site_catalog_call(event: dict) -> bool:
+    """Сайт мегатюль.рф сам забирает каталог (себестоимость) — по своему ключу.
+
+    Ключ SITE_CATALOG_KEY открывает ТОЛЬКО action=catalog. Главный ключ
+    расписания сайту не выдаём: он открывает все функции системы.
+    """
+    key = os.environ.get('SITE_CATALOG_KEY') or ''
+    q, b = request_query(event), request_body(event)
+    given = str(q.get('siteKey') or b.get('siteKey') or '')
+    action = b.get('action') or q.get('action')
+    return bool(key) and action == 'catalog' and hmac.compare_digest(given.encode(), key.encode())
 
 SHOP_CODE = 'megatul_site'
 DEFAULT_SITE_URL = 'https://xn--80aff0ab3b6do.xn--p1ai'
@@ -506,6 +522,17 @@ def handler(event: dict, context) -> dict:
     POST { action: 'low_fabric' }            — ткани меньше 20 м и товары сайта на них
     GET  ?action=status                       — подключён ли магазин
     """
+    # Вход по токену и настоящий actorId — см. authz.guard_request. Без входа:
+    # статус подключения и каталог для самого сайта по его ключу.
+    site_call = _site_catalog_call(event)
+    denied = guard_request(
+        event,
+        public=lambda e: site_call or (
+            request_method(e) == 'GET' and request_query(e).get('action', 'status') == 'status'),
+    )
+    if denied:
+        return denied
+
     method = event.get('httpMethod', 'GET')
     if method == 'OPTIONS':
         return {'statusCode': 200, 'headers': CORS_HEADERS, 'body': ''}
@@ -526,7 +553,7 @@ def handler(event: dict, context) -> dict:
         if cron_key != os.environ.get('CRON_SECRET', '') or not cron_key:
             return _resp(403, {'error': 'Неверный ключ планировщика'})
         actor_id, actor_name = None, 'Планировщик'
-    if method == 'GET' and action != 'status' and not cron_key:
+    if method == 'GET' and action != 'status' and not cron_key and not site_call:
         return _resp(403, {'error': 'Действие требует ключ планировщика'})
 
     conn = psycopg2.connect(os.environ['DATABASE_URL'])
