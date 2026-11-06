@@ -16,11 +16,18 @@ for t in users suppliers salary_payouts; do
   [ -f "$f" ] || { echo "$t: файла нет — пропускаю"; continue; }
   cols=$(head -1 "$f" | tr -d '\r\357\273\277')
   rows=$(($(wc -l < "$f") - 1))
+  # Пустое поле в CSV база читает как NULL. В обязательных текстовых колонках
+  # (например, роль ещё не назначена) это пустая строка — так и загружаем.
+  nn=$(psql "$DATABASE_URL" -tAc "SELECT string_agg(column_name, ',') FROM information_schema.columns
+        WHERE table_schema = '$S' AND table_name = '$t' AND is_nullable = 'NO'
+          AND data_type IN ('text', 'character varying', 'character')
+          AND column_name = ANY (string_to_array('$cols', ','))")
+  force=""; [ -n "$nn" ] && force=", FORCE_NOT_NULL ($nn)"
   # DELETE, а не TRUNCATE CASCADE: каскад очистил бы и все таблицы, ссылающиеся на эту.
   psql "$DATABASE_URL" -q -v ON_ERROR_STOP=1 \
     -c "BEGIN" \
     -c "DELETE FROM $S.$t" \
-    -c "\\copy $S.$t ($cols) FROM '$f' WITH (FORMAT csv, HEADER true, ENCODING 'UTF8')" \
+    -c "\\copy $S.$t ($cols) FROM '$f' WITH (FORMAT csv, HEADER true, ENCODING 'UTF8'$force)" \
     -c "COMMIT"
   echo "$t: в файле строк $rows, в базе $(psql "$DATABASE_URL" -tAc "SELECT count(*) FROM $S.$t")"
 done
