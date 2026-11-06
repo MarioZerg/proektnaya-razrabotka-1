@@ -18,14 +18,24 @@ from authz import guard_request, request_body, request_method, request_query
 def _site_catalog_call(event: dict) -> bool:
     """Сайт мегатюль.рф сам забирает каталог (себестоимость) — по своему ключу.
 
-    Ключ SITE_CATALOG_KEY открывает ТОЛЬКО action=catalog. Главный ключ
-    расписания сайту не выдаём: он открывает все функции системы.
+    Подходит ключ, по которому ERP ходит к сайту (apiKey в «Интеграциях»,
+    у сайта он CRM_ORDERS_KEY), или отдельный SITE_CATALOG_KEY. Любой из них
+    открывает ТОЛЬКО action=catalog. Главный ключ расписания сайту не нужен:
+    он открывает все функции системы.
     """
-    key = os.environ.get('SITE_CATALOG_KEY') or ''
     q, b = request_query(event), request_body(event)
-    given = str(q.get('siteKey') or b.get('siteKey') or '')
-    action = b.get('action') or q.get('action')
-    return bool(key) and action == 'catalog' and hmac.compare_digest(given.encode(), key.encode())
+    if (b.get('action') or q.get('action')) != 'catalog':
+        return False
+    given = str(q.get('siteKey') or b.get('siteKey') or '').strip()
+    if len(given) < 16:
+        return False
+    keys = [os.environ.get('SITE_CATALOG_KEY') or '']
+    conn = psycopg2.connect(os.environ['DATABASE_URL'])
+    try:
+        keys.append(site_settings(conn.cursor())[2] or '')
+    finally:
+        conn.close()
+    return any(k and hmac.compare_digest(given.encode(), k.encode()) for k in keys)
 
 SHOP_CODE = 'megatul_site'
 DEFAULT_SITE_URL = 'https://xn--80aff0ab3b6do.xn--p1ai'
