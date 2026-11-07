@@ -75,6 +75,16 @@ export const marketplaceIntegrationsConfig: MarketplaceConfigItem[] = [
       { key: 'apiKey', label: 'Ключ доступа', secret: true },
     ],
   },
+  {
+    code: 'ozon_delivery',
+    name: 'Ozon Доставка',
+    className: 'text-[#005BFF]',
+    hint: 'Ключи Rocket API из кабинета Ozon Доставки (Настройки → Интеграция API). По ним система видит, какие посылки сайта едут обратно, адрес склада возврата и документы на выдачу — на странице «Коды для ПВЗ», вкладка «мегатюль.рф».',
+    fields: [
+      { key: 'clientId', label: 'Client ID' },
+      { key: 'clientSecret', label: 'Client Secret', secret: true },
+    ],
+  },
 ];
 
 /** Учёт: не площадка, те же ключи магазина — у МЕГАТЮЛЬ и ДЮНЫ могут быть разные базы. */

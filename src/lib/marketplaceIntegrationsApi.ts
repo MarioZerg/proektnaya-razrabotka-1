@@ -10,7 +10,8 @@ export type MarketplaceCode =
   | 'lemana_pro'
   | 'avito'
   | 'onec_buh'
-  | 'internet_shop';
+  | 'internet_shop'
+  | 'ozon_delivery';
 
 export interface MarketplaceIntegration {
   marketplaceCode: MarketplaceCode;

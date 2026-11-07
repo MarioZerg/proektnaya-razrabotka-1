@@ -104,10 +104,12 @@ const MarketplaceIntegrationsSettings = () => {
   };
 
   const isSiteShop = shops.find((s) => s.id === shopId)?.code === 'megatul_site';
-  // У мегатюль.рф только интеграция с самим магазином: площадок и 1С там нет.
-  // У остальных магазинов, наоборот, карточку интернет-магазина не показываем.
+  // У мегатюль.рф только интеграции сайта: сам магазин и Ozon Доставка, через
+  // которую он отправляет посылки. Площадок и 1С там нет. У остальных магазинов,
+  // наоборот, эти карточки не показываем.
+  const SITE_CODES = ['internet_shop', 'ozon_delivery'];
   const visibleConfigs = marketplaceIntegrationsConfig.filter((c) =>
-    isSiteShop ? c.code === 'internet_shop' : c.code !== 'internet_shop'
+    isSiteShop ? SITE_CODES.includes(c.code) : !SITE_CODES.includes(c.code)
   );
 
   return (
@@ -149,8 +151,8 @@ const MarketplaceIntegrationsSettings = () => {
                       i.shopId === shop.id &&
                       i.isEnabled &&
                       (shopIsSite
-                        ? i.marketplaceCode === 'internet_shop'
-                        : i.marketplaceCode !== 'internet_shop' &&
+                        ? ['internet_shop', 'ozon_delivery'].includes(i.marketplaceCode)
+                        : !['internet_shop', 'ozon_delivery'].includes(i.marketplaceCode) &&
                           marketplaceIntegrationsConfig.some((c) => c.code === i.marketplaceCode)),
                   ).length;
                   return (

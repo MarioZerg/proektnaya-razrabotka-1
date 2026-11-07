@@ -38,7 +38,35 @@ export interface OzonPvzPlace {
  * Код принадлежит кабинету продавца: по штрихкоду МЕГАТЮЛЬ пункт выдачи не
  * отдаст коробки ДЮНЫ — для площадки это разные продавцы.
  */
+/** Посылка сайта, которая едет обратно или ждёт нас на складе возврата. */
+export interface SiteReturnParcel {
+  orderId: number;
+  orderNumber: string;
+  siteOrder: string | null;
+  product: string | null;
+  tracking: string;
+  status: string;
+  statusText: string;
+  /** ready — ждёт нас, coming — едет, problem — проблема, done — уже у нас. */
+  group: 'ready' | 'coming' | 'problem' | 'done';
+  at: string | null;
+  place: string | null;
+}
+
+/** Возвраты мегатюль.рф по Ozon Доставке (Rocket API). */
+export interface SiteReturns {
+  /** Ключи Ozon Доставки вписаны. */
+  connected: boolean;
+  error: string | null;
+  /** Склады возврата: куда ехать за посылками. */
+  places: { id: number | null; name: string | null; city: string | null; address: string | null }[];
+  parcels: SiteReturnParcel[];
+  /** Расходные документы на выдачу возвратов. */
+  documents: { id: string; number: string | null; date: string | null; state: string | null; place: string | null }[];
+}
+
 export const fetchReturnCodes = async (shopId?: number | null): Promise<{
+  siteReturns: SiteReturns | null;
   items: ReturnPickupCode[];
   totalWaiting: number;
   ozonPlaces: OzonPvzPlace[];
@@ -55,7 +83,20 @@ export const fetchReturnCodes = async (shopId?: number | null): Promise<{
     ozonError: data.ozonError || null,
     shops: data.shops || [],
     shopId: data.shopId ?? null,
+    siteReturns: data.siteReturns ?? null,
   };
+};
+
+/** PDF расходного документа Ozon Доставки на выдачу возвратов (base64). */
+export const fetchSiteReturnDocument = async (documentId: string): Promise<string> => {
+  const res = await fetch(RETURN_CODES_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'site_return_document', documentId }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Не удалось получить документ');
+  return data.pdfBase64 as string;
 };
 
 export const saveReturnCode = async (payload: {

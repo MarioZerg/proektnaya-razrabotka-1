@@ -7,6 +7,8 @@ from authz import guard_request
 MARKETPLACES = (
     'ozon', 'wildberries', 'yandex_market', 'megamarket', 'lemana_pro', 'avito',
     'onec_buh', 'internet_shop',
+    # Ozon Доставка (Rocket API) магазина мегатюль.рф: трекинг и возвраты посылок сайта.
+    'ozon_delivery',
 )
 
 

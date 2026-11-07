@@ -5,6 +5,7 @@ import urllib.request
 
 import psycopg2
 from authz import guard_request
+import rocket
 
 OZON_API_BASE = 'https://api-seller.ozon.ru'
 
@@ -159,6 +160,10 @@ def _no_ozon_cabinet(cur, shop_id):
         (int(shop_id),),
     )
     return cur.fetchone() is None
+
+
+def _is_site_shop(shops, shop_id):
+    return any(s['id'] == shop_id and s['code'] == rocket.SITE_SHOP_CODE for s in shops)
 
 
 def fetch_ozon_giveouts(cur, shop_id=None):
@@ -650,6 +655,11 @@ def handler(event: dict, context) -> dict:
                 }
                 for r in code_rows
             ]
+            site_returns = None
+            if _is_site_shop(shops, shop_id):
+                site_returns = rocket.site_returns(cur)
+                # Статусы посылок записались в заказы — сохраняем.
+                conn.commit()
             return _resp(200, {
                 'items': items,
                 'totalWaiting': sum(waiting.values()),
@@ -659,6 +669,8 @@ def handler(event: dict, context) -> dict:
                 # Магазины для вкладок и тот, что показан сейчас.
                 'shops': shops,
                 'shopId': shop_id,
+                # мегатюль.рф: штрихкода ПВЗ нет — возвраты Ozon Доставки (Rocket API).
+                'siteReturns': site_returns,
             })
 
         body_data = json.loads(event.get('body') or '{}')
@@ -676,6 +688,17 @@ def handler(event: dict, context) -> dict:
         # Обновление кода из личного кабинета маркетплейса по API. Доступно и кладовщику:
         # код OZON живёт сутки, и человеку перед выездом на ПВЗ нужно уметь получить
         # свежий самому, не дожидаясь администратора.
+        # Печать расходного документа Ozon Доставки на выдачу возвратов сайта.
+        if body_data.get('action') == 'site_return_document':
+            doc_id = str(body_data.get('documentId') or '').strip()
+            if not doc_id:
+                return _resp(400, {'error': 'Не указан документ'})
+            try:
+                pdf = rocket.return_document_pdf(cur, doc_id)
+            except rocket.RocketError as e:
+                return _resp(502, {'error': str(e)})
+            return _resp(200, {'pdfBase64': pdf})
+
         if body_data.get('action') == 'refresh':
             mp = (body_data.get('marketplaceCode') or 'ozon').strip()
             if mp != 'ozon':

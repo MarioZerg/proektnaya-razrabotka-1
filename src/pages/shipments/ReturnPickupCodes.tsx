@@ -17,10 +17,12 @@ import {
   type ReturnGiveout,
   type GiveoutProgress,
   type Shop,
+  type SiteReturns,
 } from '@/lib/returnCodesApi';
 import ShopTabs from '@/components/crm/ShopTabs';
 import ReturnCodeCard from '@/components/crm/returnCodes/ReturnCodeCard';
 import GiveoutList from '@/components/crm/returnCodes/GiveoutList';
+import SiteReturnsPanel from '@/components/crm/returnCodes/SiteReturnsPanel';
 import GiveoutProgressDialog from '@/components/crm/returnCodes/GiveoutProgressDialog';
 import ReturnCodeDialogs from '@/components/crm/returnCodes/ReturnCodeDialogs';
 import WarehouseFetchError from '@/components/crm/goodsWarehouse/WarehouseFetchError';
@@ -45,6 +47,8 @@ const ReturnPickupCodes = () => {
   // Кабинет, чьи коды смотрят. Штрихкод принадлежит продавцу: по коду МЕГАТЮЛЬ
   // пункт выдачи не отдаст коробки ДЮНЫ — для площадки это разные продавцы.
   const [shops, setShops] = useState<Shop[]>([]);
+  // Возвраты мегатюль.рф (Ozon Доставка): у сайта нет штрихкода ПВЗ.
+  const [siteReturns, setSiteReturns] = useState<SiteReturns | null>(null);
   const [shopId, setShopId] = useState<number | null>(null);
 
   const [items, setItems] = useState<ReturnPickupCode[]>([]);
@@ -78,6 +82,7 @@ const ReturnPickupCodes = () => {
         setTotalWaiting(d.totalWaiting);
         setOzonPlaces(d.ozonPlaces);
         setShops(d.shops);
+        setSiteReturns(d.siteReturns);
         // Первый заход: сервер сам подставил рабочий кабинет — запоминаем его.
         setShopId((prev) => prev ?? d.shopId);
       })
@@ -206,6 +211,7 @@ const ReturnPickupCodes = () => {
   };
 
   const currentShop = shops.find((sh) => sh.id === shopId) || null;
+  const isSiteShop = currentShop?.code === 'megatul_site';
 
   if (!canView) {
     return (
@@ -221,7 +227,9 @@ const ReturnPickupCodes = () => {
         <div>
           <h1 className="text-xl font-bold">Коды для получения возвратов</h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            {currentShop
+            {isSiteShop
+              ? 'Посылки сайта ездят через Ozon Доставку: возвраты забирают на складе возврата по документу'
+              : currentShop
               ? `Код кабинета «${currentShop.name}» — покажите его приёмщику на пункте выдачи`
               : 'Покажите код приёмщику на пункте выдачи — без него возвраты не отдадут'}
           </p>
@@ -271,6 +279,17 @@ const ReturnPickupCodes = () => {
           />
         )}
 
+        {isSiteShop ? (
+          loading ? (
+            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+              <Icon name="Loader2" size={16} className="animate-spin" />
+              Спрашиваю Ozon Доставку…
+            </div>
+          ) : (
+            <SiteReturnsPanel data={siteReturns} isAdmin={isAdmin} />
+          )
+        ) : (
+        <>
         {loading && items.length === 0 ? (
           <div className="flex items-center gap-2 text-sm text-muted-foreground">
             <Icon name="Loader2" size={16} className="animate-spin" />
@@ -302,6 +321,8 @@ const ReturnPickupCodes = () => {
           onRetry={loadGiveouts}
           onWatch={setWatchingId}
         />
+        </>
+        )}
 
         <GiveoutProgressDialog
           watchingId={watchingId}
