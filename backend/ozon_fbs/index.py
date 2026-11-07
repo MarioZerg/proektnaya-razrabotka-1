@@ -2148,7 +2148,14 @@ def find_posting_by_barcode(client_id, api_key, barcode):
     return None, f'OZON не ответил на поиск по штрихкоду (код {status})'
 
 
-def get_label_async(client_id, api_key, posting_number, debug=None, budget=3.6):
+# Сколько ждём готовую этикетку. На poehali функцию обрывали через несколько
+# секунд, поэтому ждали 3,6 с — и первый запрос после сборки почти всегда
+# получал «этикетка ещё не готова», упаковщица жала «Распечатать» второй раз.
+# На своём сервере функция может работать минуты: ждём до 15 секунд.
+LABEL_WAIT_SEC = 15.0
+
+
+def get_label_async(client_id, api_key, posting_number, debug=None, budget=LABEL_WAIT_SEC):
     """Этикетка OZON через задание: /v3/posting/fbs/package-label/create → /v2/.../get.
 
     С 2 ноября 2026 OZON ОТКЛЮЧИЛ синхронный /v2/posting/fbs/package-label: он
@@ -2175,7 +2182,8 @@ def get_label_async(client_id, api_key, posting_number, debug=None, budget=3.6):
         return 0, data
     last = None
     while time.monotonic() - started < budget:
-        time.sleep(0.5)
+        # Первые секунды спрашиваем часто, дальше раз в секунду — не жжём лимит OZON.
+        time.sleep(0.5 if time.monotonic() - started < 3 else 1.0)
         st, data = ozon_post('/v2/posting/fbs/package-label/get', client_id, api_key,
                              {'task_id': int(task_id)})
         last = (st, data)
@@ -2187,7 +2195,7 @@ def get_label_async(client_id, api_key, posting_number, debug=None, budget=3.6):
         url = res.get('file_url')
         if url:
             try:
-                left = max(0.5, 4.6 - (time.monotonic() - started))
+                left = max(5.0, budget + 10 - (time.monotonic() - started))
                 with urllib.request.urlopen(url, timeout=left) as r:
                     return 200, r.read()
             except Exception as e:
@@ -2291,7 +2299,7 @@ def get_posting_label(cur, client_id, api_key, order_number, debug=None):
     # Этикетка готовится несколько секунд после сборки — одна повторная попытка.
     if status != 200 and data == 'NOT_READY':
         retries = 1
-        status, data = get_label_async(client_id, api_key, posting_number, debug, budget=0.6)
+        status, data = get_label_async(client_id, api_key, posting_number, debug, budget=8.0)
     if debug is not None:
         debug['retries'] = retries
     if status != 200:
