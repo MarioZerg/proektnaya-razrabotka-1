@@ -33,7 +33,11 @@ const loadPdfjs = (): Promise<PdfjsModule> => {
       const workerSrc = (
         await import('pdfjs-dist/legacy/build/pdf.worker.min.mjs?url')
       ).default;
-      pdfjs.GlobalWorkerOptions.workerSrc = workerSrc;
+      // ?v=2 — новый адрес для браузеров. После переезда сервер отдавал этот
+      // файл с неверным типом (не JavaScript), и терминалы запомнили битый ответ
+      // в кэше на год: печать ярлыков OZON/Яндекса падала с «Обновляем систему».
+      // С другим адресом браузер скачает файл заново, уже правильным.
+      pdfjs.GlobalWorkerOptions.workerSrc = `${workerSrc}${workerSrc.includes('?') ? '&' : '?'}v=2`;
       return pdfjs as unknown as PdfjsModule;
     })().catch((e) => {
       // Неудачную загрузку не запоминаем: связь могла моргнуть, и следующая
