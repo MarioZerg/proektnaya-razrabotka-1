@@ -1,6 +1,7 @@
 import { Button } from '@/components/ui/button';
 import Icon from '@/components/ui/icon';
 import type { SewLine } from '@/lib/fboSewPlanApi';
+import { transitWhen } from './SewTransitSupplies';
 
 const gradeLabel: Record<string, { text: string; cls: string }> = {
   hot: { text: 'ходовой', cls: 'bg-emerald-100 text-emerald-800' },
@@ -38,9 +39,17 @@ const SewLinesList = ({ lines, mode, busy, onRemove, onAdd }: SewLinesListProps)
                 )}
               </div>
               <div className="text-xs text-muted-foreground">
-                Продано в регион {l.sold} · всего {l.soldTotal} · есть на Ozon {l.onOzon} · нужно {l.need}
+                Продано в регион {l.sold} · всего {l.soldTotal} · на складе Ozon {l.onStock ?? l.onOzon}
+                {l.inTransit > 0 ? ` · в пути ${l.inTransit}` : ''} · нужно {l.need}
                 {l.note ? ` · ${l.note}` : ''}
               </div>
+              {l.transitSupplies?.length > 0 && (
+                <div className="text-xs text-sky-700 dark:text-sky-400">
+                  {l.transitSupplies
+                    .map((t) => `№${t.number}: ${t.quantity} шт., ${transitWhen(t)}`)
+                    .join(' · ')}
+                </div>
+              )}
             </div>
             {mode === 'plan' && (
               <span className="shrink-0 tabular-nums text-base font-semibold">{l.quantity} шт.</span>

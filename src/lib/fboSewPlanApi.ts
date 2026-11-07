@@ -3,6 +3,21 @@ const URL = 'https://functions.poehali.dev/dc70091f-a346-4658-ac9b-93e5e58f7355'
 
 export type SewGrade = 'hot' | 'normal' | 'weak' | null;
 
+/** Наша поставка FBO, которая ещё не размещена на складе Ozon. */
+export interface SewTransitSupply {
+  id: number;
+  /** Номер заявки Ozon (или наш номер, если заявки ещё нет). */
+  number: string;
+  status: string;
+  ozonState: string | null;
+  /** Склад Ozon, куда едет поставка. */
+  warehouse: string | null;
+  /** Дата размещения (таймслот на складе Ozon), YYYY-MM-DD. */
+  date: string | null;
+  timeslot: string | null;
+  quantity: number;
+}
+
 export interface SewLine {
   sku: number;
   itemId: number;
@@ -14,8 +29,14 @@ export interface SewLine {
   sold: number;
   /** Продано по всем кластерам за 28 дней. */
   soldTotal: number;
-  /** На Ozon в кластере + в пути + наши поставки в работе. */
+  /** На Ozon в кластере + в пути (наши поставки или данные Ozon). */
   onOzon: number;
+  /** Лежит на складах Ozon в кластере. */
+  onStock: number;
+  /** Едет в кластер: в наших поставках, ещё не размещённых на Ozon. */
+  inTransit: number;
+  /** В каких поставках едет этот размер и когда размещение. */
+  transitSupplies: SewTransitSupply[];
   need: number;
   grade: SewGrade;
   popularSize: boolean;
@@ -30,6 +51,8 @@ export interface SewClusterRow {
   need: number;
   onOzon: number;
   inWork: number;
+  /** Наши поставки в этот кластер, ещё не размещённые. */
+  supplies: SewTransitSupply[];
   home: boolean;
   score: number;
 }
@@ -64,6 +87,8 @@ export interface SewPlan {
   skipped: SewLine[];
   fabric: SewFabricRow[];
   clusters: SewClusterRow[];
+  /** Наши поставки, которые уже едут в выбранный кластер. */
+  transit: SewTransitSupply[];
   localization: SewLocalization;
 }
 

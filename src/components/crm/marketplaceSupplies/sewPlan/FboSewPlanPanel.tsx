@@ -21,6 +21,7 @@ import {
 } from '@/lib/fboSewPlanApi';
 import SewLinesList from './SewLinesList';
 import SewSummary from './SewSummary';
+import SewTransitSupplies from './SewTransitSupplies';
 
 const AUTO = '__auto__';
 const MIN = 10;
@@ -224,7 +225,8 @@ const FboSewPlanPanel = ({ shopId, isAdmin, onOpenSupply }: FboSewPlanPanelProps
                   .filter((c) => !c.home)
                   .map((c) => (
                     <SelectItem key={c.cluster} value={c.cluster}>
-                      {c.cluster} · нужно {c.need} · лок. {c.localPercent ?? 0}%
+                      {c.cluster} · нужно {c.need}
+                      {c.inWork > 0 ? ` · в пути ${c.inWork}` : ''} · лок. {c.localPercent ?? 0}%
                     </SelectItem>
                   ))}
               </SelectContent>
@@ -256,6 +258,12 @@ const FboSewPlanPanel = ({ shopId, isAdmin, onOpenSupply }: FboSewPlanPanelProps
             </div>
 
             <SewSummary cluster={plan.cluster} localization={plan.localization} fabric={plan.fabric} />
+
+            <SewTransitSupplies
+              cluster={plan.cluster}
+              supplies={plan.transit ?? []}
+              onOpenSupply={onOpenSupply}
+            />
 
             <SewLinesList
               lines={plan.lines}

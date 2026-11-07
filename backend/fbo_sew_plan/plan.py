@@ -216,36 +216,78 @@ def _demand(cur, shop_id):
 
 
 def _ozon_stock(cur, shop_id):
+    """Остаток Ozon по кластерам: на складе отдельно, в пути и в заявках отдельно.
+
+    «В пути» и «в заявках» от Ozon сверяем с нашими поставками (см. _our_pipeline):
+    на практике Ozon показывает там ноль, даже когда к нему едут сотни штук.
+    """
     cur.execute(
-        "SELECT cluster_name, sku, available + in_transit + requested, grade "
+        "SELECT cluster_name, sku, available, in_transit + requested, grade "
         "FROM ozon_cluster_stock WHERE shop_id = %s",
         (int(shop_id),),
     )
-    stock, grade = {}, {}
-    for cluster, sku, qty, g in cur.fetchall():
-        stock.setdefault(cluster, {})[int(sku)] = int(qty or 0)
+    stock, flow, grade = {}, {}, {}
+    for cluster, sku, avail, fl, g in cur.fetchall():
+        stock.setdefault(cluster, {})[int(sku)] = int(avail or 0)
+        flow.setdefault(cluster, {})[int(sku)] = int(fl or 0)
         grade[(cluster, int(sku))] = g
-    return stock, grade
+    return stock, flow, grade
+
+
+# Состояния заявки Ozon, когда товар уже принят на склад: он есть в остатке
+# «на складе», и считать его ещё и «в пути» — значит учесть дважды.
+OZON_PLACED_STATES = ('REPORTS_CONFIRMATION_AWAITING', 'REPORT_REJECTED', 'COMPLETED')
 
 
 def _our_pipeline(cur, shop_id, items_by_id):
-    """Наши FBO-поставки без заявки Ozon: что уже шьётся или собирается по кластерам."""
+    """Наши FBO-поставки Ozon, ещё не размещённые на складе: шьются, собираются,
+    едут. По кластерам и размерам (sku), с номерами поставок и датой размещения.
+
+    Раньше сюда попадали только поставки БЕЗ заявки Ozon: считалось, что заявленное
+    Ozon сам покажет «в пути / в заявках». Он показывает ноль — и предложка снова
+    просила шить в Москву те 35 штук, что уже ехали туда в поставке.
+
+    Возвращает (cluster -> sku -> штук, cluster -> sku -> [поставки]).
+    """
     cur.execute(
-        "SELECT COALESCE(wc.cluster_name, ms.cluster), o.marketplace_item_id, COUNT(*) "
+        "SELECT COALESCE(wc.cluster_name, ms.cluster), o.marketplace_item_id, ms.id, "
+        "       COALESCE(NULLIF(ms.ozon_application_number, ''), NULLIF(ms.supply_number, ''), ms.id::text), "
+        "       ms.status, ms.ozon_state, ms.supply_date, ms.timeslot, ms.cluster, COUNT(*) "
         "FROM orders o JOIN marketplace_supplies ms ON ms.id = o.supply_id "
         "LEFT JOIN ozon_warehouse_cluster wc ON wc.warehouse_name = ms.cluster "
         "WHERE ms.marketplace = 'OZON' AND ms.type = 'FBO' AND ms.shop_id = %s "
-        "  AND ms.status IN ('Открытая', 'На сборке') AND ms.ozon_supply_order_id IS NULL "
+        "  AND ms.status IN ('Открытая', 'На сборке', 'Отгрузка') "
+        "  AND COALESCE(ms.ozon_state, '') NOT IN %s "
         "  AND COALESCE(o.status, '') <> 'Отменён' AND o.cancelled_at IS NULL "
         "  AND o.marketplace_item_id IS NOT NULL "
-        "GROUP BY 1, 2",
-        (int(shop_id),),
+        "GROUP BY 1, 2, 3, 4, 5, 6, 7, 8, 9",
+        (int(shop_id), OZON_PLACED_STATES),
     )
-    out = {}
-    for cluster, iid, qty in cur.fetchall():
+    qty_map, detail = {}, {}
+    for cluster, iid, sid, number, status, state, sdate, slot, wh, qty in cur.fetchall():
         it = items_by_id.get(int(iid))
-        if it and cluster:
-            out.setdefault(cluster, {})[it['sku']] = out.get(cluster, {}).get(it['sku'], 0) + int(qty)
+        if not (it and cluster):
+            continue
+        sku = it['sku']
+        qty_map.setdefault(cluster, {})[sku] = qty_map.get(cluster, {}).get(sku, 0) + int(qty)
+        detail.setdefault(cluster, {}).setdefault(sku, []).append({
+            'id': sid, 'number': str(number), 'status': status, 'ozonState': state,
+            'warehouse': wh, 'date': sdate.isoformat() if sdate else None,
+            'timeslot': slot, 'quantity': int(qty),
+        })
+    return qty_map, detail
+
+
+def _supplies_by_cluster(detail):
+    """Поставки кластера одним списком: номер, склад, дата размещения, сколько штук."""
+    out = {}
+    for cluster, by_sku in detail.items():
+        acc = {}
+        for rows in by_sku.values():
+            for r in rows:
+                a = acc.setdefault(r['id'], {**r, 'quantity': 0})
+                a['quantity'] += r['quantity']
+        out[cluster] = sorted(acc.values(), key=lambda r: (r['date'] or '9999', r['id']))
     return out
 
 
@@ -294,8 +336,14 @@ def build(cur, shop_id, pieces, cluster=None, removed=None, added=None):
     demand, total_sales, local = _demand(cur, shop_id)
     if not demand:
         return {'error': 'Нет данных о заказах Ozon по регионам. Нажмите «Обновить данные Ozon»'}
-    stock, grades = _ozon_stock(cur, shop_id)
-    pipeline = _our_pipeline(cur, shop_id, items_by_id)
+    stock, flow, grades = _ozon_stock(cur, shop_id)
+    pipeline, pipe_detail = _our_pipeline(cur, shop_id, items_by_id)
+    supplies_by_cluster = _supplies_by_cluster(pipe_detail)
+
+    def transit(cl, sku):
+        """В пути к кластеру: наши поставки или то, что показывает Ozon, — что больше.
+        Это одни и те же штуки, поэтому не складываем, а берём большее."""
+        return max((flow.get(cl) or {}).get(sku, 0), (pipeline.get(cl) or {}).get(sku, 0))
     home = home_cluster(cur, shop_id)
     loc = localization(cur, shop_id)
     popular = _popular_sizes(cur, shop_id)
@@ -309,7 +357,7 @@ def build(cur, shop_id, pieces, cluster=None, removed=None, added=None):
             it = items.get(sku)
             if not it:
                 continue
-            have = (stock.get(cl) or {}).get(sku, 0) + (pipeline.get(cl) or {}).get(sku, 0)
+            have = (stock.get(cl) or {}).get(sku, 0) + transit(cl, sku)
             want = sold * COVER_DAYS / DEMAND_DAYS
             out[sku] = (sold, have, max(0.0, want - have))
         return out
@@ -329,6 +377,7 @@ def build(cur, shop_id, pieces, cluster=None, removed=None, added=None):
             'need': int(round(liquid_need)),
             'onOzon': sum((stock.get(cl) or {}).values()),
             'inWork': sum((pipeline.get(cl) or {}).values()),
+            'supplies': supplies_by_cluster.get(cl, []),
             'home': cl == home,
         })
     # Выгоднее всего — где не хватает больше всего и где сейчас много нелокальных заказов.
@@ -351,7 +400,11 @@ def build(cur, shop_id, pieces, cluster=None, removed=None, added=None):
         row = {
             'sku': sku, 'itemId': it['itemId'], 'name': it['name'], 'material': it['material'],
             'width': it['width'], 'height': it['height'], 'sold': sold,
-            'soldTotal': total_sales.get(sku, 0), 'onOzon': have, 'need': int(math.ceil(n)),
+            'soldTotal': total_sales.get(sku, 0), 'onOzon': have,
+            'onStock': (stock.get(chosen) or {}).get(sku, 0),
+            'inTransit': transit(chosen, sku),
+            'transitSupplies': (pipe_detail.get(chosen) or {}).get(sku, []),
+            'need': int(math.ceil(n)),
             'grade': g, 'popularSize': size_ok, 'quantity': 0, 'note': None,
             'fabricId': it['fabricId'], 'meters': it['meters'],
         }
@@ -472,6 +525,8 @@ def build(cur, shop_id, pieces, cluster=None, removed=None, added=None):
         'skipped': [clean(r) for r in (skipped + short_lines)][:60],
         'fabric': fabric_rows,
         'clusters': summary,
+        # Что уже едет в выбранный кластер: номера поставок и даты размещения.
+        'transit': supplies_by_cluster.get(chosen, []),
         'localization': {
             'now': loc['percent'],
             'after': round(after_total, 1) if after_total is not None else None,

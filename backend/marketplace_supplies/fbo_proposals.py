@@ -582,6 +582,30 @@ def _ozon_stock(client_id, api_key, clusters):
     return by_cluster, None
 
 
+def _in_transit(cur, shop_id):
+    """Наши FBO-поставки Ozon, ещё не размещённые на складе: склад -> товар -> штук.
+
+    Ozon в остатках «в пути» их не показывает, и без этого учёта предложка снова
+    везла в регион то, что туда уже едет.
+    """
+    cur.execute(
+        "SELECT ms.cluster, o.marketplace_item_id, COUNT(*) "
+        "FROM orders o JOIN marketplace_supplies ms ON ms.id = o.supply_id "
+        "WHERE ms.marketplace = 'OZON' AND ms.type = 'FBO' AND ms.shop_id = %s "
+        "  AND ms.status IN ('Открытая', 'На сборке', 'Отгрузка') "
+        "  AND COALESCE(ms.ozon_state, '') NOT IN "
+        "      ('REPORTS_CONFIRMATION_AWAITING', 'REPORT_REJECTED', 'COMPLETED') "
+        "  AND COALESCE(o.status, '') <> 'Отменён' AND o.cancelled_at IS NULL "
+        "  AND o.marketplace_item_id IS NOT NULL AND ms.cluster IS NOT NULL "
+        "GROUP BY 1, 2",
+        (int(shop_id),),
+    )
+    out = {}
+    for wh, item_id, qty in cur.fetchall():
+        out.setdefault(wh, {})[int(item_id)] = int(qty)
+    return out
+
+
 def build(cur, shop_id):
     # Два одновременных нажатия «Сформировать» не должны занять одни и те же
     # GW дважды: второй расчёт ждёт, пока первый не закончит. Служебные
@@ -621,6 +645,16 @@ def build(cur, shop_id):
         for sku, qty in (stock.get(our_name) or {}).items():
             sbucket[sku] = sbucket.get(sku, 0) + qty
     demand, stock = region_demand, region_stock
+
+    # Что уже едет в регион в наших поставках — тоже «есть на Ozon».
+    transit = {}
+    for wh, items in _in_transit(cur, shop_id).items():
+        cid = _cluster_id_for(ozon_clusters, wh)
+        region = next((c['name'] for c in ozon_clusters if c['id'] == cid), None) if cid else None
+        if region:
+            bucket = transit.setdefault(region, {})
+            for item_id, qty in items.items():
+                bucket[item_id] = bucket.get(item_id, 0) + qty
     if not demand:
         return {'created': [], 'skipped': [f'{n}: не нашли регион в справочнике Ozon' for n in no_region]}
     popular = _popular_sizes(cur)
@@ -657,7 +691,8 @@ def build(cur, shop_id):
                 continue
             pieces = by_item.get(item_id) or []
             sku = next((p['sku'] for p in pieces if p['sku']), None)
-            give(cluster, item_id, needed - on_ozon(cluster, sku))
+            give(cluster, item_id,
+                 needed - on_ozon(cluster, sku) - transit.get(cluster, {}).get(item_id, 0))
 
     # ШАГ 2. ХОДОВОЙ ТОВАР (от LIQUID_MIN_SALES продаж за месяц), который по
     # FBO в кластере ещё не продавался — например, уходит только с FBS.
@@ -678,7 +713,8 @@ def build(cur, shop_id):
             share = sales[item_id] * weight[cluster] / total_weight
             target = max(1, int(share + 0.999))
             already = sum(1 for g in plans[cluster]['goods'] if g['itemId'] == item_id)
-            give(cluster, item_id, target - on_ozon(cluster, sku) - already)
+            give(cluster, item_id, target - on_ozon(cluster, sku) - already
+                 - transit.get(cluster, {}).get(item_id, 0))
 
     planned = []
     too_small = []
