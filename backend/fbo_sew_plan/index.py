@@ -71,7 +71,10 @@ def _handler(event: dict, context) -> dict:
             shops = [r[0] for r in cur.fetchall()]
             out = {}
             for sid in shops:
-                out[sid] = _sync(cur, conn, sid, started + 19)
+                # Планировщик на своём сервере не ограничен 30 секундами, как на
+                # poehali: даём каждому магазину по 90 с. Раньше общие 19 с
+                # заканчивались на первом магазине, второй не обновлялся вовсе.
+                out[sid] = _sync(cur, conn, sid, time.time() + 90)
             cur.execute(
                 "INSERT INTO audit_log (user_id, user_name, category, action, entity_type, entity_id, description) "
                 "VALUES (NULL, 'Планировщик', 'integration', 'fbo_sew_sync', 'ozon', NULL, %s)",

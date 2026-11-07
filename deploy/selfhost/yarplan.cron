@@ -41,4 +41,4 @@ J=/opt/yarplan/deploy/run_job.sh
 #21 */2 * * *     root $J ad_spend sync_sales POST
 #10 4 * * *       root $J ad_spend sync POST
 #50 3 * * *       root $J promotion capture POST
-#38 * * * *       root $J fbo_sew_plan sync_all POST
+38 * * * *        root $J fbo_sew_plan sync_all POST

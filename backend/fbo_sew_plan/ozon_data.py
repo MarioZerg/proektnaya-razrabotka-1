@@ -235,6 +235,14 @@ def sync_stock(cur, conn, shop_id, deadline):
             break
         status, data = ozon_post('/v1/analytics/stocks', client_id, api_key,
                                  {'skus': skus[offset:offset + STOCK_CHUNK]})
+        # 429 — Ozon просит притормозить. Времени у планировщика теперь
+        # достаточно: ждём и пробуем ту же пачку ещё раз, а не бросаем круг.
+        for wait in (5, 15):
+            if status != 429 or time.time() > deadline - wait - 3:
+                break
+            time.sleep(wait)
+            status, data = ozon_post('/v1/analytics/stocks', client_id, api_key,
+                                     {'skus': skus[offset:offset + STOCK_CHUNK]})
         if status >= 500 and time.time() < deadline - 3:
             # У Ozon этот отчёт иногда отвечает 500 — одна повторная попытка.
             time.sleep(1)
