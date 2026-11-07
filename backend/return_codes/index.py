@@ -5,7 +5,7 @@ import urllib.request
 
 import psycopg2
 from authz import guard_request
-import rocket
+import ozon_delivery
 
 OZON_API_BASE = 'https://api-seller.ozon.ru'
 
@@ -163,7 +163,7 @@ def _no_ozon_cabinet(cur, shop_id):
 
 
 def _is_site_shop(shops, shop_id):
-    return any(s['id'] == shop_id and s['code'] == rocket.SITE_SHOP_CODE for s in shops)
+    return any(s['id'] == shop_id and s['code'] == ozon_delivery.SITE_SHOP_CODE for s in shops)
 
 
 def fetch_ozon_giveouts(cur, shop_id=None):
@@ -657,7 +657,12 @@ def handler(event: dict, context) -> dict:
             ]
             site_returns = None
             if _is_site_shop(shops, shop_id):
-                site_returns = rocket.site_returns(cur)
+                site_returns = ozon_delivery.site_returns(cur)
+                # Сколько возвратов ждёт нас в пункте выдачи — на карточку штрихкода.
+                waiting[ozon_delivery.CODE_MP] = site_returns.get('waiting') or 0
+                for it in items:
+                    if it['marketplaceCode'] == ozon_delivery.CODE_MP:
+                        it['waitingCount'] = waiting[ozon_delivery.CODE_MP]
                 # Статусы посылок записались в заказы — сохраняем.
                 conn.commit()
             return _resp(200, {
@@ -688,19 +693,19 @@ def handler(event: dict, context) -> dict:
         # Обновление кода из личного кабинета маркетплейса по API. Доступно и кладовщику:
         # код OZON живёт сутки, и человеку перед выездом на ПВЗ нужно уметь получить
         # свежий самому, не дожидаясь администратора.
-        # Печать расходного документа Ozon Доставки на выдачу возвратов сайта.
-        if body_data.get('action') == 'site_return_document':
-            doc_id = str(body_data.get('documentId') or '').strip()
-            if not doc_id:
-                return _resp(400, {'error': 'Не указан документ'})
-            try:
-                pdf = rocket.return_document_pdf(cur, doc_id)
-            except rocket.RocketError as e:
-                return _resp(502, {'error': str(e)})
-            return _resp(200, {'pdfBase64': pdf})
-
         if body_data.get('action') == 'refresh':
             mp = (body_data.get('marketplaceCode') or 'ozon').strip()
+            # Штрихкод возвратов Ozon Доставки (мегатюль.рф). Тихое чтение ничего
+            # не меняет: выпустить новый код можно только кнопкой.
+            if mp == ozon_delivery.CODE_MP:
+                if body_data.get('readOnly'):
+                    return _resp(200, {'success': True})
+                try:
+                    code = ozon_delivery.issue_barcode(cur, body_data.get('actorId'))
+                except ozon_delivery.DeliveryError as e:
+                    return _resp(502, {'error': str(e)})
+                conn.commit()
+                return _resp(200, {'success': True, 'code': code})
             if mp != 'ozon':
                 return _resp(400, {
                     'error': 'Автообновление доступно только для OZON — у Wildberries '

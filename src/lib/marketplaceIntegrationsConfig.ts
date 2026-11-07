@@ -79,7 +79,7 @@ export const marketplaceIntegrationsConfig: MarketplaceConfigItem[] = [
     code: 'ozon_delivery',
     name: 'Ozon Доставка',
     className: 'text-[#005BFF]',
-    hint: 'Ключи Rocket API из кабинета Ozon Доставки (Настройки → Интеграция API). По ним система видит, какие посылки сайта едут обратно, адрес склада возврата и документы на выдачу — на странице «Коды для ПВЗ», вкладка «мегатюль.рф».',
+    hint: 'Client ID и Client Secret из кабинета Ozon Доставки для интернет-магазинов. По ним система получает штрихкод возвратов и список возвратов посылок сайта — страница «Коды для ПВЗ», вкладка «мегатюль.рф».',
     fields: [
       { key: 'clientId', label: 'Client ID' },
       { key: 'clientSecret', label: 'Client Secret', secret: true },

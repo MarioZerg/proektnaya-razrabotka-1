@@ -228,7 +228,7 @@ const ReturnPickupCodes = () => {
           <h1 className="text-xl font-bold">Коды для получения возвратов</h1>
           <p className="mt-1 text-sm text-muted-foreground">
             {isSiteShop
-              ? 'Посылки сайта ездят через Ozon Доставку: возвраты забирают на складе возврата по документу'
+              ? 'Посылки сайта ездят через Ozon Доставку — у неё свой штрихкод возвратов'
               : currentShop
               ? `Код кабинета «${currentShop.name}» — покажите его приёмщику на пункте выдачи`
               : 'Покажите код приёмщику на пункте выдачи — без него возвраты не отдадут'}
@@ -279,17 +279,6 @@ const ReturnPickupCodes = () => {
           />
         )}
 
-        {isSiteShop ? (
-          loading ? (
-            <div className="flex items-center gap-2 text-sm text-muted-foreground">
-              <Icon name="Loader2" size={16} className="animate-spin" />
-              Спрашиваю Ozon Доставку…
-            </div>
-          ) : (
-            <SiteReturnsPanel data={siteReturns} isAdmin={isAdmin} />
-          )
-        ) : (
-        <>
         {loading && items.length === 0 ? (
           <div className="flex items-center gap-2 text-sm text-muted-foreground">
             <Icon name="Loader2" size={16} className="animate-spin" />
@@ -314,14 +303,17 @@ const ReturnPickupCodes = () => {
           </div>
         )}
 
-        <GiveoutList
-          giveouts={giveouts}
-          listLoading={listLoading}
-          error={giveoutsError}
-          onRetry={loadGiveouts}
-          onWatch={setWatchingId}
-        />
-        </>
+        {/* мегатюль.рф: возвраты Ozon Доставки вместо списка выдачи OZON. */}
+        {isSiteShop ? (
+          !loading && <SiteReturnsPanel data={siteReturns} isAdmin={isAdmin} />
+        ) : (
+          <GiveoutList
+            giveouts={giveouts}
+            listLoading={listLoading}
+            error={giveoutsError}
+            onRetry={loadGiveouts}
+            onWatch={setWatchingId}
+          />
         )}
 
         <GiveoutProgressDialog

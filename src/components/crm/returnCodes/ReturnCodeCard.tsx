@@ -8,12 +8,14 @@ const tileClass: Record<string, string> = {
   ozon: 'bg-blue-600 hover:bg-blue-700',
   wildberries: 'bg-purple-600 hover:bg-purple-700',
   yandex_market: 'bg-yellow-500 hover:bg-yellow-600',
+  ozon_delivery: 'bg-sky-600 hover:bg-sky-700',
 };
 
 const iconByMarketplace: Record<string, string> = {
   ozon: 'ShoppingBag',
   wildberries: 'ShoppingCart',
   yandex_market: 'Store',
+  ozon_delivery: 'Truck',
 };
 
 interface ReturnCodeCardProps {
@@ -80,8 +82,9 @@ const ReturnCodeCard = ({
         </p>
       )}
 
-      {/* Обновление по API — только там, где код меняется ежедневно. */}
-      {item.dailyRefresh && (
+      {/* Обновление по API: OZON — ежедневно, Ozon Доставка сайта — по кнопке
+          (код выпускает сам Ozon, вписывать руками не нужно). */}
+      {(item.dailyRefresh || item.marketplaceCode === 'ozon_delivery') && (
         <Button
           size="sm"
           className="w-full"
@@ -93,7 +96,7 @@ const ReturnCodeCard = ({
             size={14}
             className={`mr-1 ${refreshingId === item.marketplaceCode ? 'animate-spin' : ''}`}
           />
-          Обновить код
+          {item.code ? 'Обновить код' : 'Получить код'}
         </Button>
       )}
 
