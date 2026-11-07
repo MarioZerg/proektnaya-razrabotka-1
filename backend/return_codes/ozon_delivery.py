@@ -38,7 +38,7 @@ RETURN_STATUS = {
     'written_off': ('Списан', 'problem'),
 }
 # Посылка выдана покупателю или отменена окончательно — дальше не опрашиваем.
-FINAL_POSTING = {'delivered', 'cancelled', 'returned', 'utilized'}
+FINAL_POSTING = {'delivered', 'canceled', 'cancelled', 'returned', 'utilized'}
 
 _state = {'token': None, 'until': 0.0, 'client': None, 'session': None}
 
@@ -161,7 +161,7 @@ def _sync_posting_statuses(cur, token):
         "SELECT id, delivery_tracking_number FROM orders "
         "WHERE marketplace = 'IM' AND delivery_tracking_number IS NOT NULL "
         "  AND created_at > now() - interval '120 days' "
-        "  AND COALESCE(delivery_status, '') NOT IN ('delivered', 'cancelled', 'returned', 'utilized') "
+        "  AND COALESCE(delivery_status, '') NOT IN ('delivered', 'canceled', 'cancelled', 'returned', 'utilized') "
         "ORDER BY id DESC LIMIT 300"
     )
     by_num = {}
