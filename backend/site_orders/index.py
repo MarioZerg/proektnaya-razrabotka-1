@@ -11,6 +11,7 @@ import hmac
 import psycopg2
 
 import site_catalog
+import site_stage
 import site_chats
 from authz import guard_request, request_body, request_method, request_query
 
@@ -520,6 +521,7 @@ def handler(event: dict, context) -> dict:
 
     POST { action: 'sync' }                  — забрать оплаченные заказы сайта (и по расписанию)
     POST { action: 'check_statuses' }        — сверить отмены и этикетки с сайтом
+    POST { action: 'push_stages' }           — сообщить сайту, какие заказы ушли в работу
     POST { action: 'sync_products' }         — выгрузить каталог сайта в карточки товаров
     POST { action: 'label', orderId }         — этикетка Ozon Доставки для печати
     POST { action: 'catalog' }               — товары сайта с ценой, себестоимостью и статусом
@@ -717,6 +719,8 @@ def handler(event: dict, context) -> dict:
             conn.commit()
             result.update(check_statuses(cur, site_url, api_key, actor_id, actor_name, limit=15))
             conn.commit()
+            result['stages'] = site_stage.sweep(cur)
+            conn.commit()
             return _resp(200, result)
 
         if action == 'sync_products':
@@ -775,8 +779,18 @@ def handler(event: dict, context) -> dict:
             conn.commit()
             return _resp(code, result)
 
+        # Стадия заказов сайта («ушёл в работу» / «вернули в Новые») — чтобы сайт
+        # убрал или вернул покупателю кнопку отмены. Планировщик раз в 5 минут —
+        # подстраховка к вызову после каждого действия в функции заказов.
+        if action == 'push_stages':
+            result = site_stage.sweep(cur)
+            conn.commit()
+            return _resp(200, result)
+
         if action == 'check_statuses':
             result = check_statuses(cur, site_url, api_key, actor_id, actor_name)
+            conn.commit()
+            result['stages'] = site_stage.sweep(cur)
             log_action(cur, actor_id, actor_name, 'site_check_statuses',
                        f'мегатюль.рф: проверено заказов {result["checked"]}, '
                        f'отменено вещей {result["cancelled"]}')

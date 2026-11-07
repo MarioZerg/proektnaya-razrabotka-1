@@ -23,6 +23,8 @@ J=/opt/yarplan/deploy/run_job.sh
 57 * * * *       root $J wb_fbs check_statuses
 3 * * * *        root $J yandex_market check_statuses
 19-59/20 * * * * root $J site_orders check_statuses
+# стадия заказов сайта (ушёл в работу) — подстраховка к вызову из функции заказов
+2-59/5 * * * *   root $J site_orders push_stages
 
 # --- склад и цех
 12 * * * *       root $J marketplace_returns sync
