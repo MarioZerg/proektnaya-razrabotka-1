@@ -374,7 +374,13 @@ const AdminActionsCard = ({
 
       <div className="space-y-1.5">
         <Label aria-hidden className="invisible hidden sm:block">{'\u00A0'}</Label>
-      <Button className="w-full" onClick={() => onCut()} disabled={cutting || isAlreadyCut}>
+      {/* Рулон берём из поля «Рулон ткани» выше. Раньше кнопка звала раскрой без
+          рулона, и сервер отвечал «Выберите рулон тюля», хотя рулон выбран. */}
+      <Button
+        className="w-full"
+        onClick={() => onCut(fabricRollId ? Number(fabricRollId) : undefined)}
+        disabled={cutting || isAlreadyCut}
+      >
         {cutting ? (
           <>
             <Icon name="Loader2" size={16} className="mr-2 animate-spin" />
