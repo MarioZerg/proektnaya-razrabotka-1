@@ -64,7 +64,12 @@ def handle_get(event: dict, headers: dict, dsn: str) -> dict:
                 "                         AND b2.packed_qty IS NOT NULL))), "
                 "s.gazelka_shipped_at "
                 "FROM marketplace_supplies s "
-                "WHERE s.type = 'FBO' AND s.status <> 'Выполнена' "
+                # Только то, что ещё не уехало в газельку: отменённые, принятые и
+                # выполненные не показываем, уехавшие (есть факт отгрузки) — тоже.
+                # Иначе на главной висели все поставки подряд, и нужное терялось.
+                "WHERE s.type = 'FBO' "
+                "  AND s.status NOT IN ('Выполнена', 'Отменена', 'Принята') "
+                "  AND s.gazelka_shipped_at IS NULL "
                 "ORDER BY COALESCE(s.ship_to_gazelka_at, s.supply_date::timestamp) NULLS LAST, s.id DESC "
                 "LIMIT 50"
             )
