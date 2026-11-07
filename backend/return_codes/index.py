@@ -148,6 +148,19 @@ CORS_HEADERS = {
 OZON_WAITING_STATUSES = {'ReturnedToOzon'}
 
 
+def _no_ozon_cabinet(cur, shop_id):
+    """У магазина вообще нет кабинета продавца OZON (мегатюль.рф: посылки идут
+    через Ozon Доставку сайта). Тогда списков выдачи у OZON спрашивать не о чем,
+    и ошибка «интеграция не настроена» только пугает кладовщика."""
+    if not shop_id:
+        return False
+    cur.execute(
+        "SELECT 1 FROM marketplace_integrations WHERE marketplace_code = 'ozon' AND shop_id = %s",
+        (int(shop_id),),
+    )
+    return cur.fetchone() is None
+
+
 def fetch_ozon_giveouts(cur, shop_id=None):
     """Отправления возвратов OZON, готовые к выдаче продавцу.
 
@@ -156,6 +169,8 @@ def fetch_ozon_giveouts(cur, shop_id=None):
 
     Возвращает (список, ошибка).
     """
+    if _no_ozon_cabinet(cur, shop_id):
+        return [], None
     client_id, api_key, enabled = get_ozon_credentials(cur, shop_id)
     if not client_id or not api_key or not enabled:
         return [], 'Интеграция OZON не настроена'
@@ -195,6 +210,8 @@ def fetch_ozon_pvz_waiting(cur, shop_id=None):
 
     Возвращает (всего, разбивка по пунктам, ошибка).
     """
+    if _no_ozon_cabinet(cur, shop_id):
+        return 0, [], None
     client_id, api_key, enabled = get_ozon_credentials(cur, shop_id)
     if not client_id or not api_key or not enabled:
         return 0, [], 'Интеграция OZON не настроена'
