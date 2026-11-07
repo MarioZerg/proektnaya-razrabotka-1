@@ -663,6 +663,12 @@ def handler(event: dict, context) -> dict:
                 for it in items:
                     if it['marketplaceCode'] == ozon_delivery.CODE_MP:
                         it['waitingCount'] = waiting[ozon_delivery.CODE_MP]
+                        # Код мог выпуститься только что, при первом возврате.
+                        if not it['code']:
+                            cur.execute("SELECT code FROM return_pickup_codes WHERE marketplace_code = %s "
+                                        "AND shop_id = %s", (ozon_delivery.CODE_MP, shop_id))
+                            r_ = cur.fetchone()
+                            it['code'] = (r_[0] if r_ else None) or None
                 # Статусы посылок записались в заказы — сохраняем.
                 conn.commit()
             return _resp(200, {

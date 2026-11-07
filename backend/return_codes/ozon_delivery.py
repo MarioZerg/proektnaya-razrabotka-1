@@ -143,7 +143,14 @@ def issue_barcode(cur, actor_id=None):
     token = _session(cur)
     if not token:
         raise DeliveryError('Не заполнены ключи «Ozon Доставка» в «Интеграциях» (магазин мегатюль.рф)')
-    data = _post(token, '/v1/return/reset_barcode', {}) or {}
+    data = _post(token, '/v1/return/reset_barcode', {})
+    if data is None:
+        # 404 «Not Found»: у магазина в Ozon Доставке ещё нет штрихкода
+        # возвратов — он появляется вместе с первым возвратом. Код выпустится
+        # сам, когда возврат приедет (см. site_returns).
+        raise DeliveryError('Ozon Доставка пока не выдаёт штрихкод: у магазина сайта ещё не было '
+                            'возвратов. Код появится сам, как только первый возврат приедет '
+                            'в пункт выдачи')
     code = ((data.get('barcode_content') or {}).get('barcode') or '').strip()
     if not code:
         raise DeliveryError('Ozon Доставка не выдала штрихкод возвратов')
@@ -237,6 +244,20 @@ def site_returns(cur):
                 'orderNumber': order[1] if order else ext,
             })
         out['waiting'] = sum(1 for r in out['returns'] if r['group'] == 'ready')
+        # Возврат ждёт нас, а штрихкода ещё нет — выпускаем сам: без него в
+        # пункте выдачи посылку не отдадут.
+        if out['waiting']:
+            cur.execute(
+                "SELECT COALESCE(code, '') FROM return_pickup_codes "
+                "WHERE marketplace_code = %s AND shop_id = %s",
+                (CODE_MP, site_shop_id(cur)),
+            )
+            row = cur.fetchone()
+            if row is not None and not row[0]:
+                try:
+                    issue_barcode(cur)
+                except DeliveryError:
+                    pass
         _sync_posting_statuses(cur, token)
     except DeliveryError as e:
         out['error'] = str(e)
